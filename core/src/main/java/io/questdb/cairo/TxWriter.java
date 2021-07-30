@@ -27,9 +27,12 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.log.Log;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -37,6 +40,7 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.*;
 
 public final class TxWriter extends TxReader implements Closeable {
+    private final FilesFacade ff;
     private long prevTransientRowCount;
     private int attachedPositionDirtyIndex;
     private int txPartitionCount;
@@ -44,8 +48,9 @@ public final class TxWriter extends TxReader implements Closeable {
     private long prevMinTimestamp;
     private MemoryCMARW txMem;
 
-    public TxWriter(FilesFacade ff, Path path, int partitionBy) {
+    public TxWriter(FilesFacade ff, @Transient Path path, int partitionBy) {
         super(ff, path, partitionBy);
+        this.ff = ff;
         try {
             readUnchecked();
         } catch (Throwable e) {
@@ -60,7 +65,7 @@ public final class TxWriter extends TxReader implements Closeable {
 
     public void appendBlock(long timestampLo, long timestampHi, long nRowsAdded) {
         if (timestampLo < maxTimestamp) {
-            throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
+            throw CairoException.instance(ff.errno()).put("cannot insert rows out of order");
         }
 
         if (txPartitionCount == 0) {
@@ -146,16 +151,11 @@ public final class TxWriter extends TxReader implements Closeable {
     }
 
     @Override
-    protected MemoryCMR openTxnFile(FilesFacade ff, Path path, int rootLen) {
-        try {
-            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-                return txMem = Vm.getSmallCMARWInstance(ff, path);
-            }
-            throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
-
-        } finally {
-            path.trimTo(rootLen);
+    protected MemoryCMR openTxnFile(FilesFacade ff, Path path) {
+        if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
+            return txMem = Vm.getSmallCMARWInstance(ff, path);
         }
+        throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
     }
 
     public void commit(int commitMode, ObjList<SymbolMapWriter> denseSymbolMapWriters) {
@@ -183,6 +183,20 @@ public final class TxWriter extends TxReader implements Closeable {
         }
 
         prevTransientRowCount = transientRowCount;
+    }
+
+    public void copyTo(LPSZ file, Log log) {
+        long fd = TableUtils.openRW(ff, file, log);
+        try {
+            long len = txMem.getAppendOffset();
+            if (ff.write(fd, txMem.getPageAddress(0), txMem.getAppendOffset(), 0) != len) {
+                throw CairoException.instance(ff.errno())
+                        .put("could not write [file=").put(file)
+                        .put(", len=").put(len).put(']');
+            }
+        } finally {
+            ff.close(fd);
+        }
     }
 
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {

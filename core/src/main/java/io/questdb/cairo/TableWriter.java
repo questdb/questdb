@@ -696,6 +696,48 @@ public class TableWriter implements Closeable {
         commit(defaultCommitMode, lagMicros);
     }
 
+    public void enableTransactionLog() {
+        final long txn = getTxn();
+        txnScoreboard.acquireTxn(txn);
+
+        try {
+            // copy txn file aside, so we know where data is for this transaction
+            path.concat(TXN_FILE_NAME).put('.').put(txn).$();
+            txFile.copyTo(path, LOG);
+            path.trimTo(rootLen);
+
+            path.concat("log").put('.').put(txn);
+            int plen = path.length();
+
+            // create dir
+            if (ff.mkdirs(path.slash$(), configuration.getMkDirMode()) == 0) {
+                for (int i = 0; i < columnCount; i++) {
+                    final CharSequence name = metadata.getColumnName(i);
+                    final int primaryIndex = getPrimaryColumnIndex(i);
+                    final int secondaryIndex = getSecondaryColumnIndex(i);
+                    final MemoryMAR logMem1 = logColumns.getQuick(primaryIndex);
+                    logMem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
+
+                    final MemoryLogAImpl spliceColumn1 = spliceColumns.getQuick(primaryIndex);
+                    spliceColumn1.of(logMem1, row.activeColumns.getQuick(primaryIndex));
+
+                    final MemoryMAR logMem2 = logColumns.getQuick(secondaryIndex);
+                    if (logMem2 != null) {
+                        logMem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
+
+                        final MemoryLogAImpl spliceColumn2 = spliceColumns.getQuick(secondaryIndex);
+                        spliceColumn2.of(logMem2, row.activeColumns.getQuick(secondaryIndex));
+                    }
+                }
+                row.activeColumns = spliceColumns;
+            } else {
+                throw CairoException.instance(ff.errno()).put("Could not create directory: ").put(path);
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     public int getColumnIndex(CharSequence name) {
         int index = metadata.getColumnIndexQuiet(name);
         if (index > -1) {
@@ -730,6 +772,10 @@ public class TableWriter implements Closeable {
 
     public int getPartitionCount() {
         return txFile.getPartitionCount();
+    }
+
+    public long getRawTxnMemory() {
+        return txFile.getRawMemory();
     }
 
     public long getStructureVersion() {
@@ -801,6 +847,71 @@ public class TableWriter implements Closeable {
             ee.put(" expected");
             throw ee;
         }
+    }
+
+    public TableReplayModel reconcileSlaveState(long slaveTxData) {
+        LOG.info().$("reconciling replay request [table=").$(tableName).I$();
+        LongIntHashMap hash = new LongIntHashMap();
+
+        TableReplayModel model = new TableReplayModel();
+        final int symbolsCount = Unsafe.getUnsafe().getInt(slaveTxData + TX_OFFSET_MAP_WRITER_COUNT);
+        final int theirLast;
+        if (Unsafe.getUnsafe().getLong(slaveTxData + TX_OFFSET_DATA_VERSION) != txFile.getDataVersion()) {
+            // truncate
+            model.setTableOperation(1);
+            theirLast = -1;
+        } else {
+            // hash partitions on slave side
+            int partitionCount = Unsafe.getUnsafe().getInt(slaveTxData + getPartitionTableSizeOffset(symbolsCount)) / 8;
+            theirLast = partitionCount / 4 - 1;
+            for (int i = 0; i < partitionCount; i += 4) {
+                long p = slaveTxData + getPartitionTableIndexOffset(symbolsCount, i);
+                long ts = Unsafe.getUnsafe().getLong(p);
+                hash.put(ts, i);
+            }
+
+        }
+        model.setDataVersion(txFile.getDataVersion());
+
+        // collate local partitions that need to be propagated to this slave
+        final int ourPartitionCount = txFile.getPartitionCount();
+        final int ourLast = ourPartitionCount - 1;
+        for (int i = 0; i < ourPartitionCount; i++) {
+            final long ts = txFile.getPartitionTimestamp(i);
+            final long ourSize = i < ourLast ? txFile.getPartitionSize(i) : txFile.transientRowCount;
+            final int keyIndex = hash.keyIndex(ts);
+            if (keyIndex < 0) {
+                int slavePartitionIndex = hash.valueAt(keyIndex);
+                long p = slaveTxData + getPartitionTableIndexOffset(symbolsCount, slavePartitionIndex);
+                if (
+                        Unsafe.getUnsafe().getLong(p + 16) == txFile.getPartitionNameTxn(i)
+                ) {
+                    // this is the same partition roughly
+                    final long theirSize = slavePartitionIndex / 4 < theirLast ?
+                            Unsafe.getUnsafe().getLong(p + 8) :
+                            Unsafe.getUnsafe().getLong(slaveTxData + TX_OFFSET_TRANSIENT_ROW_COUNT);
+
+                    if (theirSize != ourSize) {
+                        if (theirSize < ourSize) {
+                            // send append section
+                            model.addPartitionAction(1, ts, theirSize, ourSize - theirSize);
+                        } else {
+                            LOG.error()
+                                    .$("slave partition is larger than that on master [table=").$(tableName)
+                                    .$(", ts=").$ts(ts)
+                                    .I$();
+                        }
+                    }
+                } else {
+                    model.addPartitionAction(0, ts, 0, ourSize);
+                }
+            } else {
+                // send whole partition
+                model.addPartitionAction(0, ts, 0, ourSize);
+            }
+        }
+
+        return model;
     }
 
     public void removeColumn(CharSequence name) {
@@ -1439,7 +1550,7 @@ public class TableWriter implements Closeable {
             long fileSize = ff.length(path);
             if (fileSize < partitionSize * typeSize) {
                 throw CairoException.instance(0).put("Column file row count does not match timestamp file row count. " +
-                        "Partition files inconsistent [file=")
+                                "Partition files inconsistent [file=")
                         .put(path)
                         .put(",expectedSize=")
                         .put(partitionSize * typeSize)
@@ -1464,7 +1575,7 @@ public class TableWriter implements Closeable {
             long fileSize = ff.length(path);
             if (fileSize < partitionSize << ColumnType.pow2SizeOf(columnType)) {
                 throw CairoException.instance(0).put("Column file row count does not match timestamp file row count. " +
-                        "Partition files inconsistent [file=")
+                                "Partition files inconsistent [file=")
                         .put(path)
                         .put(",expectedSize=")
                         .put(partitionSize << ColumnType.pow2SizeOf(columnType))
@@ -2052,7 +2163,6 @@ public class TableWriter implements Closeable {
             LOG.info().$("closed '").utf8(tableName).$('\'').$();
         }
     }
-
 
     private void finishMetaSwapUpdate() {
 
@@ -3214,7 +3324,7 @@ public class TableWriter implements Closeable {
                     int errno;
                     if ((errno = ff.rmdir(other)) == 0) {
                         LOG.info().$(
-                                "purged [path=").$(other)
+                                        "purged [path=").$(other)
                                 .$(", readerTxn=").$(readerTxn)
                                 .$(", readerTxnCount=").$(readerTxnCount)
                                 .$(']').$();
@@ -3674,44 +3784,6 @@ public class TableWriter implements Closeable {
         } finally {
             path.trimTo(rootLen);
         }
-    }
-
-    public void enableTransactionLog() {
-        final long txn = getTxn();
-        txnScoreboard.acquireTxn(txn);
-
-        try {
-            path.concat("log").put('.').put(txn);
-            int plen = path.length();
-
-            // create dir
-            if (ff.mkdirs(path.slash$(), configuration.getMkDirMode()) == 0) {
-                for (int i = 0; i < columnCount; i++) {
-                    final CharSequence name = metadata.getColumnName(i);
-                    final int primaryIndex = getPrimaryColumnIndex(i);
-                    final int secondaryIndex = getSecondaryColumnIndex(i);
-                    final MemoryMAR logMem1 = logColumns.getQuick(primaryIndex);
-                    logMem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
-
-                    final MemoryLogAImpl spliceColumn1 = spliceColumns.getQuick(primaryIndex);
-                    spliceColumn1.of(logMem1, row.activeColumns.getQuick(primaryIndex));
-
-                    final MemoryMAR logMem2 = logColumns.getQuick(secondaryIndex);
-                    if (logMem2 != null) {
-                        logMem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
-
-                        final MemoryLogAImpl spliceColumn2 = spliceColumns.getQuick(secondaryIndex);
-                        spliceColumn2.of(logMem2, row.activeColumns.getQuick(secondaryIndex));
-                    }
-                }
-                row.activeColumns = spliceColumns;
-            } else {
-                throw CairoException.instance(ff.errno()).put("Could not create directory: ").put(path);
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
-
     }
 
     private long openTodoMem() {

@@ -567,14 +567,14 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         downgradeMetaDataFile(src);
 
         try (Path path = new Path()) {
-            path.concat(root).concat(src.getName()).concat(TableUtils.META_FILE_NAME);
+            path.of(root).concat(src.getName()).concat(TableUtils.META_FILE_NAME);
             FilesFacade ff = configuration.getFilesFacade();
 
             // Read current symbols list
             IntList symbolCounts = new IntList();
             path.trimTo(0).concat(root).concat(src.getName());
             LongList attachedPartitions = new LongList();
-            try (TxReader txFile = new TxReader(ff, path.$(), src.getPartitionBy())) {
+            try (TxReader txFile = new TxReader(ff, path, src.getPartitionBy())) {
                 txFile.readUnchecked();
 
                 for (int i = 0; i < txFile.getPartitionCount() - 1; i++) {
@@ -584,7 +584,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 txFile.readSymbolCounts(symbolCounts);
             }
 
-            path.trimTo(0).concat(root).concat(src.getName()).concat(TXN_FILE_NAME);
+            path.of(root).concat(src.getName()).concat(TXN_FILE_NAME);
             try (MemoryCMARW rwTx = Vm.getSmallCMARWInstance(ff, path.$())) {
                 rwTx.toTop();
                 rwTx.putInt(TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT, symbolCounts.size());

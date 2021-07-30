@@ -96,6 +96,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .$(", table=").utf8(tableName)
                     .I$();
             this.txFile = new TxReader(ff, path, partitionBy);
+            path.trimTo(rootLen);
             readTxnSlow();
             openSymbolMaps();
             partitionCount = txFile.getPartitionCount();
