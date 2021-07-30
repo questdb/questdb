@@ -158,10 +158,11 @@ public class RecordCursorPrinter {
                 break;
             case ColumnType.GEOHASH:
                 int bitsPrecision = GeoHashExtra.getBitsPrecision(m.getColumnType(i));
+                long hash = r.getGeoHash(i);
                 if (bitsPrecision % 5 == 0) {
-                    GeoHashNative.toString(readGeoHash(r, i, columnType),bitsPrecision / 5, sink);
+                    GeoHashNative.toString(hash, bitsPrecision / 5, sink);
                 } else {
-                    GeoHashNative.toBitString(readGeoHash(r, i, columnType), bitsPrecision, sink);
+                    GeoHashNative.toBitString(hash, bitsPrecision, sink);
                 }
                 break;
             case ColumnType.BYTE:
@@ -182,9 +183,5 @@ public class RecordCursorPrinter {
         if (printTypes) {
             sink.put(':').put(ColumnType.nameOf(columnType));
         }
-    }
-
-    private long readGeoHash(Record r, int index, int type) {
-        return r.getLong(index);
     }
 }

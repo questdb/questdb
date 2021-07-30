@@ -617,11 +617,7 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.GEOHASH:
                     assert toColumnTypeTag == ColumnType.GEOHASH;
-                    int finalFromColumnType = fromColumnType;
-                    if (ColumnType.tagOf(fromColumnType) == ColumnType.NULL) {
-                        finalFromColumnType = toColumnType;
-                    }
-                    final int sizeFrom = ColumnType.sizeOf(finalFromColumnType);
+                    final int sizeFrom = ColumnType.sizeOf(fromColumnType);
                     final int sizeTo = ColumnType.sizeOf(toColumnType);
                     switch (sizeFrom) {
                         case 1:
@@ -683,7 +679,6 @@ public class SqlCompiler implements Closeable {
                                     break; // impossible conversion
                             }
                             break;
-                        // TODO: Missing case 0: // NULL has size 0
                         case 8:
                             switch (sizeTo) {
                                 case 1:
@@ -714,6 +709,29 @@ public class SqlCompiler implements Closeable {
                                     break;
                                 case 8:
                                     asm.invokeInterface(rGetLong, 1);
+                                    asm.invokeVirtual(wPutLong);
+                                    break;
+                                default:
+                                    break; // impossible conversion
+                            }
+                            break;
+                        // NULL has size 0
+                        case 0:
+                            asm.pop();
+                            asm.pop();
+                            asm.iconst((int)GeoHashExtra.NULL);
+                            switch (sizeTo) {
+                                case 1:
+                                    asm.invokeVirtual(wPutByte);
+                                    break;
+                                case 2:
+                                    asm.invokeVirtual(wPutShort);
+                                    break;
+                                case 4:
+                                    asm.invokeVirtual(wPutInt);
+                                    break;
+                                case 8:
+                                    asm.i2l();
                                     asm.invokeVirtual(wPutLong);
                                     break;
                                 default:
