@@ -1636,14 +1636,14 @@ public final class SqlParser {
     static int parseGeoHashSize(int position, CharSequence sizeStr) throws SqlException {
         if (sizeStr.length() < 2) {
             throw SqlException.position(position)
-                    .put("GEOHASH size must be INT ended in case insensitive 'C', or 'B' for bits");
+                    .put("invalid GEOHASH size, must be number followed by 'C' or 'B' character");
         }
         int size;
         try {
             size = Numbers.parseInt(sizeStr.subSequence(0, sizeStr.length() - 1));
         } catch (NumericException e) {
             throw SqlException.position(position)
-                    .put("GEOHASH size must be INT ended in case insensitive 'C', or 'B' for bits");
+                    .put("invalid GEOHASH size, must be number followed by 'C' or 'B' character");
         }
         switch (sizeStr.charAt(sizeStr.length() - 1)) {
             case 'C':
@@ -1655,11 +1655,11 @@ public final class SqlParser {
                 break;
             default:
                 throw SqlException.position(position)
-                        .put("GEOHASH type size units must be either 'c', 'C' for chars, or 'b', 'B' for bits");
+                        .put("invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
         }
         if (size <= 0 || size > 60) {
             throw SqlException.position(position)
-                    .put("GEOHASH type precision range is [1, 60] bits, provided=")
+                    .put("invalid GEOHASH type precision range, mast be [1, 60] bits, provided=")
                     .put(size);
         }
         return size;

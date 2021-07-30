@@ -1933,6 +1933,7 @@ public class SampleByTest extends AbstractGriffinTest {
             compiler.compile("alter table xx add b1 byte", sqlExecutionContext);
             compiler.compile("alter table xx add t1 timestamp", sqlExecutionContext);
             compiler.compile("alter table xx add dt date", sqlExecutionContext);
+            compiler.compile("alter table xx add ge geohash(5c)", sqlExecutionContext);
         });
 
         assertSampleByIndexQuery("fi1\tli1\tfc1\tlc1\tfl1\tlf1\tff1\tlf11\tfd1\tld1\tfs1\tls1\tfss1\tlss1\tfb1\tlb1\tfk\tlk\tft1\tlt1\tfdt\tldt\tk\ts\n" +
@@ -1950,7 +1951,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "last(c1) lc1, first(l1) fl1, last(l1) lf1, first(f1) ff1, last(f1) lf1, " +
                         "first(d1) fd1, last(d1) ld1, first(s1) fs1, last(s1) ls1, first(ss1) fss1, " +
                         "last(ss1) lss1, first(b1) fb1, last(b1) lb1, first(k) fk, last(k) lk, first(t1) ft1, " +
-                        "last(t1) lt1, first(dt) fdt, last(dt) ldt, k, s\n" +
+                        "last(t1) lt1, first(dt) fdt, last(dt) ldt, first(ge) fge, last(ge) lge, k, s\n" +
                         "from xx " +
                         "where s in ('b')" +
                         "sample by 30m",
@@ -1967,7 +1968,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         "cast(x as SHORT) ss1,\n" +
                         "cast(x % 256 as byte) b1,\n" +
                         "cast(x as timestamp) t1,\n" +
-                        "cast(x as date) dt\n" +
+                        "cast(x as date) dt,\n" +
+                        "cast(cast(x as string) as geohash(5c)) ge\n" +
                         "from\n" +
                         "long_sequence(100)");
     }

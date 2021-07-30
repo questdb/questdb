@@ -1054,8 +1054,33 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), "invalid type");
             }
 
-            tok = SqlUtil.fetchNext(lexer);
+            if (ColumnType.tagOf(type) == ColumnType.GEOHASH) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || tok.charAt(0) != '(') {
+                    throw SqlException.position(lexer.getPosition()).put("missing GEOHASH precision");
+                }
 
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && tok.charAt(0) != ')') {
+                    int geosizeBits = SqlParser.parseGeoHashSize(lexer.lastTokenPosition(), tok);
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok == null || tok.charAt(0) != ')') {
+                        if (tok != null) {
+                            throw SqlException.position(lexer.lastTokenPosition())
+                                    .put("invalid GEOHASH type literal, expected ')'")
+                                    .put(" found='").put(tok.charAt(0)).put("'");
+                        }
+                        throw SqlException.position(lexer.getPosition())
+                                .put("invalid GEOHASH type literal, expected ')'");
+                    }
+                    type = GeoHashExtra.setBitsPrecision(type, geosizeBits);
+                } else {
+                    throw SqlException.position(lexer.lastTokenPosition())
+                            .put("missing GEOHASH precision");
+                }
+            }
+
+            tok = SqlUtil.fetchNext(lexer);
             final int indexValueBlockCapacity;
             final boolean cache;
             int symbolCapacity;
