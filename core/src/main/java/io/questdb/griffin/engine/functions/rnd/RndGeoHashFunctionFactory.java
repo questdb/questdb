@@ -53,7 +53,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         int bits = args.getQuick(0).getInt(null);
-        if (bits < 1 || bits > 60) {
+        if (bits < 1 || bits > GeoHashNative.MAX_BITS_LENGTH) {
             throw SqlException.$(argPositions.getQuick(0), "precision must be in [1..60] range");
         }
         return new RndFunction(bits);

@@ -293,11 +293,13 @@ class ExpressionParser {
                     case 'G':
                         if (SqlKeywords.isGeoHashKeyword(tok)) {
                             tok = SqlUtil.fetchNext(lexer);
-                            if (tok.charAt(0) != '(') {
-                                throw SqlException.position(lexer.lastTokenPosition())
-                                        .put("not valid GEOHASH type literal, expected '(' found='")
-                                        .put(tok.charAt(0))
-                                        .put("'");
+                            if (tok == null || tok.charAt(0) != '(') {
+                                if (tok != null) {
+                                    lexer.unparse();
+                                }
+                                tok = ColumnType.nameOf(ColumnType.GEOHASH);
+                                processDefaultBranch = true;
+                                break;
                             }
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok != null && tok.charAt(0) != ')') {

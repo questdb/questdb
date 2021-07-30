@@ -1663,6 +1663,58 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateAsSelectGeoHashBitsPrecision() throws Exception {
+        final String expected = "a\tb\n" +
+                "01001110110\t00100001101\n" +
+                "10001101001\t11111011101\n" +
+                "10000101010\t11100100000\n" +
+                "11000000101\t00001010111\n" +
+                "10011100111\t00111000010\n" +
+                "01110110001\t10110001001\n" +
+                "11010111111\t10001100010\n" +
+                "10010110001\t01010110101\n";
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (" +
+                    " select" +
+                    " rnd_geohash(11) a," +
+                    " rnd_geohash(11) b" +
+                    " from long_sequence(8)" +
+                    ")", sqlExecutionContext);
+            assertSql(
+                    "x",
+                    expected
+            );
+        });
+    }
+
+    @Test
+    public void testCreateAsSelectGeoHashCharsPrecision() throws Exception {
+        final String expected = "a\tb\n" +
+                "9v1\t46s\n" +
+                "jnw\tzfu\n" +
+                "hp4\twh4\n" +
+                "s2z\t1cj\n" +
+                "mmt\t71f\n" +
+                "fsn\tq4s\n" +
+                "uzr\tjj5\n" +
+                "ksu\tbuy\n";
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (" +
+                    " select" +
+                    " rnd_geohash(15) a," +
+                    " rnd_geohash(15) b" +
+                    " from long_sequence(8)" +
+                    ")", sqlExecutionContext);
+            assertSql(
+                    "x",
+                    expected
+            );
+        });
+    }
+
+    @Test
     public void testCreateAsSelect() throws SqlException {
         String expectedData = "a1\ta\tb\tc\td\te\tf\tf1\tg\th\ti\tj\tj1\tk\tl\tm\n" +
                 "1569490116\tNaN\tfalse\t\tNaN\t0.7611\t428\t-1593\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +

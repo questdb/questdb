@@ -51,7 +51,7 @@ public final class Constants {
         Constants.nullConstants.extendAndSet(ColumnType.LONG256, Long256NullConstant.INSTANCE);
 
         for(int i = 0; i < GeoHashNative.MAX_BITS_LENGTH; i++) {
-            int type = GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, i + 1);
+            int type = ColumnType.geohashWithPrecision(i + 1);
             Constants.nullConstants.extendAndSet(type, GeoHashConstant.newInstance(GeoHashExtra.NULL, type));
         }
 

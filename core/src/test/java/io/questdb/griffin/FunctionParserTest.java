@@ -1137,7 +1137,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new CastStrToGeoHashFunctionFactory());
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("gh", GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, 25), null));
+        metadata.add(new TableColumnMetadata("gh", ColumnType.geohashWithPrecision(25), null));
 
         FunctionParser functionParser = createFunctionParser();
         Record record = new Record() {
@@ -1153,7 +1153,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         };
 
         Function function = parseFunction("cast('sp052w92' as geohash(5c))", metadata, functionParser);
-        Assert.assertEquals(GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, 25), function.getType());
+        Assert.assertEquals(ColumnType.geohashWithPrecision(25), function.getType());
         Assert.assertEquals(25854114, function.getGeoHash(record));
     }
 

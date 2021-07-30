@@ -1,0 +1,30 @@
+{
+  "name": "libpq",
+  "version": "1.8.9",
+  "description": "Low-level native bindings to PostgreSQL libpq",
+  "main": "index.js",
+  "keywords": [
+    "postgres",
+    "libpq"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/brianc/node-libpq.git"
+  },
+  "scripts": {
+    "test": "node-gyp rebuild && node_modules/.bin/mocha"
+  },
+  "author": "Brian M. Carlson",
+  "license": "MIT",
+  "dependencies": {
+    "bindings": "1.5.0",
+    "nan": "^2.14.0"
+  },
+  "devDependencies": {
+    "async": "^2.6.2",
+    "buffer-from": "^1.1.1",
+    "lodash": "^4.17.11",
+    "mocha": "5.2.0",
+    "okay": "^1.0.0"
+  }
+}

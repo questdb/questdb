@@ -33,7 +33,7 @@ public class GeoHashExtraTest {
         Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(ColumnType.GEOHASH));
         Assert.assertEquals(0, GeoHashExtra.getBitsPrecision(ColumnType.GEOHASH));
 
-        int geohashCol = GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, 42);
+        int geohashCol = ColumnType.geohashWithPrecision(42);
         Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(geohashCol));
         Assert.assertEquals(42, GeoHashExtra.getBitsPrecision(geohashCol));
         geohashCol = GeoHashExtra.setBitsPrecision(geohashCol, 24);
@@ -45,7 +45,7 @@ public class GeoHashExtraTest {
         Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(ColumnType.GEOHASH));
         Assert.assertEquals(0, GeoHashExtra.getBitsPrecision(ColumnType.GEOHASH));
 
-        int geohashCol = GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, 42);
+        int geohashCol = ColumnType.geohashWithPrecision(42);
         Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(geohashCol));
         Assert.assertEquals(64, GeoHashExtra.storageSizeInBits(geohashCol));
         Assert.assertEquals(3, GeoHashExtra.storageSizeInPow2(geohashCol));
@@ -131,7 +131,7 @@ public class GeoHashExtraTest {
                 "GEOHASH(12c) -> 15374 (60)\n";
         StringSink everything = new StringSink();
         for (int b = 1; b <= 60; b++) {
-            int type = GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, b);
+            int type = ColumnType.geohashWithPrecision(b);
             String name = ColumnType.nameOf(type);
             everything.put(name)
                     .put(" -> ")

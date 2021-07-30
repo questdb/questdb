@@ -1,0 +1,25 @@
+{
+  "name": "packet-reader",
+  "version": "1.0.0",
+  "description": "Read binary packets...",
+  "main": "index.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "mocha"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/brianc/node-packet-reader.git"
+  },
+  "author": "Brian M. Carlson",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/brianc/node-packet-reader/issues"
+  },
+  "homepage": "https://github.com/brianc/node-packet-reader",
+  "devDependencies": {
+    "mocha": "~1.21.5"
+  }
+}

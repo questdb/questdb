@@ -63,7 +63,7 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
         Assert.assertTrue(function.isConstant());
         Assert.assertNotEquals(ColumnType.GEOHASH, function.getType());
-        Assert.assertEquals(GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, expectedGeohash.length() * 5), function.getType());
+        Assert.assertEquals(ColumnType.geohashWithPrecision(expectedGeohash.length() * 5), function.getType());
         Assert.assertEquals(expectedGeohash.length() * 5, GeoHashExtra.getBitsPrecision(function.getType()));
         Assert.assertEquals(expectedHash, function.getGeoHash(null));
         Assert.assertEquals(expectedHash, function.getLong(null));

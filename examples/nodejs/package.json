@@ -1,0 +1,23 @@
+{
+  "name": "questdb-nodejs-example",
+  "version": "1.0.0",
+  "description": "Creates a table, ingests some ILP, then selects",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/questdb/questdb.git",
+    "directory": "examples/nodejs"
+  },
+  "main": "main.js",
+  "keywords": [
+    "questdb",
+    "nodejs",
+    "json",
+    "timeseries"
+  ],
+  "author": "questdb.io",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "pg": "^8.5.1",
+    "pg-native": "^3.0.0"
+  }
+}

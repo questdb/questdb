@@ -1628,7 +1628,7 @@ public final class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "unsupported column type: ").put(tok);
         }
         if (ColumnType.GEOHASH == type) {
-            return GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, parseGeoHashSize(lexer));
+            return ColumnType.geohashWithPrecision(parseGeoHashSize(lexer));
         }
         return type;
     }

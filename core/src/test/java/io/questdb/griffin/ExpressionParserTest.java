@@ -390,45 +390,45 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCastGeoHash1() throws SqlException {
+    public void testCastGeoHashCastStrWithCharsPrecision() throws SqlException {
         x("'sp052w92'GEOHASH(6c)cast", "cast('sp052w92' as geohash(6c))");
     }
 
     @Test
-    public void testCastGeoHash2() throws SqlException {
+    public void testCastGeoHashCastStrWithBitsPrecision() throws SqlException {
         x("'sp052w92'GEOHASH(60b)cast", "cast('sp052w92' as geohash(60b))");
     }
 
     @Test
-    public void testCastGeoHashMissingSize1() {
+    public void testCastGeoHashCastMissingSize1() {
         assertFail("cast('sp052w92' as geohash())",
                 27,
                 "GEOHASH type precision is missing");
     }
 
     @Test
-    public void testCastGeoHashMissingSize2() {
+    public void testCastGeoHashCastMissingSize2() {
         assertFail("cast('sp052w92' as geohash)",
-                26,
-                "not valid GEOHASH type literal, expected '(' found=')'");
+                19,
+                "invalid type");
     }
 
     @Test
-    public void testCastGeoHashMissingSize3() {
+    public void testCastGeoHashCastMissingSize3() {
         assertFail("cast('sp052w92' as geohash(21b)",
                 4,
                 "unbalanced (");
     }
 
     @Test
-    public void testCastGeoHashMissingSize4() {
+    public void testCastGeoHashCastMissingSize4() {
         assertFail("cast('sp052w92' as geohash(21 b))",
                 27,
                 "GEOHASH type size units must be either 'c', 'C' for chars, or 'b', 'B' for bits");
     }
 
     @Test
-    public void testCastGeoHashMissingSize5() {
+    public void testCastGeoHashCastMissingSize5() {
         assertFail("cast('sp052w92' as geohash(b))",
                 27,
                 "GEOHASH size must be INT ended in case insensitive 'C', or 'B' for bits");
@@ -442,6 +442,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testGeoHash2() throws SqlException {
         x("GEOHASH(31b)", "geohash(31b)");
+    }
+
+    @Test
+    public void testGeoHash3() throws SqlException {
+        x("GEOHASH", "GEOHASH");
     }
 
     @Test

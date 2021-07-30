@@ -25,14 +25,15 @@
 package io.questdb.griffin.engine.functions.geohash;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashExtra;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Misc;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class GeohashQueryTest extends AbstractGriffinTest {
+public class GeoHashQueryTest extends AbstractGriffinTest {
     @Test
     public void testGeohashDowncast() throws SqlException {
         assertSql("select cast(cast('questdb' as geohash(7c)) as geohash(6c)) from long_sequence(1)\n" +
@@ -95,24 +96,46 @@ public class GeohashQueryTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertNullGeoHash() throws Exception {
+        assertGeoHashQueryForAllValidBitSizes("", 10);
+    }
+
+    @Test
+    public void testInsertNullThenFilterEq() throws Exception {
+        // TODO: fix this test
+        assertGeoHashQueryForAllValidBitSizes("where geohash = null", 10);
+    }
+
+    @Test
+    public void testInsertNullThenFilterNotEq() throws Exception {
+        assertGeoHashQueryForAllValidBitSizes("where geohash != null", 0);
+    }
+
+    private void assertGeoHashQueryForAllValidBitSizes(String queryExtra,
+                                                       int expectedEmptyLines) throws Exception {
         for (int b = 1; b <= 60; b++) {
             if (b > 1) {
                 setUp();
             }
+            StringSink sb = Misc.getThreadLocalBuilder();
+            sb.put("geohash\n");
+            for (int i = 0; i < expectedEmptyLines; i++) {
+                sb.put("");
+                sb.put("\n");
+            }
+            String expected = sb.toString();
             try {
-                int typep = GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, b);
+                int typep = ColumnType.geohashWithPrecision(b);
                 final String type = ColumnType.nameOf(typep);
                 assertQuery(
                         "geohash\n",
-                        "x",
+                        "x " + queryExtra,
                         String.format("create table x (geohash %s)", type),
                         null,
-                        "insert into x select null from long_sequence(1)",
-                        "geohash\n" +
-                                "\n",
+                        "insert into x select null from long_sequence(10)",
+                        expected,
                         true,
                         true,
-                        true
+                        expectedEmptyLines > 0
                 );
             } finally {
                 tearDown();

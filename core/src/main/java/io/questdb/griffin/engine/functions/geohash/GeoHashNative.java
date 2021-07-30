@@ -87,8 +87,8 @@ public class GeoHashNative {
         if (lng < -180.0 || lng > 180.0) {
             throw new IllegalArgumentException("lat range is [-180, 180]");
         }
-        if (bits % 5 != 0) {
-            throw new IllegalArgumentException("bits range is [0, 60] and a multiple of 5");
+        if (bits < 1 || bits > GeoHashNative.MAX_BITS_LENGTH) {
+            throw new IllegalArgumentException("bits range is [1, 60]");
         }
         double minLat = -90, maxLat = 90;
         double minLng = -180, maxLng = 180;
@@ -147,7 +147,7 @@ public class GeoHashNative {
     }
 
     public static void toString(long hash, int chars, CharSink sink) {
-        if (hash != GeoHashExtra.NULL) { // TODO: HASH comes in as 0, test testInsertNullGeoHash
+        if (hash != GeoHashExtra.NULL) {
             if (chars < 1 || chars > GeoHashNative.MAX_STRING_LENGTH) {
                 throw new IllegalArgumentException("precision range is [1, 12]");
             }

@@ -1,0 +1,25 @@
+language: node_js
+
+dist: xenial
+
+services:
+  - postgresql
+
+sudo: true
+
+node_js:
+  - "12"
+  - "10"
+  - "8"
+  - "6"
+  - "4"
+
+env:
+  - CC=clang CXX=clang++ npm_config_clang=1 PGUSER=postgres PGDATABASE=postgres PGHOST=localhost
+
+before_install:
+  - if [ $TRAVIS_OS_NAME == "linux" ]; then
+      if [[ $(node -v) =~ v[1-9][0-9] ]]; then
+        source ./vendor/build.sh;
+      fi
+    fi

@@ -119,6 +119,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqBooleanFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqBinaryFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqGeoHashGeoHashFunctionFactory,
 
             //nullif
             io.questdb.griffin.engine.functions.eq.NullIfCharCharFunctionFactory,

@@ -57,7 +57,7 @@ public abstract class GeoHashFunction implements ScalarFunction {
     }
 
     @Override
-    public final boolean getBool(Record rec) {
+    public boolean getBool(Record rec) {
         throw new UnsupportedOperationException();
     }
 
