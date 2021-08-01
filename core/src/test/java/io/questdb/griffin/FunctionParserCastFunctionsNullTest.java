@@ -117,7 +117,7 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
         assertFailure("cast(null as GEOHASH(21 b))",
                 null,
                 21,
-                "GEOHASH type size units must be either 'c', 'C' for chars, or 'b', 'B' for bits");
+                "invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
     }
 
     @Test
@@ -125,7 +125,7 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
         assertFailure("cast(null as GEOHASH(c))",
                 null,
                 21,
-                "GEOHASH size must be INT ended in case insensitive 'C', or 'B' for bits");
+                "invalid GEOHASH size, must be number followed by 'C' or 'B' character");
     }
 
     private static final FunctionFactory[] CAST_FUNCS = {
@@ -142,7 +142,8 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
             new CastSymbolToSymbolFunctionFactory(),
             new CastLong256ToLong256FunctionFactory(),
             new CastStrToGeoHashFunctionFactory(),
-            new CastNullFunctionFactory()
+            new CastGeoHashToGeoHashFunctionFactory(),
+            new CastNullFunctionFactory(),
     };
 
     private static final CharSequenceIntHashMap typeNameToId = new CharSequenceIntHashMap();
