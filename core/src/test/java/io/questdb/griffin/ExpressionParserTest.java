@@ -410,7 +410,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testCastGeoHashCastMissingSize2() {
         assertFail("cast('sp052w92' as geohash)",
                 19,
-                "invalid type");
+                "not valid GEOHASH type literal");
     }
 
     @Test

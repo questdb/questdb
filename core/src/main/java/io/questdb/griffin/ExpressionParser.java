@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.engine.functions.constants.GeoHashTypeConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.*;
 
@@ -297,8 +296,12 @@ class ExpressionParser {
                                 if (tok != null) {
                                     lexer.unparse();
                                 }
-                                tok = ColumnType.nameOf(ColumnType.GEOHASH);
-                                processDefaultBranch = true;
+                                thisBranch = BRANCH_LITERAL;
+                                opStack.push(expressionNodePool.next().of(
+                                        ExpressionNode.LITERAL,
+                                        ColumnType.nameOf(ColumnType.GEOHASH),
+                                        Integer.MIN_VALUE,
+                                        position));
                                 break;
                             }
                             tok = SqlUtil.fetchNext(lexer);
@@ -401,12 +404,14 @@ class ExpressionParser {
                                 if (thisWasCast) {
                                     // validate type
                                     if (prevBranch != BRANCH_GEOHASH_SIZE || node.type == ExpressionNode.GEOHASH_TYPE) {
-                                        final int columnTypeTag = ColumnType.tagOf(ColumnType.columnTypeOf(node.token));
+                                        final int columnTypeTag = ColumnType.columnTypeOf(node.token);
                                         if ((columnTypeTag < ColumnType.BOOLEAN || columnTypeTag > ColumnType.GEOHASH) && !asPoppedNull) {
                                             throw SqlException.$(node.position, "invalid type");
                                         }
                                         if (columnTypeTag != ColumnType.GEOHASH) {
                                             node.type = ExpressionNode.CONSTANT;
+                                        } else if (node.type == ExpressionNode.LITERAL) {
+                                            throw SqlException.$(node.position, "not valid GEOHASH type literal");
                                         }
                                     }
                                 }

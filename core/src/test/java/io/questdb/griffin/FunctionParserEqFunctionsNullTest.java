@@ -62,7 +62,6 @@ public class FunctionParserEqFunctionsNullTest extends BaseFunctionFactoryTest {
     // SqlCompiler.isAssignableFrom
     private static final int[] EQUIVALENT_NULL_TYPES = {
             ColumnType.NULL,
-            ColumnType.UNDEFINED,
             ColumnType.BOOLEAN,
             ColumnType.BYTE,
             ColumnType.SHORT,

@@ -100,8 +100,8 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
     public void testCastNullGeoHashMissingSize2() throws Exception {
         assertFailure("cast(null as GEOHASH)",
                 null,
-                20,
-                "not valid GEOHASH type literal, expected '(' found=')'");
+                13,
+                "not valid GEOHASH type literal");
     }
 
     @Test

@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
@@ -66,7 +67,7 @@ public class InsertNullTest extends AbstractGriffinTest {
                         String.format("create table x (value %s)", type[0]),
                         null,
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
-                        expectedNullInserts(type[1]),
+                        expectedNullInserts("value\n", type[1], NULL_INSERTS),
                         true,
                         true,
                         true
@@ -91,7 +92,7 @@ public class InsertNullTest extends AbstractGriffinTest {
                         String.format("create table x (value %s)", type[0]),
                         null,
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
-                        expectedNullInserts(type[1]),
+                        expectedNullInserts("value\n", type[1], NULL_INSERTS),
                         true,
                         true,
                         type[0].equals("long256")
@@ -171,10 +172,74 @@ public class InsertNullTest extends AbstractGriffinTest {
         });
     }
 
-    private static String expectedNullInserts(final String nullValue) {
+    @Test
+    public void testInsertNullGeoHash() throws Exception {
+        assertGeoHashQueryForAllValidBitSizes("", NULL_INSERTS, true);
+    }
+
+    @Test
+    public void testInsertNullGeoHashThenFilterEq1() throws Exception {
+        assertGeoHashQueryForAllValidBitSizes("where geohash = null", NULL_INSERTS, true);
+    }
+
+    @Test
+    public void testInsertNullGeoHashThenFilterEq2() throws Exception {
+        assertGeoHashQueryForAllValidBitSizes("where null = geohash", NULL_INSERTS, true);
+    }
+
+    @Test
+    public void testInsertNullGeoHashThenFilterEq3() throws Exception {
+        assertGeoHashQueryForAllValidBitSizes("where geohash = geohash", NULL_INSERTS, true);
+    }
+
+    @Test
+    public void testInsertNullGeoHashThenFilterNotEq1() throws Exception {
+        assertGeoHashQueryForAllValidBitSizes("where geohash != null", 0, true);
+    }
+
+    @Test
+    public void testInsertNullGeoHashThenFilterNotEq2() throws Exception {
+        assertGeoHashQueryForAllValidBitSizes("where null != geohash", 0, true);
+    }
+
+    @Test
+    public void testInsertNullGeoHashThenFilterNotEq3() throws Exception {
+        assertGeoHashQueryForAllValidBitSizes("where geohash != geohash", 0, false);
+    }
+
+    private void assertGeoHashQueryForAllValidBitSizes(String queryExtra,
+                                                       int expectedEmptyLines,
+                                                       boolean supportsRandomAccess) throws Exception {
+        for (int b = 1; b <= 60; b++) {
+            if (b > 1) {
+                setUp();
+            }
+            StringSink sb = Misc.getThreadLocalBuilder();
+            try {
+                int typep = ColumnType.geohashWithPrecision(b);
+                final String type = ColumnType.nameOf(typep);
+                assertQuery(
+                        "geohash\n",
+                        "geohash " + queryExtra,
+                        String.format("create table geohash (geohash %s)", type),
+                        null,
+                        String.format("insert into geohash select null from long_sequence(%d)", expectedEmptyLines),
+                        expectedNullInserts("geohash\n", "", expectedEmptyLines),
+                        supportsRandomAccess,
+                        true,
+                        expectedEmptyLines > 0,
+                        expectedEmptyLines > 0
+                );
+            } finally {
+                tearDown();
+            }
+        }
+    }
+
+    private static String expectedNullInserts(String header, String nullValue, int count) {
         StringSink sb = Misc.getThreadLocalBuilder();
-        sb.put("value\n");
-        for (int i = 0; i < NULL_INSERTS; i++) {
+        sb.put(header);
+        for (int i = 0; i < count; i++) {
             sb.put(nullValue);
             sb.put("\n");
         }

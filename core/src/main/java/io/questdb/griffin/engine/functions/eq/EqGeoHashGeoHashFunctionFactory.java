@@ -63,20 +63,18 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
             long hash1 = geohash1.getLong(null);
             if (geohash2.isConstant()) {
                 long hash2 = geohash2.getLong(null);
-                if (geohash1.getType() == geohash2.getType() ||
-                        hash1 == GeoHashExtra.NULL ||
-                        hash2 == GeoHashExtra.NULL) {
+                if (geohash1.getType() == geohash2.getType()) {
                     return BooleanConstant.of(hash1 == hash2);
-                } else {
-                    return BooleanConstant.of(false);
                 }
-            } else {
-                return createHalfConstantFunc(geohash1, geohash2);
+                if ((hash1 == GeoHashExtra.NULL || ColumnType.tagOf(geohash1.getType()) == ColumnType.NULL) &&
+                        (hash2 == GeoHashExtra.NULL || ColumnType.tagOf(geohash2.getType()) == ColumnType.NULL)) {
+                    return BooleanConstant.of(true);
+                }
+                return BooleanConstant.of(false);
             }
-        } else if (geohash2.isConstant()) {
-            return createHalfConstantFunc(geohash2, geohash1);
+            return createHalfConstantFunc(geohash1, geohash2);
         }
-        return new Func(geohash1, geohash2);
+        return geohash2.isConstant() ? createHalfConstantFunc(geohash2, geohash1) : new Func(geohash1, geohash2);
     }
 
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
