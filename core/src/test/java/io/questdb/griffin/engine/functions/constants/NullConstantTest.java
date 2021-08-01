@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashExtra;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
@@ -64,6 +65,7 @@ public class NullConstantTest {
         Assert.assertEquals(Long256NullConstant.INSTANCE.getLong(null), constant.getLong(null));
         Assert.assertEquals(Long256NullConstant.INSTANCE.getLong256A(null), constant.getLong256A(null));
         Assert.assertEquals(Long256NullConstant.INSTANCE.getLong256B(null), constant.getLong256B(null));
+        Assert.assertEquals(GeoHashExtra.NULL, constant.getGeoHash(null));
         Assert.assertNull(constant.getRecord(null));
 
         StringSink sink = new StringSink();

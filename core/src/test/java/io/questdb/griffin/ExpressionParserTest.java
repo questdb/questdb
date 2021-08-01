@@ -424,14 +424,14 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testCastGeoHashCastMissingSize4() {
         assertFail("cast('sp052w92' as geohash(21 b))",
                 27,
-                "GEOHASH type size units must be either 'c', 'C' for chars, or 'b', 'B' for bits");
+                "invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
     }
 
     @Test
     public void testCastGeoHashCastMissingSize5() {
         assertFail("cast('sp052w92' as geohash(b))",
                 27,
-                "GEOHASH size must be INT ended in case insensitive 'C', or 'B' for bits");
+                "invalid GEOHASH size, must be number followed by 'C' or 'B' character");
     }
 
     @Test
@@ -467,21 +467,21 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testGeoHashFail3() {
         assertFail("GEOHASH(13c)",
                 8,
-                "GEOHASH type precision range is [1, 60] bits, provided=65");
+                "invalid GEOHASH type precision range, mast be [1, 60] bits, provided=65");
     }
 
     @Test
     public void testGeoHashFail4() {
         assertFail("GEOHASH(131b)",
                 8,
-                "GEOHASH type precision range is [1, 60] bits, provided=131");
+                "invalid GEOHASH type precision range, mast be [1, 60] bits, provided=131");
     }
 
     @Test
     public void testGeoHashFail5() {
         assertFail("GEOHASH(-1c)",
                 8,
-                "GEOHASH size must be INT ended in case insensitive 'C', or 'B' for bits");
+                "invalid GEOHASH size, must be number followed by 'C' or 'B' character");
     }
 
     @Test

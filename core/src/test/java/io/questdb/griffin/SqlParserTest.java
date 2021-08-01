@@ -1892,28 +1892,28 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableWithGeoHashNoSizeUnit() throws Exception {
         assertSyntaxError(
                 "create table x (gh GEOHASH(12), t TIMESTAMP) timestamp(t) partition by DAY",
-                26, "GEOHASH type size units must be either 'c', 'C' for chars, or 'b', 'B' for bits");
+                26, "invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
     }
 
     @Test
     public void testCreateTableWithGeoHashWrongSizeUnit() throws Exception {
         assertSyntaxError(
                 "create table x (gh GEOHASH(12s), t TIMESTAMP) timestamp(t) partition by DAY",
-                26, "GEOHASH type size units must be either 'c', 'C' for chars, or 'b', 'B' for bits");
+                26, "invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
     }
 
     @Test
     public void testCreateTableWithGeoHashWrongSize1() throws Exception {
         assertSyntaxError(
                 "create table x (gh GEOHASH(0b), t TIMESTAMP) timestamp(t) partition by DAY",
-                26, "GEOHASH type precision range is [1, 60] bits, provided=0");
+                26, "invalid GEOHASH type precision range, mast be [1, 60] bits, provided=0");
     }
 
     @Test
     public void testCreateTableWithGeoHashWrongSize2() throws Exception {
         assertSyntaxError(
                 "create table x (gh GEOHASH(61b), t TIMESTAMP) timestamp(t) partition by DAY",
-                26, "GEOHASH type precision range is [1, 60] bits, provided=61");
+                26, "invalid GEOHASH type precision range, mast be [1, 60] bits, provided=61");
     }
 
     @Test
