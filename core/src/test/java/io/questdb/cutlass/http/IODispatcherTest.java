@@ -3444,8 +3444,7 @@ public class IODispatcherTest {
     }
 
     @Test
-    @Ignore // TODO fix for geohashes
-    public void testJsonQueryGeohashColumChars() throws Exception {
+    public void testJsonQueryGeoHashColumnChars() throws Exception {
         new HttpQueryTestBuilder()
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
@@ -3468,16 +3467,16 @@ public class IODispatcherTest {
                         String request = "SELECT+*+FROM+y";
                         new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                                 "GET /query?query=" + request + " HTTP/1.1\r\n",
-                                "0153\r\n" +
+                                "0142\r\n" +
                                         "{\"query\":\"SELECT * FROM y\",\"columns\":[" +
                                         "{\"name\":\"geo1\",\"type\":\"GEOHASH(1c)\"}," +
                                         "{\"name\":\"geo2\",\"type\":\"GEOHASH(3c)\"}," +
                                         "{\"name\":\"geo4\",\"type\":\"GEOHASH(7c)\"}," +
                                         "{\"name\":\"geo8\",\"type\":\"GEOHASH(12c)\"}" +
                                         "],\"dataset\":[" +
-                                        "[null,null,\"u10m99d\",\"u10m99dd3pbj\"]," +
-                                        "[\"q\",\"u10m\",\"u10m99d\",\"questdb12345\"]," +
-                                        "[null,\"que\",\"u10m99d\",\"u10m99dd3pbj\"]" +
+                                        "[null,null,\"questdb\",\"u10m99dd3pbj\"]," +
+                                        "[\"u\",\"u10\",\"u10m99d\",\"questdb12345\"]," +
+                                        "[null,\"que\",\"questdb\",\"u10m99dd3pbj\"]" +
                                         "],\"count\":3}\r\n" +
                                         "00\r\n"+
                                         "\r\n"
