@@ -70,7 +70,6 @@ public final class ColumnType {
     public static final int MAX = NULL;
     public static final int NO_OVERLOAD = 10000;
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
-    private static final IntObjHashMap<String> geoHashTypeNameMap = new IntObjHashMap<>();
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final int[] TYPE_SIZE_POW2 = new int[ColumnType.PARAMETER + 1];
     private static final int[] TYPE_SIZE = new int[ColumnType.PARAMETER + 1];
@@ -151,14 +150,9 @@ public final class ColumnType {
     }
 
     public static String nameOf(int columnType) {
-        final int tag = ColumnType.tagOf(columnType);
-        final int index = typeNameMap.keyIndex(tag);
+        final int index = typeNameMap.keyIndex(columnType);
         if (index > -1) {
             return "unknown";
-        }
-        if (ColumnType.GEOHASH == tag) {
-            String name = geoHashTypeNameMap.get(columnType);
-            return name != null ? name : "GEOHASH";
         }
         return typeNameMap.valueAtQuick(index);
     }
@@ -223,16 +217,14 @@ public final class ColumnType {
         StringSink sink = new StringSink();
 
         for (int b = 1; b <= 60; b++) {
-            if (b % 5 != 0) {
-                sink.clear();
-                sink.put("GEOHASH(").put(b).put("b)");
-                geoHashTypeNameMap.put(GeoHashExtra.setBitsPrecision(GEOHASH, b), sink.toString());
-            }
-        }
-        for (int c = 1; c <= 12; c++) {
             sink.clear();
-            sink.put("GEOHASH(").put(c).put("c)");
-            geoHashTypeNameMap.put(GeoHashExtra.setBitsPrecision(GEOHASH, c * 5), sink.toString());
+
+            if (b % 5 != 0) {
+                sink.put("GEOHASH(").put(b).put("b)");
+            } else {
+                sink.put("GEOHASH(").put(b/5).put("c)");
+            }
+            typeNameMap.put(GeoHashExtra.setBitsPrecision(GEOHASH, b), sink.toString());
         }
 
         nameTypeMap.put("boolean", BOOLEAN);
