@@ -90,4 +90,102 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                             + value + "\n");
         }
     }
+
+    @Test
+    public void testAlterTableAddGeohashColumn() throws SqlException {
+        for (int l = 12; l > 0; l--) {
+            String tableName = "pos" + l;
+            compiler.compile(String.format("create table %s(x long)", tableName), sqlExecutionContext);
+            compiler.compile(String.format("alter table %s add hash geohash(%sc)", tableName, l), sqlExecutionContext);
+            assertSql("show columns from " + tableName, "" +
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
+                    "x\tLONG\tfalse\t0\tfalse\t0\tfalse\n" +
+                    String.format("hash\tGEOHASH(%sc)\tfalse\t256\tfalse\t0\tfalse\n", l));
+        }
+    }
+
+    @Test
+    public void testAlterTableAddGeohashBitsColumn() throws SqlException {
+        for (int l = GeoHashNative.MAX_BITS_LENGTH; l > 0; l--) {
+            String tableName = "pos" + l;
+            compiler.compile(String.format("create table %s(x long)", tableName), sqlExecutionContext);
+            compiler.compile(String.format("alter table %s add hash geohash(%sb)", tableName, l), sqlExecutionContext);
+
+            String columnType = l % 5 == 0 ? (l / 5) + "c" : l + "b";
+            assertSql("show columns from " + tableName, "" +
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
+                    "x\tLONG\tfalse\t0\tfalse\t0\tfalse\n" +
+                    String.format("hash\tGEOHASH(%s)\tfalse\t256\tfalse\t0\tfalse\n", columnType));
+        }
+    }
+
+    @Test
+    public void testAlterTableAddGeohashBitsColumnInvlidSyntax() throws SqlException {
+        compiler.compile("create table pos(x long)", sqlExecutionContext);
+        try {
+            compiler.compile("alter table pos add hash geohash(1)", sqlExecutionContext);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(),
+                    "invalid GEOHASH size, must be number followed by 'C' or 'B' character");
+            Assert.assertEquals("alter table pos add hash geohash(".length(), e.getPosition());
+        }
+    }
+
+    @Test
+    public void testAlterTableAddGeohashBitsColumnInvlidSyntax2() throws SqlException {
+        compiler.compile("create table pos(x long)", sqlExecutionContext);
+        try {
+            compiler.compile("alter table pos add hash geohash", sqlExecutionContext);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "missing GEOHASH precision");
+            Assert.assertEquals("alter table pos add hash geohash".length(), e.getPosition());
+        }
+    }
+
+    @Test
+    public void testAlterTableAddGeohashBitsColumnInvlidSyntax22() throws SqlException {
+        compiler.compile("create table pos(x long)", sqlExecutionContext);
+        try {
+            compiler.compile("alter table pos add hash geohash()", sqlExecutionContext);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "missing GEOHASH precision");
+            Assert.assertEquals("alter table pos add hash geohash(".length(), e.getPosition());
+        }
+    }
+
+    @Test
+    public void testAlterTableAddGeohashBitsColumnInvlidSyntax3() throws SqlException {
+        compiler.compile("create table pos(x long)", sqlExecutionContext);
+        try {
+            compiler.compile("alter table pos add hash geohash(11)", sqlExecutionContext);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(),
+                    "invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
+            Assert.assertEquals("alter table pos add hash geohash(".length(), e.getPosition());
+        }
+    }
+
+    @Test
+    public void testAlterTableAddGeohashBitsColumnInvlidSyntax4() throws SqlException {
+        compiler.compile("create table pos(x long)", sqlExecutionContext);
+        try {
+            compiler.compile("alter table pos add hash geohash(11c 1)", sqlExecutionContext);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(),
+                    "invalid GEOHASH type literal, expected ')' found='1'");
+            Assert.assertEquals("alter table pos add hash geohash(11c ".length(), e.getPosition());
+        }
+    }
+
+    @Test
+    public void testAlterTableAddGeohashBitsColumnInvlidSyntax5() throws SqlException {
+        compiler.compile("create table pos(x long)", sqlExecutionContext);
+        try {
+            compiler.compile("alter table pos add hash geohash(11c", sqlExecutionContext);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(),
+                    "invalid GEOHASH type literal, expected ')'");
+            Assert.assertEquals("alter table pos add hash geohash(11c".length(), e.getPosition());
+        }
+    }
 }
