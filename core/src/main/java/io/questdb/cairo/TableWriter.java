@@ -1378,16 +1378,16 @@ public class TableWriter implements Closeable {
             case ColumnType.GEOHASH:
                 switch (GeoHashExtra.storageSizeInBits(type) / Byte.SIZE) {
                     case 1:
-                        nullers.add(() -> mem1.putByte((byte) -1));
+                        nullers.add(() -> mem1.putByte((byte) GeoHashExtra.NULL));
                         break;
                     case 2:
-                        nullers.add(() -> mem1.putShort((short) -1));
+                        nullers.add(() -> mem1.putShort((short) GeoHashExtra.NULL));
                         break;
                     case 4:
-                        nullers.add(() -> mem1.putInt(-1));
+                        nullers.add(() -> mem1.putInt((int) GeoHashExtra.NULL));
                         break;
                     default:
-                        nullers.add(() -> mem1.putLong(-1L));
+                        nullers.add(() -> mem1.putLong(GeoHashExtra.NULL));
                 }
                 break;
             default:
