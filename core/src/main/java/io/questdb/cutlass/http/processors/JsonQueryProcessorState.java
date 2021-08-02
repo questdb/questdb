@@ -38,6 +38,7 @@ import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -61,16 +62,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_METADATA = 2;
     static final int QUERY_PREFIX = 1;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
-    private final ObjList<ValueWriter> allValueWriters = new ObjList<>();
     private final StringSink query = new StringSink();
     private final StringSink columnsQueryParameter = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
-    private final ObjList<ValueWriter> valueWriters = new ObjList<>();
     private final ArrayColumnTypes columnTypes = new ArrayColumnTypes();
     private final ObjList<String> columnNames = new ObjList<>();
     private final HttpConnectionContext httpConnectionContext;
     private final IntList columnSkewList = new IntList();
-    private final ObjList<ValueWriter> skewedValueWriters = new ObjList<>();
     private final NanosecondClock nanosecondClock;
     private final int floatScale;
     private final int doubleScale;
@@ -108,40 +106,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         resumeActions.extendAndSet(QUERY_RECORD_SUFFIX, this::onQueryRecordSuffix);
         resumeActions.extendAndSet(QUERY_SUFFIX, this::doQuerySuffix);
 
-        skewedValueWriters.extendAndSet(ColumnType.BOOLEAN, this::putSkewedBooleanValue);
-        skewedValueWriters.extendAndSet(ColumnType.BYTE, this::putSkewedByteValue);
-        skewedValueWriters.extendAndSet(ColumnType.DOUBLE, this::putSkewedDoubleValue);
-        skewedValueWriters.extendAndSet(ColumnType.FLOAT, this::putSkewedFloatValue);
-        skewedValueWriters.extendAndSet(ColumnType.INT, this::putSkewedIntValue);
-        skewedValueWriters.extendAndSet(ColumnType.LONG, this::putSkewedLongValue);
-        skewedValueWriters.extendAndSet(ColumnType.DATE, this::putSkewedDateValue);
-        skewedValueWriters.extendAndSet(ColumnType.TIMESTAMP, this::putSkewedTimestampValue);
-        skewedValueWriters.extendAndSet(ColumnType.SHORT, this::putSkewedShortValue);
-        skewedValueWriters.extendAndSet(ColumnType.CHAR, this::putSkewedCharValue);
-        skewedValueWriters.extendAndSet(ColumnType.STRING, this::putSkewedStrValue);
-        skewedValueWriters.extendAndSet(ColumnType.SYMBOL, this::putSkewedSymValue);
-        skewedValueWriters.extendAndSet(ColumnType.BINARY, this::putSkewedBinValue);
-        skewedValueWriters.extendAndSet(ColumnType.LONG256, this::putSkewedLong256Value);
-        skewedValueWriters.extendAndSet(ColumnType.CURSOR, JsonQueryProcessorState::putCursorValue);
-        skewedValueWriters.extendAndSet(ColumnType.GEOHASH, this::putSkewedGeoHashValue);
-
-        allValueWriters.extendAndSet(ColumnType.BOOLEAN, JsonQueryProcessorState::putBooleanValue);
-        allValueWriters.extendAndSet(ColumnType.BYTE, JsonQueryProcessorState::putByteValue);
-        allValueWriters.extendAndSet(ColumnType.DOUBLE, this::putDoubleValue);
-        allValueWriters.extendAndSet(ColumnType.FLOAT, this::putFloatValue);
-        allValueWriters.extendAndSet(ColumnType.INT, JsonQueryProcessorState::putIntValue);
-        allValueWriters.extendAndSet(ColumnType.LONG, JsonQueryProcessorState::putLongValue);
-        allValueWriters.extendAndSet(ColumnType.DATE, JsonQueryProcessorState::putDateValue);
-        allValueWriters.extendAndSet(ColumnType.TIMESTAMP, JsonQueryProcessorState::putTimestampValue);
-        allValueWriters.extendAndSet(ColumnType.SHORT, JsonQueryProcessorState::putShortValue);
-        allValueWriters.extendAndSet(ColumnType.CHAR, JsonQueryProcessorState::putCharValue);
-        allValueWriters.extendAndSet(ColumnType.STRING, JsonQueryProcessorState::putStrValue);
-        allValueWriters.extendAndSet(ColumnType.SYMBOL, JsonQueryProcessorState::putSymValue);
-        allValueWriters.extendAndSet(ColumnType.BINARY, JsonQueryProcessorState::putBinValue);
-        allValueWriters.extendAndSet(ColumnType.LONG256, JsonQueryProcessorState::putLong256Value);
-        allValueWriters.extendAndSet(ColumnType.RECORD, JsonQueryProcessorState::putCursorValue);
-        allValueWriters.extendAndSet(ColumnType.GEOHASH, JsonQueryProcessorState::putGeoHashValue);
-
         this.nanosecondClock = nanosecondClock;
         this.floatScale = floatScale;
         this.doubleScale = doubleScale;
@@ -150,6 +114,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     @Override
     public void clear() {
         columnCount = 0;
+        columnSkewList.clear();
         columnTypes.clear();
         columnNames.clear();
         cursor = Misc.free(cursor);
@@ -268,20 +233,20 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
-    private static void putBinValue(HttpChunkedResponseSocket socket, Record record, int col) {
+    private void putBinValue(HttpChunkedResponseSocket socket, Record record, int col) {
         socket.put('[');
         socket.put(']');
     }
 
-    private static void putBooleanValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private void putBooleanValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         socket.put(rec.getBool(col));
     }
 
-    private static void putByteValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private void putByteValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         socket.put(rec.getByte(col));
     }
 
-    private static void putCharValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private void putCharValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         char c = rec.getChar(col);
         if (c == 0) {
             socket.put("\"\"");
@@ -290,7 +255,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
-    private static void putDateValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private void putDateValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         final long d = rec.getDate(col);
         if (d == Long.MIN_VALUE) {
             socket.put("null");
@@ -299,7 +264,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         socket.put('"').putISODateMillis(d).put('"');
     }
 
-    private static void putIntValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private void putIntValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         final int i = rec.getInt(col);
         if (i == Integer.MIN_VALUE) {
             socket.put("null");
@@ -308,13 +273,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
-    private static void putLong256Value(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private void putLong256Value(HttpChunkedResponseSocket socket, Record rec, int col) {
         socket.put('"');
         rec.getLong256(col, socket);
         socket.put('"');
     }
 
-    private static void putLongValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private void putLongValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         final long l = rec.getLong(col);
         if (l == Long.MIN_VALUE) {
             socket.put("null");
@@ -327,15 +292,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         socket.put(rec.getShort(col));
     }
 
-    private static void putStrValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private void putStrValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         putStringOrNull(socket, rec.getStr(col));
     }
 
-    private static void putSymValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private void putSymValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         putStringOrNull(socket, rec.getSym(col));
     }
 
-    private static void putTimestampValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private void putTimestampValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         final long t = rec.getTimestamp(col);
         if (t == Long.MIN_VALUE) {
             socket.put("null");
@@ -344,16 +309,24 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         socket.put('"').putISODate(t).put('"');
     }
 
-    private static void putGeoHashValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private void putGeoHashValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         final long l = rec.getGeoHash(col);
         if (l == GeoHashExtra.NULL) {
             socket.put("null");
         } else {
-            socket.put(l);
+            final int columnType = columnTypes.getColumnType(col);
+            final int bitsPrecision = GeoHashExtra.getBitsPrecision(columnType);
+            socket.put('\"');
+            if (bitsPrecision % 5 == 0) {
+                GeoHashNative.toString(l, bitsPrecision / 5, socket);
+            } else {
+                GeoHashNative.toBitString(l, bitsPrecision, socket);
+            }
+            socket.put('\"');
         }
     }
 
-    private static void putCursorValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private void putCursorValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         putStringOrNull(socket, null);
     }
 
@@ -390,7 +363,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
         this.columnTypes.add(columnType);
         this.columnSkewList.add(columnIndex);
-        this.valueWriters.add(skewedValueWriters.getQuick(columnType));
         this.columnNames.add(metadata.getColumnName(columnIndex));
         return false;
     }
@@ -469,7 +441,59 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             if (columnIndex > 0) {
                 socket.put(',');
             }
-            valueWriters.getQuick(columnIndex).write(socket, record, columnIndex);
+
+            int columnIdx = columnSkewList.size() > 0 ? columnSkewList.getQuick(columnIndex) : columnIndex;
+            final int columnType = columnTypes.getColumnType(columnIndex);
+            switch (ColumnType.tagOf(columnType)) {
+                case ColumnType.BOOLEAN:
+                    putBooleanValue(socket, record, columnIdx);
+                    break;
+                case ColumnType.BYTE:
+                    putByteValue(socket, record, columnIdx);
+                    break;
+                case ColumnType.DOUBLE:
+                    putDoubleValue(socket, record, columnIdx);
+                    break;
+                case ColumnType.FLOAT:
+                    putFloatValue(socket, record, columnIdx);
+                    break;
+                case ColumnType.INT:
+                    putIntValue(socket, record, columnIdx);
+                    break;
+                case ColumnType.LONG:
+                    putLongValue(socket, record, columnIdx);
+                    break;
+                case ColumnType.DATE:
+                    putDateValue(socket, record, columnIdx);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    putTimestampValue(socket, record, columnIdx);
+                    break;
+                case ColumnType.SHORT:
+                    putShortValue(socket, record, columnIdx);
+                    break;
+                case ColumnType.CHAR:
+                    putCharValue(socket, record, columnIdx);
+                    break;
+                case ColumnType.STRING:
+                    putStrValue(socket, record, columnIdx);
+                    break;
+                case ColumnType.SYMBOL:
+                    putSymValue(socket, record, columnIdx);
+                    break;
+                case ColumnType.BINARY:
+                    putBinValue(socket, record, columnIdx);
+                    break;
+                case ColumnType.LONG256:
+                    putLong256Value(socket, record, columnIdx);
+                    break;
+                case ColumnType.RECORD:
+                    putCursorValue(socket, record, columnIdx);
+                    break;
+                case ColumnType.GEOHASH:
+                    putGeoHashValue(socket, record, columnIdx);
+                    break;
+            }
         }
     }
 
@@ -543,8 +567,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         final RecordMetadata metadata = factory.getMetadata();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();
         DirectByteCharSequence columnNames = header.getUrlParam("cols");
-        this.valueWriters.clear();
         int columnCount;
+        columnSkewList.clear();
         if (columnNames != null) {
             columnsQueryParameter.clear();
             try {
@@ -560,7 +584,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 return false;
             }
 
-            this.columnSkewList.clear();
             columnCount = 1;
             int start = 0;
             int comma = 0;
@@ -587,7 +610,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     columnType = ColumnType.STRING;
                 }
                 this.columnTypes.add(columnType);
-                this.valueWriters.add(allValueWriters.getQuick(ColumnType.tagOf(columnType)));
                 this.columnNames.add(metadata.getColumnName(i));
             }
         }
@@ -689,66 +711,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     private void putFloatValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         socket.put(rec.getFloat(col), floatScale);
-    }
-
-    private void putSkewedBinValue(HttpChunkedResponseSocket socket, Record record, int col) {
-        putBinValue(socket, record, columnSkewList.getQuick(col));
-    }
-
-    private void putSkewedBooleanValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        putBooleanValue(socket, rec, columnSkewList.getQuick(col));
-    }
-
-    private void putSkewedByteValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        putByteValue(socket, rec, columnSkewList.getQuick(col));
-    }
-
-    private void putSkewedCharValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        putCharValue(socket, rec, columnSkewList.getQuick(col));
-    }
-
-    private void putSkewedDateValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        putDateValue(socket, rec, columnSkewList.getQuick(col));
-    }
-
-    private void putSkewedDoubleValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        putDoubleValue(socket, rec, columnSkewList.getQuick(col));
-    }
-
-    private void putSkewedFloatValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        putFloatValue(socket, rec, columnSkewList.getQuick(col));
-    }
-
-    private void putSkewedIntValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        putIntValue(socket, rec, columnSkewList.getQuick(col));
-    }
-
-    private void putSkewedLong256Value(HttpChunkedResponseSocket socket, Record rec, int col) {
-        putLong256Value(socket, rec, columnSkewList.getQuick(col));
-    }
-
-    private void putSkewedLongValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        putLongValue(socket, rec, columnSkewList.getQuick(col));
-    }
-
-    private void putSkewedShortValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        putShortValue(socket, rec, col);
-    }
-
-    private void putSkewedStrValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        putStrValue(socket, rec, columnSkewList.getQuick(col));
-    }
-
-    private void putSkewedSymValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        putSymValue(socket, rec, columnSkewList.getQuick(col));
-    }
-
-    private void putSkewedTimestampValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        putTimestampValue(socket, rec, columnSkewList.getQuick(col));
-    }
-
-    private void putSkewedGeoHashValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        putGeoHashValue(socket, rec, columnSkewList.getQuick(col));
     }
 
     void resume(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
