@@ -291,6 +291,7 @@ class ExpressionParser {
                     case 'g':
                     case 'G':
                         if (SqlKeywords.isGeoHashKeyword(tok)) {
+                            CharSequence originalGeoHashKeyword = GenericLexer.immutableOf(tok);
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok == null || tok.charAt(0) != '(') {
                                 if (tok != null) {
@@ -299,7 +300,7 @@ class ExpressionParser {
                                 thisBranch = BRANCH_LITERAL;
                                 opStack.push(expressionNodePool.next().of(
                                         ExpressionNode.LITERAL,
-                                        ColumnType.nameOf(ColumnType.GEOHASH),
+                                        originalGeoHashKeyword,
                                         Integer.MIN_VALUE,
                                         position));
                                 break;
@@ -309,7 +310,7 @@ class ExpressionParser {
                                 SqlParser.parseGeoHashSize(lexer.lastTokenPosition(), tok);
                                 node = expressionNodePool.next().of(
                                         ExpressionNode.GEOHASH_TYPE,
-                                        ColumnType.nameOf(ColumnType.GEOHASH),
+                                        originalGeoHashKeyword,
                                         Integer.MIN_VALUE,
                                         position);
                                 node.paramCount = 1;

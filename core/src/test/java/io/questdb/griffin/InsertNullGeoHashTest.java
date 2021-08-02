@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.std.str.StringSink;
 import org.junit.Test;
 
 import static io.questdb.griffin.InsertNullTest.expectedNullInserts;
