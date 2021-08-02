@@ -285,20 +285,6 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
-    static long getGeoHashStatic(final Record r, int col, int type) {
-        final int size = ColumnType.sizeOf(type);
-        switch (size) {
-            case 1:
-                return r.getByte(col);
-            case 2:
-                return r.getShort(col);
-            case 4:
-                return r.getInt(col);
-            default:
-                return r.getLong(col);
-        }
-    }
-
     @FunctionalInterface
     interface CharSequenceFunction {
         /**
