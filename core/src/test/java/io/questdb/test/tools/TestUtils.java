@@ -114,7 +114,9 @@ public final class TestUtils {
             for (int i = 0; i < metadataExpected.getColumnCount(); i++) {
                 String columnName = metadataExpected.getColumnName(i);
                 try {
-                    switch (ColumnType.tagOf(metadataExpected.getColumnType(i))) {
+                    int columnType = metadataExpected.getColumnType(i);
+                    int tagType = ColumnType.sizeTag(columnType);
+                    switch (tagType) {
                         case ColumnType.DATE:
                             Assert.assertEquals(r.getDate(i), l.getDate(i));
                             break;

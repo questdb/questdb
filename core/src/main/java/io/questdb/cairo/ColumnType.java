@@ -128,6 +128,24 @@ public final class ColumnType {
         return type & 0xFF;
     }
 
+    public static int sizeTag(int type) {
+        int tagType = type & 0xFF;
+        if (tagType != ColumnType.GEOHASH) {
+            return tagType;
+        }
+        switch (sizeOf(type)) {
+            case 1:
+                return ColumnType.BYTE;
+            case 2:
+                return ColumnType.SHORT;
+            case 4:
+                return ColumnType.INT;
+            case 8:
+                return ColumnType.LONG;
+        }
+        throw new UnsupportedOperationException("Invalid geohash size" + sizeOf(type));
+    }
+
     public static int columnTypeOf(CharSequence name) {
         return nameTypeMap.get(name);
     }
