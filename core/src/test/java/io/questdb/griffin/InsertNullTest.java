@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
@@ -172,71 +171,7 @@ public class InsertNullTest extends AbstractGriffinTest {
         });
     }
 
-    @Test
-    public void testInsertNullGeoHash() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("", NULL_INSERTS, true);
-    }
-
-    @Test
-    public void testInsertNullGeoHashThenFilterEq1() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("where geohash = null", NULL_INSERTS, true);
-    }
-
-    @Test
-    public void testInsertNullGeoHashThenFilterEq2() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("where null = geohash", NULL_INSERTS, true);
-    }
-
-    @Test
-    public void testInsertNullGeoHashThenFilterEq3() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("where geohash = geohash", NULL_INSERTS, true);
-    }
-
-    @Test
-    public void testInsertNullGeoHashThenFilterNotEq1() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("where geohash != null", 0, true);
-    }
-
-    @Test
-    public void testInsertNullGeoHashThenFilterNotEq2() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("where null != geohash", 0, true);
-    }
-
-    @Test
-    public void testInsertNullGeoHashThenFilterNotEq3() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("where geohash != geohash", 0, false);
-    }
-
-    private void assertGeoHashQueryForAllValidBitSizes(String queryExtra,
-                                                       int expectedEmptyLines,
-                                                       boolean supportsRandomAccess) throws Exception {
-        for (int b = 1; b <= 60; b++) {
-            if (b > 1) {
-                setUp();
-            }
-            StringSink sb = Misc.getThreadLocalBuilder();
-            try {
-                int typep = ColumnType.geohashWithPrecision(b);
-                final String type = ColumnType.nameOf(typep);
-                assertQuery(
-                        "geohash\n",
-                        "geohash " + queryExtra,
-                        String.format("create table geohash (geohash %s)", type),
-                        null,
-                        String.format("insert into geohash select null from long_sequence(%d)", expectedEmptyLines),
-                        expectedNullInserts("geohash\n", "", expectedEmptyLines),
-                        supportsRandomAccess,
-                        true,
-                        expectedEmptyLines > 0,
-                        expectedEmptyLines > 0
-                );
-            } finally {
-                tearDown();
-            }
-        }
-    }
-
-    private static String expectedNullInserts(String header, String nullValue, int count) {
+    static String expectedNullInserts(String header, String nullValue, int count) {
         StringSink sb = Misc.getThreadLocalBuilder();
         sb.put(header);
         for (int i = 0; i < count; i++) {
