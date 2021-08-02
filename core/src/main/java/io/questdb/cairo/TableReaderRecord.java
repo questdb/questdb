@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Rows;
@@ -220,27 +219,6 @@ public class TableReaderRecord implements Record {
                 TableReader.getPrimaryColumnIndex(columnBase, col)
         );
         return reader.getSymbolMapReader(col).valueBOf(reader.getColumn(absoluteColumnIndex).getInt(offset));
-    }
-
-    @Override
-    public long getGeoHash(int col) {
-        final long offset = getAdjustedRecordIndex(col) * Long.BYTES;
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
-                offset,
-                TableReader.getPrimaryColumnIndex(columnBase, col)
-        );
-        final MemoryR column = reader.getColumn(absoluteColumnIndex);
-        final int columnType = reader.getMetadata().getColumnType(col);
-        switch (ColumnType.sizeOf(columnType)) {
-            case 1:
-                return column.getByte(offset);
-            case 2:
-                return column.getShort(offset);
-            case 4:
-                return column.getInt(offset);
-            default:
-                return column.getLong(offset);
-        }
     }
 
     public long getRecordIndex() {

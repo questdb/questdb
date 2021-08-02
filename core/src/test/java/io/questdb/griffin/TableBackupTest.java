@@ -190,6 +190,31 @@ public class TableBackupTest {
     }
 
     @Test
+    public void testBackupDatabaseGeohashColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            // @formatter:off
+            mainCompiler.compile("create table tb1 as (select" +
+                    " rnd_geohash(2) g1," +
+                    " rnd_geohash(15) g2," +
+                    " timestamp_sequence(0, 1000000000) ts" +
+                    " from long_sequence(1)) timestamp(ts)", mainSqlExecutionContext);
+            mainCompiler.compile("create table tb2 as (select" +
+                    " rnd_geohash(31) g4," +
+                    " rnd_geohash(42) g8," +
+                    " timestamp_sequence(10000000000, 500000000) ts" +
+                    " from long_sequence(1)) timestamp(ts)", mainSqlExecutionContext);
+            // @formatter:on
+
+            mainCompiler.compile("backup database", mainSqlExecutionContext);
+
+            setFinalBackupPath();
+
+            assertTables("tb1");
+            assertTables("tb2");
+        });
+    }
+
+    @Test
     public void testCompromisedTableName() throws Exception {
         assertMemoryLeak(() -> {
             try {
