@@ -187,8 +187,8 @@ public class GeoHashNative {
                 final int bits = 5 * prefix.length();
                 final int shift = 8 * 5 - bits;
                 final long norm = hash << shift;
-                final long mask = bitmask(bits, shift);
-
+                long mask = bitmask(bits, shift);
+                mask |= 1L << 63; // set the most significant bit to ignore null from prefix matching
                 prefixesBits.add(norm);
                 prefixesBits.add(mask);
             } catch (NumericException e) {
