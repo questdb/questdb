@@ -2720,6 +2720,44 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testJoinWithGeohash() throws Exception {
+        testFullFat(() -> assertMemoryLeak(() -> {
+            final String query = "select g1, gg1, gg2, gg4, gg8, x.k " +
+                    "from x " +
+                    "join y on y.kk = x.k";
+
+            final String expected = "g1\tgg1\tgg2\tgg4\tgg8\tk\n" +
+                    "9v1s\t1\twh4\ts2z2\t10011100111100101000010010010000010001010\t1\n" +
+                    "46sw\tq\t71f\tfsnj\t11010111111011100000110010000111111101101\t2\n" +
+                    "jnw9\tb\tjj5\tksu7\t11101100011100010000100111000111100000001\t3\n" +
+                    "zfuq\ts\t76u\tq0s5\t11110001011010001010010100000110110100010\t4\n" +
+                    "hp4m\ty\tp1d\tp2n3\t10111100100011101101110001110010111011001\t5\n";
+
+
+            compiler.compile(
+                    "create table x as (select" +
+                            " cast(x as int) k, " +
+                            " rnd_geohash(20) g1" +
+                            " from long_sequence(5))",
+                    sqlExecutionContext
+            );
+
+            compiler.compile(
+                    "create table y as (select" +
+                            " cast(x as int) kk," +
+                            " rnd_geohash(15) gg2," +
+                            " rnd_geohash(20) gg4," +
+                            " rnd_geohash(5) gg1," +
+                            " rnd_geohash(41) gg8" +
+                            " from long_sequence(20))",
+                    sqlExecutionContext
+            );
+
+            assertQueryAndCache(expected, query, null, false);
+        }));
+    }
+
+    @Test
     public void testJoinOuterAllTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tkk1\ta1\tb1\tc1\td1\te1\tf1\tg1\ti1\tj1\tk1\tl1\tm1\tn1\n" +

@@ -228,15 +228,15 @@ public class RecordSinkFactory {
                     switch (size) {
                         case 1:
                             asm.invokeInterface(rGetByte, 1);
-                            asm.invokeInterface(wPutByte, 2);
+                            asm.invokeInterface(wPutByte, 1);
                             break;
                         case 2:
                             asm.invokeInterface(rGetShort, 1);
-                            asm.invokeInterface(wPutShort, 2);
+                            asm.invokeInterface(wPutShort, 1);
                             break;
                         case 4:
                             asm.invokeInterface(rGetInt, 1);
-                            asm.invokeInterface(wPutInt, 2);
+                            asm.invokeInterface(wPutInt, 1);
                             break;
                         default:
                             asm.invokeInterface(rGetLong, 1);
