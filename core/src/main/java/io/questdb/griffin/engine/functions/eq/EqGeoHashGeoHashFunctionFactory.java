@@ -49,8 +49,6 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
         return true;
     }
 
-    // TODO: refactor this so that it is nicer code and add a truckload of tests
-
     @Override
     public Function newInstance(int position,
                                 ObjList<Function> args,
@@ -68,6 +66,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
                 }
                 if ((hash1 == GeoHashExtra.NULL || ColumnType.tagOf(geohash1.getType()) == ColumnType.NULL) &&
                         (hash2 == GeoHashExtra.NULL || ColumnType.tagOf(geohash2.getType()) == ColumnType.NULL)) {
+                    // both values are null, any flavour of null
                     return BooleanConstant.of(true);
                 }
                 return BooleanConstant.of(false);
@@ -78,29 +77,11 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
     }
 
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
-        if (ColumnType.tagOf(constFunc.getType()) == ColumnType.NULL ||
-                constFunc.getLong(null) == GeoHashExtra.NULL) {
+        if (constFunc.getLong(null) == GeoHashExtra.NULL ||
+                ColumnType.tagOf(constFunc.getType()) == ColumnType.NULL) {
             return new NullCheckFunc(varFunc);
         }
         return new ConstCheckFunc(varFunc, constFunc.getLong(null), constFunc.getType());
-    }
-
-    private static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function arg;
-
-        public NullCheckFunc(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (arg.getLong(rec) == GeoHashExtra.NULL);
-        }
     }
 
     private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
@@ -125,6 +106,24 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function arg;
+
+        public NullCheckFunc(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (arg.getLong(rec) == GeoHashExtra.NULL || ColumnType.tagOf(arg.getType()) == ColumnType.NULL);
+        }
+    }
+
     private static class Func extends NegatableBooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
@@ -146,16 +145,17 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final long a = left.getLong(rec);
-            final int aType = left.getType();
-            final long b = right.getLong(rec);
-            final int bType = right.getType();
-
-            if (aType == bType) {
-                return negated != (a == b);
+            final long hash1 = left.getLong(rec);
+            final int hash1Type = left.getType();
+            final long hash2 = right.getLong(rec);
+            final int hash2Type = right.getType();
+            if (hash1Type == hash2Type) {
+                return negated != (hash1 == hash2);
             }
-            if (a == b && a == GeoHashExtra.NULL) {
-                return negated;
+            if ((hash1 == GeoHashExtra.NULL || ColumnType.tagOf(hash1Type) == ColumnType.NULL) &&
+                    (hash2 == GeoHashExtra.NULL || ColumnType.tagOf(hash2Type) == ColumnType.NULL)) {
+                // both values are null, any flavour of null
+                return true;
             }
             return false;
         }

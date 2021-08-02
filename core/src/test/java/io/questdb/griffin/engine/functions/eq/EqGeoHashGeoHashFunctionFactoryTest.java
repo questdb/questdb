@@ -25,8 +25,11 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashExtra;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.engine.functions.GeoHashFunction;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.functions.constants.GeoHashConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
@@ -50,67 +53,134 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
         args = new ObjList<>(2);
     }
 
-    // TODO: WIP add more tests to cover both args not being constants, and only one not being constant
+    @Test
+    public void testSameTypeAndValue() {
+        createEqFunctionAndAssert(
+                0, ColumnType.geohashWithPrecision(31),
+                0, ColumnType.geohashWithPrecision(31),
+                true);
+    }
+
+    @Test
+    public void testDifferentTypeAndValue() {
+        createEqFunctionAndAssert(
+                0, ColumnType.geohashWithPrecision(31),
+                10, ColumnType.geohashWithPrecision(12),
+                false);
+    }
+
+    @Test
+    public void testSameTypeDifferentValue() {
+        createEqFunctionAndAssert(
+                0, ColumnType.geohashWithPrecision(31),
+                10, ColumnType.geohashWithPrecision(31),
+                false);
+    }
+
+    @Test
+    public void testDifferentTypeSameValue() {
+        createEqFunctionAndAssert(
+                10, ColumnType.geohashWithPrecision(31),
+                10, ColumnType.geohashWithPrecision(30),
+                false);
+    }
+
+    @Test
+    public void testNull1() {
+        args.add(NullConstant.NULL);
+        args.add(new GeoHashFunction(ColumnType.geohashWithPrecision(1)) {
+            @Override
+            public long getLong(Record rec) {
+                return GeoHashExtra.NULL;
+            }
+        });
+        createEqFunctionAndAssert(false, true);
+    }
+
+    @Test
+    public void testNull2() {
+        args.add(new GeoHashFunction(ColumnType.geohashWithPrecision(1)) {
+            @Override
+            public long getLong(Record rec) {
+                return GeoHashExtra.NULL;
+            }
+        });
+        args.add(NullConstant.NULL);
+        createEqFunctionAndAssert(false, true);
+    }
+
+    @Test
+    public void testNull3() {
+        createEqFunctionAndAssert(
+                GeoHashExtra.NULL, ColumnType.geohashWithPrecision(1),
+                GeoHashExtra.NULL, ColumnType.geohashWithPrecision(1),
+                true);
+    }
+
+    @Test
+    public void testNull4() {
+        createEqFunctionAndAssert(
+                GeoHashExtra.NULL, ColumnType.geohashWithPrecision(12),
+                GeoHashExtra.NULL, ColumnType.geohashWithPrecision(1),
+                true);
+    }
+
+    @Test
+    public void testNull5() {
+        args.add(NullConstant.NULL);
+        args.add(NullConstant.NULL);
+        createEqFunctionAndAssert(true);
+    }
+
+    @Test
+    public void testNull6() {
+        args.add(NullConstant.NULL);
+        for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
+            args.setPos(1);
+            args.add(nullConstantForBitsPrecision(b));
+            createEqFunctionAndAssert(true);
+        }
+    }
+
+    @Test
+    public void testNull7() {
+        for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
+            args.clear();
+            args.add(nullConstantForBitsPrecision(b));
+            args.add(NullConstant.NULL);
+            createEqFunctionAndAssert(true);
+        }
+    }
+
+    @Test
+    public void testNull8() {
+        for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
+            args.clear();
+            args.add(nullConstantForBitsPrecision(b));
+            args.add(nullConstantForBitsPrecision(((b + 1) % 60) + 1));
+            createEqFunctionAndAssert(true);
+        }
+    }
 
     @Test
     public void testConstConst1() {
-        args.add(NullConstant.NULL);
-        args.add(NullConstant.NULL);
-        Function func = factory.newInstance(-1, args, null, null, null);
-        Assert.assertTrue(func.isConstant());
-        Assert.assertTrue(func.getBool(null));
+        for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
+            args.clear();
+            int type = ColumnType.geohashWithPrecision(b);
+            args.add(GeoHashConstant.newInstance(0, type));
+            args.add(GeoHashConstant.newInstance(0, type));
+            createEqFunctionAndAssert(true);
+        }
     }
 
     @Test
     public void testConstConst2() {
-        args.add(NullConstant.NULL);
-        for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
-            args.setPos(1);
-            int type = ColumnType.geohashWithPrecision(b);
-            args.add(Constants.getNullConstant(type));
-            Function func = factory.newInstance(-1, args, null, null, null);
-            Assert.assertTrue(func.isConstant());
-            Assert.assertTrue(func.getBool(null));
-        }
-    }
-
-    @Test
-    public void testConstConst3() {
         for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
             args.clear();
             int type = ColumnType.geohashWithPrecision(b);
-            args.add(Constants.getNullConstant(type));
-            args.add(NullConstant.NULL);
-            Function func = factory.newInstance(-1, args, null, null, null);
-            Assert.assertTrue(func.isConstant());
-            Assert.assertTrue(func.getBool(null));
-        }
-    }
-
-    @Test
-    public void testConstConst4() {
-        for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
-            args.clear();
-            int type = ColumnType.geohashWithPrecision(b);
-            args.add(Constants.getNullConstant(type));
-            type = ColumnType.geohashWithPrecision(((b + 1) % 60) + 1);
-            args.add(Constants.getNullConstant(type));
-            Function func = factory.newInstance(-1, args, null, null, null);
-            Assert.assertTrue(func.isConstant());
-            Assert.assertTrue(func.getBool(null));
-        }
-    }
-
-    @Test
-    public void testConstConst5() {
-        for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
-            args.clear();
-            int type = ColumnType.geohashWithPrecision(b);
+            args.add(GeoHashConstant.newInstance(1, type));
             args.add(GeoHashConstant.newInstance(0, type));
-            args.add(GeoHashConstant.newInstance(0, type));
-            Function func = factory.newInstance(-1, args, null, null, null);
-            Assert.assertTrue(func.isConstant());
-            Assert.assertTrue(func.getBool(null));
+            createEqFunctionAndAssert(false);
         }
     }
 
@@ -145,5 +215,35 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                     "a\tb\n"
             );
         });
+    }
+
+    private void createEqFunctionAndAssert(long hash1, int typep1, long hash2, int typep2, boolean expectedEq) {
+        args.add(new GeoHashFunction(typep1) {
+            @Override
+            public long getLong(Record rec) {
+                return hash1;
+            }
+        });
+        args.add(new GeoHashFunction(typep2) {
+            @Override
+            public long getLong(Record rec) {
+                return hash2;
+            }
+        });
+        createEqFunctionAndAssert(false, expectedEq);
+    }
+
+    private static Function nullConstantForBitsPrecision(int bits) {
+        return Constants.getNullConstant(ColumnType.geohashWithPrecision(bits));
+    }
+
+    private void createEqFunctionAndAssert(boolean expectedEq) {
+        createEqFunctionAndAssert(true, expectedEq);
+    }
+
+    private void createEqFunctionAndAssert(boolean isConstant, boolean expectedEq) {
+        Function func = factory.newInstance(-1, args, null, null, null);
+        Assert.assertEquals(isConstant, func.isConstant());
+        Assert.assertEquals(expectedEq, func.getBool(null));
     }
 }
