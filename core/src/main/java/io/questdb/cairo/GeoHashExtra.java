@@ -52,6 +52,7 @@ public class GeoHashExtra {
         if (bits == 0) {
             return 64; // variable length geohash
         }
+        bits += 1; // reserved null bit
         bits = (bits + Byte.SIZE - 1) & -Byte.SIZE; // round up to 8 bit
         return Numbers.ceilPow2(bits); // next pow of 2
     }

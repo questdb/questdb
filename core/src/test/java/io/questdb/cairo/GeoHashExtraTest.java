@@ -68,6 +68,29 @@ public class GeoHashExtraTest {
     }
 
     @Test
+    public void testStorageSizeWithNull() {
+        int geohashCol = ColumnType.geohashWithPrecision(0);
+        Assert.assertEquals(64, GeoHashExtra.storageSizeInBits(geohashCol));
+        Assert.assertEquals(3, GeoHashExtra.storageSizeInPow2(geohashCol));
+        for (int i = 1; i < 61; i++) {
+            geohashCol = GeoHashExtra.setBitsPrecision(geohashCol, i);
+            if (i < 8) {
+                Assert.assertEquals(8, GeoHashExtra.storageSizeInBits(geohashCol));
+                Assert.assertEquals(0, GeoHashExtra.storageSizeInPow2(geohashCol));
+            } else if (i < 16) {
+                Assert.assertEquals(16, GeoHashExtra.storageSizeInBits(geohashCol));
+                Assert.assertEquals(1, GeoHashExtra.storageSizeInPow2(geohashCol));
+            } else if (i < 32) {
+                Assert.assertEquals(32, GeoHashExtra.storageSizeInBits(geohashCol));
+                Assert.assertEquals(2, GeoHashExtra.storageSizeInPow2(geohashCol));
+            } else {
+                Assert.assertEquals(64, GeoHashExtra.storageSizeInBits(geohashCol));
+                Assert.assertEquals(3, GeoHashExtra.storageSizeInPow2(geohashCol));
+            }
+        }
+    }
+
+    @Test
     public void testGeoHashTypeName() {
         String expected = "GEOHASH(1b) -> 270 (1)\n" +
                 "GEOHASH(2b) -> 526 (2)\n" +
