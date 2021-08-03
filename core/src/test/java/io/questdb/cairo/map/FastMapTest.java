@@ -61,6 +61,7 @@ public class FastMapTest extends AbstractCairoTest {
         valueTypes.add(ColumnType.DOUBLE);
         valueTypes.add(ColumnType.BOOLEAN);
         valueTypes.add(ColumnType.DATE);
+        valueTypes.add(ColumnType.geohashWithPrecision(50));
 
         try (FastMap map = new FastMap(64, keyTypes, valueTypes, 64, 0.8, 24)) {
             final int N = 100000;
