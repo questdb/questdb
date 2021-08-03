@@ -72,7 +72,7 @@ public class TransactionLogTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":0,}],\"columnMetaData\":[],\"columnMetaIndex\":[]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":0,}]}",
                     sink
             );
         });
@@ -120,7 +120,79 @@ public class TransactionLogTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":0,}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":0,}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    sink
+            );
+        });
+    }
+
+    @Test
+    public void testOrderedAddColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table x as  " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o" +
+                            " from long_sequence(100000)" +
+                            ") timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            compiler.compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
+
+            compiler.compile("alter table x add column z double", sqlExecutionContext);
+
+            compiler.compile("insert into x " +
+                            "select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-13T23:00:00', 'yyyy-MM-ddTHH:mm:ss'), 30000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o," +
+                            " rnd_double() z" +
+                            " from long_sequence(10000)",
+                    sqlExecutionContext
+            );
+
+            try (
+                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
+                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
+            ) {
+                sink.clear();
+                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                Assert.assertTrue(w1.isTransactionLogEnabled());
+            }
+
+            TestUtils.assertEquals(
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"dataTxn\":0,}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -226,7 +298,7 @@ public class TransactionLogTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":0,}],\"columnMetaData\":[],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":11,\"toIndex\":-1},{\"action\":\"move\",\"fromIndex\":12,\"toIndex\":11},{\"action\":\"move\",\"fromIndex\":13,\"toIndex\":12},{\"action\":\"move\",\"fromIndex\":14,\"toIndex\":13},{\"action\":\"move\",\"fromIndex\":15,\"toIndex\":14},{\"action\":\"move\",\"fromIndex\":16,\"toIndex\":15}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":0,}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":11,\"toIndex\":-1},{\"action\":\"move\",\"fromIndex\":12,\"toIndex\":11},{\"action\":\"move\",\"fromIndex\":13,\"toIndex\":12},{\"action\":\"move\",\"fromIndex\":14,\"toIndex\":13},{\"action\":\"move\",\"fromIndex\":15,\"toIndex\":14},{\"action\":\"move\",\"fromIndex\":16,\"toIndex\":15}]}",
                     sink
             );
         });
@@ -295,7 +367,7 @@ public class TransactionLogTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-09T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":10000,\"nameTxn\":-1,\"dataTxn\":1,}],\"columnMetaData\":[],\"columnMetaIndex\":[]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-09T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":10000,\"nameTxn\":-1,\"dataTxn\":1,}]}",
                     sink
             );
         });
@@ -366,7 +438,7 @@ public class TransactionLogTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-09T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":10000,\"nameTxn\":-1,\"dataTxn\":1,}],\"columnMetaData\":[],\"columnMetaIndex\":[]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-09T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":10000,\"nameTxn\":-1,\"dataTxn\":1,}]}",
                     sink
             );
         });
@@ -435,7 +507,7 @@ public class TransactionLogTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-11T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":38800,\"nameTxn\":1,\"dataTxn\":0,}],\"columnMetaData\":[],\"columnMetaIndex\":[]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-11T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":38800,\"nameTxn\":1,\"dataTxn\":0,}]}",
                     sink
             );
         });
@@ -481,7 +553,7 @@ public class TransactionLogTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":0,}],\"columnMetaData\":[],\"columnMetaIndex\":[]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":0,}]}",
                     sink
             );
         });
@@ -528,7 +600,7 @@ public class TransactionLogTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[],\"columnMetaData\":[],\"columnMetaIndex\":[]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0}}",
                     sink
             );
         });
@@ -599,7 +671,7 @@ public class TransactionLogTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"truncate\",\"dataVersion\":1},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-10T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"dataTxn\":2,},{\"action\":\"whole\",\"ts\":\"2018-01-11T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"dataTxn\":2,},{\"action\":\"whole\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"dataTxn\":2,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":2,}],\"columnMetaData\":[],\"columnMetaIndex\":[]}",
+                    "{\"table\":{\"action\":\"truncate\",\"dataVersion\":1},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-10T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"dataTxn\":2,},{\"action\":\"whole\",\"ts\":\"2018-01-11T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"dataTxn\":2,},{\"action\":\"whole\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"dataTxn\":2,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":2,}]}",
                     sink
             );
         });
@@ -647,7 +719,7 @@ public class TransactionLogTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"truncate\",\"dataVersion\":1},\"partitions\":[],\"columnMetaData\":[],\"columnMetaIndex\":[]}",
+                    "{\"table\":{\"action\":\"truncate\",\"dataVersion\":1}}",
                     sink
             );
         });

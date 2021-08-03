@@ -847,40 +847,53 @@ public class TableWriter implements Closeable {
         // collate local partitions that need to be propagated to this slave
         final int ourPartitionCount = txFile.getPartitionCount();
         final int ourLast = ourPartitionCount - 1;
-        for (int i = 0; i < ourPartitionCount; i++) {
-            final long ts = txFile.getPartitionTimestamp(i);
-            final long ourSize = i < ourLast ? txFile.getPartitionSize(i) : txFile.transientRowCount;
-            final int keyIndex = hash.keyIndex(ts);
-            if (keyIndex < 0) {
-                int slavePartitionIndex = hash.valueAt(keyIndex);
-                long p = slaveTxData + getPartitionTableIndexOffset(symbolsCount, slavePartitionIndex);
-                // check if partition name txn is the same
-                if (Unsafe.getUnsafe().getLong(p + 16) == txFile.getPartitionNameTxn(i)) {
-                    // this is the same partition roughly
-                    final long theirSize = slavePartitionIndex / 4 < theirLast ?
-                            Unsafe.getUnsafe().getLong(p + 8) :
-                            Unsafe.getUnsafe().getLong(slaveTxData + TX_OFFSET_TRANSIENT_ROW_COUNT);
 
-                    if (theirSize != ourSize) {
-                        if (theirSize < ourSize) {
-                            // send append section
-                            model.addPartitionAction(
-                                    1,
-                                    ts,
-                                    theirSize,
-                                    ourSize - theirSize,
-                                    txFile.getPartitionNameTxn(i),
-                                    txFile.getPartitionDataTxn(i)
-                            );
-                        } else {
-                            LOG.error()
-                                    .$("slave partition is larger than that on master [table=").$(tableName)
-                                    .$(", ts=").$ts(ts)
-                                    .I$();
+        for (int i = 0; i < ourPartitionCount; i++) {
+            try {
+                final long ts = txFile.getPartitionTimestamp(i);
+                final long ourSize = i < ourLast ? txFile.getPartitionSize(i) : txFile.transientRowCount;
+                final int keyIndex = hash.keyIndex(ts);
+                if (keyIndex < 0) {
+                    int slavePartitionIndex = hash.valueAt(keyIndex);
+                    long p = slaveTxData + getPartitionTableIndexOffset(symbolsCount, slavePartitionIndex);
+                    // check if partition name txn is the same
+                    if (Unsafe.getUnsafe().getLong(p + 16) == txFile.getPartitionNameTxn(i)) {
+                        // this is the same partition roughly
+                        final long theirSize = slavePartitionIndex / 4 < theirLast ?
+                                Unsafe.getUnsafe().getLong(p + 8) :
+                                Unsafe.getUnsafe().getLong(slaveTxData + TX_OFFSET_TRANSIENT_ROW_COUNT);
+
+                        if (theirSize != ourSize) {
+                            if (theirSize < ourSize) {
+                                // send append section
+                                model.addPartitionAction(
+                                        1,
+                                        ts,
+                                        theirSize,
+                                        ourSize - theirSize,
+                                        txFile.getPartitionNameTxn(i),
+                                        txFile.getPartitionDataTxn(i)
+                                );
+                            } else {
+                                LOG.error()
+                                        .$("slave partition is larger than that on master [table=").$(tableName)
+                                        .$(", ts=").$ts(ts)
+                                        .I$();
+                            }
                         }
+                    } else {
+                        // partition name txn is different, partition mutated
+                        model.addPartitionAction(
+                                0,
+                                ts,
+                                0,
+                                ourSize,
+                                txFile.getPartitionNameTxn(i),
+                                txFile.getPartitionDataTxn(i)
+                        );
                     }
                 } else {
-                    // partition name txn is different, partition mutated
+                    // send whole partition
                     model.addPartitionAction(
                             0,
                             ts,
@@ -890,16 +903,18 @@ public class TableWriter implements Closeable {
                             txFile.getPartitionDataTxn(i)
                     );
                 }
-            } else {
-                // send whole partition
-                model.addPartitionAction(
-                        0,
-                        ts,
-                        0,
-                        ourSize,
-                        txFile.getPartitionNameTxn(i),
-                        txFile.getPartitionDataTxn(i)
-                );
+
+                setPathForPartition(path, partitionBy, ts, false);
+
+                int plen = path.length();
+                for (int j = 0; j < columnCount; j++) {
+                    final long top = TableUtils.readColumnTop(ff, path, metadata.getColumnName(j), plen, tempMem16b);
+                    if (top > 0) {
+                        model.addColumnTop(ts, j, top);
+                    }
+                }
+            } finally {
+                path.trimTo(rootLen);
             }
         }
 
