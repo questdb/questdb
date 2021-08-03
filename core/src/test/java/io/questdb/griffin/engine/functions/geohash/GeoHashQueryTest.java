@@ -303,4 +303,31 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                             "1234\t10\t1234\t1\n");
         });
     }
+
+    @Test
+    public void assertInsertGeoHashWithTruncate() throws Exception {
+        tearDown();
+        for (int b = 5; b <= 40; b *= 2) {
+            for (int i = b; i <= 40; i *= 2) {
+                setUp();
+                try {
+                    assertQuery(
+                            String.format("count\n%s\n", 5),
+                            "select count() from gh",
+                            String.format("create table gh as (select rnd_geohash(%s) from long_sequence(5))", b),
+                            null,
+                            String.format("insert into gh select rnd_geohash(%s) from long_sequence(5)", i),
+                            String.format("count\n%s\n", 10),
+                            false,
+                            true,
+                            true,
+                            true
+                    );
+                } finally {
+                    tearDown();
+                }
+            }
+        }
+    }
+
 }
