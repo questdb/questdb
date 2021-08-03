@@ -435,6 +435,13 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastGeoHashCastMissingSize6() {
+        assertFail("cast('sp052w92' as geohash(8c",
+                27,
+                "invalid GEOHASH, missing ')'");
+    }
+
+    @Test
     public void testGeoHash1() throws SqlException {
         x("GEOHASH(6c)", "geohash(6c)");
     }

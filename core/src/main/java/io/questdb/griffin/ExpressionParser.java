@@ -296,6 +296,11 @@ class ExpressionParser {
                             if (tok == null || tok.charAt(0) != '(') {
                                 if (tok != null) {
                                     lexer.unparse();
+                                    if (Chars.toLowerCaseAscii(tok.charAt(0)) == 'f' && SqlKeywords.isFromKeyword(tok)) {
+                                        tok = originalGeoHashKeyword;
+                                        processDefaultBranch = true;
+                                        break;
+                                    }
                                 }
                                 thisBranch = BRANCH_LITERAL;
                                 opStack.push(expressionNodePool.next().of(
@@ -322,11 +327,8 @@ class ExpressionParser {
                                         lexer.lastTokenPosition()
                                 ));
                                 tok = SqlUtil.fetchNext(lexer);
-                                if (tok.charAt(0) != ')') {
-                                    throw SqlException.position(lexer.lastTokenPosition())
-                                            .put("not valid GEOHASH type literal, expected ')' found='")
-                                            .put(tok.charAt(0))
-                                            .put("'");
+                                if (tok == null || tok.charAt(0) != ')') {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "invalid GEOHASH, missing ')'");
                                 }
                             } else {
                                 throw SqlException.position(lexer.lastTokenPosition())
