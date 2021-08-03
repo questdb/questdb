@@ -57,7 +57,9 @@ public class GeoHashNative {
     };
 
     public static long fromString(CharSequence hash, int parseLen) throws NumericException {
-        assert parseLen <= MAX_STRING_LENGTH && hash.length() >= parseLen;
+        if (parseLen == 0 || parseLen > MAX_STRING_LENGTH || parseLen > hash.length()) {
+            throw NumericException.INSTANCE;
+        }
         long output = 0;
         for (int i = 0; i < parseLen; ++i) {
             char c = hash.charAt(i);
@@ -77,19 +79,17 @@ public class GeoHashNative {
         if (hash == null || hash.length() == 0) {
             return GeoHashExtra.NULL;
         }
-        return fromString(hash, Math.min(MAX_STRING_LENGTH, hash.length()));
+        return fromString(hash, hash.length());
     }
 
-    public static long fromCoordinates(double lat, double lng, int bits) {
+    public static long fromCoordinates(double lat, double lng, int bits) throws NumericException {
         if (lat < -90.0 || lat > 90.0) {
-            throw new IllegalArgumentException("lat range is [-90, 90]");
+            throw NumericException.INSTANCE;
         }
         if (lng < -180.0 || lng > 180.0) {
-            throw new IllegalArgumentException("lat range is [-180, 180]");
+            throw NumericException.INSTANCE;
         }
-        if (bits < 1 || bits > GeoHashNative.MAX_BITS_LENGTH) {
-            throw new IllegalArgumentException("bits range is [1, 60]");
-        }
+        assert bits > 0 && bits <= GeoHashNative.MAX_BITS_LENGTH;
         double minLat = -90, maxLat = 90;
         double minLng = -180, maxLng = 180;
         long result = 0;
@@ -137,9 +137,7 @@ public class GeoHashNative {
 
     public static void toBitString(long hash, int bits, CharSink sink) {
         if (hash != GeoHashExtra.NULL) {
-            if (bits < 1 || bits > GeoHashNative.MAX_BITS_LENGTH) {
-                throw new IllegalArgumentException("bits range is [1, 60]");
-            }
+            assert bits > 0 && bits <= GeoHashNative.MAX_BITS_LENGTH;
             for (int i = bits - 1; i >= 0; --i) {
                 sink.put(((hash >> i) & 1) == 1? '1' : '0');
             }
@@ -148,9 +146,7 @@ public class GeoHashNative {
 
     public static void toString(long hash, int chars, CharSink sink) {
         if (hash != GeoHashExtra.NULL) {
-            if (chars < 1 || chars > GeoHashNative.MAX_STRING_LENGTH) {
-                throw new IllegalArgumentException("precision range is [1, 12]");
-            }
+            assert chars >0 && chars <= GeoHashNative.MAX_STRING_LENGTH;
             for (int i = chars - 1; i >= 0; --i) {
                 sink.put(base32[(int) ((hash >> i * 5) & 0x1F)]);
             }
@@ -174,10 +170,10 @@ public class GeoHashNative {
         return (((long) length) << 60L) + hash;
     }
 
-    public static void fromStringToBits(final CharSequenceHashSet prefixes, final DirectLongList prefixesBits) {
+    public static void fromStringToBits(final CharSequenceHashSet prefixes, int lo, int hi, final DirectLongList prefixesBits) {
         prefixesBits.clear();
-        // skip first (search column name) element
-        for (int i = 1, sz = prefixes.size(); i < sz; i++) {
+        assert hi <= prefixes.size();
+        for (int i = lo; i < hi; i++) {
             try {
                 final CharSequence prefix = prefixes.get(i);
                 final long hash = fromStringNl(prefix);

@@ -188,4 +188,24 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
             Assert.assertEquals("alter table pos add hash geohash(11c".length(), e.getPosition());
         }
     }
+
+    @Test
+    public void testInvalidGeohashRnd() {
+        try {
+            assertSql("select rnd_geohash(0) from long_sequence(1)", "");
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "precision must be in [1..60] range");
+        }
+    }
+
+    @Test
+    public void testInvalidGeohashRnd2() {
+        try {
+            assertSql("select rnd_geohash(61) from long_sequence(1)", "");
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "precision must be in [1..60] range");
+        }
+    }
 }

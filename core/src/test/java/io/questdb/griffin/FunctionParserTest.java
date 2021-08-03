@@ -324,7 +324,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testExplicitConstantGeoHash() throws SqlException {
+    public void testExplicitConstantGeoHash() throws SqlException, NumericException {
         long hash = GeoHashNative.fromCoordinates(39.9830487269087, 0.02405432769681642, 6 * 5);
         testConstantPassThru(new GeoHashConstant(hash, ColumnType.GEOHASH));
         functions.clear();

@@ -24,10 +24,9 @@
 
 package io.questdb.griffin.engine.functions.geohash;
 
+import io.questdb.cairo.GeoHashExtra;
 import io.questdb.griffin.engine.table.LatestByArguments;
-import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.DirectLongList;
-import io.questdb.std.NumericException;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
@@ -45,7 +44,7 @@ public class GeoHashNativeTest {
         return ThreadLocalRandom.current().nextDouble(min, max);
     }
 
-    private static long rnd_geohash(int size) {
+    private static long rnd_geohash(int size) throws NumericException {
         double x = rnd_double(-90, 90);
         double y = rnd_double(-180, 180);
         return GeoHashNative.fromCoordinates(x, y, size * 5);
@@ -62,7 +61,7 @@ public class GeoHashNativeTest {
 
     @Test
     public void testFromCoordinates() throws NumericException {
-        Assert.assertEquals(GeoHashNative.fromCoordinates(lat, lon, 1 * 5), GeoHashNative.fromBitString("11100"));
+        Assert.assertEquals(GeoHashNative.fromCoordinates(lat, lon, 5), GeoHashNative.fromBitString("11100"));
         Assert.assertEquals(GeoHashNative.fromCoordinates(lat, lon, 2 * 5), GeoHashNative.fromBitString("1110011001"));
         Assert.assertEquals(GeoHashNative.fromCoordinates(lat, lon, 3 * 5), GeoHashNative.fromBitString("111001100111100"));
         Assert.assertEquals(GeoHashNative.fromCoordinates(lat, lon, 4 * 5), GeoHashNative.fromBitString("11100110011110000011"));
@@ -73,7 +72,7 @@ public class GeoHashNativeTest {
     }
 
     @Test
-    public void testToHash() {
+    public void testToHash() throws NumericException {
         final long gh = GeoHashNative.fromCoordinates(lat, lon, 8 * 5);
         final long ghz = GeoHashNative.toHashWithSize(gh, 8);
         Assert.assertEquals(gh, GeoHashNative.toHash(ghz));
@@ -91,7 +90,7 @@ public class GeoHashNativeTest {
     }
 
     @Test
-    public void testFromStringToBits() {
+    public void testFromStringToBits() throws NumericException {
         final int cap = 12;
         DirectLongList bits = new DirectLongList(cap * 2); // hash and mask
         CharSequenceHashSet strh = new CharSequenceHashSet();
@@ -102,12 +101,37 @@ public class GeoHashNativeTest {
             GeoHashNative.toString(h, prec, sink);
             strh.add(sink);
         }
-        GeoHashNative.fromStringToBits(strh, bits);
+        GeoHashNative.fromStringToBits(strh, 0, (int) bits.size(), bits);
         for (int i = 0; i < bits.size() / 2; i += 2) {
             final long b = bits.get(i);
             final long m = bits.get(i + 1);
             Assert.assertEquals(b, b & m);
         }
+    }
+
+    @Test
+    public void testFromStringToBitsInvalidNull() {
+        final int cap = 12;
+        DirectLongList bits = new DirectLongList(cap * 2); // hash and mask
+        CharSequenceHashSet strh = new CharSequenceHashSet();
+        strh.add("");
+        strh.add(null);
+        strh.add("$invalid");
+        strh.add("questdb1234567890");
+
+        GeoHashNative.fromStringToBits(strh, 0, (int) bits.size(), bits);
+        Assert.assertEquals(0, bits.size());
+    }
+
+    @Test
+    public void testFromStringToBitsSingle() {
+        final int cap = 12;
+        DirectLongList bits = new DirectLongList(cap * 2); // hash and mask
+        CharSequenceHashSet strh = new CharSequenceHashSet();
+        strh.add("questdb");
+
+        GeoHashNative.fromStringToBits(strh, 0, (int) bits.size(), bits);
+        Assert.assertEquals(2, bits.size());
     }
 
     @Test
@@ -224,8 +248,8 @@ public class GeoHashNativeTest {
 
     @Test
     public void testToStringInvalidSizeInChars() {
-        assertFail(0, 0, "precision range is [1, 12]", toString);
-        assertFail(0, 13, "precision range is [1, 12]", toString);
+        Assert.assertThrows(AssertionError.class, () -> GeoHashNative.toString(-0, 0, sink));
+        Assert.assertThrows(AssertionError.class, () -> GeoHashNative.toString(-0, 31, sink));
     }
 
     @Test
@@ -244,9 +268,42 @@ public class GeoHashNativeTest {
     }
 
     @Test
+    public void tstsRndD() {
+        Rnd r = new Rnd();
+        for(int i = 0; i < 1000; i++) {
+            double d = r.nextDouble();
+            Assert.assertTrue(Double.toString(d), Math.abs(d) < 1.0);
+        }
+    }
+
+    @Test
+    public void testFromBitStringInvalid() {
+        CharSequence tooLongBitString = Chars.repeat("1", 61);
+        Assert.assertThrows(NumericException.class, () -> GeoHashNative.fromBitString(tooLongBitString));
+    }
+
+    @Test
+    public void testFromBitStringInvalid2() {
+        Assert.assertThrows(NumericException.class, () -> GeoHashNative.fromBitString("a"));
+    }
+
+    @Test
     public void testToBitStringInvalidSizeInBits() {
-        assertFail(0, 0, "bits range is [1, 60]", toBitString);
-        assertFail(0, 61, "bits range is [1, 60]", toBitString);
+        Assert.assertThrows(AssertionError.class, () -> GeoHashNative.toBitString(-0, 0, sink));
+        Assert.assertThrows(AssertionError.class, () -> GeoHashNative.toBitString(-31, 0, sink));
+    }
+
+    @Test
+    public void testFromStringNull() throws NumericException {
+        Assert.assertEquals(GeoHashNative.fromStringNl(null), GeoHashExtra.NULL);
+        Assert.assertEquals(GeoHashNative.fromStringNl(""), GeoHashExtra.NULL);
+    }
+
+    @SuppressWarnings("ResultOfMethodCallIgnored")
+    @Test
+    public void testFromCoordinatesEdge() {
+        Assert.assertThrows(NumericException.class, () -> GeoHashNative.fromCoordinates(-91, 0, 10));
+        Assert.assertThrows(NumericException.class, () -> GeoHashNative.fromCoordinates(0, 190, 10));
     }
 
     @FunctionalInterface
@@ -256,16 +313,6 @@ public class GeoHashNativeTest {
 
     private static final StringConverter toString = GeoHashNative::toString;
     private static final StringConverter toBitString = GeoHashNative::toBitString;
-
-    private static void assertFail(long hash, int size, String message, StringConverter converter) {
-        try {
-            sink.clear();
-            converter.convert(hash, size, sink);
-            Assert.fail();
-        } catch (IllegalArgumentException err) {
-            Assert.assertEquals(message, err.getMessage());
-        }
-    }
 
     private static void assertSuccess(long hash, int size, String message, StringConverter converter) {
         try {

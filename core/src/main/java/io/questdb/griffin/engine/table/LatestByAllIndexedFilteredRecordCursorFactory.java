@@ -53,7 +53,8 @@ public class LatestByAllIndexedFilteredRecordCursorFactory extends AbstractTreeS
 
         this.hashes = new DirectLongList(configuration.getSqlLatestByRowCount());
         this.prefixes = new DirectLongList(64);
-        GeoHashNative.fromStringToBits(prefixes, this.prefixes);
+        // first element is column name
+        GeoHashNative.fromStringToBits(prefixes, 1, prefixes.size(), this.prefixes);
 
         if (filter == null) {
             this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, hashColumnIndex, rows, hashes, columnIndexes, this.prefixes);
