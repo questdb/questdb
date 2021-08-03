@@ -251,7 +251,7 @@ public class SqlCompiler implements Closeable {
         asm.methodCount(2);
         asm.defineDefaultConstructor();
 
-        asm.startMethod(copyNameIndex, copySigIndex, 4, 3);
+        asm.startMethod(copyNameIndex, copySigIndex, 6, 3);
 
         int n = toColumnFilter.getColumnCount();
         for (int i = 0; i < n; i++) {
@@ -667,6 +667,7 @@ public class SqlCompiler implements Closeable {
                                     asm.i2l();
                                     asm.iconst(fromColumnType);
                                     asm.iconst(toColumnType);
+                                    asm.invokeStatic(geohashTruncatePrecision);
                                     asm.l2i();
                                     asm.i2s();
                                     asm.invokeVirtual(wPutShort);
