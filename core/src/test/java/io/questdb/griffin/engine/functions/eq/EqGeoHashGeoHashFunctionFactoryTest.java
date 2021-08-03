@@ -186,12 +186,15 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testConstHalfConst1() throws Exception {
-        // TODO: Fix this test, when POTATO is replaced by geohash things go south
         assertMemoryLeak(() -> {
-            compiler.compile("create table geohash as (select cast('sp052w92p1' as GeOhAsH(50b)) POTATO from long_sequence(1))", sqlExecutionContext);
+            compiler.compile("create table geohash as (" +
+                    "select " +
+                    "    cast('sp052w92p1' as GeOhAsH(50b)) as geohash from long_sequence(1)" +
+                    ")",
+                    sqlExecutionContext);
             assertSql(
-                    "geohash where POTATO = cast('sp052w92p1p' as gEoHaSh(10c))",
-                    "POTATO\n" +
+                    "geohash where cast('sp052w92p1p' as gEoHaSh(10c)) = geohash",
+                    "geohash\n" +
                             "sp052w92p1\n"
             );
         });
