@@ -478,7 +478,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         assert node.type == ExpressionNode.GEOHASH_TYPE;
         assert node.rhs.type == ExpressionNode.GEOHASH_TYPE_SIZE;
         int bits = SqlParser.parseGeoHashSize(0, node.rhs.token);
-        return new GeoHashTypeConstant(ColumnType.geohashWithPrecision(bits));
+        return GeoHashTypeConstant.getInstanceByPrecision(bits);
     }
 
     private Function createFunction(
