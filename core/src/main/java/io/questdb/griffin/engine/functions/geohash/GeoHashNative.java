@@ -57,7 +57,7 @@ public class GeoHashNative {
     };
 
     public static long fromString(CharSequence hash, int parseLen) throws NumericException {
-        if (parseLen == 0 || parseLen > MAX_STRING_LENGTH || parseLen > hash.length()) {
+        if (parseLen == 0 || parseLen > MAX_STRING_LENGTH || hash == null || parseLen > hash.length()) {
             throw NumericException.INSTANCE;
         }
         long output = 0;

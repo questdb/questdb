@@ -130,7 +130,7 @@ public class GeoHashNativeTest {
         CharSequenceHashSet strh = new CharSequenceHashSet();
         strh.add("questdb");
 
-        GeoHashNative.fromStringToBits(strh, 0, (int) bits.size(), bits);
+        GeoHashNative.fromStringToBits(strh, 0, strh.size(), bits);
         Assert.assertEquals(2, bits.size());
     }
 

@@ -94,7 +94,7 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
     public void testCastStringToGeoHashSizesBinary() throws SqlException, NumericException {
         String geohash = "sp052w92p1p8ignore";
         int geohashLen = Math.min(geohash.length(), 12);
-        long fullGeohash = GeoHashNative.fromStringNl(geohash);
+        long fullGeohash = GeoHashNative.fromString(geohash, geohashLen);
         Assert.assertEquals(888340623145993896L, fullGeohash);
         for (int c = 1; c <= geohashLen; c++) {
             String expectedGeohash = geohash.substring(0, c);

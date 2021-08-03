@@ -262,7 +262,7 @@ public final class ColumnType {
         TYPE_SIZE_POW2[DATE] = 3;
         TYPE_SIZE_POW2[TIMESTAMP] = 3;
         TYPE_SIZE_POW2[LONG256] = 5;
-        // GEOHASH: GeoHashExtra.storageSizeInPow2
+        // GEOHASH: geohash column types has variable storage size, 1-8 bytes depending on type bit lenght
 
         TYPE_SIZE[BOOLEAN] = Byte.BYTES;
         TYPE_SIZE[BYTE] = Byte.BYTES;
@@ -276,7 +276,7 @@ public final class ColumnType {
         TYPE_SIZE[DATE] = Long.BYTES;
         TYPE_SIZE[TIMESTAMP] = Long.BYTES;
         TYPE_SIZE[LONG256] = Long256.BYTES;
-        // GEOHASH: GeoHashExtra.storageSizeInBits / 8
+        // GEOHASH: geohash column types has variable storage size, 1-8 bytes depending on type bit lenght
     }
 
     private static int indexOf(int[] list, int value) {
