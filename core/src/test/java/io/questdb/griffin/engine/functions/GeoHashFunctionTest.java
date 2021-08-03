@@ -49,6 +49,7 @@ public class GeoHashFunctionTest {
             nullFunction.getStr(null, sink);
             Assert.fail();
         } catch (UnsupportedOperationException e) {
+            // Good
         }
     }
 
@@ -113,8 +114,18 @@ public class GeoHashFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetStrB() {
+        nullFunction.getStrB(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetSym() {
         nullFunction.getSymbol(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetSymB() {
+        nullFunction.getSymbolB(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

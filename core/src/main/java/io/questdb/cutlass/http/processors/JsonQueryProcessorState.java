@@ -233,7 +233,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
-    private void putBinValue(HttpChunkedResponseSocket socket, Record record, int col) {
+    private void putBinValue(HttpChunkedResponseSocket socket) {
         socket.put('[');
         socket.put(']');
     }
@@ -324,10 +324,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             }
             socket.put('\"');
         }
-    }
-
-    private void putCursorValue(HttpChunkedResponseSocket socket, Record rec, int col) {
-        putStringOrNull(socket, null);
     }
 
     private boolean addColumnToOutput(RecordMetadata metadata, CharSequence columnNames, int start, int hi) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -482,16 +478,17 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putSymValue(socket, record, columnIdx);
                     break;
                 case ColumnType.BINARY:
-                    putBinValue(socket, record, columnIdx);
+                    putBinValue(socket);
                     break;
                 case ColumnType.LONG256:
                     putLong256Value(socket, record, columnIdx);
                     break;
-                case ColumnType.RECORD:
-                    putCursorValue(socket, record, columnIdx);
-                    break;
                 case ColumnType.GEOHASH:
                     putGeoHashValue(socket, record, columnIdx);
+                    break;
+                default:
+                    assert false : "Not supported type in output " + ColumnType.nameOf(columnType);
+                    socket.put("null"); // To make JSON valid
                     break;
             }
         }

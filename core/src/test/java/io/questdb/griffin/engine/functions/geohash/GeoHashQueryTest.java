@@ -71,11 +71,18 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
 
     @Test
     public void testDynamicGeohashPrecisionTrim() throws SqlException {
-        compiler.compile("create table pos(time timestamp, uuid symbol, hash8 geohash(8c))", sqlExecutionContext);
-        executeInsert("insert into pos values('2021-05-10T23:59:59.160000Z','YYY','0f91tzzz')");
-        assertSql("select cast(hash8 as geohash(6c)) from pos",
-                "cast\n" +
-                        "0f91tz\n");
+        compiler.compile("create table pos(" +
+                "time timestamp, " +
+                "uuid symbol, " +
+                "hash8 geohash(8c), " +
+                "hash4 geohash(4c), " +
+                "hash2 geohash(2c), " +
+                "hash1 geohash(1c)" +
+                ")", sqlExecutionContext);
+        executeInsert("insert into pos values('2021-05-10T23:59:59.160000Z','YYY','0f91tzzz','0f91tzzz','0f91tzzz','0f91tzzz')");
+        assertSql("select cast(hash8 as geohash(6c)), cast(hash4 as geohash(3c)), cast(hash2 as geohash(1c)), cast(hash1 as geohash(1b)) from pos",
+                "cast\tcast1\tcast2\tcast3\n" +
+                        "0f91tz\t0f9\t0\t0\n");
     }
 
     @Test
