@@ -37,7 +37,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
     private final LongList columnBits = new LongList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
-    private final CharSequenceIntHashMap columnNameIndexMap = new CharSequenceIntHashMap();
+    private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     private ExpressionNode name;
     private QueryModel queryModel;
     private ExpressionNode timestamp;

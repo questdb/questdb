@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.MemoryLogAImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
@@ -139,6 +140,7 @@ public class TableWriter implements Closeable {
     private final boolean o3QuickSortEnabled;
     private final LongConsumer appendTimestampSetter;
     private final MemoryMR indexMem = Vm.getMRInstance();
+    private final MemoryFR slaveMetaMem = new MemoryFCRImpl();
     private long todoTxn;
     private MemoryARW o3TimestampMem;
     private final O3ColumnUpdateMethod o3MoveLagRef = this::o3MoveLag0;
@@ -696,48 +698,6 @@ public class TableWriter implements Closeable {
         commit(defaultCommitMode, lagMicros);
     }
 
-    public void enableTransactionLog() {
-        final long txn = getTxn();
-        txnScoreboard.acquireTxn(txn);
-
-        try {
-            // copy txn file aside, so we know where data is for this transaction
-            path.concat(TXN_FILE_NAME).put('.').put(txn).$();
-            txFile.copyTo(path, LOG);
-            path.trimTo(rootLen);
-
-            path.concat("log").put('.').put(txn);
-            int plen = path.length();
-
-            // create dir
-            if (ff.mkdirs(path.slash$(), configuration.getMkDirMode()) == 0) {
-                for (int i = 0; i < columnCount; i++) {
-                    final CharSequence name = metadata.getColumnName(i);
-                    final int primaryIndex = getPrimaryColumnIndex(i);
-                    final int secondaryIndex = getSecondaryColumnIndex(i);
-                    final MemoryMAR logMem1 = logColumns.getQuick(primaryIndex);
-                    logMem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
-
-                    final MemoryLogAImpl spliceColumn1 = spliceColumns.getQuick(primaryIndex);
-                    spliceColumn1.of(logMem1, row.activeColumns.getQuick(primaryIndex));
-
-                    final MemoryMAR logMem2 = logColumns.getQuick(secondaryIndex);
-                    if (logMem2 != null) {
-                        logMem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
-
-                        final MemoryLogAImpl spliceColumn2 = spliceColumns.getQuick(secondaryIndex);
-                        spliceColumn2.of(logMem2, row.activeColumns.getQuick(secondaryIndex));
-                    }
-                }
-                row.activeColumns = spliceColumns;
-            } else {
-                throw CairoException.instance(ff.errno()).put("Could not create directory: ").put(path);
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
     public int getColumnIndex(CharSequence name) {
         int index = metadata.getColumnIndexQuiet(name);
         if (index > -1) {
@@ -774,6 +734,14 @@ public class TableWriter implements Closeable {
         return txFile.getPartitionCount();
     }
 
+    public long getRawMetaMemory() {
+        return metaMem.getPageAddress(0);
+    }
+
+    public long getRawMetaMemorySize() {
+        return metaMem.size();
+    }
+
     public long getRawTxnMemory() {
         return txFile.getRawMemory();
     }
@@ -804,6 +772,10 @@ public class TableWriter implements Closeable {
 
     public boolean isOpen() {
         return tempMem16b != 0;
+    }
+
+    public boolean isTransactionLogEnabled() {
+        return row.activeColumns == spliceColumns;
     }
 
     public TableBlockWriter newBlock() {
@@ -849,16 +821,16 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public TableReplayModel reconcileSlaveState(long slaveTxData) {
+    public TableReplayModel reconcileSlaveState(long slaveTxData, long slaveMetaData, long slaveMetaDataSize) {
         LOG.info().$("reconciling replay request [table=").$(tableName).I$();
-        LongIntHashMap hash = new LongIntHashMap();
+        final LongIntHashMap hash = new LongIntHashMap();
+        final TableReplayModel model = new TableReplayModel();
 
-        TableReplayModel model = new TableReplayModel();
         final int symbolsCount = Unsafe.getUnsafe().getInt(slaveTxData + TX_OFFSET_MAP_WRITER_COUNT);
         final int theirLast;
         if (Unsafe.getUnsafe().getLong(slaveTxData + TX_OFFSET_DATA_VERSION) != txFile.getDataVersion()) {
             // truncate
-            model.setTableOperation(1);
+            model.setTableAction(TableReplayModel.TABLE_ACTION_TRUNCATE);
             theirLast = -1;
         } else {
             // hash partitions on slave side
@@ -869,7 +841,6 @@ public class TableWriter implements Closeable {
                 long ts = Unsafe.getUnsafe().getLong(p);
                 hash.put(ts, i);
             }
-
         }
         model.setDataVersion(txFile.getDataVersion());
 
@@ -883,9 +854,8 @@ public class TableWriter implements Closeable {
             if (keyIndex < 0) {
                 int slavePartitionIndex = hash.valueAt(keyIndex);
                 long p = slaveTxData + getPartitionTableIndexOffset(symbolsCount, slavePartitionIndex);
-                if (
-                        Unsafe.getUnsafe().getLong(p + 16) == txFile.getPartitionNameTxn(i)
-                ) {
+                // check if partition name txn is the same
+                if (Unsafe.getUnsafe().getLong(p + 16) == txFile.getPartitionNameTxn(i)) {
                     // this is the same partition roughly
                     final long theirSize = slavePartitionIndex / 4 < theirLast ?
                             Unsafe.getUnsafe().getLong(p + 8) :
@@ -894,7 +864,14 @@ public class TableWriter implements Closeable {
                     if (theirSize != ourSize) {
                         if (theirSize < ourSize) {
                             // send append section
-                            model.addPartitionAction(1, ts, theirSize, ourSize - theirSize);
+                            model.addPartitionAction(
+                                    1,
+                                    ts,
+                                    theirSize,
+                                    ourSize - theirSize,
+                                    txFile.getPartitionNameTxn(i),
+                                    txFile.getPartitionDataTxn(i)
+                            );
                         } else {
                             LOG.error()
                                     .$("slave partition is larger than that on master [table=").$(tableName)
@@ -903,12 +880,98 @@ public class TableWriter implements Closeable {
                         }
                     }
                 } else {
-                    model.addPartitionAction(0, ts, 0, ourSize);
+                    // partition name txn is different, partition mutated
+                    model.addPartitionAction(
+                            0,
+                            ts,
+                            0,
+                            ourSize,
+                            txFile.getPartitionNameTxn(i),
+                            txFile.getPartitionDataTxn(i)
+                    );
                 }
             } else {
                 // send whole partition
-                model.addPartitionAction(0, ts, 0, ourSize);
+                model.addPartitionAction(
+                        0,
+                        ts,
+                        0,
+                        ourSize,
+                        txFile.getPartitionNameTxn(i),
+                        txFile.getPartitionDataTxn(i)
+                );
             }
+        }
+
+        slaveMetaMem.of(slaveMetaData, slaveMetaDataSize);
+
+        final LowerCaseCharSequenceIntHashMap slaveColumnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
+        // create column name - index map
+        // We will rely on this writer's metadata to convert CharSequence instances
+        // of column names to string in the map. The assumption here that most of the time
+        // column names will be the same
+
+        int slaveColumnCount = slaveMetaMem.getInt(TableUtils.META_OFFSET_COUNT);
+        long offset = TableUtils.getColumnNameOffset(slaveColumnCount);
+
+        // don't create strings in this loop, we already have them in columnNameIndexMap
+        for (int i = 0; i < slaveColumnCount; i++) {
+            final CharSequence name = slaveMetaMem.getStr(offset);
+            int ourColumnIndex = this.metadata.getColumnIndexQuiet(name);
+            if (ourColumnIndex > -1) {
+                slaveColumnNameIndexMap.put(this.metadata.getColumnName(ourColumnIndex), i);
+            } else {
+                slaveColumnNameIndexMap.put(Chars.toString(name), i);
+            }
+            offset += Vm.getStorageLength(name);
+        }
+
+        final long pTransitionIndex = TableUtils.createTransitionIndex(
+                metaMem,
+                slaveMetaMem,
+                slaveColumnCount,
+                slaveColumnNameIndexMap
+        );
+
+        try {
+            final long pIndexBase = pTransitionIndex + 8;
+
+            int addedColumnMetadataIndex = -1;
+            for (int i = 0; i < metadata.getColumnCount(); i++) {
+
+                final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L) - 1;
+
+                if (copyFrom == i) {
+                    // It appears that column hasn't changed its position. There are three possibilities here:
+                    // 1. Column has been deleted and re-added by the same name. We must check if file
+                    //    descriptor is still valid. If it isn't, reload the column from disk
+                    // 2. Column has been forced out of the reader via closeColumnForRemove(). This is required
+                    //    on Windows before column can be deleted. In this case we must check for marker
+                    //    instance and the column from disk
+                    // 3. Column hasn't been altered, and we can skip to next column.
+                    continue;
+                }
+
+                if (copyFrom > -1) {
+                    int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4) - 1;
+                    if (copyTo == -1) {
+                        model.addColumnMetaAction(TableReplayModel.COLUMN_META_ACTION_REMOVE, i, copyTo);
+                        model.addColumnMetaAction(TableReplayModel.COLUMN_META_ACTION_MOVE, copyFrom, i);
+                    } else {
+                        model.addColumnMetaAction(TableReplayModel.COLUMN_META_ACTION_MOVE, copyFrom, copyTo + 1);
+                    }
+                } else {
+                    // new column
+                    model.addColumnMetadata(metadata.getColumnQuick(i));
+                    model.addColumnMetaAction(TableReplayModel.COLUMN_META_ACTION_ADD, ++addedColumnMetadataIndex, i);
+                }
+            }
+        } finally {
+            TableUtils.freeTransitionIndex(pTransitionIndex);
+        }
+
+        if (model.getTableAction() != 0 || model.getPartitionCount() > 0) {
+            enableTransactionLog();
         }
 
         return model;
@@ -2162,6 +2225,60 @@ public class TableWriter implements Closeable {
             freeTempMem();
             LOG.info().$("closed '").utf8(tableName).$('\'').$();
         }
+    }
+
+    private void enableTransactionLog() {
+        final long txn = getTxn();
+
+        LOG.info()
+                .$("enabling transaction log [table=").$(tableName)
+                .$(", txn=").$(txn)
+                .I$();
+
+        txnScoreboard.acquireTxn(txn);
+
+        try {
+            // copy txn file aside, so we know where data is for this transaction
+            path.concat(TXN_FILE_NAME).put('.').put(txn).$();
+            txFile.copyTo(path, LOG);
+            path.trimTo(rootLen);
+
+            path.concat("log").put('.').put(txn);
+            int plen = path.length();
+
+            // create dir
+            if (ff.mkdirs(path.slash$(), configuration.getMkDirMode()) == 0) {
+                for (int i = 0; i < columnCount; i++) {
+                    final CharSequence name = metadata.getColumnName(i);
+                    final int primaryIndex = getPrimaryColumnIndex(i);
+                    final int secondaryIndex = getSecondaryColumnIndex(i);
+                    final MemoryMAR logMem1 = logColumns.getQuick(primaryIndex);
+                    logMem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
+
+                    final MemoryLogAImpl spliceColumn1 = spliceColumns.getQuick(primaryIndex);
+                    spliceColumn1.of(logMem1, row.activeColumns.getQuick(primaryIndex));
+
+                    final MemoryMAR logMem2 = logColumns.getQuick(secondaryIndex);
+                    if (logMem2 != null) {
+                        logMem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
+
+                        final MemoryLogAImpl spliceColumn2 = spliceColumns.getQuick(secondaryIndex);
+                        spliceColumn2.of(logMem2, row.activeColumns.getQuick(secondaryIndex));
+                    }
+                }
+                row.activeColumns = spliceColumns;
+            } else {
+                throw CairoException.instance(ff.errno()).put("Could not create directory: ").put(path);
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
+
+        LOG.info()
+                .$("enabled transaction log [table=").$(tableName)
+                .$(", txn=").$(txn)
+                .I$();
+
     }
 
     private void finishMetaSwapUpdate() {

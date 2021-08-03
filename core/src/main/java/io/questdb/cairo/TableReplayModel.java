@@ -24,41 +24,72 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.LongList;
-import io.questdb.std.Mutable;
-import io.questdb.std.Sinkable;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
 public class TableReplayModel implements Mutable, Sinkable {
 
+    public static final int TABLE_ACTION_KEEP = 0;
+    public static final int TABLE_ACTION_TRUNCATE = 1;
+    public static final int COLUMN_META_ACTION_REPLACE = 1;
+    public static final int COLUMN_META_ACTION_MOVE = 2;
+    public static final int COLUMN_META_ACTION_REMOVE = 3;
+    public static final int COLUMN_META_ACTION_ADD = 4;
     static final String[] ACTION_NAMES = {
             "whole",
             "append"
     };
+    private static final int SLOTS_PER_PARTITION = 8;
+    private static final int SLOTS_PER_COLUMN_META_INDEX = 2;
+    private static final int SLOTS_PER_COLUMN_DATA_ACTION = 4;
 
-    private final LongList partitionActions = new LongList();
-    private int tableOperation = 0;
+    private final LongList partitions = new LongList();
+    private final LongList columnMetaIndex = new LongList();
+    private final LongList columnDataActions = new LongList();
+    private final ObjList<TableColumnMetadata> addedColumnMetadata = new ObjList<>();
+
+    private int tableAction = 0;
     private long dataVersion;
 
-    public void addPartitionAction(long action, long timestamp, long startRow, long rowCount) {
-        partitionActions.add(action);
-        partitionActions.add(timestamp);
-        partitionActions.add(startRow);
-        partitionActions.add(rowCount);
+    public void addColumnDataAction(int index, long offset, long size, long top) {
+        columnDataActions.add(index);
+        columnDataActions.add(offset);
+        columnDataActions.add(size);
+        columnDataActions.add(top);
+    }
+
+    public void addColumnMetaAction(int action, int from, int to) {
+        columnMetaIndex.add(action);
+        columnMetaIndex.add(Numbers.encodeLowHighInts(from, to));
+    }
+
+    public void addColumnMetadata(TableColumnMetadata columnMetadata) {
+        this.addedColumnMetadata.add(columnMetadata);
+    }
+
+    public void addPartitionAction(
+            long action,
+            long timestamp,
+            long startRow,
+            long rowCount,
+            long nameTxn,
+            long dataTxn
+    ) {
+        partitions.add(action);
+        partitions.add(timestamp);
+        partitions.add(startRow);
+        partitions.add(rowCount);
+        partitions.add(nameTxn);
+        partitions.add(dataTxn);
+        partitions.add(0); // reserved
+        partitions.add(0); // reserved
     }
 
     @Override
     public void clear() {
-        partitionActions.clear();
-        tableOperation = 0;
-    }
-
-    public int getTableOperation() {
-        return tableOperation;
-    }
-
-    public void setTableOperation(int tableOperation) {
-        this.tableOperation = tableOperation;
+        partitions.clear();
+        columnMetaIndex.clear();
+        tableAction = 0;
     }
 
     public long getDataVersion() {
@@ -69,25 +100,124 @@ public class TableReplayModel implements Mutable, Sinkable {
         this.dataVersion = dataVersion;
     }
 
+    public int getPartitionCount() {
+        return partitions.size() / SLOTS_PER_PARTITION;
+    }
+
+    public int getTableAction() {
+        return tableAction;
+    }
+
+    public void setTableAction(int tableAction) {
+        this.tableAction = tableAction;
+    }
+
     @Override
     public void toSink(CharSink sink) {
 
-        switch (tableOperation) {
-            case 0:
-                sink.put("keep");
+        sink.put('{');
+        sink.putQuoted("table").put(':').put('{');
+
+        sink.putQuoted("action").put(':');
+
+        switch (tableAction) {
+            case TABLE_ACTION_KEEP:
+                sink.putQuoted("keep");
                 break;
-            case 1:
-                sink.put("truncate");
+            case TABLE_ACTION_TRUNCATE:
+                sink.putQuoted("truncate");
+                break;
+            case 2:
+                sink.putQuoted("replace");
                 break;
         }
-        sink.put(" dataVersion=").put(dataVersion).put('\n');
-        for (int i = 0, n = partitionActions.size(); i < n; i += 4) {
-            sink
-                    .put(ACTION_NAMES[(int) partitionActions.getQuick(i)]).put(' ')
-                    .put("ts=").putISODate(partitionActions.getQuick(i + 1)).put(' ')
-                    .put("startRow=").put(partitionActions.getQuick(i + 2)).put(' ')
-                    .put("rowCount=").put(partitionActions.getQuick(i + 3))
-                    .put('\n');
+
+        sink.put(',');
+
+        sink.putQuoted("dataVersion").put(':').put(dataVersion);
+
+        sink.put('}');
+
+        sink.put(',');
+
+        sink.putQuoted("partitions").put(':').put('[');
+
+        for (int i = 0, n = partitions.size(); i < n; i += SLOTS_PER_PARTITION) {
+            if (i > 0) {
+                sink.put(',');
+            }
+            sink.put('{');
+            sink.putQuoted("action").put(':').putQuoted(ACTION_NAMES[(int) partitions.getQuick(i)]).put(',');
+            sink.putQuoted("ts").put(':').put('"').putISODate(partitions.getQuick(i + 1)).put('"').put(',');
+            sink.putQuoted("startRow").put(':').put(partitions.getQuick(i + 2)).put(',');
+            sink.putQuoted("rowCount").put(':').put(partitions.getQuick(i + 3)).put(',');
+            sink.putQuoted("nameTxn").put(':').put(partitions.getQuick(i + 4)).put(',');
+            sink.putQuoted("dataTxn").put(':').put(partitions.getQuick(i + 5)).put(',');
+            sink.put('}');
         }
+
+        sink.put(']');
+
+        sink.put(',');
+
+        sink.putQuoted("columnMetaData").put(':').put('[');
+
+        for (int i = 0, n = addedColumnMetadata.size(); i < n; i++) {
+            if (i > 0) {
+                sink.put(',');
+            }
+
+            sink.put('{');
+
+            final TableColumnMetadata metadata = addedColumnMetadata.getQuick(i);
+            sink.putQuoted("name").put(':').putQuoted(metadata.getName()).put(',');
+            sink.putQuoted("type").put(':').putQuoted(ColumnType.nameOf(metadata.getType())).put(',');
+            sink.putQuoted("index").put(':').put(metadata.isIndexed()).put(',');
+            sink.putQuoted("indexCapacity").put(':').put(metadata.getIndexValueBlockCapacity());
+
+            sink.put('}');
+        }
+
+        sink.put(']');
+
+        sink.put(',');
+
+        sink.putQuoted("columnMetaIndex").put(':').put('[');
+
+        for (int i = 0, n = columnMetaIndex.size(); i < n; i += SLOTS_PER_COLUMN_META_INDEX) {
+
+            if (i > 0) {
+                sink.put(',');
+            }
+
+            int action = (int) columnMetaIndex.getQuick(i);
+            sink.put('{');
+            sink.putQuoted("action").put(':');
+            switch (action) {
+                case COLUMN_META_ACTION_REPLACE:
+                    sink.putQuoted("replace");
+                    break;
+                case COLUMN_META_ACTION_MOVE:
+                    sink.putQuoted("move");
+                    break;
+                case COLUMN_META_ACTION_REMOVE:
+                    sink.putQuoted("remove");
+                    break;
+                case COLUMN_META_ACTION_ADD:
+                    sink.putQuoted("add");
+                    break;
+                default:
+                    break;
+            }
+            sink.put(',');
+
+            long mix = columnMetaIndex.getQuick(i + 1);
+            sink.putQuoted("fromIndex").put(':').put(Numbers.decodeLowInt(mix)).put(',');
+            sink.putQuoted("toIndex").put(':').put(Numbers.decodeHighInt(mix));
+
+            sink.put('}');
+        }
+        sink.put(']');
+        sink.put('}');
     }
 }
