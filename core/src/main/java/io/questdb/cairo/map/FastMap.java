@@ -139,7 +139,8 @@ public class FastMap implements Map {
                         offset += Long256.BYTES;
                         break;
                     case ColumnType.GEOHASH:
-                        offset += ColumnType.sizeOf(columnType);
+                        // Geohashes travel as Longs inside QuestDB, regardless of the size
+                        offset += 8;
                         break;
                     default:
                         close();

@@ -185,6 +185,11 @@ final class FastMapRecord implements MapRecord {
     }
 
     @Override
+    public long getGeoHash(int columnIndex) {
+        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
+    }
+
+    @Override
     public void getLong256(int columnIndex, CharSink sink) {
         long address = addressOfColumn(columnIndex);
         final long a = Unsafe.getUnsafe().getLong(address);

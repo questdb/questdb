@@ -51,6 +51,7 @@ public class FastMapTest extends AbstractCairoTest {
         keyTypes.add(ColumnType.STRING);
         keyTypes.add(ColumnType.BOOLEAN);
         keyTypes.add(ColumnType.DATE);
+        keyTypes.add(ColumnType.geohashWithPrecision(3));
 
 
         valueTypes.add(ColumnType.BYTE);
@@ -80,6 +81,7 @@ public class FastMapTest extends AbstractCairoTest {
                 }
                 key.putBool(rnd.nextBoolean());
                 key.putDate(rnd.nextLong());
+                key.putLong(rnd.nextLong());
 
 
                 MapValue value = key.createValue();
@@ -93,6 +95,7 @@ public class FastMapTest extends AbstractCairoTest {
                 value.putDouble(5, rnd.nextDouble());
                 value.putBool(6, rnd.nextBoolean());
                 value.putDate(7, rnd.nextLong());
+                value.putLong(8, rnd.nextLong());
             }
 
 
@@ -114,6 +117,7 @@ public class FastMapTest extends AbstractCairoTest {
                 }
                 key.putBool(rnd.nextBoolean());
                 key.putDate(rnd.nextLong());
+                key.putLong(rnd.nextLong());
 
 
                 MapValue value = key.createValue();
@@ -127,6 +131,7 @@ public class FastMapTest extends AbstractCairoTest {
                 Assert.assertEquals(rnd.nextDouble(), value.getDouble(5), 0.000000001d);
                 Assert.assertEquals(rnd.nextBoolean(), value.getBool(6));
                 Assert.assertEquals(rnd.nextLong(), value.getDate(7));
+                Assert.assertEquals(rnd.nextLong(), value.getLong(8));
             }
 
 
@@ -696,36 +701,39 @@ public class FastMapTest extends AbstractCairoTest {
     private void assertCursor1(Rnd rnd, RecordCursor cursor) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            Assert.assertEquals(rnd.nextByte(), record.getByte(8));
-            Assert.assertEquals(rnd.nextShort(), record.getShort(9));
-            Assert.assertEquals(rnd.nextInt(), record.getInt(10));
-            Assert.assertEquals(rnd.nextLong(), record.getLong(11));
-            Assert.assertEquals(rnd.nextFloat(), record.getFloat(12), 0.000000001f);
-            Assert.assertEquals(rnd.nextDouble(), record.getDouble(13), 0.000000001d);
+            int col = 9;
+            Assert.assertEquals(rnd.nextByte(), record.getByte(col++));
+            Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
+            Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getLong(col++));
+            Assert.assertEquals(rnd.nextFloat(), record.getFloat(col++), 0.000000001f);
+            Assert.assertEquals(rnd.nextDouble(), record.getDouble(col++), 0.000000001d);
 
 
             if ((rnd.nextPositiveInt() % 4) == 0) {
-                Assert.assertNull(record.getStr(14));
-                Assert.assertEquals(-1, record.getStrLen(14));
+                Assert.assertNull(record.getStr(col));
+                Assert.assertEquals(-1, record.getStrLen(col++));
             } else {
                 CharSequence expected = rnd.nextChars(rnd.nextPositiveInt() % 16);
-                TestUtils.assertEquals(expected, record.getStr(14));
+                TestUtils.assertEquals(expected, record.getStr(col++));
             }
 
-            Assert.assertEquals(rnd.nextBoolean(), record.getBool(15));
-            Assert.assertEquals(rnd.nextLong(), record.getDate(16));
+            Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getDate(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getGeoHash(col));
 
 
             // value part, it comes first in record
-
-            Assert.assertEquals(rnd.nextByte(), record.getByte(0));
-            Assert.assertEquals(rnd.nextShort(), record.getShort(1));
-            Assert.assertEquals(rnd.nextInt(), record.getInt(2));
-            Assert.assertEquals(rnd.nextLong(), record.getLong(3));
-            Assert.assertEquals(rnd.nextFloat(), record.getFloat(4), 0.000000001f);
-            Assert.assertEquals(rnd.nextDouble(), record.getDouble(5), 0.000000001d);
-            Assert.assertEquals(rnd.nextBoolean(), record.getBool(6));
-            Assert.assertEquals(rnd.nextLong(), record.getDate(7));
+            col = 0;
+            Assert.assertEquals(rnd.nextByte(), record.getByte(col++));
+            Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
+            Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getLong(col++));
+            Assert.assertEquals(rnd.nextFloat(), record.getFloat(col++), 0.000000001f);
+            Assert.assertEquals(rnd.nextDouble(), record.getDouble(col++), 0.000000001d);
+            Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getDate(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getGeoHash(col));
         }
     }
 
