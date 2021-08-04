@@ -121,6 +121,10 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         return content;
     }
 
+    public CharSequence peek() {
+        return next;
+    }
+
     public int getPosition() {
         return _pos;
     }

@@ -89,7 +89,7 @@ public class GeoHashNative {
         if (lng < -180.0 || lng > 180.0) {
             throw NumericException.INSTANCE;
         }
-        assert bits > 0 && bits <= GeoHashNative.MAX_BITS_LENGTH;
+        assert bits > 0 && bits <= MAX_BITS_LENGTH;
         double minLat = -90, maxLat = 90;
         double minLng = -180, maxLng = 180;
         long result = 0;
@@ -118,7 +118,7 @@ public class GeoHashNative {
     }
 
     public static long fromBitString(CharSequence bits) throws NumericException {
-        if (bits.length() > 60) {
+        if (bits.length() > MAX_BITS_LENGTH) {
             throw NumericException.INSTANCE;
         }
         long result = 0;
@@ -137,7 +137,7 @@ public class GeoHashNative {
 
     public static void toBitString(long hash, int bits, CharSink sink) {
         if (hash != GeoHashExtra.NULL) {
-            assert bits > 0 && bits <= GeoHashNative.MAX_BITS_LENGTH;
+            assert bits > 0 && bits <= MAX_BITS_LENGTH;
             for (int i = bits - 1; i >= 0; --i) {
                 sink.put(((hash >> i) & 1) == 1? '1' : '0');
             }
@@ -163,7 +163,7 @@ public class GeoHashNative {
     }
 
     public static int hashSize(long hashz) {
-        return (int) (hashz >>> 60);
+        return (int) (hashz >>> MAX_BITS_LENGTH);
     }
 
     public static long toHashWithSize(long hash, int length) {

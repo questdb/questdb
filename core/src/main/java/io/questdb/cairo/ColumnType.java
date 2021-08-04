@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
@@ -216,7 +217,7 @@ public final class ColumnType {
 
         StringSink sink = new StringSink();
 
-        for (int b = 1; b <= 60; b++) {
+        for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
             sink.clear();
 
             if (b % 5 != 0) {

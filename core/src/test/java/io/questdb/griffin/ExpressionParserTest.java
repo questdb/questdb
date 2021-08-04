@@ -403,7 +403,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testCastGeoHashCastMissingSize1() {
         assertFail("cast('sp052w92' as geohash())",
                 27,
-                "GEOHASH type precision is missing");
+                "invalid GEOHASH, invalid type precision");
     }
 
     @Test
@@ -460,14 +460,14 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testGeoHashFail1() {
         assertFail("GEOHASH(",
                 7,
-                "GEOHASH type precision is missing");
+                "invalid GEOHASH, invalid type precision");
     }
 
     @Test
     public void testGeoHashFail2() {
         assertFail("GEOHASH()",
                 8,
-                "GEOHASH type precision is missing");
+                "invalid GEOHASH, invalid type precision");
     }
 
     @Test

@@ -163,6 +163,23 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNull9() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table geohash as (" +
+                            "select " +
+                            "    cast(null as GeOhAsH(50b)) as geohash1, " +
+                            "    cast('sp052w92' as GeOhAsH(2c)) as geohash2 " +
+                            "from long_sequence(1)" +
+                            ")",
+                    sqlExecutionContext);
+            assertSql(
+                    "geohash where geohash1 = geohash2",
+                    "geohash1\tgeohash2\n"
+            );
+        });
+    }
+
+    @Test
     public void testConstConst1() {
         for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
             args.clear();
@@ -185,11 +202,21 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testConstConst3() {
+        for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
+            args.clear();
+            args.add(GeoHashConstant.newInstance(1, ColumnType.geohashWithPrecision(b)));
+            args.add(GeoHashConstant.newInstance(1, ColumnType.geohashWithPrecision(((b + 1) % 60) + 1)));
+            createEqFunctionAndAssert(false);
+        }
+    }
+
+    @Test
     public void testConstHalfConst1() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table geohash as (" +
                     "select " +
-                    "    cast('sp052w92p1' as GeOhAsH(50b)) as geohash from long_sequence(1)" +
+                    "    cast('sp052w92p1' as GeOhAsH(50b)) geohash from long_sequence(1)" +
                     ")",
                     sqlExecutionContext);
             assertSql(

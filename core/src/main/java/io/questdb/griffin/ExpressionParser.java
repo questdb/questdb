@@ -292,24 +292,12 @@ class ExpressionParser {
                     case 'G':
                         if (SqlKeywords.isGeoHashKeyword(tok)) {
                             CharSequence originalGeoHashKeyword = GenericLexer.immutableOf(tok);
-                            tok = SqlUtil.fetchNext(lexer);
-                            if (tok == null || tok.charAt(0) != '(') {
-                                if (tok != null) {
-                                    lexer.unparse();
-                                    if (Chars.toLowerCaseAscii(tok.charAt(0)) == 'f' && SqlKeywords.isFromKeyword(tok)) {
-                                        tok = originalGeoHashKeyword;
-                                        processDefaultBranch = true;
-                                        break;
-                                    }
-                                }
-                                thisBranch = BRANCH_LITERAL;
-                                opStack.push(expressionNodePool.next().of(
-                                        ExpressionNode.LITERAL,
-                                        originalGeoHashKeyword,
-                                        Integer.MIN_VALUE,
-                                        position));
+                            CharSequence peek = lexer.peek();
+                            if (peek == null || peek.charAt(0) != '(') {
+                                processDefaultBranch = true;
                                 break;
                             }
+                            assert SqlUtil.fetchNext(lexer).charAt(0) == '(';
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok != null && tok.charAt(0) != ')') {
                                 SqlParser.parseGeoHashSize(lexer.lastTokenPosition(), tok);
@@ -331,8 +319,7 @@ class ExpressionParser {
                                     throw SqlException.$(lexer.lastTokenPosition(), "invalid GEOHASH, missing ')'");
                                 }
                             } else {
-                                throw SqlException.position(lexer.lastTokenPosition())
-                                        .put("GEOHASH type precision is missing");
+                                throw SqlException.$(lexer.lastTokenPosition(),"invalid GEOHASH, invalid type precision");
                             }
                             thisBranch = BRANCH_GEOHASH_SIZE;
                         } else {
