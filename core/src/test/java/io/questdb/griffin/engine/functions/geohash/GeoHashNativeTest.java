@@ -51,12 +51,19 @@ public class GeoHashNativeTest {
     }
 
     @Test
-    public void testFromString() throws NumericException {
+    public void testFromStringNl() throws NumericException {
         final long gh = GeoHashNative.fromCoordinates(lat, lon, 8 * 5);
         sink.clear();
         GeoHashNative.toString(gh, 8, sink);
         final long gh1 = GeoHashNative.fromStringNl(sink);
         Assert.assertEquals(gh, gh1);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromString() throws NumericException {
+        sink.clear();
+        sink.put("@s");
+        GeoHashNative.fromString(sink.toString(), 2);
     }
 
     @Test
@@ -132,6 +139,17 @@ public class GeoHashNativeTest {
 
         GeoHashNative.fromStringToBits(strh, 0, strh.size(), bits);
         Assert.assertEquals(2, bits.size());
+    }
+
+    @Test
+    public void testFromStringToBitsInvalidStrings() {
+        final int cap = 12;
+        DirectLongList bits = new DirectLongList(cap * 2); // hash and mask
+        CharSequenceHashSet strh = new CharSequenceHashSet();
+        strh.add("");
+        strh.add("a medium sized banana");
+        GeoHashNative.fromStringToBits(strh, 0, strh.size(), bits);
+        Assert.assertEquals(0, bits.size());
     }
 
     @Test
