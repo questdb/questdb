@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 package io.questdb.cairo;
+import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
@@ -153,7 +154,7 @@ public class GeoHashExtraTest {
                 "GEOHASH(59b) -> 15118 (59)\n" +
                 "GEOHASH(12c) -> 15374 (60)\n";
         StringSink everything = new StringSink();
-        for (int b = 1; b <= 60; b++) {
+        for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
             int type = ColumnType.geohashWithPrecision(b);
             String name = ColumnType.nameOf(type);
             everything.put(name)
