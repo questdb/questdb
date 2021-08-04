@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashExtra;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -34,7 +34,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GeoHashFunction;
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.IntList;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -55,7 +54,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         int bits = args.getQuick(0).getInt(null);
-        if (bits < 1 || bits > GeoHashNative.MAX_BITS_LENGTH) {
+        if (bits < 1 || bits > GeoHashes.MAX_BITS_LENGTH) {
             throw SqlException.$(argPositions.getQuick(0), "precision must be in [1..60] range");
         }
         return new RndFunction(bits);
@@ -91,10 +90,10 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
             double x = rnd.nextDouble() * 180.0 - 90.0;
             double y = rnd.nextDouble() * 360.0 - 180.0;
             try {
-                return GeoHashNative.fromCoordinates(x, y, this.bits);
+                return GeoHashes.fromCoordinates(x, y, this.bits);
             } catch (NumericException e) {
                 // Should never happen
-                return GeoHashExtra.NULL;
+                return GeoHashes.NULL;
             }
         }
 

@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashExtra;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.AbstractGriffinTest;
@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.GeoHashFunction;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.functions.constants.GeoHashConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -91,7 +90,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
         args.add(new GeoHashFunction(ColumnType.geohashWithPrecision(1)) {
             @Override
             public long getLong(Record rec) {
-                return GeoHashExtra.NULL;
+                return GeoHashes.NULL;
             }
         });
         createEqFunctionAndAssert(false, true);
@@ -102,7 +101,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
         args.add(new GeoHashFunction(ColumnType.geohashWithPrecision(1)) {
             @Override
             public long getLong(Record rec) {
-                return GeoHashExtra.NULL;
+                return GeoHashes.NULL;
             }
         });
         args.add(NullConstant.NULL);
@@ -112,16 +111,16 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNull3() {
         createEqFunctionAndAssert(
-                GeoHashExtra.NULL, ColumnType.geohashWithPrecision(1),
-                GeoHashExtra.NULL, ColumnType.geohashWithPrecision(1),
+                GeoHashes.NULL, ColumnType.geohashWithPrecision(1),
+                GeoHashes.NULL, ColumnType.geohashWithPrecision(1),
                 true);
     }
 
     @Test
     public void testNull4() {
         createEqFunctionAndAssert(
-                GeoHashExtra.NULL, ColumnType.geohashWithPrecision(12),
-                GeoHashExtra.NULL, ColumnType.geohashWithPrecision(1),
+                GeoHashes.NULL, ColumnType.geohashWithPrecision(12),
+                GeoHashes.NULL, ColumnType.geohashWithPrecision(1),
                 true);
     }
 
@@ -135,7 +134,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNull6() {
         args.add(NullConstant.NULL);
-        for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
             args.setPos(1);
             args.add(nullConstantForBitsPrecision(b));
             createEqFunctionAndAssert(true);
@@ -144,7 +143,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testNull7() {
-        for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
             args.clear();
             args.add(nullConstantForBitsPrecision(b));
             args.add(NullConstant.NULL);
@@ -154,7 +153,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testNull8() {
-        for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
             args.clear();
             args.add(nullConstantForBitsPrecision(b));
             args.add(nullConstantForBitsPrecision(((b + 1) % 60) + 1));
@@ -181,7 +180,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testConstConst1() {
-        for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
             args.clear();
             int type = ColumnType.geohashWithPrecision(b);
             args.add(GeoHashConstant.newInstance(0, type));
@@ -192,7 +191,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testConstConst2() {
-        for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
             args.clear();
             int type = ColumnType.geohashWithPrecision(b);
             args.add(GeoHashConstant.newInstance(1, type));
@@ -203,7 +202,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testConstConst3() {
-        for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
             args.clear();
             args.add(GeoHashConstant.newInstance(1, ColumnType.geohashWithPrecision(b)));
             args.add(GeoHashConstant.newInstance(1, ColumnType.geohashWithPrecision(((b + 1) % 60) + 1)));

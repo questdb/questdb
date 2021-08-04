@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -1658,7 +1657,7 @@ public final class SqlParser {
                 throw SqlException.position(position)
                         .put("invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
         }
-        if (size <= 0 || size > GeoHashNative.MAX_BITS_LENGTH) {
+        if (size <= 0 || size > GeoHashes.MAX_BITS_LENGTH) {
             throw SqlException.position(position)
                     .put("invalid GEOHASH type precision range, mast be [1, 60] bits, provided=")
                     .put(size);

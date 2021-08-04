@@ -42,7 +42,6 @@ import io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory;
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.griffin.engine.functions.groupby.*;
 import io.questdb.griffin.engine.functions.math.*;
 import io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory;
@@ -325,11 +324,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testExplicitConstantGeoHash() throws SqlException, NumericException {
-        long hash = GeoHashNative.fromCoordinates(39.9830487269087, 0.02405432769681642, 6 * 5);
+        long hash = GeoHashes.fromCoordinates(39.9830487269087, 0.02405432769681642, 6 * 5);
         testConstantPassThru(new GeoHashConstant(hash, ColumnType.GEOHASH));
         functions.clear();
         sink.clear();
-        GeoHashNative.toString(hash, 6, sink);
+        GeoHashes.toString(hash, 6, sink);
     }
 
     @Test

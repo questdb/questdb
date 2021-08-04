@@ -28,7 +28,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -498,7 +497,7 @@ public class FastMapTest extends AbstractCairoTest {
             try (TableWriter writer = new TableWriter(configuration, "x")) {
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row row = writer.newRow();
-                    long rndGeohash = GeoHashNative.fromCoordinates(rnd.nextDouble() * 180 - 90, rnd.nextDouble() * 360 - 180, precisionBits);
+                    long rndGeohash = GeoHashes.fromCoordinates(rnd.nextDouble() * 180 - 90, rnd.nextDouble() * 360 - 180, precisionBits);
                     row.putLong(0, i);
                     row.putGeoHash(1, rndGeohash);
                     row.append();

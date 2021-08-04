@@ -26,12 +26,11 @@ package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.GeoHashExtra;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.BaseFunctionFactoryTest;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.NumericException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -64,10 +63,10 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
         Assert.assertTrue(function.isConstant());
         Assert.assertNotEquals(ColumnType.GEOHASH, function.getType());
         Assert.assertEquals(ColumnType.geohashWithPrecision(expectedGeohash.length() * 5), function.getType());
-        Assert.assertEquals(expectedGeohash.length() * 5, GeoHashExtra.getBitsPrecision(function.getType()));
+        Assert.assertEquals(expectedGeohash.length() * 5, GeoHashes.getBitsPrecision(function.getType()));
         Assert.assertEquals(expectedHash, function.getGeoHash(null));
         Assert.assertEquals(expectedHash, function.getLong(null));
-        Assert.assertEquals(0, GeoHashNative.hashSize(function.getLong(null)));
+        Assert.assertEquals(0, GeoHashes.hashSize(function.getLong(null)));
         assertGeoHashStrEquals(expectedGeohash, function);
     }
 
@@ -85,7 +84,7 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
                         metadata,
                         functionParser);
                 Assert.assertTrue(castExpr, function.isConstant());
-                Assert.assertEquals(castExpr, parsedGeoHashLen * 5, GeoHashExtra.getBitsPrecision(function.getType()));
+                Assert.assertEquals(castExpr, parsedGeoHashLen * 5, GeoHashes.getBitsPrecision(function.getType()));
             }
         }
     }
@@ -93,8 +92,8 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
     @Test
     public void testCastStringToGeoHashSizesBinary() throws SqlException, NumericException {
         String geohash = "sp052w92p1p8ignore";
-        int geohashLen = Math.min(geohash.length(), 12);
-        long fullGeohash = GeoHashNative.fromString(geohash, geohashLen);
+        int geohashLen = 12;
+        long fullGeohash = GeoHashes.fromString(geohash, geohashLen);
         Assert.assertEquals(888340623145993896L, fullGeohash);
         for (int c = 1; c <= geohashLen; c++) {
             String expectedGeohash = geohash.substring(0, c);
@@ -103,7 +102,7 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
                 String castExpr = String.format("cast('%s' as geohash(%sb))", expectedGeohash, b);
                 function = parseFunction(castExpr, metadata, functionParser);
                 Assert.assertTrue(castExpr, function.isConstant());
-                Assert.assertEquals(castExpr, b, GeoHashExtra.getBitsPrecision(function.getType()));
+                Assert.assertEquals(castExpr, b, GeoHashes.getBitsPrecision(function.getType()));
                 Assert.assertEquals(castExpr, fullGeohash >>> (geohashLen * 5 - b), function.getLong(null));
             }
             assertGeoHashStrEquals(expectedGeohash, function);
@@ -116,8 +115,8 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
         Function function = parseFunction(castExpr, metadata, functionParser);
 
         Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(1, GeoHashExtra.getBitsPrecision(function.getType()));
-        Assert.assertEquals(GeoHashExtra.NULL, function.getGeoHash(null));
+        Assert.assertEquals(1, GeoHashes.getBitsPrecision(function.getType()));
+        Assert.assertEquals(GeoHashes.NULL, function.getGeoHash(null));
     }
 
     @Test
@@ -126,8 +125,8 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
         Function function = parseFunction(castExpr, metadata, functionParser);
 
         Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(10, GeoHashExtra.getBitsPrecision(function.getType()));
-        Assert.assertEquals(GeoHashExtra.NULL, function.getGeoHash(null));
+        Assert.assertEquals(10, GeoHashes.getBitsPrecision(function.getType()));
+        Assert.assertEquals(GeoHashes.NULL, function.getGeoHash(null));
     }
 
     @Test
@@ -158,15 +157,15 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
         Function function = parseFunction(castExpr, metadata, functionParser);
 
         Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(5, GeoHashExtra.getBitsPrecision(function.getType()));
-        Assert.assertEquals(GeoHashNative.fromStringNl("s"), function.getGeoHash(null));
+        Assert.assertEquals(5, GeoHashes.getBitsPrecision(function.getType()));
+        Assert.assertEquals(GeoHashes.fromStringNl("s"), function.getGeoHash(null));
     }
 
     private void assertGeoHashStrEquals(String expectedGeohash, Function function) {
         sink.clear();
-        GeoHashNative.toString(
+        GeoHashes.toString(
                 function.getLong(null),
-                GeoHashExtra.getBitsPrecision(function.getType()) / 5,
+                GeoHashes.getBitsPrecision(function.getType()) / 5,
                 sink);
         Assert.assertEquals(expectedGeohash, sink.toString());
     }

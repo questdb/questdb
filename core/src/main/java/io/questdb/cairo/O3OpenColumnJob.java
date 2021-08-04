@@ -2556,16 +2556,16 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             case ColumnType.GEOHASH:
                 switch (ColumnType.sizeOf(columnType)) {
                     case 1:
-                        Vect.memset(addr, count, (byte) GeoHashExtra.NULL);
+                        Vect.memset(addr, count, (byte) GeoHashes.NULL);
                         break;
                     case 2:
-                        Vect.setMemoryShort(addr, (short) GeoHashExtra.NULL, count);
+                        Vect.setMemoryShort(addr, (short) GeoHashes.NULL, count);
                         break;
                     case 4:
-                        Vect.setMemoryInt(addr, (int) GeoHashExtra.NULL, count);
+                        Vect.setMemoryInt(addr, (int) GeoHashes.NULL, count);
                         break;
                     default:
-                        Vect.setMemoryLong(addr, GeoHashExtra.NULL, count);
+                        Vect.setMemoryLong(addr, GeoHashes.NULL, count);
                 }
                 break;
             default:

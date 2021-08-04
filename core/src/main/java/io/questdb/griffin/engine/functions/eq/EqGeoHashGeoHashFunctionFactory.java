@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashExtra;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -64,8 +64,8 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
                 if (geohash1.getType() == geohash2.getType()) {
                     return BooleanConstant.of(hash1 == hash2);
                 }
-                if ((hash1 == GeoHashExtra.NULL || ColumnType.tagOf(geohash1.getType()) == ColumnType.NULL) &&
-                        (hash2 == GeoHashExtra.NULL || ColumnType.tagOf(geohash2.getType()) == ColumnType.NULL)) {
+                if ((hash1 == GeoHashes.NULL || ColumnType.tagOf(geohash1.getType()) == ColumnType.NULL) &&
+                        (hash2 == GeoHashes.NULL || ColumnType.tagOf(geohash2.getType()) == ColumnType.NULL)) {
                     // both values are null, any flavour of null
                     return BooleanConstant.of(true);
                 }
@@ -77,7 +77,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
     }
 
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
-        if (constFunc.getLong(null) == GeoHashExtra.NULL ||
+        if (constFunc.getLong(null) == GeoHashes.NULL ||
                 ColumnType.tagOf(constFunc.getType()) == ColumnType.NULL) {
             return new NullCheckFunc(varFunc);
         }
@@ -120,7 +120,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg.getLong(rec) == GeoHashExtra.NULL || ColumnType.tagOf(arg.getType()) == ColumnType.NULL);
+            return negated != (arg.getLong(rec) == GeoHashes.NULL || ColumnType.tagOf(arg.getType()) == ColumnType.NULL);
         }
     }
 
@@ -152,12 +152,9 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
             if (hash1Type == hash2Type) {
                 return negated != (hash1 == hash2);
             }
-            if ((hash1 == GeoHashExtra.NULL || ColumnType.tagOf(hash1Type) == ColumnType.NULL) &&
-                    (hash2 == GeoHashExtra.NULL || ColumnType.tagOf(hash2Type) == ColumnType.NULL)) {
-                // both values are null, any flavour of null
-                return true;
-            }
-            return false;
+            // both values are null, any flavour of null
+            return (hash1 == GeoHashes.NULL || ColumnType.tagOf(hash1Type) == ColumnType.NULL) &&
+                    (hash2 == GeoHashes.NULL || ColumnType.tagOf(hash2Type) == ColumnType.NULL);
         }
     }
 }

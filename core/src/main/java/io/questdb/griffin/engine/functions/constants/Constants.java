@@ -25,9 +25,8 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashExtra;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.griffin.TypeConstant;
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.ObjList;
 
 public final class Constants {
@@ -50,9 +49,9 @@ public final class Constants {
         Constants.nullConstants.extendAndSet(ColumnType.BINARY, NullBinConstant.INSTANCE);
         Constants.nullConstants.extendAndSet(ColumnType.LONG256, Long256NullConstant.INSTANCE);
 
-        for(int i = 0; i < GeoHashNative.MAX_BITS_LENGTH; i++) {
+        for(int i = 0; i < GeoHashes.MAX_BITS_LENGTH; i++) {
             int type = ColumnType.geohashWithPrecision(i + 1);
-            Constants.nullConstants.extendAndSet(type, GeoHashConstant.newInstance(GeoHashExtra.NULL, type));
+            Constants.nullConstants.extendAndSet(type, GeoHashConstant.newInstance(GeoHashes.NULL, type));
         }
 
         Constants.typeConstants.extendAndSet(ColumnType.INT, IntTypeConstant.INSTANCE);

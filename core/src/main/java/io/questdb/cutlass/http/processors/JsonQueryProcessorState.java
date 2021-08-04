@@ -26,7 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashExtra;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -38,7 +38,6 @@ import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -311,16 +310,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     private void putGeoHashValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         final long l = rec.getGeoHash(col);
-        if (l == GeoHashExtra.NULL) {
+        if (l == GeoHashes.NULL) {
             socket.put("null");
         } else {
             final int columnType = columnTypes.getColumnType(col);
-            final int bitsPrecision = GeoHashExtra.getBitsPrecision(columnType);
+            final int bitsPrecision = GeoHashes.getBitsPrecision(columnType);
             socket.put('\"');
             if (bitsPrecision % 5 == 0) {
-                GeoHashNative.toString(l, bitsPrecision / 5, socket);
+                GeoHashes.toString(l, bitsPrecision / 5, socket);
             } else {
-                GeoHashNative.toBitString(l, bitsPrecision, socket);
+                GeoHashes.toBitString(l, bitsPrecision, socket);
             }
             socket.put('\"');
         }

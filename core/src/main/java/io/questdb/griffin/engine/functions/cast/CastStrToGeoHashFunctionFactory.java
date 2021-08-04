@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.GeoHashExtra;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -34,10 +34,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GeoHashFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.GeoHashConstant;
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.*;
 
-import static io.questdb.griffin.engine.functions.geohash.GeoHashNative.MAX_BITS_LENGTH;
+import static io.questdb.cairo.GeoHashes.MAX_BITS_LENGTH;
 
 public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
     @Override
@@ -60,7 +59,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
     public Function newInstance(int argPosition, int geoType, Function value) throws SqlException {
         if (value.isConstant()) {
             try {
-                int bitsPrecision = GeoHashExtra.getBitsPrecision(geoType);
+                int bitsPrecision = GeoHashes.getBitsPrecision(geoType);
                 assert bitsPrecision > 0 && bitsPrecision < MAX_BITS_LENGTH + 1;
                 return GeoHashConstant.newInstance(
                         getGeoHashImpl(value.getStr(null), argPosition, bitsPrecision),
@@ -77,7 +76,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
 
     private static long getGeoHashImpl(CharSequence value, int position, int typeBits) throws SqlException, NumericException {
         if (value == null || value.length() == 0) {
-            return GeoHashExtra.NULL;
+            return GeoHashes.NULL;
         }
         int actualBits = value.length() * 5;
         if (actualBits < typeBits) {
@@ -85,7 +84,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         }
         // Don't parse full string, it can be over 12 chars and result in overflow
         int parseChars = (typeBits - 1) / 5 + 1;
-        long lvalue = GeoHashNative.fromString(value, parseChars);
+        long lvalue = GeoHashes.fromString(value, parseChars);
         return lvalue >>> (parseChars * 5 - typeBits);
     }
 
@@ -98,7 +97,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
             super(geoType);
             this.arg = arg;
             this.position = position;
-            this.bitsPrecision = GeoHashExtra.getBitsPrecision(geoType);
+            this.bitsPrecision = GeoHashes.getBitsPrecision(geoType);
             assert this.bitsPrecision > 0 && this.bitsPrecision < MAX_BITS_LENGTH + 1;
         }
 
@@ -127,7 +126,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
             try {
                 return getGeoHashImpl(arg.getStr(rec), position, bitsPrecision);
             } catch (SqlException | NumericException e) {
-                return GeoHashExtra.NULL;
+                return GeoHashes.NULL;
             }
         }
     }

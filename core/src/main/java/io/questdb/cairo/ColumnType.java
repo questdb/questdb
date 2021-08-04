@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
@@ -113,13 +112,13 @@ public final class ColumnType {
     }
 
     public static int geohashWithPrecision(int bits) {
-        return GeoHashExtra.setBitsPrecision(ColumnType.GEOHASH, bits);
+        return (ColumnType.GEOHASH & ~(0xFF << 8)) | (bits << 8);
     }
 
-
+    // This method used by row copier assembler
     public static long geohashTruncatePrecision(long value, int fromType, int toType) {
-        final int fromBits = GeoHashExtra.getBitsPrecision(fromType);
-        final int toBits = GeoHashExtra.getBitsPrecision(toType);
+        final int fromBits = GeoHashes.getBitsPrecision(fromType);
+        final int toBits = GeoHashes.getBitsPrecision(toType);
         assert fromBits >= toBits;
         return value >>> (fromBits - toBits);
     }
@@ -171,7 +170,7 @@ public final class ColumnType {
         final int tag = ColumnType.tagOf(columnType);
 
         if (tag == ColumnType.GEOHASH) {
-            return GeoHashExtra.storageSizeInPow2(columnType);
+            return GeoHashes.storageSizeInPow2(columnType);
         }
 
         return TYPE_SIZE_POW2[tag];
@@ -185,7 +184,7 @@ public final class ColumnType {
         }
 
         if (tag == ColumnType.GEOHASH) {
-            return GeoHashExtra.storageSizeInBits(columnType) / Byte.SIZE;
+            return GeoHashes.storageSizeInBits(columnType) / Byte.SIZE;
         }
 
         if (tag < ColumnType.BOOLEAN || tag > ColumnType.PARAMETER) {
@@ -217,7 +216,7 @@ public final class ColumnType {
 
         StringSink sink = new StringSink();
 
-        for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
             sink.clear();
 
             if (b % 5 != 0) {
@@ -225,7 +224,7 @@ public final class ColumnType {
             } else {
                 sink.put("GEOHASH(").put(b/5).put("c)");
             }
-            typeNameMap.put(GeoHashExtra.setBitsPrecision(GEOHASH, b), sink.toString());
+            typeNameMap.put(ColumnType.geohashWithPrecision(b), sink.toString());
         }
 
         nameTypeMap.put("boolean", BOOLEAN);

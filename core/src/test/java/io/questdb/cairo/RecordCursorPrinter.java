@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 import io.questdb.std.Chars;
@@ -157,15 +156,15 @@ public class RecordCursorPrinter {
                 sink.put(r.getLong(i));
                 break;
             case ColumnType.GEOHASH:
-                int bitsPrecision = GeoHashExtra.getBitsPrecision(m.getColumnType(i));
+                int bitsPrecision = GeoHashes.getBitsPrecision(m.getColumnType(i));
                 long hash = r.getGeoHash(i);
-                if (hash == GeoHashExtra.NULL) {
+                if (hash == GeoHashes.NULL) {
                     break; // optimisation
                 }
                 if (bitsPrecision % 5 == 0) {
-                    GeoHashNative.toString(hash, bitsPrecision / 5, sink);
+                    GeoHashes.toString(hash, bitsPrecision / 5, sink);
                 } else {
-                    GeoHashNative.toBitString(hash, bitsPrecision, sink);
+                    GeoHashes.toBitString(hash, bitsPrecision, sink);
                 }
                 break;
             case ColumnType.BYTE:

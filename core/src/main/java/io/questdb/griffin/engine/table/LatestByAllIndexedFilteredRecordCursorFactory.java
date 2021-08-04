@@ -25,10 +25,10 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
@@ -54,7 +54,7 @@ public class LatestByAllIndexedFilteredRecordCursorFactory extends AbstractTreeS
         this.hashes = new DirectLongList(configuration.getSqlLatestByRowCount());
         this.prefixes = new DirectLongList(64);
         // first element is column name
-        GeoHashNative.fromStringToBits(prefixes, 1, prefixes.size(), this.prefixes);
+        GeoHashes.fromStringToBits(prefixes, 1, prefixes.size(), this.prefixes);
 
         if (filter == null) {
             this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, hashColumnIndex, rows, hashes, columnIndexes, this.prefixes);

@@ -26,7 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.GeoHashExtra;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.std.CharSequenceIntHashMap;
@@ -57,35 +57,35 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
             CharSequence type = typeNames.getQuick(i);
             Function function = parseFunction(String.format("cast(null as %s)", type), metadata, functionParser);
             Assert.assertEquals(typeNameToId.get(type), function.getType());
-            Assert.assertEquals(true, function.isConstant());
+            Assert.assertTrue(function.isConstant());
         }
     }
 
     @Test
     public void testCastNullGeoHash1() throws SqlException {
         Function function = parseFunction("cast(null as GeOhAsH(12c))", metadata, functionParser);
-        Assert.assertEquals(true, function.isConstant());
+        Assert.assertTrue(function.isConstant());
         Assert.assertEquals(ColumnType.geohashWithPrecision(12*5), function.getType());
-        Assert.assertEquals(GeoHashExtra.NULL, function.getGeoHash(null));
-        Assert.assertEquals(GeoHashExtra.NULL, function.getLong(null));
+        Assert.assertEquals(GeoHashes.NULL, function.getGeoHash(null));
+        Assert.assertEquals(GeoHashes.NULL, function.getLong(null));
     }
 
     @Test
     public void testCastNullGeoHash2() throws SqlException {
         Function function = parseFunction("cast(null as GeOhAsH(60b))", metadata, functionParser);
-        Assert.assertEquals(true, function.isConstant());
+        Assert.assertTrue(function.isConstant());
         Assert.assertEquals(ColumnType.geohashWithPrecision(60), function.getType());
-        Assert.assertEquals(GeoHashExtra.NULL, function.getGeoHash(null));
-        Assert.assertEquals(GeoHashExtra.NULL, function.getLong(null));
+        Assert.assertEquals(GeoHashes.NULL, function.getGeoHash(null));
+        Assert.assertEquals(GeoHashes.NULL, function.getLong(null));
     }
 
     @Test
     public void testCastNullGeoHash3() throws SqlException {
         Function function = parseFunction("cast('' as GeOhAsH(60b))", metadata, functionParser);
-        Assert.assertEquals(true, function.isConstant());
+        Assert.assertTrue(function.isConstant());
         Assert.assertEquals(ColumnType.geohashWithPrecision(60), function.getType());
-        Assert.assertEquals(GeoHashExtra.NULL, function.getGeoHash(null));
-        Assert.assertEquals(GeoHashExtra.NULL, function.getLong(null));
+        Assert.assertEquals(GeoHashes.NULL, function.getGeoHash(null));
+        Assert.assertEquals(GeoHashes.NULL, function.getLong(null));
     }
 
     @Test

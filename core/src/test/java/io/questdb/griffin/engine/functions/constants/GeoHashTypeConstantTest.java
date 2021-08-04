@@ -25,8 +25,7 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashExtra;
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
+import io.questdb.cairo.GeoHashes;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -34,10 +33,10 @@ public class GeoHashTypeConstantTest {
 
     @Test
     public void testConstant() {
-        for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
             GeoHashTypeConstant constant = GeoHashTypeConstant.getInstanceByPrecision(b);
             Assert.assertEquals(ColumnType.geohashWithPrecision(b), constant.getType());
-            Assert.assertEquals(GeoHashExtra.NULL, constant.getLong(null));
+            Assert.assertEquals(GeoHashes.NULL, constant.getLong(null));
         }
     }
 }

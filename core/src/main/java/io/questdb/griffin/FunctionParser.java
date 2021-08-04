@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashExtra;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;

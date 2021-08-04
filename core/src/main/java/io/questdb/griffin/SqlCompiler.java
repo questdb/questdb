@@ -621,13 +621,10 @@ public class SqlCompiler implements Closeable {
                     final int sizeTo = ColumnType.sizeOf(toColumnType);
                     switch (sizeFrom) {
                         case 1:
-                            switch (sizeTo) {
-                                case 1:
-                                    asm.invokeInterface(rGetByte, 1);
-                                    asm.invokeVirtual(wPutByte);
-                                    break;
-                                default:
-                                    break; // impossible conversion
+                            // impossible conversion
+                            if (sizeTo == 1) {
+                                asm.invokeInterface(rGetByte, 1);
+                                asm.invokeVirtual(wPutByte);
                             }
                             break;
                         case 2:
@@ -720,7 +717,7 @@ public class SqlCompiler implements Closeable {
                         case 0:
                             asm.pop();
                             asm.pop();
-                            asm.iconst((int) GeoHashExtra.NULL);
+                            asm.iconst((int) GeoHashes.NULL);
                             switch (sizeTo) {
                                 case 1:
                                     asm.invokeVirtual(wPutByte);
@@ -1074,7 +1071,7 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.position(lexer.getPosition())
                                 .put("invalid GEOHASH type literal, expected ')'");
                     }
-                    type = GeoHashExtra.setBitsPrecision(type, geosizeBits);
+                    type = ColumnType.geohashWithPrecision(geosizeBits);
                 } else {
                     throw SqlException.position(lexer.lastTokenPosition())
                             .put("missing GEOHASH precision");
@@ -2446,8 +2443,8 @@ public class SqlCompiler implements Closeable {
             if (ColumnType.GEOHASH == ColumnType.tagOf(columnType)) {
                 switch (ColumnType.tagOf(function.getType())) {
                     case ColumnType.GEOHASH:
-                        int typeBits = GeoHashExtra.getBitsPrecision(columnType);
-                        int funcBits = GeoHashExtra.getBitsPrecision(function.getType());
+                        int typeBits = GeoHashes.getBitsPrecision(columnType);
+                        int funcBits = GeoHashes.getBitsPrecision(function.getType());
                         if (funcBits < typeBits) {
                             throw SqlException.$(functionPosition, "GEOHASH does not have enough precision");
                         }

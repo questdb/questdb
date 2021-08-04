@@ -25,7 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
+import io.questdb.cairo.GeoHashes;
 import org.junit.Test;
 
 import static io.questdb.griffin.InsertNullTest.expectedNullInserts;
@@ -72,7 +72,7 @@ public class InsertNullGeoHashTest extends AbstractGriffinTest {
     private void assertGeoHashQueryForAllValidBitSizes(String queryExtra,
                                                        int expectedEmptyLines,
                                                        boolean supportsRandomAccess) throws Exception {
-        for (int b = 1; b <= GeoHashNative.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
             if (b > 1) {
                 setUp();
             }

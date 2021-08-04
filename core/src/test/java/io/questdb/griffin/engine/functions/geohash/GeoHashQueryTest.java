@@ -24,6 +24,9 @@
 
 package io.questdb.griffin.engine.functions.geohash;
 
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Rnd;
@@ -139,7 +142,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     @Test
     public void testAlterTableAddGeohashBitsColumn() throws Exception {
         assertMemoryLeak(() -> {
-            for (int l = GeoHashNative.MAX_BITS_LENGTH; l > 0; l--) {
+            for (int l = GeoHashes.MAX_BITS_LENGTH; l > 0; l--) {
                 String tableName = "pos" + l;
                 compiler.compile(String.format("create table %s(x long)", tableName), sqlExecutionContext);
                 compiler.compile(String.format("alter table %s add hash geohash(%sb)", tableName, l), sqlExecutionContext);
@@ -390,6 +393,45 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                 }
             }
         }
+    }
+
+    @Test
+    public void testDirectWrite() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t1 as (select " +
+                    "rnd_geohash(5) geo1," +
+                    "rnd_geohash(15) geo2," +
+                    "rnd_geohash(20) geo4," +
+                    "rnd_geohash(40) geo8," +
+                    "x " +
+                    "from long_sequence(0))", sqlExecutionContext);
+
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "t1", "test")) {
+                for(int i = 0; i < 10; i++) {
+                    TableWriter.Row row = writer.newRow();
+                    row.putGeoHash(0, GeoHashes.fromString("qeustdb", 1));
+                    row.putGeoHash(1, GeoHashes.fromString("qeustdb", 2));
+                    row.putGeoHash(2, GeoHashes.fromString("qeustdb", 4));
+                    row.putGeoHash(3, GeoHashes.fromString("qeustdb123456", 8));
+                    row.putGeoHash(4, i);
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            assertSql("t1",
+                    "geo1\tgeo2\tgeo4\tgeo8\tx\n" +
+                            "q\t0qe\tqeus\tqeustdb1\t0\n" +
+                            "q\t0qe\tqeus\tqeustdb1\t1\n" +
+                            "q\t0qe\tqeus\tqeustdb1\t2\n" +
+                            "q\t0qe\tqeus\tqeustdb1\t3\n" +
+                            "q\t0qe\tqeus\tqeustdb1\t4\n" +
+                            "q\t0qe\tqeus\tqeustdb1\t5\n" +
+                            "q\t0qe\tqeus\tqeustdb1\t6\n" +
+                            "q\t0qe\tqeus\tqeustdb1\t7\n" +
+                            "q\t0qe\tqeus\tqeustdb1\t8\n" +
+                            "q\t0qe\tqeus\tqeustdb1\t9\n");
+        });
     }
 
 }

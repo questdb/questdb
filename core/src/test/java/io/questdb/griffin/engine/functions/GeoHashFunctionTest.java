@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashExtra;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
@@ -42,7 +42,7 @@ public class GeoHashFunctionTest {
 
     @Test
     public void testGetStrIntoSink1() {
-        Assert.assertEquals(GeoHashExtra.NULL, nullFunction.getLong(null));
+        Assert.assertEquals(GeoHashes.NULL, nullFunction.getLong(null));
         Assert.assertEquals(nullFunction.getLong(null), nullFunction.getGeoHash(null));
         StringSink sink = new StringSink();
         try {

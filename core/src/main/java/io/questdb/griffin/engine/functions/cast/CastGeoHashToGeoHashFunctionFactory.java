@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.GeoHashExtra;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -55,8 +55,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         Function value = args.getQuick(0);
         int srcType = value.getType();
         int targetType = args.getQuick(1).getType();
-        int srcBitsPrecision = GeoHashExtra.getBitsPrecision(srcType);
-        int targetBitsPrecision = GeoHashExtra.getBitsPrecision(targetType);
+        int srcBitsPrecision = GeoHashes.getBitsPrecision(srcType);
+        int targetBitsPrecision = GeoHashes.getBitsPrecision(targetType);
         int shift = srcBitsPrecision - targetBitsPrecision;
         if (shift > 0) {
             if (value.isConstant()) {
