@@ -26,10 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterTaskHolder;
-import io.questdb.mp.MCSequence;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
+import io.questdb.mp.*;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
 
@@ -74,6 +71,13 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence latestByPubSeq;
     private final MCSequence latestBySubSeq;
 
+    private final RingQueue<TableWriterTask> tableWriterCommandQueue;
+    private final MPSequence tableWriterCommandPubSeq;
+    private final FanOut tableWriterCommandSubSeq;
+
+    private final RingQueue<TableWriterTask> tableWriterEventQueue;
+    private final MPSequence tableWriterEventPubSeq;
+    private final FanOut tableWriterEventSubSeq;
     private final CairoConfiguration configuration;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
@@ -127,21 +131,16 @@ public class MessageBusImpl implements MessageBus {
         this.latestByPubSeq = new MPSequence(latestByQueue.getCapacity());
         this.latestBySubSeq = new MCSequence(latestByQueue.getCapacity());
         latestByPubSeq.then(latestBySubSeq).then(latestByPubSeq);
-    }
 
-    @Override
-    public MPSequence getO3CallbackPubSeq() {
-        return o3CallbackPubSeq;
-    }
+        this.tableWriterCommandQueue = new RingQueue<>(() -> new TableWriterTask(1024), 32);
+        this.tableWriterCommandPubSeq = new MPSequence(this.tableWriterCommandQueue.getCapacity());
+        this.tableWriterCommandSubSeq = new FanOut();
+        this.tableWriterCommandPubSeq.then(this.tableWriterCommandSubSeq).then(this.tableWriterCommandPubSeq);
 
-    @Override
-    public RingQueue<O3CallbackTask> getO3CallbackQueue() {
-        return o3CallbackQueue;
-    }
-
-    @Override
-    public MCSequence getO3CallbackSubSeq() {
-        return o3CallbackSubSeq;
+        this.tableWriterEventQueue = new RingQueue<>(() -> new TableWriterTask(1024), 32);
+        this.tableWriterEventPubSeq = new MPSequence(this.tableWriterCommandQueue.getCapacity());
+        this.tableWriterEventSubSeq = new FanOut();
+        this.tableWriterEventPubSeq.then(this.tableWriterEventSubSeq).then(this.tableWriterEventPubSeq);
     }
 
     @Override
@@ -165,48 +164,33 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public RingQueue<VectorAggregateTask> getVectorAggregateQueue() {
-        return vectorAggregateQueue;
+    public Sequence getLatestByPubSeq() {
+        return latestByPubSeq;
     }
 
     @Override
-    public Sequence getVectorAggregatePubSeq() {
-        return vectorAggregatePubSeq;
+    public RingQueue<LatestByTask> getLatestByQueue() {
+        return latestByQueue;
     }
 
     @Override
-    public Sequence getVectorAggregateSubSeq() {
-        return vectorAggregateSubSeq;
+    public Sequence getLatestBySubSeq() {
+        return latestBySubSeq;
     }
 
     @Override
-    public RingQueue<TableBlockWriterTaskHolder> getTableBlockWriterQueue() {
-        return tableBlockWriterQueue;
+    public MPSequence getO3CallbackPubSeq() {
+        return o3CallbackPubSeq;
     }
 
     @Override
-    public Sequence getTableBlockWriterPubSeq() {
-        return tableBlockWriterPubSeq;
+    public RingQueue<O3CallbackTask> getO3CallbackQueue() {
+        return o3CallbackQueue;
     }
 
     @Override
-    public Sequence getTableBlockWriterSubSeq() {
-        return tableBlockWriterSubSeq;
-    }
-
-    @Override
-    public MPSequence getO3PartitionPubSeq() {
-        return o3PartitionPubSeq;
-    }
-
-    @Override
-    public RingQueue<O3PartitionTask> getO3PartitionQueue() {
-        return o3PartitionQueue;
-    }
-
-    @Override
-    public MCSequence getO3PartitionSubSeq() {
-        return o3PartitionSubSeq;
+    public MCSequence getO3CallbackSubSeq() {
+        return o3CallbackSubSeq;
     }
 
     @Override
@@ -240,13 +224,28 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public RingQueue<O3PurgeDiscoveryTask> getO3PurgeDiscoveryQueue() {
-        return o3PurgeDiscoveryQueue;
+    public MPSequence getO3PartitionPubSeq() {
+        return o3PartitionPubSeq;
+    }
+
+    @Override
+    public RingQueue<O3PartitionTask> getO3PartitionQueue() {
+        return o3PartitionQueue;
+    }
+
+    @Override
+    public MCSequence getO3PartitionSubSeq() {
+        return o3PartitionSubSeq;
     }
 
     @Override
     public MPSequence getO3PurgeDiscoveryPubSeq() {
         return o3PurgeDiscoveryPubSeq;
+    }
+
+    @Override
+    public RingQueue<O3PurgeDiscoveryTask> getO3PurgeDiscoveryQueue() {
+        return o3PurgeDiscoveryQueue;
     }
 
     @Override
@@ -270,17 +269,62 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public Sequence getLatestByPubSeq() {
-        return latestByPubSeq;
+    public Sequence getTableBlockWriterPubSeq() {
+        return tableBlockWriterPubSeq;
     }
 
     @Override
-    public RingQueue<LatestByTask> getLatestByQueue() {
-        return latestByQueue;
+    public RingQueue<TableBlockWriterTaskHolder> getTableBlockWriterQueue() {
+        return tableBlockWriterQueue;
     }
 
     @Override
-    public Sequence getLatestBySubSeq() {
-        return latestBySubSeq;
+    public Sequence getTableBlockWriterSubSeq() {
+        return tableBlockWriterSubSeq;
+    }
+
+    @Override
+    public MPSequence getTableWriterCommandPubSeq() {
+        return tableWriterCommandPubSeq;
+    }
+
+    @Override
+    public RingQueue<TableWriterTask> getTableWriterCommandQueue() {
+        return tableWriterCommandQueue;
+    }
+
+    @Override
+    public FanOut getTableWriterCommandSubSeq() {
+        return tableWriterCommandSubSeq;
+    }
+
+    @Override
+    public MPSequence getTableWriterEventPubSeq() {
+        return tableWriterEventPubSeq;
+    }
+
+    @Override
+    public RingQueue<TableWriterTask> getTableWriterEventQueue() {
+        return tableWriterEventQueue;
+    }
+
+    @Override
+    public FanOut getTableWriterEventSubSeq() {
+        return tableWriterEventSubSeq;
+    }
+
+    @Override
+    public Sequence getVectorAggregatePubSeq() {
+        return vectorAggregatePubSeq;
+    }
+
+    @Override
+    public RingQueue<VectorAggregateTask> getVectorAggregateQueue() {
+        return vectorAggregateQueue;
+    }
+
+    @Override
+    public Sequence getVectorAggregateSubSeq() {
+        return vectorAggregateSubSeq;
     }
 }

@@ -91,7 +91,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 row.putInt(0, rnd.nextInt());
                 row.putInt(1, rnd.nextInt());
 
-                // create partition on disk but not commit neither transaction nor row
+                // create partition on disk but do not commit transaction nor row
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
                     FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
@@ -2490,32 +2490,32 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
-        public MPSequence getO3PurgeDiscoveryPubSeq() {
+        public Sequence getLatestByPubSeq() {
             return null;
         }
 
         @Override
-        public RingQueue<O3PurgeDiscoveryTask> getO3PurgeDiscoveryQueue() {
+        public RingQueue<LatestByTask> getLatestByQueue() {
             return null;
         }
 
         @Override
-        public MCSequence getO3PurgeDiscoverySubSeq() {
+        public Sequence getLatestBySubSeq() {
             return null;
         }
 
         @Override
-        public MPSequence getO3PurgePubSeq() {
+        public MPSequence getO3CallbackPubSeq() {
             return null;
         }
 
         @Override
-        public RingQueue<O3PurgeTask> getO3PurgeQueue() {
+        public RingQueue<O3CallbackTask> getO3CallbackQueue() {
             return null;
         }
 
         @Override
-        public MCSequence getO3PurgeSubSeq() {
+        public MCSequence getO3CallbackSubSeq() {
             return null;
         }
 
@@ -2565,17 +2565,62 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
-        public MPSequence getO3CallbackPubSeq() {
+        public MPSequence getO3PurgeDiscoveryPubSeq() {
             return null;
         }
 
         @Override
-        public RingQueue<O3CallbackTask> getO3CallbackQueue() {
+        public RingQueue<O3PurgeDiscoveryTask> getO3PurgeDiscoveryQueue() {
             return null;
         }
 
         @Override
-        public MCSequence getO3CallbackSubSeq() {
+        public MCSequence getO3PurgeDiscoverySubSeq() {
+            return null;
+        }
+
+        @Override
+        public MPSequence getO3PurgePubSeq() {
+            return null;
+        }
+
+        @Override
+        public RingQueue<O3PurgeTask> getO3PurgeQueue() {
+            return null;
+        }
+
+        @Override
+        public MCSequence getO3PurgeSubSeq() {
+            return null;
+        }
+
+        @Override
+        public MPSequence getTableWriterCommandPubSeq() {
+            return null;
+        }
+
+        @Override
+        public RingQueue<TableWriterTask> getTableWriterCommandQueue() {
+            return null;
+        }
+
+        @Override
+        public FanOut getTableWriterCommandSubSeq() {
+            return null;
+        }
+
+        @Override
+        public MPSequence getTableWriterEventPubSeq() {
+            return null;
+        }
+
+        @Override
+        public RingQueue<TableWriterTask> getTableWriterEventQueue() {
+            return null;
+        }
+
+        @Override
+        public FanOut getTableWriterEventSubSeq() {
             return null;
         }
 
@@ -2591,21 +2636,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
         @Override
         public Sequence getVectorAggregateSubSeq() {
-            return null;
-        }
-
-        @Override
-        public Sequence getLatestByPubSeq() {
-            return null;
-        }
-
-        @Override
-        public RingQueue<LatestByTask> getLatestByQueue() {
-            return null;
-        }
-
-        @Override
-        public Sequence getLatestBySubSeq() {
             return null;
         }
     }

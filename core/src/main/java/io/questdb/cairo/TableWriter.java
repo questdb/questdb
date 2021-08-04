@@ -141,6 +141,7 @@ public class TableWriter implements Closeable {
     private final LongConsumer appendTimestampSetter;
     private final MemoryMR indexMem = Vm.getMRInstance();
     private final MemoryFR slaveMetaMem = new MemoryFCRImpl();
+    private final SCSequence commandSubSeq = new SCSequence();
     private long todoTxn;
     private MemoryARW o3TimestampMem;
     private final O3ColumnUpdateMethod o3MoveLagRef = this::o3MoveLag0;
@@ -212,7 +213,7 @@ public class TableWriter implements Closeable {
         this.o3PartitionUpdatePubSeq = new MPSequence(this.o3PartitionUpdateQueue.getCapacity());
         this.o3PartitionUpdateSubSeq = new SCSequence();
         o3PartitionUpdatePubSeq.then(o3PartitionUpdateSubSeq).then(o3PartitionUpdatePubSeq);
-
+        this.messageBus.getTableWriterCommandSubSeq().and(commandSubSeq);
         this.path = new Path();
         this.path.of(root).concat(tableName);
         this.other = new Path().of(root).concat(tableName);
@@ -1221,10 +1222,13 @@ public class TableWriter implements Closeable {
                 configureAppendPosition();
                 o3InError = false;
                 LOG.info().$("tx rollback complete [name=").$(tableName).$(']').$();
+                processCommandQueue();
             } catch (Throwable e) {
                 LOG.error().$("could not perform rollback [name=").$(tableName).$(", msg=").$(e.getMessage()).$(']').$();
                 distressed = true;
             }
+        } else {
+            processCommandQueue();
         }
     }
 
@@ -1909,6 +1913,8 @@ public class TableWriter implements Closeable {
             txFile.commit(commitMode, this.denseSymbolMapWriters);
             o3ProcessPartitionRemoveCandidates();
         }
+
+        processCommandQueue();
     }
 
     void commitBlock(long firstTimestamp) {
@@ -3963,6 +3969,13 @@ public class TableWriter implements Closeable {
             }
         }
         indexCount = denseIndexers.size();
+    }
+
+    private void processCommandQueue() {
+        final long cursor = commandSubSeq.next();
+        if (cursor > -1) {
+            commandSubSeq.done(cursor);
+        }
     }
 
     void purgeUnusedPartitions() {

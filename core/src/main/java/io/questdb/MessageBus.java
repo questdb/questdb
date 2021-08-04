@@ -26,10 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterTaskHolder;
-import io.questdb.mp.MCSequence;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
+import io.questdb.mp.*;
 import io.questdb.std.Misc;
 import io.questdb.tasks.*;
 
@@ -39,6 +36,8 @@ public interface MessageBus extends Closeable {
     @Override
     default void close() {
         Misc.free(getO3PartitionQueue());
+        Misc.free(getTableWriterCommandQueue());
+        Misc.free(getTableWriterEventQueue());
     }
 
     CairoConfiguration getConfiguration();
@@ -49,17 +48,17 @@ public interface MessageBus extends Closeable {
 
     Sequence getIndexerSubSequence();
 
-    MPSequence getO3PurgeDiscoveryPubSeq();
+    Sequence getLatestByPubSeq();
 
-    RingQueue<O3PurgeDiscoveryTask> getO3PurgeDiscoveryQueue();
+    RingQueue<LatestByTask> getLatestByQueue();
 
-    MCSequence getO3PurgeDiscoverySubSeq();
+    Sequence getLatestBySubSeq();
 
-    MPSequence getO3PurgePubSeq();
+    MPSequence getO3CallbackPubSeq();
 
-    RingQueue<O3PurgeTask> getO3PurgeQueue();
+    RingQueue<O3CallbackTask> getO3CallbackQueue();
 
-    MCSequence getO3PurgeSubSeq();
+    MCSequence getO3CallbackSubSeq();
 
     MPSequence getO3CopyPubSeq();
 
@@ -79,11 +78,17 @@ public interface MessageBus extends Closeable {
 
     MCSequence getO3PartitionSubSeq();
 
-    MPSequence getO3CallbackPubSeq();
+    MPSequence getO3PurgeDiscoveryPubSeq();
 
-    RingQueue<O3CallbackTask> getO3CallbackQueue();
+    RingQueue<O3PurgeDiscoveryTask> getO3PurgeDiscoveryQueue();
 
-    MCSequence getO3CallbackSubSeq();
+    MCSequence getO3PurgeDiscoverySubSeq();
+
+    MPSequence getO3PurgePubSeq();
+
+    RingQueue<O3PurgeTask> getO3PurgeQueue();
+
+    MCSequence getO3PurgeSubSeq();
 
     default Sequence getTableBlockWriterPubSeq() {
         return null;
@@ -97,15 +102,21 @@ public interface MessageBus extends Closeable {
         return null;
     }
 
+    MPSequence getTableWriterCommandPubSeq();
+
+    RingQueue<TableWriterTask> getTableWriterCommandQueue();
+
+    FanOut getTableWriterCommandSubSeq();
+
+    MPSequence getTableWriterEventPubSeq();
+
+    RingQueue<TableWriterTask> getTableWriterEventQueue();
+
+    FanOut getTableWriterEventSubSeq();
+
     Sequence getVectorAggregatePubSeq();
 
     RingQueue<VectorAggregateTask> getVectorAggregateQueue();
 
     Sequence getVectorAggregateSubSeq();
-
-    Sequence getLatestByPubSeq();
-
-    RingQueue<LatestByTask> getLatestByQueue();
-
-    Sequence getLatestBySubSeq();
 }
