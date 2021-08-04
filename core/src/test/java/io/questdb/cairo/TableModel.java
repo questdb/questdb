@@ -71,8 +71,7 @@ public class TableModel implements TableStructure, Closeable {
     public TableModel col(CharSequence name, int type) {
         columnNames.add(Chars.toString(name));
         // set default symbol capacity
-        columnBits.add((128L << 32) | type);
-        columnBits.add(COLUMN_FLAG_CACHED);
+        columnBits.add((128L << 32) | type, COLUMN_FLAG_CACHED);
         return this;
     }
 

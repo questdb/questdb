@@ -3392,8 +3392,7 @@ public class TableWriter implements Closeable {
                     .$("`, ts=").$ts(partitionTimestamp)
                     .$(", txn=").$(txFile.txn).$(']').$();
             txFile.updatePartitionSizeByIndexAndTxn(partitionIndex, partitionSize);
-            o3PartitionRemoveCandidates.add(partitionTimestamp);
-            o3PartitionRemoveCandidates.add(srcDataTxn);
+            o3PartitionRemoveCandidates.add(partitionTimestamp, srcDataTxn);
             txFile.bumpPartitionTableVersion();
         } else {
             if (partitionTimestamp != lastPartitionTimestamp) {

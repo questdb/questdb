@@ -64,8 +64,7 @@ public class TableReplayModel implements Mutable, Sinkable {
     private long dataVersion;
 
     public void addColumnMetaAction(int action, int from, int to) {
-        columnMetaIndex.add(action);
-        columnMetaIndex.add(Numbers.encodeLowHighInts(from, to));
+        columnMetaIndex.add((long) action, Numbers.encodeLowHighInts(from, to));
     }
 
     public void addColumnMetadata(TableColumnMetadata columnMetadata) {
@@ -73,10 +72,7 @@ public class TableReplayModel implements Mutable, Sinkable {
     }
 
     public void addColumnTop(long timestamp, int columnIndex, long topValue) {
-        columnTops.add(timestamp);
-        columnTops.add(columnIndex);
-        columnTops.add(topValue);
-        columnTops.add(0); // reserved
+        columnTops.add(timestamp, columnIndex, topValue, 0);
     }
 
     public void addPartitionAction(
@@ -87,14 +83,7 @@ public class TableReplayModel implements Mutable, Sinkable {
             long nameTxn,
             long dataTxn
     ) {
-        partitions.add(action);
-        partitions.add(timestamp);
-        partitions.add(startRow);
-        partitions.add(rowCount);
-        partitions.add(nameTxn);
-        partitions.add(dataTxn);
-        partitions.add(0); // reserved
-        partitions.add(0); // reserved
+        partitions.add(action, timestamp, startRow, rowCount, nameTxn, dataTxn, 0, 0);
     }
 
     @Override
