@@ -81,7 +81,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         }
         int actualBits = value.length() * 5;
         if (actualBits < typeBits) {
-            throw SqlException.position(position).put("string is too short to cast to chosen GEOHASH precision");
+            throw SqlException.$(position, "string is too short to cast to chosen GEOHASH precision");
         }
         // Don't parse full string, it can be over 12 chars and result in overflow
         int parseChars = (typeBits - 1) / 5 + 1;

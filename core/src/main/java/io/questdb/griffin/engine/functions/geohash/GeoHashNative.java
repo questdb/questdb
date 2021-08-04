@@ -28,6 +28,7 @@ import io.questdb.cairo.GeoHashExtra;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.NumericException;
+import io.questdb.std.OutOfRangeRuntimeException;
 import io.questdb.std.str.CharSink;
 
 public class GeoHashNative {
@@ -135,18 +136,22 @@ public class GeoHashNative {
         return result;
     }
 
-    public static void toBitString(long hash, int bits, CharSink sink) {
+    public static void toBitString(long hash, int bits, CharSink sink) throws OutOfRangeRuntimeException {
         if (hash != GeoHashExtra.NULL) {
-            assert bits > 0 && bits <= MAX_BITS_LENGTH;
+            if (bits < 1 || bits > MAX_BITS_LENGTH) {
+                throw OutOfRangeRuntimeException.INSTANCE;
+            }
             for (int i = bits - 1; i >= 0; --i) {
                 sink.put(((hash >> i) & 1) == 1? '1' : '0');
             }
         }
     }
 
-    public static void toString(long hash, int chars, CharSink sink) {
+    public static void toString(long hash, int chars, CharSink sink) throws OutOfRangeRuntimeException {
         if (hash != GeoHashExtra.NULL) {
-            assert chars >0 && chars <= GeoHashNative.MAX_STRING_LENGTH;
+            if (chars < 1 || chars > MAX_STRING_LENGTH) {
+                throw OutOfRangeRuntimeException.INSTANCE;
+            }
             for (int i = chars - 1; i >= 0; --i) {
                 sink.put(base32[(int) ((hash >> i * 5) & 0x1F)]);
             }

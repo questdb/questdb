@@ -720,7 +720,7 @@ public class SqlCompiler implements Closeable {
                         case 0:
                             asm.pop();
                             asm.pop();
-                            asm.iconst((int)GeoHashExtra.NULL);
+                            asm.iconst((int) GeoHashExtra.NULL);
                             switch (sizeTo) {
                                 case 1:
                                     asm.invokeVirtual(wPutByte);
@@ -2444,14 +2444,23 @@ public class SqlCompiler implements Closeable {
                 return function;
             }
             if (ColumnType.GEOHASH == ColumnType.tagOf(columnType)) {
-                if (ColumnType.STRING == ColumnType.tagOf(function.getType())) {
-                    function = GEO_HASH_FUNCTION_FACTORY.newInstance(functionPosition, columnType, function);
-                } else {
-                    throw SqlException.position(functionPosition)
-                            .put("cannot cast ")
-                            .put(ColumnType.nameOf(function.getType()))
-                            .put(" to ")
-                            .put(ColumnType.nameOf(ColumnType.GEOHASH));
+                switch (ColumnType.tagOf(function.getType())) {
+                    case ColumnType.GEOHASH:
+                        int typeBits = GeoHashExtra.getBitsPrecision(columnType);
+                        int funcBits = GeoHashExtra.getBitsPrecision(function.getType());
+                        if (funcBits < typeBits) {
+                            throw SqlException.$(functionPosition, "GEOHASH does not have enough precision");
+                        }
+                        break;
+                    case ColumnType.STRING:
+                        function = GEO_HASH_FUNCTION_FACTORY.newInstance(functionPosition, columnType, function);
+                        break;
+                    default:
+                        throw SqlException.position(functionPosition)
+                                .put("cannot cast ")
+                                .put(ColumnType.nameOf(function.getType()))
+                                .put(" to ")
+                                .put(ColumnType.nameOf(columnType));
                 }
             }
             valueFunctions.add(function);

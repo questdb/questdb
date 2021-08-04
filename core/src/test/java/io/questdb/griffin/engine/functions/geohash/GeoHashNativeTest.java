@@ -266,8 +266,8 @@ public class GeoHashNativeTest {
 
     @Test
     public void testToStringInvalidSizeInChars() {
-        Assert.assertThrows(AssertionError.class, () -> GeoHashNative.toString(-0, 0, sink));
-        Assert.assertThrows(AssertionError.class, () -> GeoHashNative.toString(-0, 31, sink));
+        Assert.assertThrows(OutOfRangeRuntimeException.class, () -> GeoHashNative.toString(-0, 0, sink));
+        Assert.assertThrows(OutOfRangeRuntimeException.class, () -> GeoHashNative.toString(-0, 31, sink));
     }
 
     @Test
@@ -307,8 +307,8 @@ public class GeoHashNativeTest {
 
     @Test
     public void testToBitStringInvalidSizeInBits() {
-        Assert.assertThrows(AssertionError.class, () -> GeoHashNative.toBitString(-0, 0, sink));
-        Assert.assertThrows(AssertionError.class, () -> GeoHashNative.toBitString(-31, 0, sink));
+        Assert.assertThrows(OutOfRangeRuntimeException.class, () -> GeoHashNative.toBitString(-0, 0, sink));
+        Assert.assertThrows(OutOfRangeRuntimeException.class, () -> GeoHashNative.toBitString(-31, 0, sink));
     }
 
     @Test

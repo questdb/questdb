@@ -297,7 +297,7 @@ class ExpressionParser {
                                 processDefaultBranch = true;
                                 break;
                             }
-                            assert SqlUtil.fetchNext(lexer).charAt(0) == '(';
+                            SqlUtil.fetchNext(lexer); // consume '('
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok != null && tok.charAt(0) != ')') {
                                 SqlParser.parseGeoHashSize(lexer.lastTokenPosition(), tok);
