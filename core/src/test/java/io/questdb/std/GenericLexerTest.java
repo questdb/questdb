@@ -200,4 +200,40 @@ public class GenericLexerTest {
             TestUtils.assertEquals(e, a);
         }
     }
+
+    @Test
+    public void testPeek1() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.defineSymbol(",");
+        ts.defineSymbol(" ");
+        ts.of("Day-o, day-o");
+
+        Assert.assertEquals("Day-o", ts.next().toString());
+        Assert.assertEquals(",", ts.peek().toString());
+        Assert.assertEquals(",", ts.next().toString());
+        Assert.assertNull(ts.peek());
+        Assert.assertEquals(" ", ts.next().toString());
+        Assert.assertNull(ts.peek());
+        Assert.assertEquals("day-o", ts.next().toString());
+        Assert.assertNull(ts.peek());
+    }
+
+    @Test
+    public void testPeek2() {
+        GenericLexer ts = new GenericLexer(64);
+        String fortune = "Daylight come and we want go home";
+        ts.of(fortune);
+
+        Iterator<CharSequence> it = ts.iterator();
+        String [] parts = fortune.split("[ ]");
+        for (int i=0; i < parts.length; i++) {
+            CharSequence e = it.next();
+            Assert.assertEquals(parts[i], e.toString());
+            if (i < parts.length - 1) {
+                Assert.assertEquals(" ", ts.peek().toString());
+                it.next();
+            }
+        }
+        Assert.assertNull(ts.peek());
+    }
 }

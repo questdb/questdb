@@ -93,7 +93,7 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
         assertFailure("cast(null as geohash())",
                 null,
                 21,
-                "GEOHASH type precision is missing");
+                "invalid GEOHASH, invalid type precision");
     }
 
     @Test
