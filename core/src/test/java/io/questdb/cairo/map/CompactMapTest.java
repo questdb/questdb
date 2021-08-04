@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -473,6 +474,74 @@ public class CompactMapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
                         Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGeoHashValueAccess() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int precisionBits = 10;
+            int geohashType = ColumnType.geohashWithPrecision(precisionBits);
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
+                model
+                        .col("a", ColumnType.LONG)
+                        .col("b", geohashType);
+                CairoTestUtils.create(model);
+            }
+
+            BytecodeAssembler asm = new BytecodeAssembler();
+            final int N = 1000;
+            final Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row row = writer.newRow();
+                    long rndGeohash = GeoHashNative.fromCoordinates(rnd.nextDouble() * 180 - 90, rnd.nextDouble() * 360 - 180, precisionBits);
+                    row.putLong(0, i);
+                    row.putGeoHash(1, rndGeohash);
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = new TableReader(configuration, "x")) {
+                EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
+                entityColumnFilter.of(reader.getMetadata().getColumnCount());
+
+                try (CompactMap map = new CompactMap(
+                        1024 * 1024,
+                        new SymbolAsStrTypes(reader.getMetadata()),
+                        new ArrayColumnTypes().add(ColumnType.LONG)
+                        ,
+                        N,
+                        0.9,
+                        1, Integer.MAX_VALUE)) {
+
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
+                    RecordCursor cursor = reader.getCursor();
+
+                    long counter = 0;
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        MapKey key = map.withKey();
+                        key.put(record, sink);
+                        MapValue value = key.createValue();
+                        Assert.assertTrue(value.isNew());
+                        value.putLong(0, counter++);
+                    }
+
+                    cursor.toTop();
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        MapKey key = map.withKey();
+                        key.put(record, sink);
+                        MapValue value = key.findValue();
+                        Assert.assertNotNull(value);
+                        Assert.assertEquals(count++, value.getLong(0));
+                    }
+
+                    Assert.assertEquals(N, count);
                 }
             }
         });

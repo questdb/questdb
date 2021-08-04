@@ -186,7 +186,8 @@ final class FastMapRecord implements MapRecord {
 
     @Override
     public long getGeoHash(int columnIndex) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
+        // TODO: geohash store type per column or other way to get size of the geohash
+        throw new UnsupportedOperationException();
     }
 
     @Override
