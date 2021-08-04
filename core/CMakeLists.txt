@@ -245,11 +245,3 @@ elseif (APPLE)
 else ()
     target_link_libraries(questdb rt)
 endif (WIN32)
-
-option(ENABLE_UNIT_TESTS "Enable unit tests" ON)
-message(STATUS "Enable testing: ${ENABLE_UNIT_TESTS}")
-
-if (ENABLE_UNIT_TESTS)
-    include_directories(src/main/c)
-    add_subdirectory(src/test/c)
-endif()
