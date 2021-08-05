@@ -733,7 +733,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             job.floatingCharSink.asCharSequence(bufPos, hi);
                             bufPos = hi;
                             final int colType = writer.getMetadata().getColumnType(colIndex);
-                            if (ColumnType.tagOf(colType) == ColumnType.STRING) {
+                            if (ColumnType.isString(colType)) {
                                 row.putStr(colIndex, job.floatingCharSink);
                             } else {
                                 throw CairoException.instance(0)
@@ -975,7 +975,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             private int resolveSymbolIndex(TableReaderMetadata metadata, int colIndex) {
                 int symIndex = 0;
                 for (int n = 0; n < colIndex; n++) {
-                    if (ColumnType.tagOf(metadata.getColumnType(n)) == ColumnType.SYMBOL) {
+                    if (ColumnType.isSymbol(metadata.getColumnType(n))) {
                         symIndex++;
                     }
                 }

@@ -560,7 +560,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 int columnType = writer.getMetadata().getColumnType(columnIndex);
-                if (ColumnType.tagOf(columnType) == ColumnType.SYMBOL) {
+                if (ColumnType.isSymbol(columnType)) {
                     SymbolMapReader symReader = reader.getSymbolMapReader(columnIndex);
                     writer.updateSymbols(columnIndex, symReader);
                 }

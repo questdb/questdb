@@ -569,8 +569,8 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             assert args.size() == 2;
             this.args0 = args.getQuick(0);
             this.args1 = args.getQuick(1);
-            this.args0IsSymbol = ColumnType.tagOf(args0.getType()) == ColumnType.SYMBOL;
-            this.arg1IsSymbol = ColumnType.tagOf(args1.getType()) == ColumnType.SYMBOL;
+            this.args0IsSymbol = ColumnType.isSymbol(args0.getType());
+            this.arg1IsSymbol = ColumnType.isSymbol(args1.getType());
         }
 
         @Override
@@ -689,7 +689,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public CharSequence getStr(Record rec) {
             for (int i = 0; i < size; i++) {
                 Function arg = args.getQuick(i);
-                CharSequence value = (ColumnType.tagOf(arg.getType()) == ColumnType.SYMBOL) ? arg.getSymbol(rec) : arg.getStr(rec);
+                CharSequence value = (ColumnType.isSymbol(arg.getType())) ? arg.getSymbol(rec) : arg.getStr(rec);
                 if (value != null) {
                     return value;
                 }
@@ -701,7 +701,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public CharSequence getStrB(Record rec) {
             for (int i = 0; i < size; i++) {
                 Function arg = args.getQuick(i);
-                CharSequence value = (ColumnType.tagOf(arg.getType()) == ColumnType.SYMBOL) ? arg.getSymbolB(rec) : arg.getStrB(rec);
+                CharSequence value = (ColumnType.isSymbol(arg.getType())) ? arg.getSymbolB(rec) : arg.getStrB(rec);
                 if (value != null) {
                     return value;
                 }

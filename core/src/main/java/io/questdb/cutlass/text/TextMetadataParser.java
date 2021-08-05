@@ -140,7 +140,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                         name = copy(tag);
                         break;
                     case P_TYPE:
-                        type = ColumnType.columnTypeOf(tag);
+                        type = ColumnType.columnTypeTagOf(tag);
                         if (type == -1) {
                             throw JsonException.$(position, "Invalid type");
                         }

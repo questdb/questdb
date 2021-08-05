@@ -528,7 +528,7 @@ public final class SqlParser {
         final int type = toColumnType(lexer, columnType.token);
         columnCastModel.setType(type, columnName.position, columnType.position);
 
-        if (ColumnType.tagOf(type) == ColumnType.SYMBOL) {
+        if (ColumnType.isSymbol(type)) {
             CharSequence tok = tok(lexer, "'capacity', 'nocache', 'cache', 'index' or ')'");
 
             int symbolCapacity;
@@ -606,7 +606,7 @@ public final class SqlParser {
             }
 
             CharSequence tok;
-            if (ColumnType.tagOf(type) == ColumnType.SYMBOL) {
+            if (ColumnType.isSymbol(type)) {
                 tok = tok(lexer, "'capacity', 'nocache', 'cache', 'index' or ')'");
 
                 int symbolCapacity;
@@ -1623,7 +1623,7 @@ public final class SqlParser {
     }
 
     private int toColumnType(GenericLexer lexer, CharSequence tok) throws SqlException {
-        final int type = ColumnType.columnTypeOf(tok);
+        final short type = ColumnType.columnTypeTagOf(tok);
         if (type == -1) {
             throw SqlException.$(lexer.lastTokenPosition(), "unsupported column type: ").put(tok);
         }

@@ -52,7 +52,7 @@ public class TableModel implements TableStructure, Closeable {
     public TableModel cached(boolean cached) {
         int last = columnBits.size() - 1;
         assert last > 0;
-        assert (ColumnType.tagOf((int)columnBits.getQuick(last - 1)) == ColumnType.SYMBOL);
+        assert (ColumnType.isSymbol((int)columnBits.getQuick(last - 1)));
         long bits = columnBits.getQuick(last);
         if (cached) {
             columnBits.setQuick(last, bits | COLUMN_FLAG_CACHED);
@@ -164,7 +164,7 @@ public class TableModel implements TableStructure, Closeable {
         int pos = columnBits.size() - 2;
         assert pos > -1;
         long bits = columnBits.getQuick(pos);
-        assert (ColumnType.tagOf((int) bits) == ColumnType.SYMBOL);
+        assert (ColumnType.isSymbol((int) bits));
         bits = (((long) capacity) << 32) | (int) bits;
         columnBits.setQuick(pos, bits);
         return this;

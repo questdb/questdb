@@ -391,7 +391,7 @@ class ExpressionParser {
                             } else {
                                 if (thisWasCast) {
                                     // validate type
-                                    final int columnTypeTag = ColumnType.columnTypeOf(node.token);
+                                    final short columnTypeTag = ColumnType.columnTypeTagOf(node.token);
                                     if ((columnTypeTag < ColumnType.BOOLEAN || columnTypeTag > ColumnType.GEOHASH) && !asPoppedNull) {
                                         throw SqlException.$(node.position, "invalid type");
                                     }
@@ -605,7 +605,7 @@ class ExpressionParser {
                                     // timestamp with time zone '2005-04-02 12:00:00-07'
 
                                     // validate type
-                                    final int columnType = ColumnType.tagOf(ColumnType.columnTypeOf(prevNode.token));
+                                    final short columnType = ColumnType.columnTypeTagOf(prevNode.token);
                                     if (columnType < ColumnType.BOOLEAN || columnType > ColumnType.LONG256) {
                                         throw SqlException.$(prevNode.position, "invalid type");
                                     } else {

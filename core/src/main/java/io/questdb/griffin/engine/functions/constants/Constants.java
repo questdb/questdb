@@ -31,6 +31,7 @@ import io.questdb.std.ObjList;
 
 public final class Constants {
     private static final ObjList<ConstantFunction> nullConstants = new ObjList<>();
+    private static final ObjList<ConstantFunction> geoNullConstants = new ObjList<>();
     private static final ObjList<TypeConstant> typeConstants = new ObjList<>();
 
     static {
@@ -49,9 +50,9 @@ public final class Constants {
         Constants.nullConstants.extendAndSet(ColumnType.BINARY, NullBinConstant.INSTANCE);
         Constants.nullConstants.extendAndSet(ColumnType.LONG256, Long256NullConstant.INSTANCE);
 
-        for(int i = 0; i < GeoHashes.MAX_BITS_LENGTH; i++) {
-            int type = ColumnType.geohashWithPrecision(i + 1);
-            Constants.nullConstants.extendAndSet(type, GeoHashConstant.newInstance(GeoHashes.NULL, type));
+        for(int b = 0; b < GeoHashes.MAX_BITS_LENGTH; b++) {
+            int type = ColumnType.geohashWithPrecision(b + 1);
+            geoNullConstants.extendAndSet(b, GeoHashConstant.newInstance(GeoHashes.NULL, type));
         }
 
         Constants.typeConstants.extendAndSet(ColumnType.INT, IntTypeConstant.INSTANCE);
@@ -72,7 +73,13 @@ public final class Constants {
     }
 
     public static ConstantFunction getNullConstant(int columnType) {
-        return nullConstants.getQuick(columnType);
+        if (columnType < nullConstants.size()) {
+            return nullConstants.getQuick(columnType);
+        } else if (ColumnType.tagOf(columnType) == ColumnType.GEOHASH) {
+            int bitsPrecision = GeoHashes.getBitsPrecision(columnType);
+            return geoNullConstants.getQuick(bitsPrecision - 1);
+        }
+        throw new UnsupportedOperationException();
     }
 
     public static TypeConstant getTypeConstant(int columnType) {

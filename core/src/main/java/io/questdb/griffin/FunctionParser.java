@@ -456,7 +456,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
         // type constant for 'CAST' operation
 
-        final int columnType = ColumnType.columnTypeOf(tok);
+        final short columnType = ColumnType.columnTypeTagOf(tok);
 
         if (columnType >= ColumnType.BOOLEAN && columnType <= ColumnType.BINARY) {
             return Constants.getTypeConstant(columnType);
@@ -515,7 +515,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
             if (sigArgCount > 0) {
                 final int lastSigArgMask = descriptor.getArgTypeMask(sigArgCount - 1);
-                sigVarArg = ColumnType.tagOf(FunctionFactoryDescriptor.toType(lastSigArgMask)) == ColumnType.VAR_ARG;
+                sigVarArg = FunctionFactoryDescriptor.toType(lastSigArgMask) == ColumnType.VAR_ARG;
                 sigVarArgConst = FunctionFactoryDescriptor.isConstant(lastSigArgMask);
             } else {
                 sigVarArg = false;
@@ -558,10 +558,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         break;
                     }
 
-                    final int sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
+                    final short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
                     final int argType = arg.getType();
-                    final int argTypeTag = ColumnType.tagOf(argType);
-                    final int sigArgTypeTag = ColumnType.tagOf(sigArgType);
+                    final short argTypeTag = ColumnType.tagOf(argType);
+                    final short sigArgTypeTag = sigArgType;
 
                     if (sigArgTypeTag == argTypeTag) {
                         switch (match) {
@@ -578,7 +578,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         continue;
                     }
 
-                    int overloadDistance = ColumnType.overloadDistance(argType, sigArgType); // NULL to any is 0
+                    int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgType); // NULL to any is 0
                     sigArgTypeSum += overloadDistance;
                     // Overload with cast to higher precision
                     boolean overloadPossible = overloadDistance != ColumnType.NO_OVERLOAD;
@@ -689,8 +689,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
         for (int k = 0; k < candidateSigArgCount; k++) {
             final Function arg = args.getQuick(k);
-            final int sigArgTypeTag = ColumnType.tagOf(FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k)));
-            final int argTypeTag = ColumnType.tagOf(arg.getType());
+            final short sigArgTypeTag = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k));
+            final short argTypeTag = ColumnType.tagOf(arg.getType());
 
             if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Double.isNaN(arg.getDouble(null))) {
                 // substitute NaNs with appropriate types
@@ -722,7 +722,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     private Function functionToConstant(Function function) {
-        switch (ColumnType.tagOf(function.getType())) {
+        switch (function.getType()) {
             case ColumnType.INT:
                 if (function instanceof IntConstant) {
                     return function;

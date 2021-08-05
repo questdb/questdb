@@ -2687,7 +2687,7 @@ public class TableWriterTest extends AbstractCairoTest {
         int productName = writer.getColumnIndex("productName");
         int category = writer.getColumnIndex("category");
         int price = writer.getColumnIndex("price");
-        boolean isSym = ColumnType.tagOf(writer.getMetadata().getColumnType(productName)) == ColumnType.SYMBOL;
+        boolean isSym = ColumnType.isSymbol(writer.getMetadata().getColumnType(productName));
 
         for (int i = 0; i < 10000; i++) {
             TableWriter.Row r = writer.newRow(ts += 60000L * 1000L);
@@ -2728,7 +2728,7 @@ public class TableWriterTest extends AbstractCairoTest {
         int supplier = writer.getColumnIndex("supplier");
         int category = writer.getColumnIndex("category");
         int price = writer.getColumnIndex("price");
-        boolean isSym = ColumnType.tagOf(writer.getMetadata().getColumnType(productName)) == ColumnType.SYMBOL;
+        boolean isSym = ColumnType.isSymbol(writer.getMetadata().getColumnType(productName));
 
         for (int i = 0; i < 10000; i++) {
             TableWriter.Row r = writer.newRow(ts += 60000L * 1000L);
@@ -2753,7 +2753,7 @@ public class TableWriterTest extends AbstractCairoTest {
         int supplier = writer.getColumnIndex("sup");
         int category = writer.getColumnIndex("category");
         int price = writer.getColumnIndex("price");
-        boolean isSym = ColumnType.tagOf(writer.getMetadata().getColumnType(productName)) == ColumnType.SYMBOL;
+        boolean isSym = ColumnType.isSymbol(writer.getMetadata().getColumnType(productName));
 
         for (int i = 0; i < 10000; i++) {
             TableWriter.Row r = writer.newRow(ts += 60000L * 1000L);

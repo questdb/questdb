@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.geohash;
 
 public class GeoHashNative {
-    public static final int MAX_STRING_LENGTH = 12;
 
     public static native void latesByAndFilterPrefix(
             long keysMemory,

@@ -1535,7 +1535,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         sink.putNetworkShort((short) n);
         for (int i = 0; i < n; i++) {
             final int typeFlag = activeSelectColumnTypes.getQuick(i);
-            final int columnType = toColumnType(ColumnType.tagOf(typeFlag) == ColumnType.NULL ? ColumnType.STRING : typeFlag);
+            final int columnType = toColumnType(ColumnType.isNull(typeFlag) ? ColumnType.STRING : typeFlag);
             sink.encodeUtf8Z(metadata.getColumnName(i));
             sink.putIntDirect(0); //tableOid ?
             sink.putNetworkShort((short) (i + 1)); //column number, starting from 1
@@ -1553,7 +1553,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             sink.putIntDirect(INT_NULL_X);
             // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
             // format code
-            sink.putNetworkShort(ColumnType.tagOf(typeFlag) == ColumnType.BINARY ? 1 : getColumnBinaryFlag(typeFlag)); // format code
+            sink.putNetworkShort(ColumnType.isBinary(columnType) ? 1 : getColumnBinaryFlag(typeFlag)); // format code
         }
         sink.putLen(addr);
     }

@@ -59,7 +59,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         Function left = args.getQuick(0);
         Function right = args.getQuick(1);
 
-        if (left.isConstant() && ColumnType.tagOf(left.getType()) == ColumnType.DOUBLE && Double.isNaN(left.getDouble(null))) {
+        if (left.isConstant() && ColumnType.isDouble(left.getType()) && Double.isNaN(left.getDouble(null))) {
             switch (ColumnType.tagOf(right.getType())) {
                 case ColumnType.INT:
                     return new FuncIntIsNaN(right);
@@ -75,7 +75,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
                     // double
                     return new FuncDoubleIsNaN(right);
             }
-        } else if (right.isConstant() && ColumnType.tagOf(right.getType()) == ColumnType.DOUBLE && Double.isNaN(right.getDouble(null))) {
+        } else if (right.isConstant() && ColumnType.isDouble(right.getType()) && Double.isNaN(right.getDouble(null))) {
             switch (ColumnType.tagOf(left.getType())) {
                 case ColumnType.INT:
                     return new FuncIntIsNaN(left);

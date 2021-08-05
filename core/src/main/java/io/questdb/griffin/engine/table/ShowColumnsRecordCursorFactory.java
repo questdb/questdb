@@ -158,7 +158,7 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
                     return reader.getMetadata().isColumnIndexed(columnIndex);
                 }
                 if (col == N_SYMBOL_CACHED_COL) {
-                    if (ColumnType.tagOf(reader.getMetadata().getColumnType(columnIndex)) == ColumnType.SYMBOL) {
+                    if (ColumnType.isSymbol(reader.getMetadata().getColumnType(columnIndex))) {
                         return reader.getSymbolMapReader(columnIndex).isCached();
                     } else {
                         return false;
@@ -176,7 +176,7 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
                     return reader.getMetadata().getIndexValueBlockCapacity(columnIndex);
                 }
                 if (col == N_SYMBOL_CAPACITY_COL) {
-                    if (ColumnType.tagOf(reader.getMetadata().getColumnType(columnIndex)) == ColumnType.SYMBOL) {
+                    if (ColumnType.isSymbol(reader.getMetadata().getColumnType(columnIndex))) {
                         return reader.getSymbolMapReader(columnIndex).getSymbolCapacity();
                     } else {
                         return 0;

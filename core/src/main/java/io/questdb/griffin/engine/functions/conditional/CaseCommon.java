@@ -282,10 +282,10 @@ public class CaseCommon {
     }
 
     static int getCommonType(int commonType, int valueType, int valuePos) throws SqlException {
-        if (commonType == -1 || ColumnType.tagOf(commonType) == ColumnType.NULL) {
+        if (commonType == -1 || ColumnType.isNull(commonType)) {
             return valueType;
         }
-        if (ColumnType.tagOf(valueType) == ColumnType.NULL) {
+        if (ColumnType.isNull(valueType)) {
             return commonType;
         }
         final int type = typeEscalationMap.get(Numbers.encodeLowHighInts(commonType, valueType));
@@ -303,7 +303,7 @@ public class CaseCommon {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        if (ColumnType.tagOf(arg.getType()) == ColumnType.NULL) {
+        if (ColumnType.isNull(arg.getType())) {
             return Constants.getNullConstant(toType);
         }
         final int keyIndex = castFactories.keyIndex(Numbers.encodeLowHighInts(arg.getType(), toType));

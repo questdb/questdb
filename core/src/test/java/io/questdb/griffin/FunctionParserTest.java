@@ -86,7 +86,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void overloadBetweenNullAndAnyTypeIsZero() {
-        for (int type = ColumnType.BOOLEAN; type <= ColumnType.MAX; type++) {
+        for (short type = ColumnType.BOOLEAN; type <= ColumnType.MAX; type++) {
             Assert.assertEquals(0, ColumnType.overloadDistance(ColumnType.NULL, type));
             Assert.assertEquals(0, ColumnType.overloadDistance(type, ColumnType.NULL));
         }

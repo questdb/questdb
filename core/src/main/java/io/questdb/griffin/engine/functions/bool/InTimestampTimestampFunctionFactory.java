@@ -69,7 +69,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             return new InTimestampConstFunction(args.getQuick(0), parseToTs(args, argPositions));
         }
 
-        if (args.size() == 2 && ColumnType.tagOf(args.get(1).getType()) == ColumnType.STRING) {
+        if (args.size() == 2 && ColumnType.isString(args.get(1).getType())) {
             // special case - one argument and it a string
             return new InTimestampStrFunctionFactory.EqTimestampStrFunction(args.get(0), args.get(1));
         }

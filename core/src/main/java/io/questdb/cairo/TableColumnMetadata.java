@@ -40,7 +40,7 @@ public class TableColumnMetadata {
         this(name, type, false, 0, false, metadata);
         // Do not allow using this constructor for symbol types.
         // Use version where you specify symbol table parameters
-        assert ColumnType.tagOf(type) != ColumnType.SYMBOL;
+        assert !ColumnType.isSymbol(type);
     }
 
     public TableColumnMetadata(

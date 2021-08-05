@@ -266,8 +266,12 @@ public class GeoHashNativeTest {
 
     @Test
     public void testToStringInvalidSizeInChars() {
-        Assert.assertThrows(OutOfRangeRuntimeException.class, () -> GeoHashes.toString(-0, 0, sink));
-        Assert.assertThrows(OutOfRangeRuntimeException.class, () -> GeoHashes.toString(-0, 31, sink));
+        boolean assertsEnabled = false;
+        assert assertsEnabled = true; // Test only when assertions enabled
+        if (assertsEnabled) {
+            Assert.assertThrows(AssertionError.class, () -> GeoHashes.toString(-0, 0, sink));
+            Assert.assertThrows(AssertionError.class, () -> GeoHashes.toString(-0, 31, sink));
+        }
     }
 
     @Test
@@ -307,8 +311,12 @@ public class GeoHashNativeTest {
 
     @Test
     public void testToBitStringInvalidSizeInBits() {
-        Assert.assertThrows(OutOfRangeRuntimeException.class, () -> GeoHashes.toBitString(-0, 0, sink));
-        Assert.assertThrows(OutOfRangeRuntimeException.class, () -> GeoHashes.toBitString(-31, 0, sink));
+        boolean assertsEnable = false;
+        assert assertsEnable = true; // Test only when assertions enabled
+        if (assertsEnable) {
+            Assert.assertThrows(AssertionError.class, () -> GeoHashes.toBitString(-0, 0, sink));
+            Assert.assertThrows(AssertionError.class, () -> GeoHashes.toBitString(-31, 0, sink));
+        }
     }
 
     @Test
@@ -326,7 +334,7 @@ public class GeoHashNativeTest {
 
     @FunctionalInterface
     private interface StringConverter {
-        void convert(long hash, int size, CharSink sink);
+        void convert(long hash, int size, CharSink sink) throws NumericException;
     }
 
     private static final StringConverter toString = GeoHashes::toString;
@@ -337,7 +345,7 @@ public class GeoHashNativeTest {
             sink.clear();
             converter.convert(hash, size, sink);
             Assert.assertEquals(message, sink.toString());
-        } catch (IllegalArgumentException err) {
+        } catch (IllegalArgumentException | NumericException err) {
             Assert.fail();
         }
     }

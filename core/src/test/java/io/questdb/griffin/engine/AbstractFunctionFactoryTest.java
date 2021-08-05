@@ -338,7 +338,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             printConstant(argType, expression2, arg);
         } else {
             expression1.put(columnName);
-            if (ColumnType.tagOf(argType) == ColumnType.SYMBOL || ColumnType.tagOf(argType) == ColumnType.BINARY || isNegative(argType, arg)) {
+            if (ColumnType.isSymbol(argType) || ColumnType.isBinary(argType) || isNegative(argType, arg)) {
                 // above types cannot be expressed as constant in SQL
                 expression2.put(columnName);
             } else {

@@ -31,6 +31,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;

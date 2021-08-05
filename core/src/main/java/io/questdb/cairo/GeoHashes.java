@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
@@ -32,6 +31,9 @@ public class GeoHashes {
 
     public static final long NULL = -1L;
     public static final int MAX_BITS_LENGTH = 60;
+    public static final int MAX_STRING_LENGTH = 12;
+    private static final int[] GEO_TYPE_SIZE_POW2 = new int[MAX_BITS_LENGTH + 1];
+
     static final byte[] base32Indexes = {
             0, 1, 2, 3, 4, 5, 6, 7,        // 30-37, '0'..'7'
             8, 9, -1, -1, -1, -1, -1, -1,  // 38-2F, '8','9'
@@ -54,6 +56,12 @@ public class GeoHashes {
             'h', 'j', 'k', 'm', 'n', 'p', 'q', 'r',
             's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
     };
+
+    static {
+        for(int bits = 1; bits <= MAX_BITS_LENGTH; bits++) {
+            GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
+        }
+    }
 
     public static long bitmask(int count, int shift) {
         // e.g. 3, 4 -> 1110000
@@ -114,7 +122,7 @@ public class GeoHashes {
     }
 
     public static long fromString(CharSequence hash, int parseLen) throws NumericException {
-        if (parseLen == 0 || parseLen > GeoHashNative.MAX_STRING_LENGTH || hash == null || parseLen > hash.length()) {
+        if (parseLen == 0 || parseLen > MAX_STRING_LENGTH || hash == null || parseLen > hash.length()) {
             throw NumericException.INSTANCE;
         }
         long output = 0;
@@ -171,29 +179,29 @@ public class GeoHashes {
         return (type >> BITS_OFFSET) & 0xFF;
     }
 
-    public static int storageSizeInBits(int type) {
-        int bits = GeoHashes.getBitsPrecision(type);
-        return roundUpToPow2(bits);
-    }
-
-    public static int roundUpToPow2(int bits) {
-        if (bits == 0) {
-            return 64; // variable length geohash
+    public static int sizeOf(int columnType) {
+        assert ColumnType.tagOf(columnType) == ColumnType.GEOHASH;
+        int bits = GeoHashes.getBitsPrecision(columnType);
+        if (bits <= MAX_BITS_LENGTH) {
+            return 1 << GEO_TYPE_SIZE_POW2[bits];
         }
-        bits += 1; // reserved null bit
-        bits = (bits + Byte.SIZE - 1) & -Byte.SIZE; // round up to 8 bit
-        return Numbers.ceilPow2(bits); // next pow of 2
+        return -1;
     }
 
-    public static int storageSizeInPow2(int type) {
-        return Numbers.msb(storageSizeInBits(type) / Byte.SIZE);
+    public static int pow2SizeOf(int columnType) {
+        assert ColumnType.tagOf(columnType) == ColumnType.GEOHASH;
+        int bits = GeoHashes.getBitsPrecision(columnType);
+        if (bits <= MAX_BITS_LENGTH) {
+            return GEO_TYPE_SIZE_POW2[bits];
+        }
+        return -1;
     }
 
-    public static void toBitString(long hash, int bits, CharSink sink) throws OutOfRangeRuntimeException {
+    public static void toBitString(long hash, int bits, CharSink sink) {
         if (hash != NULL) {
-            if (bits < 1 || bits > MAX_BITS_LENGTH) {
-                throw OutOfRangeRuntimeException.INSTANCE;
-            }
+            // Below assertion can happen if there is corrupt metadata
+            // which should not happen in production code since reader and writer check table metadata
+            assert bits > 0 && bits <= MAX_BITS_LENGTH;
             for (int i = bits - 1; i >= 0; --i) {
                 sink.put(((hash >> i) & 1) == 1? '1' : '0');
             }
@@ -208,11 +216,11 @@ public class GeoHashes {
         return (((long) length) << 60L) + hash;
     }
 
-    public static void toString(long hash, int chars, CharSink sink) throws OutOfRangeRuntimeException {
+    public static void toString(long hash, int chars, CharSink sink) {
         if (hash != NULL) {
-            if (chars < 1 || chars > GeoHashNative.MAX_STRING_LENGTH) {
-                throw OutOfRangeRuntimeException.INSTANCE;
-            }
+            // Below assertion can happen if there is corrupt metadata
+            // which should not happen in production code since reader and writer check table metadata
+            assert chars > 0 && chars <= MAX_STRING_LENGTH;
             for (int i = chars - 1; i >= 0; --i) {
                 sink.put(base32[(int) ((hash >> i * 5) & 0x1F)]);
             }

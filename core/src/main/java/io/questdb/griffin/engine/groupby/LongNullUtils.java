@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
@@ -60,6 +61,10 @@ public final class LongNullUtils {
                     Unsafe.getUnsafe().putLong(buffer, 0L);
                     Unsafe.getUnsafe().putDouble(buffer, Double.NaN);
                     LONG_NULLs[i] = Unsafe.getUnsafe().getLong(buffer);
+                    break;
+
+                case ColumnType.GEOHASH:
+                    LONG_NULLs[i] = GeoHashes.NULL;
                     break;
 
                 default:

@@ -1047,12 +1047,12 @@ public class SqlCompiler implements Closeable {
 
             tok = expectToken(lexer, "column type");
 
-            int type = ColumnType.columnTypeOf(tok);
+            int type = ColumnType.columnTypeTagOf(tok);
             if (type == -1) {
                 throw SqlException.$(lexer.lastTokenPosition(), "invalid type");
             }
 
-            if (ColumnType.tagOf(type) == ColumnType.GEOHASH) {
+            if (ColumnType.isGeohash(type)) {
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null || tok.charAt(0) != '(') {
                     throw SqlException.position(lexer.getPosition()).put("missing GEOHASH precision");
@@ -1084,7 +1084,7 @@ public class SqlCompiler implements Closeable {
             int symbolCapacity;
             final boolean indexed;
 
-            if (ColumnType.tagOf(type) == ColumnType.SYMBOL && tok != null && !Chars.equals(tok, ',')) {
+            if (ColumnType.isSymbol(type) && tok != null && !Chars.equals(tok, ',')) {
 
                 if (isCapacityKeyword(tok)) {
                     tok = expectToken(lexer, "symbol capacity");
@@ -1210,7 +1210,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.invalidColumn(lexer.lastTokenPosition(), columnName);
             }
 
-            if (ColumnType.tagOf(metadata.getColumnType(columnIndex)) != ColumnType.SYMBOL) {
+            if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
                 throw SqlException.$(lexer.lastTokenPosition(), "Invalid column type - Column should be of type symbol");
             }
 
@@ -1263,7 +1263,7 @@ public class SqlCompiler implements Closeable {
                 GenericRecordMetadata metadata = new GenericRecordMetadata();
                 metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP, null));
                 Function function = functionParser.parseFunction(expr, metadata, currentExecutionContext);
-                if (function != null && ColumnType.tagOf(function.getType()) == ColumnType.BOOLEAN) {
+                if (function != null && ColumnType.isBoolean(function.getType())) {
                     function.init(null, executionContext);
                     writer.removePartition(function, pos);
                 } else {
@@ -1465,7 +1465,7 @@ public class SqlCompiler implements Closeable {
             path.trimTo(rootLen).$();
             int symbolMapCount = 0;
             for (int i = 0, sz = sourceMetaData.getColumnCount(); i < sz; i++) {
-                if (ColumnType.tagOf(sourceMetaData.getColumnType(i)) == ColumnType.SYMBOL) {
+                if (ColumnType.isSymbol(sourceMetaData.getColumnType(i))) {
                     SymbolMapReader mapReader = reader.getSymbolMapReader(i);
                     SymbolMapWriter.createSymbolMapFiles(ff, mem, path, sourceMetaData.getColumnName(i), mapReader.getSymbolCapacity(), mapReader.isCached());
                     symbolMapCount++;
@@ -1541,8 +1541,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private void copyOrdered(TableWriter writer, RecordMetadata metadata, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
-        int timestampType = ColumnType.tagOf(metadata.getColumnType(cursorTimestampIndex));
-        if (timestampType == ColumnType.STRING || timestampType == ColumnType.SYMBOL) {
+        if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
             copyOrderedStrTimestamp(writer, cursor, copier, cursorTimestampIndex);
         } else {
             copyOrdered0(writer, cursor, copier, cursorTimestampIndex);
@@ -1568,8 +1567,7 @@ public class SqlCompiler implements Closeable {
             long batchSize,
             long commitLag
     ) {
-        int timestampType = ColumnType.tagOf(metadata.getColumnType(cursorTimestampIndex));
-        if (timestampType == ColumnType.STRING || timestampType == ColumnType.SYMBOL) {
+        if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
             copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, commitLag);
         } else {
             copyOrderedBatched0(writer, cursor, copier, cursorTimestampIndex, batchSize, commitLag);
@@ -1945,7 +1943,7 @@ public class SqlCompiler implements Closeable {
             }
 
             // validate timestamp
-            if (writerTimestampIndex > -1 && (timestampFunction == null || ColumnType.tagOf(timestampFunction.getType()) == ColumnType.NULL)) {
+            if (writerTimestampIndex > -1 && (timestampFunction == null || ColumnType.isNull(timestampFunction.getType()))) {
                 throw SqlException.$(0, "insert statement must populate timestamp");
             }
 
@@ -2440,7 +2438,7 @@ public class SqlCompiler implements Closeable {
             if (metadataColumnIndex == writerTimestampIndex) {
                 return function;
             }
-            if (ColumnType.GEOHASH == ColumnType.tagOf(columnType)) {
+            if (ColumnType.isGeohash(columnType)) {
                 switch (ColumnType.tagOf(function.getType())) {
                     case ColumnType.GEOHASH:
                         int typeBits = GeoHashes.getBitsPrecision(columnType);

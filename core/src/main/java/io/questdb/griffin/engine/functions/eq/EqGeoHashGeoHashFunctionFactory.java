@@ -64,8 +64,8 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
                 if (geohash1.getType() == geohash2.getType()) {
                     return BooleanConstant.of(hash1 == hash2);
                 }
-                if ((hash1 == GeoHashes.NULL || ColumnType.tagOf(geohash1.getType()) == ColumnType.NULL) &&
-                        (hash2 == GeoHashes.NULL || ColumnType.tagOf(geohash2.getType()) == ColumnType.NULL)) {
+                if ((hash1 == GeoHashes.NULL || ColumnType.isNull(geohash1.getType())) &&
+                        (hash2 == GeoHashes.NULL || ColumnType.isNull(geohash2.getType()))) {
                     // both values are null, any flavour of null
                     return BooleanConstant.of(true);
                 }
@@ -78,7 +78,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
 
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
         if (constFunc.getLong(null) == GeoHashes.NULL ||
-                ColumnType.tagOf(constFunc.getType()) == ColumnType.NULL) {
+                ColumnType.isNull(constFunc.getType())) {
             return new NullCheckFunc(varFunc);
         }
         return new ConstCheckFunc(varFunc, constFunc.getLong(null), constFunc.getType());
@@ -120,7 +120,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg.getLong(rec) == GeoHashes.NULL || ColumnType.tagOf(arg.getType()) == ColumnType.NULL);
+            return negated != (arg.getLong(rec) == GeoHashes.NULL || ColumnType.isNull(arg.getType()));
         }
     }
 
@@ -153,8 +153,8 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
                 return negated != (hash1 == hash2);
             }
             // both values are null, any flavour of null
-            return (hash1 == GeoHashes.NULL || ColumnType.tagOf(hash1Type) == ColumnType.NULL) &&
-                    (hash2 == GeoHashes.NULL || ColumnType.tagOf(hash2Type) == ColumnType.NULL);
+            return (hash1 == GeoHashes.NULL || ColumnType.isNull(hash1Type)) &&
+                    (hash2 == GeoHashes.NULL || ColumnType.isNull(hash2Type));
         }
     }
 }

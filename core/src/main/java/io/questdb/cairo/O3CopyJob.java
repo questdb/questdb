@@ -905,7 +905,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarOffset
     ) {
         final long rowCount = srcOooHi - srcOooLo + 1 + srcDataHi - srcDataLo + 1;
-        switch (ColumnType.tagOf(columnType)) {
+        switch (ColumnType.sizeTag(columnType)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
                 Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
@@ -960,21 +960,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 break;
             case ColumnType.LONG256:
                 Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
-                break;
-            case ColumnType.GEOHASH:
-                switch (ColumnType.sizeOf(columnType)) {
-                    case 1:
-                        Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
-                        break;
-                    case 2:
-                        Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
-                        break;
-                    case 4:
-                        Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
-                        break;
-                    default:
-                        Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
-                }
                 break;
             default:
                 break;

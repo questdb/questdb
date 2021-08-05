@@ -474,7 +474,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     private static void testSymbolAPI(RecordMetadata metadata, RecordCursor cursor) {
         IntList symbolIndexes = null;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            if (ColumnType.tagOf(metadata.getColumnType(i)) == ColumnType.SYMBOL) {
+            if (ColumnType.isSymbol(metadata.getColumnType(i))) {
                 if (symbolIndexes == null) {
                     symbolIndexes = new IntList();
                 }

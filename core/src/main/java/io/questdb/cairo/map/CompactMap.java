@@ -236,6 +236,7 @@ public class CompactMap implements Map {
         for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
             int sz;
             final int columnType = valueTypes.getColumnType(i);
+            sz = ColumnType.sizeOf(columnType);
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.BOOLEAN:
                 case ColumnType.BYTE:

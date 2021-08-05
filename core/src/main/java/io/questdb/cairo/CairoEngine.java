@@ -323,7 +323,7 @@ public class CairoEngine implements Closeable, WriterSource {
             if (readerMetadata.getVersion() < 416) {
                 LOG.info().$("migrating null flag for symbols [table=").utf8(tableName).$(']').$();
                 for (int i = 0, count = reader.getColumnCount(); i < count; i++) {
-                    if (ColumnType.tagOf(readerMetadata.getColumnType(i)) == ColumnType.SYMBOL) {
+                    if (ColumnType.isSymbol(readerMetadata.getColumnType(i))) {
                         LOG.info().$("updating null flag [column=").utf8(readerMetadata.getColumnName(i)).$(']').$();
                         writer.getSymbolMapWriter(i).updateNullFlag(reader.hasNull(i));
                     }

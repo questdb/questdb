@@ -472,7 +472,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long tmpBuf
     ) {
         final long offset;
-        if (ColumnType.tagOf(columnType) == ColumnType.STRING) {
+        if (ColumnType.isString(columnType)) {
             if (ff.read(dataFd, tmpBuf, Integer.BYTES, lastValueOffset) != Integer.BYTES) {
                 throw CairoException.instance(ff.errno()).put("could not read string length [fd=").put(dataFd).put(']');
             }
@@ -2293,7 +2293,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                     // at bottom of source var column set length of strings to null (-1) for as many strings
                     // as srcDataTop value.
-                    if (ColumnType.tagOf(columnType) == ColumnType.STRING) {
+                    if (ColumnType.isString(columnType)) {
                         srcDataVarOffset = srcDataVarSize;
                         srcDataVarSize += srcDataTop * Integer.BYTES + srcDataVarSize;
                         srcDataVarAddr = mapRW(ff, srcVarFd, srcDataVarSize);
@@ -2523,7 +2523,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     }
 
     private static void setNull(int columnType, long addr, long count) {
-        switch (ColumnType.tagOf(columnType)) {
+        switch (ColumnType.sizeTag(columnType)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
                 Vect.memset(addr, count, 0);
@@ -2552,21 +2552,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             case ColumnType.LONG256:
                 // Long256 is null when all 4 longs are NaNs
                 Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 4);
-                break;
-            case ColumnType.GEOHASH:
-                switch (ColumnType.sizeOf(columnType)) {
-                    case 1:
-                        Vect.memset(addr, count, (byte) GeoHashes.NULL);
-                        break;
-                    case 2:
-                        Vect.setMemoryShort(addr, (short) GeoHashes.NULL, count);
-                        break;
-                    case 4:
-                        Vect.setMemoryInt(addr, (int) GeoHashes.NULL, count);
-                        break;
-                    default:
-                        Vect.setMemoryLong(addr, GeoHashes.NULL, count);
-                }
                 break;
             default:
                 break;
@@ -2606,31 +2591,27 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final FilesFacade ff = tableWriter.getFilesFacade();
 
         try {
-            switch (ColumnType.tagOf(columnType)) {
-                case ColumnType.BINARY:
-                case ColumnType.STRING:
-                    setPath(pathToPartition.trimTo(plen), columnName, FILE_SUFFIX_I);
-                    dstFixFd = openRW(ff, pathToPartition, LOG);
-                    dstFixSize = (srcOooHi - srcOooLo + 1) * Long.BYTES;
-                    dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
+            if (ColumnType.isVariableLength(columnType)) {
+                setPath(pathToPartition.trimTo(plen), columnName, FILE_SUFFIX_I);
+                dstFixFd = openRW(ff, pathToPartition, LOG);
+                dstFixSize = (srcOooHi - srcOooLo + 1) * Long.BYTES;
+                dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
 
-                    setPath(pathToPartition.trimTo(plen), columnName, FILE_SUFFIX_D);
-                    dstVarFd = openRW(ff, pathToPartition, LOG);
-                    dstVarSize = O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
-                    dstVarAddr = mapRW(ff, dstVarFd, dstVarSize);
-                    break;
-                default:
-                    setPath(pathToPartition.trimTo(plen), columnName, FILE_SUFFIX_D);
-                    dstFixFd = openRW(ff, pathToPartition, LOG);
-                    dstFixSize = (srcOooHi - srcOooLo + 1) << ColumnType.pow2SizeOf(Math.abs(columnType));
-                    dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
-                    if (isIndexed) {
-                        BitmapIndexUtils.keyFileName(pathToPartition.trimTo(plen), columnName);
-                        dstKFd = openRW(ff, pathToPartition, LOG);
-                        BitmapIndexUtils.valueFileName(pathToPartition.trimTo(plen), columnName);
-                        dstVFd = openRW(ff, pathToPartition, LOG);
-                    }
-                    break;
+                setPath(pathToPartition.trimTo(plen), columnName, FILE_SUFFIX_D);
+                dstVarFd = openRW(ff, pathToPartition, LOG);
+                dstVarSize = O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
+                dstVarAddr = mapRW(ff, dstVarFd, dstVarSize);
+            } else {
+                setPath(pathToPartition.trimTo(plen), columnName, FILE_SUFFIX_D);
+                dstFixFd = openRW(ff, pathToPartition, LOG);
+                dstFixSize = (srcOooHi - srcOooLo + 1) << ColumnType.pow2SizeOf(Math.abs(columnType));
+                dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
+                if (isIndexed) {
+                    BitmapIndexUtils.keyFileName(pathToPartition.trimTo(plen), columnName);
+                    dstKFd = openRW(ff, pathToPartition, LOG);
+                    BitmapIndexUtils.valueFileName(pathToPartition.trimTo(plen), columnName);
+                    dstVFd = openRW(ff, pathToPartition, LOG);
+                }
             }
         } catch (Throwable e) {
             LOG.error().$("append new partition error [table=").$(tableWriter.getTableName())

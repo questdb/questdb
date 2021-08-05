@@ -437,16 +437,12 @@ public class TableBlockWriter implements Closeable {
 
                     partitionStruct.setColumnDataFd(columnIndex, TableUtils.openFileRWOrFail(ff, TableUtils.dFile(path.trimTo(plen), name)));
                     int columnType = metadata.getColumnType(columnIndex);
-                    switch (ColumnType.tagOf(columnType)) {
-                        case ColumnType.STRING:
-                        case ColumnType.BINARY:
-                            partitionStruct.setColumnIndexFd(columnIndex, TableUtils.openFileRWOrFail(ff, iFile(path.trimTo(plen), name)));
-                            partitionStruct.setColumnFieldSizePow2(columnIndex, -1);
-                            break;
-                        default:
-                            partitionStruct.setColumnIndexFd(columnIndex, -1);
-                            partitionStruct.setColumnFieldSizePow2(columnIndex, ColumnType.pow2SizeOf(columnType));
-                            break;
+                    if (ColumnType.isVariableLength(columnType)) {
+                        partitionStruct.setColumnIndexFd(columnIndex, TableUtils.openFileRWOrFail(ff, iFile(path.trimTo(plen), name)));
+                        partitionStruct.setColumnFieldSizePow2(columnIndex, -1);
+                    } else {
+                        partitionStruct.setColumnIndexFd(columnIndex, -1);
+                        partitionStruct.setColumnFieldSizePow2(columnIndex, ColumnType.pow2SizeOf(columnType));
                     }
                 }
 
@@ -600,7 +596,7 @@ public class TableBlockWriter implements Closeable {
                             long indexFd = partitionStruct.getColumnIndexFd(columnIndex);
                             long indexOffsetLo = writer.getSecondaryAppendOffset(timestampLo, columnIndex);
 
-                            if (ColumnType.tagOf(columnType) == ColumnType.STRING) {
+                            if (ColumnType.isString(columnType)) {
                                 task.assignUpdateStringIndex(columnDataAddressLo, columnDataAddressHi, offsetLo, indexFd, indexOffsetLo, columnIndex, partitionStruct);
                             } else {
                                 task.assignUpdateBinaryIndex(columnDataAddressLo, columnDataAddressHi, offsetLo, indexFd, indexOffsetLo, columnIndex, partitionStruct);

@@ -62,7 +62,7 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
         }
         final int columnType = metadata.getColumnType(columnIndex);
 
-        if (ColumnType.tagOf(columnType) == ColumnType.INT) {
+        if (ColumnType.isInt(columnType)) {
             return new IntColumnFunction(
                     cursorFunction,
                     columnNameFunction,
