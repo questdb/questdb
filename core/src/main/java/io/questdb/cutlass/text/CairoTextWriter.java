@@ -360,7 +360,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
         _size = writer.size();
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);
-        if (timestampIndex != -1 && ColumnType.tagOf(types.getQuick(timestampIndex).getType()) == ColumnType.TIMESTAMP) {
+        if (timestampIndex != -1 && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
             timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
         } else {
             timestampAdapter = null;
