@@ -341,6 +341,12 @@ public final class TableUtils {
         return getPartitionTableIndexOffset(symbolWriterCount, attachedPartitionsSize);
     }
 
+    public static long getTxMemorySize(long txMem) {
+        final int symbolsCount = Unsafe.getUnsafe().getInt(txMem + TX_OFFSET_MAP_WRITER_COUNT);
+        final int partitionCount = Unsafe.getUnsafe().getInt(txMem + getPartitionTableSizeOffset(symbolsCount)) / 8;
+        return getPartitionTableIndexOffset(symbolsCount, partitionCount);
+    }
+
     public static boolean isValidColumnName(CharSequence seq) {
         for (int i = 0, l = seq.length(); i < l; i++) {
             char c = seq.charAt(i);

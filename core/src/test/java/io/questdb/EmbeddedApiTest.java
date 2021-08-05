@@ -121,7 +121,7 @@ public class EmbeddedApiTest {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
 
         TestUtils.assertMemoryLeak(() -> {
-            // the write part
+            // write part
             try (
                     final CairoEngine engine = new CairoEngine(configuration);
                     final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);

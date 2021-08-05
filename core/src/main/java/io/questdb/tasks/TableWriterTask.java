@@ -38,6 +38,22 @@ public class TableWriterTask implements Closeable {
         this.dataSize = size;
     }
 
+    public long getData() {
+        return data;
+    }
+
+    public long getDataSize() {
+        return dataSize;
+    }
+
+    public void resize(long size) {
+        assert dataSize > 0;
+        if (size > dataSize) {
+            data = Unsafe.realloc(data, dataSize, size);
+            dataSize = size;
+        }
+    }
+
     @Override
     public void close() {
         if (dataSize > 0) {
