@@ -278,14 +278,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     functionStack.push(new StrConstant(node.token));
                     break;
                 case ExpressionNode.CONSTANT:
-                    functionStack.push(createConstant(node.position, node.token));
+                    if (!SqlKeywords.isGeoHashKeyword(node.token)) {
+                        functionStack.push(createConstant(node.position, node.token));
+                    } else {
+                        functionStack.push(createGeoHashTypeConstant(node));
+                    }
                     break;
                 case ExpressionNode.QUERY:
                     functionStack.push(createCursorFunction(node));
                     break;
-                case ExpressionNode.GEOHASH_TYPE_SIZE:
-                    // ignore this node (rhs of GEOHASH)
-                    return;
                 default:
                     // lookup zero arg function from symbol table
                     functionStack.push(createFunction(node, null, null));
@@ -295,16 +296,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             mutableArgs.clear();
             mutableArgs.setPos(argCount);
             mutableArgPositions.clear();
-            if (node.type == ExpressionNode.GEOHASH_TYPE) {
-                functionStack.push(createGeoHashTypeConstant(node));
-            } else {
-                mutableArgPositions.setPos(argCount);
-                for (int n = 0; n < argCount; n++) {
-                    mutableArgs.setQuick(n, functionStack.poll());
-                    mutableArgPositions.setQuick(n, positionStack.pop());
-                }
-                functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
+            mutableArgPositions.setPos(argCount);
+            for (int n = 0; n < argCount; n++) {
+                mutableArgs.setQuick(n, functionStack.poll());
+                mutableArgPositions.setQuick(n, positionStack.pop());
             }
+            functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
         }
         positionStack.push(node.position);
     }
@@ -474,8 +471,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     private TypeConstant createGeoHashTypeConstant(ExpressionNode node) throws SqlException {
-        assert node.type == ExpressionNode.GEOHASH_TYPE;
-        assert node.rhs.type == ExpressionNode.GEOHASH_TYPE_SIZE;
+        assert node.rhs != null;
         int bits = SqlParser.parseGeoHashSize(0, node.rhs.token);
         return GeoHashTypeConstant.getInstanceByPrecision(bits);
     }

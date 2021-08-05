@@ -391,12 +391,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCastGeoHashCastStrWithCharsPrecision() throws SqlException {
-        x("'sp052w92'GEOHASH(6c)cast", "cast('sp052w92' as geohash(6c))");
+        x("'sp052w92'geohash(6c)cast", "cast('sp052w92' as geohash(6c))");
     }
 
     @Test
     public void testCastGeoHashCastStrWithBitsPrecision() throws SqlException {
-        x("'sp052w92'GEOHASH(60b)cast", "cast('sp052w92' as geohash(60b))");
+        x("'sp052w92'geohash(60b)cast", "cast('sp052w92' as geohash(60b))");
     }
 
     @Test
@@ -443,12 +443,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testGeoHash1() throws SqlException {
-        x("GEOHASH(6c)", "geohash(6c)");
+        x("geohash(6c)", "geohash(6c)");
     }
 
     @Test
     public void testGeoHash2() throws SqlException {
-        x("GEOHASH(31b)", "geohash(31b)");
+        x("geohash(31b)", "geohash(31b)");
     }
 
     @Test
@@ -1055,5 +1055,4 @@ public class ExpressionParserTest extends AbstractCairoTest {
         compiler.testParseExpression(content, rpnBuilder);
         TestUtils.assertEquals(expectedRpn, rpnBuilder.rpn());
     }
-
 }

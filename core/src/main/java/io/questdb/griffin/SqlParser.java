@@ -1640,7 +1640,7 @@ public final class SqlParser {
         }
         int size;
         try {
-            size = Numbers.parseInt(sizeStr.subSequence(0, sizeStr.length() - 1));
+            size = Numbers.parseInt(sizeStr, 0, sizeStr.length() - 1);
         } catch (NumericException e) {
             throw SqlException.position(position)
                     .put("invalid GEOHASH size, must be number followed by 'C' or 'B' character");
@@ -1657,7 +1657,7 @@ public final class SqlParser {
                 throw SqlException.position(position)
                         .put("invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
         }
-        if (size <= 0 || size > GeoHashes.MAX_BITS_LENGTH) {
+        if (size < 1 || size > GeoHashes.MAX_BITS_LENGTH) {
             throw SqlException.position(position)
                     .put("invalid GEOHASH type precision range, mast be [1, 60] bits, provided=")
                     .put(size);

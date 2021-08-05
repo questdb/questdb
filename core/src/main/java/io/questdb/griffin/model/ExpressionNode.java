@@ -41,8 +41,6 @@ public class ExpressionNode implements Mutable, Sinkable {
     public static final int CONTROL = 16;
     public static final int SET_OPERATION = 32;
     public static final int QUERY = 65;
-    public static final int GEOHASH_TYPE = 126;
-    public static final int GEOHASH_TYPE_SIZE = 127;
     public static final int UNKNOWN = 0;
     public final ObjList<ExpressionNode> args = new ObjList<>(4);
     public CharSequence token;

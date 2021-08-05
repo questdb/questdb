@@ -50,7 +50,6 @@ class ExpressionParser {
     private static final int BRANCH_LEFT_BRACKET = 15;
     private static final int BRANCH_RIGHT_BRACKET = 16;
     private static final int BRANCH_DOT_DEREFERENCE = 17;
-    private static final int BRANCH_GEOHASH_SIZE = 18;
 
     private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final LowerCaseAsciiCharSequenceObjHashMap<CharSequence> allFunctions = new LowerCaseAsciiCharSequenceObjHashMap<>();
@@ -302,26 +301,25 @@ class ExpressionParser {
                             if (tok != null && tok.charAt(0) != ')') {
                                 SqlParser.parseGeoHashSize(lexer.lastTokenPosition(), tok);
                                 node = expressionNodePool.next().of(
-                                        ExpressionNode.GEOHASH_TYPE,
+                                        ExpressionNode.CONSTANT,
                                         originalGeoHashKeyword,
                                         Integer.MIN_VALUE,
                                         position);
-                                node.paramCount = 1;
-                                opStack.push(node);
-                                opStack.push(expressionNodePool.next().of(
-                                        ExpressionNode.GEOHASH_TYPE_SIZE,
+                                node.rhs = expressionNodePool.next().of(
+                                        ExpressionNode.CONSTANT,
                                         GenericLexer.immutableOf(tok),
                                         Integer.MIN_VALUE,
                                         lexer.lastTokenPosition()
-                                ));
+                                );
+                                opStack.push(node);
                                 tok = SqlUtil.fetchNext(lexer);
                                 if (tok == null || tok.charAt(0) != ')') {
                                     throw SqlException.$(lexer.lastTokenPosition(), "invalid GEOHASH, missing ')'");
                                 }
                             } else {
-                                throw SqlException.$(lexer.lastTokenPosition(),"invalid GEOHASH, invalid type precision");
+                                throw SqlException.$(lexer.lastTokenPosition(), "invalid GEOHASH, invalid type precision");
                             }
-                            thisBranch = BRANCH_GEOHASH_SIZE;
+                            thisBranch = BRANCH_LITERAL;
                         } else {
                             processDefaultBranch = true;
                         }
@@ -393,17 +391,16 @@ class ExpressionParser {
                             } else {
                                 if (thisWasCast) {
                                     // validate type
-                                    if (prevBranch != BRANCH_GEOHASH_SIZE || node.type == ExpressionNode.GEOHASH_TYPE) {
-                                        final int columnTypeTag = ColumnType.columnTypeOf(node.token);
-                                        if ((columnTypeTag < ColumnType.BOOLEAN || columnTypeTag > ColumnType.GEOHASH) && !asPoppedNull) {
-                                            throw SqlException.$(node.position, "invalid type");
-                                        }
-                                        if (columnTypeTag != ColumnType.GEOHASH) {
-                                            node.type = ExpressionNode.CONSTANT;
-                                        } else if (node.type == ExpressionNode.LITERAL) {
-                                            throw SqlException.$(node.position, "not valid GEOHASH type literal");
-                                        }
+                                    final int columnTypeTag = ColumnType.columnTypeOf(node.token);
+                                    if ((columnTypeTag < ColumnType.BOOLEAN || columnTypeTag > ColumnType.GEOHASH) && !asPoppedNull) {
+                                        throw SqlException.$(node.position, "invalid type");
                                     }
+                                    if (Chars.toLowerCaseAscii(node.token.charAt(0)) == 'g' &&
+                                            SqlKeywords.isGeoHashKeyword(node.token) &&
+                                            node.rhs == null) {
+                                        throw SqlException.$(node.position, "not valid GEOHASH type literal");
+                                    }
+                                    node.type = ExpressionNode.CONSTANT;
                                 }
                                 argStackDepth = onNode(listener, node, argStackDepth);
                             }
