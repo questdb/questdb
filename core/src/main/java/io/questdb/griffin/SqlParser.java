@@ -1623,7 +1623,7 @@ public final class SqlParser {
     }
 
     private int toColumnType(GenericLexer lexer, CharSequence tok) throws SqlException {
-        final short type = ColumnType.columnTypeTagOf(tok);
+        final short type = ColumnType.tagOf(tok);
         if (type == -1) {
             throw SqlException.$(lexer.lastTokenPosition(), "unsupported column type: ").put(tok);
         }

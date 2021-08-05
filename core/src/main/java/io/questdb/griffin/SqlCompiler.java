@@ -1047,12 +1047,12 @@ public class SqlCompiler implements Closeable {
 
             tok = expectToken(lexer, "column type");
 
-            int type = ColumnType.columnTypeTagOf(tok);
+            int type = ColumnType.tagOf(tok);
             if (type == -1) {
                 throw SqlException.$(lexer.lastTokenPosition(), "invalid type");
             }
 
-            if (ColumnType.isGeohash(type)) {
+            if (ColumnType.isGeoHash(type)) {
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null || tok.charAt(0) != '(') {
                     throw SqlException.position(lexer.getPosition()).put("missing GEOHASH precision");
@@ -2438,7 +2438,7 @@ public class SqlCompiler implements Closeable {
             if (metadataColumnIndex == writerTimestampIndex) {
                 return function;
             }
-            if (ColumnType.isGeohash(columnType)) {
+            if (ColumnType.isGeoHash(columnType)) {
                 switch (ColumnType.tagOf(function.getType())) {
                     case ColumnType.GEOHASH:
                         int typeBits = GeoHashes.getBitsPrecision(columnType);

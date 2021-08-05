@@ -103,19 +103,19 @@ public final class ColumnType {
         return columnType == ColumnType.BOOLEAN;
     }
 
-    public static boolean isChar(int type) {
-        return type == CHAR;
+    public static boolean isChar(int columnType) {
+        return columnType == CHAR;
     }
 
     public static boolean isCursor(int columnType) {
         return columnType == CURSOR;
     }
 
-    public static boolean isDouble(int type) {
-        return type == DOUBLE;
+    public static boolean isDouble(int columnType) {
+        return columnType == DOUBLE;
     }
 
-    public static boolean isGeohash(int columnType) {
+    public static boolean isGeoHash(int columnType) {
         return tagOf(columnType) == GEOHASH;
     }
 
@@ -144,7 +144,7 @@ public final class ColumnType {
     }
 
     public static boolean isVariableLength(int columnType) {
-        return columnType == BINARY || columnType == STRING;
+        return columnType == STRING || columnType == BINARY;
     }
 
     public static boolean isSymbolOrString(int columnType) {
@@ -203,7 +203,7 @@ public final class ColumnType {
         throw new UnsupportedOperationException("Invalid geohash size" + sizeOf(type));
     }
 
-    public static short columnTypeTagOf(CharSequence name) {
+    public static short tagOf(CharSequence name) {
         return (short) nameTypeMap.get(name);
     }
 

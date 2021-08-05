@@ -185,7 +185,7 @@ public class GeoHashes {
         if (bits <= MAX_BITS_LENGTH) {
             return 1 << GEO_TYPE_SIZE_POW2[bits];
         }
-        return -1;
+        return -1; // Corrupt metadata
     }
 
     public static int pow2SizeOf(int columnType) {
@@ -194,7 +194,7 @@ public class GeoHashes {
         if (bits <= MAX_BITS_LENGTH) {
             return GEO_TYPE_SIZE_POW2[bits];
         }
-        return -1;
+        return -1; // Corrupt metadata
     }
 
     public static void toBitString(long hash, int bits, CharSink sink) {
