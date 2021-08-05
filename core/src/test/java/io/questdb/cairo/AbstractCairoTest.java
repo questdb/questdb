@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
@@ -125,7 +126,7 @@ public class AbstractCairoTest {
 
     @AfterClass
     public static void tearDownStatic() {
-        engine.close();
+        engine = Misc.free(engine);
     }
 
     @Before

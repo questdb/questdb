@@ -14,6 +14,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUnboundedByteSink;
 import io.questdb.std.str.Path;
@@ -41,16 +42,6 @@ public class LineTcpO3Test extends AbstractCairoTest {
 
     @AfterClass
     public static void tearDownStatic() {
-    }
-
-    @Test
-    public void testInOrder() throws Exception {
-        test("ilp.inOrder1");
-    }
-
-    @Test
-    public void testO3() throws Exception {
-        test("ilp.outOfOrder1");
     }
 
     @Override
@@ -89,9 +80,18 @@ public class LineTcpO3Test extends AbstractCairoTest {
     @Override
     @After
     public void tearDown() {
-        engine.close();
-        engine = null;
+        engine = Misc.free(engine);
         TestUtils.removeTestPath(root);
+    }
+
+    @Test
+    public void testInOrder() throws Exception {
+        test("ilp.inOrder1");
+    }
+
+    @Test
+    public void testO3() throws Exception {
+        test("ilp.outOfOrder1");
     }
 
     private void readGzResource(String rname) {

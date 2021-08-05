@@ -108,8 +108,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         AbstractCairoTest.setUpStatic();
         compiler = new SqlCompiler(engine);
         bindVariableService = new BindVariableServiceImpl(configuration);
-        sqlExecutionContext = new SqlExecutionContextImpl(
-                engine, 1, engine.getMessageBus())
+        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                 .with(
                         AllowAllCairoSecurityContext.INSTANCE,
                         bindVariableService,

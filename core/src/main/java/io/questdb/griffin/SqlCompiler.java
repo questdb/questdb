@@ -106,14 +106,14 @@ public class SqlCompiler implements Closeable {
     };
 
     public SqlCompiler(CairoEngine engine) {
-        this(engine, engine.getMessageBus(), null);
+        this(engine, null);
     }
 
-    public SqlCompiler(CairoEngine engine, @Nullable MessageBus messageBus, @Nullable FunctionFactoryCache functionFactoryCache) {
+    public SqlCompiler(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
-        this.messageBus = messageBus;
+        this.messageBus = engine.getMessageBus();
         this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
         this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
         this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());

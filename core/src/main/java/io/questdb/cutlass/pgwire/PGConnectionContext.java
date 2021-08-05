@@ -165,12 +165,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final PGResumeProcessor resumeCursorExecuteRef = this::resumeCursorExecute;
     private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
 
-    public PGConnectionContext(
-            CairoEngine engine,
-            PGWireConfiguration configuration,
-            @Nullable MessageBus messageBus,
-            int workerCount
-    ) {
+    public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, int workerCount) {
         this.engine = engine;
         this.utf8Sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
         this.typeManager = new TypeManager(engine.getConfiguration().getTextConfiguration(), utf8Sink);
@@ -193,7 +188,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.serverVersion = configuration.getServerVersion();
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
         this.locale = configuration.getDefaultDateLocale();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, messageBus);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
         this.sqlExecutionContext.setRandom(this.rnd = configuration.getRandom());
         this.namedStatementWrapperPool = new WeakObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 16
         this.namedPortalPool = new WeakObjectPool<>(Portal::new, configuration.getNamesStatementPoolCapacity()); // 16
@@ -942,6 +937,22 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         activeSelectColumnTypes.setPos(columnCount);
         for (int i = 0; i < columnCount; i++) {
             activeSelectColumnTypes.setQuick(i, m.getColumnType(i));
+        }
+    }
+
+    private void clearCursorAndFactory() {
+        resumeProcessor = null;
+        currentCursor = Misc.free(currentCursor);
+        // do not free factory, it will be cached
+        currentFactory = null;
+        // we we resumed the cursor send the typeAndSelect will be null
+        // we do not want to overwrite cache entries and potentially
+        // leak memory
+        if (typesAndSelect != null) {
+            typesAndSelectCache.put(queryText, typesAndSelect);
+            // clear selectAndTypes so that context doesn't accidentally
+            // free the factory when context finishes abnormally
+            this.typesAndSelect = null;
         }
     }
 
@@ -2105,22 +2116,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             prepareCommandComplete(true);
         } else {
             prepareSuspended();
-        }
-    }
-
-    private void clearCursorAndFactory() {
-        resumeProcessor = null;
-        currentCursor = Misc.free(currentCursor);
-        // do not free factory, it will be cached
-        currentFactory = null;
-        // we we resumed the cursor send the typeAndSelect will be null
-        // we do not want to overwrite cache entries and potentially
-        // leak memory
-        if (typesAndSelect != null) {
-            typesAndSelectCache.put(queryText, typesAndSelect);
-            // clear selectAndTypes so that context doesn't accidentally
-            // free the factory when context finishes abnormally
-            this.typesAndSelect = null;
         }
     }
 

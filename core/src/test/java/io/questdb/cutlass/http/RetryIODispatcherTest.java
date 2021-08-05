@@ -31,7 +31,6 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.ServerDisconnectException;
 import org.jetbrains.annotations.NotNull;
@@ -231,7 +230,7 @@ public class RetryIODispatcherTest {
                             .withTempFolder(temp)
                             .withWorkerCount(2)
                             .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                            .withCustomTextImportProcessor(((configuration, engine, messageBus, workerCount) -> new TextImportProcessor(engine) {
+                            .withCustomTextImportProcessor(((configuration, engine, workerCount) -> new TextImportProcessor(engine) {
                                 @Override
                                 public void onRequestRetry(HttpConnectionContext context) throws ServerDisconnectException {
                                     throw ServerDisconnectException.INSTANCE;

@@ -107,6 +107,7 @@ public class TableWriter implements Closeable {
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
     private final MessageBus messageBus;
+    private final MessageBus ownMessageBus;
     private final boolean parallelIndexerEnabled;
     private final Timestamps.TimestampFloorMethod timestampFloorMethod;
     private final Timestamps.TimestampCeilMethod timestampCeilMethod;
@@ -173,7 +174,7 @@ public class TableWriter implements Closeable {
     private boolean o3InError = false;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
-        this(configuration, tableName, new MessageBusImpl(configuration));
+        this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot());
     }
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName, @NotNull MessageBus messageBus) {
@@ -187,20 +188,26 @@ public class TableWriter implements Closeable {
             boolean lock,
             LifecycleManager lifecycleManager
     ) {
-        this(configuration, tableName, messageBus, lock, lifecycleManager, configuration.getRoot());
+        this(configuration, tableName, messageBus, null, lock, lifecycleManager, configuration.getRoot());
     }
 
     public TableWriter(
             CairoConfiguration configuration,
             CharSequence tableName,
-            @NotNull MessageBus messageBus,
+            MessageBus messageBus,
+            MessageBus ownMessageBus,
             boolean lock,
             LifecycleManager lifecycleManager,
             CharSequence root
     ) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
         this.configuration = configuration;
-        this.messageBus = messageBus;
+        this.ownMessageBus = ownMessageBus;
+        if (ownMessageBus != null) {
+            this.messageBus = ownMessageBus;
+        } else {
+            this.messageBus = messageBus;
+        }
         this.defaultCommitMode = configuration.getCommitMode();
         this.lifecycleManager = lifecycleManager;
         this.parallelIndexerEnabled = configuration.isParallelIndexingEnabled();
@@ -213,12 +220,15 @@ public class TableWriter implements Closeable {
         this.o3PartitionUpdatePubSeq = new MPSequence(this.o3PartitionUpdateQueue.getCapacity());
         this.o3PartitionUpdateSubSeq = new SCSequence();
         o3PartitionUpdatePubSeq.then(o3PartitionUpdateSubSeq).then(o3PartitionUpdatePubSeq);
-        this.messageBus.getTableWriterCommandSubSeq().and(commandSubSeq);
+        final FanOut commandFanOut = this.messageBus.getTableWriterCommandSubSeq();
+        if (commandFanOut != null) {
+            commandFanOut.and(commandSubSeq);
+        }
         this.path = new Path();
         this.path.of(root).concat(tableName);
         this.other = new Path().of(root).concat(tableName);
         this.rootLen = path.length();
-        this.blockWriter = new TableBlockWriter(configuration, messageBus);
+        this.blockWriter = new TableBlockWriter(configuration, this.messageBus);
         try {
             if (lock) {
                 lock();
@@ -2243,6 +2253,11 @@ public class TableWriter implements Closeable {
             Misc.free(txnScoreboard);
             Misc.free(path);
             Misc.free(o3TimestampMemCpy);
+            final FanOut commandFanOut = messageBus.getTableWriterCommandSubSeq();
+            if (commandFanOut != null) {
+                commandFanOut.remove(commandSubSeq);
+            }
+            Misc.free(ownMessageBus);
             freeTempMem();
             LOG.info().$("closed '").utf8(tableName).$('\'').$();
         }

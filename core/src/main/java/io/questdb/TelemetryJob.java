@@ -75,8 +75,8 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
         this.queue = engine.getTelemetryQueue();
         this.subSeq = engine.getTelemetrySubSequence();
 
-        try (final SqlCompiler compiler = new SqlCompiler(engine, engine.getMessageBus(), functionFactoryCache)) {
-            final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1, engine.getMessageBus());
+        try (final SqlCompiler compiler = new SqlCompiler(engine, functionFactoryCache)) {
+            final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
             sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
             if (enabled) {
                 compiler.compile("CREATE TABLE IF NOT EXISTS " + tableName + " (created timestamp, event short, origin short) timestamp(created)", sqlExecutionContext);
