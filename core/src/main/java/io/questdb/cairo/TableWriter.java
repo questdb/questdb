@@ -3989,6 +3989,14 @@ public class TableWriter implements Closeable {
     private void processCommandQueue() {
         final long cursor = commandSubSeq.next();
         if (cursor > -1) {
+            TableWriterTask tsk = messageBus.getTableWriterCommandQueue().get(cursor);
+            switch (tsk.type) {
+                case 1: // slave replay
+                    long txMemSize = Unsafe.getUnsafe().getLong(tsk.data);
+                    long metaMemSize = Unsafe.getUnsafe().getLong(tsk.data + txMemSize + 8);
+                    reconcileSlaveState(tsk.data + 8, tsk.data + txMemSize + 16, metaMemSize);
+                    break;
+            }
             commandSubSeq.done(cursor);
         }
     }

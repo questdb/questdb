@@ -28,6 +28,8 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.tasks.TableWriterTask;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -35,6 +37,215 @@ import org.junit.Ignore;
 import org.junit.Test;
 
 public class ReplModelReconTest extends AbstractGriffinTest {
+
+    @Test
+    public void testColumnNameCaseSensitivity() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table x as  " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o" +
+                            " from long_sequence(100000)" +
+                            ") timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            compiler.compile("create table y as (" +
+                    "select i, sym, amt, timestamp, b, c, d, e, f, g G, ik IK, j, k K, l, m, n, o from x" +
+                    ") timestamp(k) partition by DAY", sqlExecutionContext);
+
+            compiler.compile("insert into x " +
+                            "select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-09', 'yyyy-MM-dd'), 30000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o" +
+                            " from long_sequence(10000)",
+                    sqlExecutionContext
+            );
+
+            try (
+                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
+                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
+            ) {
+                sink.clear();
+                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                Assert.assertTrue(w1.isTransactionLogEnabled());
+            }
+
+            TestUtils.assertEquals(
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-09T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":10000,\"nameTxn\":-1,\"dataTxn\":1,}]}",
+                    sink
+            );
+        });
+    }
+
+    @Test
+    public void testO3PartitionInsertedBefore() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table x as  " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o" +
+                            " from long_sequence(100000)" +
+                            ") timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            compiler.compile("create table y as (x) timestamp(k) partition by DAY", sqlExecutionContext);
+
+            compiler.compile("insert into x " +
+                            "select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-09', 'yyyy-MM-dd'), 30000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o" +
+                            " from long_sequence(10000)",
+                    sqlExecutionContext
+            );
+
+            try (
+                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
+                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
+            ) {
+                sink.clear();
+                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                Assert.assertTrue(w1.isTransactionLogEnabled());
+            }
+
+            TestUtils.assertEquals(
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-09T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":10000,\"nameTxn\":-1,\"dataTxn\":1,}]}",
+                    sink
+            );
+        });
+    }
+
+    @Test
+    public void testO3PartitionMutates() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table x as  " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o" +
+                            " from long_sequence(100000)" +
+                            ") timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            compiler.compile("create table y as (x) timestamp(k) partition by DAY", sqlExecutionContext);
+
+            compiler.compile("insert into x " +
+                            "select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-11', 'yyyy-MM-dd'), 30000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o" +
+                            " from long_sequence(10000)",
+                    sqlExecutionContext
+            );
+
+            try (
+                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
+                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
+            ) {
+                sink.clear();
+                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                Assert.assertTrue(w1.isTransactionLogEnabled());
+            }
+
+            TestUtils.assertEquals(
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-11T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":38800,\"nameTxn\":1,\"dataTxn\":0,}]}",
+                    sink
+            );
+        });
+    }
 
     @Test
     public void testOrderedAcrossPartition() throws Exception {
@@ -270,19 +481,129 @@ public class ReplModelReconTest extends AbstractGriffinTest {
 
                 Assert.assertTrue(cursor > -1);
                 TableWriterTask task = wq.get(cursor);
+
                 long txMem = w2.getRawTxnMemory();
                 long txMemSize = TableUtils.getTxMemorySize(txMem);
-//                long
+                long metaMem = w2.getRawMetaMemory();
+                long metaMemSize = w2.getRawMetaMemorySize();
 
+                long tskSize = task.dataSize;
+                if (tskSize < txMemSize + metaMemSize + 16) {
+                    task.resize(txMemSize + metaMemSize + 16);
+                }
 
+                long p = task.data;
+                Unsafe.getUnsafe().putLong(p, txMemSize);
+                Vect.memcpy(txMem, p + 8, txMemSize);
+                Unsafe.getUnsafe().putLong(p + txMemSize + 8, metaMemSize);
+                Vect.memcpy(metaMem, p + txMemSize + 16, metaMemSize);
 
+                task.type = 1; // slave replay
+
+                pubSeq.done(cursor);
+
+                w1.rollback();
+
+//                sink.clear();
+//                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+//                Assert.assertTrue(w1.isTransactionLogEnabled());
+            }
+
+            TestUtils.assertEquals(
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"dataTxn\":0,}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    sink
+            );
+        });
+    }
+
+    @Test
+    public void testOrderedCleanPartitionBreakOnLast() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table x as  " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o" +
+                            " from long_sequence(100000)" +
+                            ") timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            compiler.compile("create table y as (select * from x where k < '2018-01-13') timestamp(k) partition by DAY", sqlExecutionContext);
+
+            try (
+                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
+                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
+            ) {
                 sink.clear();
                 sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
                 Assert.assertTrue(w1.isTransactionLogEnabled());
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"dataTxn\":0,}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":0,}]}",
+                    sink
+            );
+        });
+
+    }
+
+    @Test
+    public void testOrderedNothingToDo() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table x as  " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o" +
+                            " from long_sequence(100000)" +
+                            ") timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            compiler.compile("create table y as (x) timestamp(k) partition by DAY", sqlExecutionContext);
+
+            try (
+                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
+                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
+            ) {
+                sink.clear();
+                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                Assert.assertFalse(w1.isTransactionLogEnabled());
+            }
+
+            TestUtils.assertEquals(
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0}}",
                     sink
             );
         });
@@ -389,308 +710,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
 
             TestUtils.assertEquals(
                     "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":0,}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":11,\"toIndex\":-1},{\"action\":\"move\",\"fromIndex\":12,\"toIndex\":11},{\"action\":\"move\",\"fromIndex\":13,\"toIndex\":12},{\"action\":\"move\",\"fromIndex\":14,\"toIndex\":13},{\"action\":\"move\",\"fromIndex\":15,\"toIndex\":14},{\"action\":\"move\",\"fromIndex\":16,\"toIndex\":15}]}",
-                    sink
-            );
-        });
-    }
-
-    @Test
-    public void testO3PartitionInsertedBefore() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile(
-                    "create table x as  " +
-                            "(select" +
-                            " cast(x + 10 as int) i," +
-                            " rnd_symbol('msft','ibm', 'googl') sym," +
-                            " round(rnd_double(0)*100, 3) amt," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) ik," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_long256() o" +
-                            " from long_sequence(100000)" +
-                            ") timestamp(k) partition by DAY",
-                    sqlExecutionContext
-            );
-
-            compiler.compile("create table y as (x) timestamp(k) partition by DAY", sqlExecutionContext);
-
-            compiler.compile("insert into x " +
-                            "select" +
-                            " cast(x + 10 as int) i," +
-                            " rnd_symbol('msft','ibm', 'googl') sym," +
-                            " round(rnd_double(0)*100, 3) amt," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) ik," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(to_timestamp('2018-01-09', 'yyyy-MM-dd'), 30000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_long256() o" +
-                            " from long_sequence(10000)",
-                    sqlExecutionContext
-            );
-
-            try (
-                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
-                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
-            ) {
-                sink.clear();
-                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-                Assert.assertTrue(w1.isTransactionLogEnabled());
-            }
-
-            TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-09T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":10000,\"nameTxn\":-1,\"dataTxn\":1,}]}",
-                    sink
-            );
-        });
-    }
-
-    @Test
-    public void testColumnNameCaseSensitivity() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile(
-                    "create table x as  " +
-                            "(select" +
-                            " cast(x + 10 as int) i," +
-                            " rnd_symbol('msft','ibm', 'googl') sym," +
-                            " round(rnd_double(0)*100, 3) amt," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) ik," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_long256() o" +
-                            " from long_sequence(100000)" +
-                            ") timestamp(k) partition by DAY",
-                    sqlExecutionContext
-            );
-
-            compiler.compile("create table y as (" +
-                    "select i, sym, amt, timestamp, b, c, d, e, f, g G, ik IK, j, k K, l, m, n, o from x" +
-                    ") timestamp(k) partition by DAY", sqlExecutionContext);
-
-            compiler.compile("insert into x " +
-                            "select" +
-                            " cast(x + 10 as int) i," +
-                            " rnd_symbol('msft','ibm', 'googl') sym," +
-                            " round(rnd_double(0)*100, 3) amt," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) ik," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(to_timestamp('2018-01-09', 'yyyy-MM-dd'), 30000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_long256() o" +
-                            " from long_sequence(10000)",
-                    sqlExecutionContext
-            );
-
-            try (
-                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
-                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
-            ) {
-                sink.clear();
-                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-                Assert.assertTrue(w1.isTransactionLogEnabled());
-            }
-
-            TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-09T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":10000,\"nameTxn\":-1,\"dataTxn\":1,}]}",
-                    sink
-            );
-        });
-    }
-
-    @Test
-    public void testO3PartitionMutates() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile(
-                    "create table x as  " +
-                            "(select" +
-                            " cast(x + 10 as int) i," +
-                            " rnd_symbol('msft','ibm', 'googl') sym," +
-                            " round(rnd_double(0)*100, 3) amt," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) ik," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_long256() o" +
-                            " from long_sequence(100000)" +
-                            ") timestamp(k) partition by DAY",
-                    sqlExecutionContext
-            );
-
-            compiler.compile("create table y as (x) timestamp(k) partition by DAY", sqlExecutionContext);
-
-            compiler.compile("insert into x " +
-                            "select" +
-                            " cast(x + 10 as int) i," +
-                            " rnd_symbol('msft','ibm', 'googl') sym," +
-                            " round(rnd_double(0)*100, 3) amt," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) ik," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(to_timestamp('2018-01-11', 'yyyy-MM-dd'), 30000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_long256() o" +
-                            " from long_sequence(10000)",
-                    sqlExecutionContext
-            );
-
-            try (
-                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
-                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
-            ) {
-                sink.clear();
-                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-                Assert.assertTrue(w1.isTransactionLogEnabled());
-            }
-
-            TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-11T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":38800,\"nameTxn\":1,\"dataTxn\":0,}]}",
-                    sink
-            );
-        });
-    }
-
-    @Test
-    public void testOrderedCleanPartitionBreakOnLast() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile(
-                    "create table x as  " +
-                            "(select" +
-                            " cast(x + 10 as int) i," +
-                            " rnd_symbol('msft','ibm', 'googl') sym," +
-                            " round(rnd_double(0)*100, 3) amt," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) ik," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_long256() o" +
-                            " from long_sequence(100000)" +
-                            ") timestamp(k) partition by DAY",
-                    sqlExecutionContext
-            );
-
-            compiler.compile("create table y as (select * from x where k < '2018-01-13') timestamp(k) partition by DAY", sqlExecutionContext);
-
-            try (
-                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
-                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
-            ) {
-                sink.clear();
-                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-                Assert.assertTrue(w1.isTransactionLogEnabled());
-            }
-
-            TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":0,}]}",
-                    sink
-            );
-        });
-
-    }
-
-    @Test
-    public void testOrderedNothingToDo() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile(
-                    "create table x as  " +
-                            "(select" +
-                            " cast(x + 10 as int) i," +
-                            " rnd_symbol('msft','ibm', 'googl') sym," +
-                            " round(rnd_double(0)*100, 3) amt," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) ik," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_long256() o" +
-                            " from long_sequence(100000)" +
-                            ") timestamp(k) partition by DAY",
-                    sqlExecutionContext
-            );
-
-            compiler.compile("create table y as (x) timestamp(k) partition by DAY", sqlExecutionContext);
-
-            try (
-                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
-                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
-            ) {
-                sink.clear();
-                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-                Assert.assertFalse(w1.isTransactionLogEnabled());
-            }
-
-            TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0}}",
                     sink
             );
         });
