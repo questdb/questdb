@@ -154,6 +154,11 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public long getGeoHash(Record rec) {
+        return getBase().getGeoHash(rec);
+    }
+
+    @Override
     public int getType() {
         return type;
     }

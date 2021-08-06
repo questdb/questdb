@@ -57,7 +57,7 @@ public class InStrFunctionFactory implements FunctionFactory {
 
         for (int i = 1; i < n; i++) {
             Function func = args.getQuick(i);
-            switch (func.getType()) {
+            switch (ColumnType.tagOf(func.getType())) {
                 case ColumnType.NULL:
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:

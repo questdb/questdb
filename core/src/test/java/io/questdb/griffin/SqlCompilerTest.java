@@ -39,6 +39,7 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -1660,6 +1661,116 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCompileSet() throws Exception {
         String query = "SET x = y";
         assertMemoryLeak(() -> Assert.assertEquals(SET, compiler.compile(query, sqlExecutionContext).getType()));
+    }
+
+    @Test
+    public void testCreateAsSelectGeoHashBitsPrecision() throws Exception {
+        final String expected = "a\tb\n" +
+                "01001110110\t00100001101\n" +
+                "10001101001\t11111011101\n" +
+                "10000101010\t11100100000\n" +
+                "11000000101\t00001010111\n" +
+                "10011100111\t00111000010\n" +
+                "01110110001\t10110001001\n" +
+                "11010111111\t10001100010\n" +
+                "10010110001\t01010110101\n";
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (" +
+                    " select" +
+                    " rnd_geohash(11) a," +
+                    " rnd_geohash(11) b" +
+                    " from long_sequence(8)" +
+                    ")", sqlExecutionContext);
+            assertSql(
+                    "x",
+                    expected
+            );
+        });
+    }
+
+    @Test
+    public void testCreateAsSelectGeoHashCharsPrecision() throws Exception {
+        final String expected = "a\tb\n" +
+                "9v1\t46s\n" +
+                "jnw\tzfu\n" +
+                "hp4\twh4\n" +
+                "s2z\t1cj\n" +
+                "mmt\t71f\n" +
+                "fsn\tq4s\n" +
+                "uzr\tjj5\n" +
+                "ksu\tbuy\n";
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (" +
+                    " select" +
+                    " rnd_geohash(15) a," +
+                    " rnd_geohash(15) b" +
+                    " from long_sequence(8)" +
+                    ")", sqlExecutionContext);
+            assertSql(
+                    "x",
+                    expected
+            );
+        });
+    }
+
+    // TODO: I would expect an implicit cast char to string to geohash
+    @Ignore(value = "inconvertible types: CHAR -> GEOHASH(1c) [from='s', to=geohash]")
+    @Test
+    public void testCreateAsSelectGeoHashByteSizedStorage1() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery(
+                    "geohash\n",
+                    "select geohash from geohash",
+                    "create table geohash (geohash geohash(1c))",
+                    null,
+                    "insert into geohash values('s')",
+                    "geohash\n" +
+                            "s\n",
+                    true,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Ignore(value = "Da funk, the 's' is a valid geohash of the correct size and it is not inserted")
+    @Test
+    public void testCreateAsSelectGeoHashByteSizedStorage2() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery(
+                    "geohash\n",
+                    "select geohash from geohash",
+                    "create table geohash (geohash geohash(1c))",
+                    null,
+                    "insert into geohash values(cast('s' as string))",
+                    "geohash\n" +
+                            "s\n",
+                    true,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Ignore(value = "Da funk, the 's' is a valid geohash of the correct size and it is not inserted")
+    @Test
+    public void testCreateAsSelectGeoHashByteSizedStorage3() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery(
+                    "geohash\n",
+                    "select geohash from geohash",
+                    "create table geohash (geohash geohash(1c))",
+                    null,
+                    "insert into geohash values(cast('s' as geohash(1c)))",
+                    "geohash\n" +
+                            "s\n",
+                    true,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test

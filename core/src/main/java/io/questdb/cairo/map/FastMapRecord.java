@@ -73,7 +73,7 @@ final class FastMapRecord implements MapRecord {
         Long256Impl[] long256B = null;
 
         for (int i = 0; i < n; i++) {
-            switch (keyTypes.getColumnType(i)) {
+            switch (ColumnType.tagOf(keyTypes.getColumnType(i))) {
                 case ColumnType.STRING:
                     if (csA == null) {
                         csA = new DirectCharSequence[n + split];
@@ -182,6 +182,12 @@ final class FastMapRecord implements MapRecord {
     @Override
     public long getLong(int columnIndex) {
         return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
+    }
+
+    @Override
+    public long getGeoHash(int columnIndex) {
+        // TODO: geohash store type per column or other way to get size of the geohash
+        throw new UnsupportedOperationException();
     }
 
     @Override

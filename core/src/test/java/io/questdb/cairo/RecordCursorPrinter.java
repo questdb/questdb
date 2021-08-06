@@ -31,6 +31,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
@@ -117,7 +118,8 @@ public class RecordCursorPrinter {
     }
 
     protected void printColumn(Record r, RecordMetadata m, int i, CharSink sink) {
-        switch (m.getColumnType(i)) {
+        final int columnType = m.getColumnType(i);
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.DATE:
                 DateFormatUtils.appendDateTime(sink, r.getDate(i));
                 break;
@@ -154,6 +156,18 @@ public class RecordCursorPrinter {
             case ColumnType.LONG:
                 sink.put(r.getLong(i));
                 break;
+            case ColumnType.GEOHASH:
+                int bitsPrecision = GeoHashes.getBitsPrecision(m.getColumnType(i));
+                long hash = r.getGeoHash(i);
+                if (hash == GeoHashes.NULL) {
+                    break; // optimisation
+                }
+                if (bitsPrecision % 5 == 0) {
+                    GeoHashes.toString(hash, bitsPrecision / 5, sink);
+                } else {
+                    GeoHashes.toBitString(hash, bitsPrecision, sink);
+                }
+                break;
             case ColumnType.BYTE:
                 sink.put(r.getByte(i));
                 break;
@@ -170,7 +184,7 @@ public class RecordCursorPrinter {
                 break;
         }
         if (printTypes) {
-            sink.put(':').put(ColumnType.nameOf(m.getColumnType(i)));
+            sink.put(':').put(ColumnType.nameOf(columnType));
         }
     }
 }

@@ -3230,8 +3230,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0bda\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[false,-727724771,-13027,8920866532787660373,\"-51129-02-11T06:38:29.397464Z\",\"-169665660-01-09T01:58:28.119Z\",null,null,\"EHNRX\",\"ZSX\",80,[]],[false,-303295973,-11105,6854658259142399220,\"273652-10-24T01:16:04.499209Z\",null,0.38179755,0.9687423276940171,\"EDRQQ\",\"LOF\",30,[]],[true,1985398001,4635,7522482991756933150,\"20093-07-24T16:56:53.198086Z\",\"279864478-12-31T01:58:35.932Z\",null,0.05384400312338511,\"HVUVS\",\"OTS\",-79,[]],[false,-1966408995,-4628,-2406077911451945242,\"-254163-09-17T05:33:54.251307Z\",null,0.81233966,null,\"IKJSM\",\"SUQ\",70,[]],[false,2011884585,-15119,4641238585508069993,\"186548-11-05T05:57:55.827139Z\",\"-277437004-09-03T08:55:41.803Z\",0.89989215,0.6583311519893554,\"ZIMNZ\",\"RMF\",-97,[]],[false,-907794648,30294,null,null,null,0.13264287,null,\"OHNZH\",null,-9,[]],[true,-1510166985,-1315,6056145309392106540,null,null,0.54669005,null,\"MZVQE\",\"NDC\",-94,[]],[false,null,-30006,750145151786158348,\"-279681-08-19T06:26:33.186955Z\",\"-144112168-08-02T20:50:38.542Z\",0.8977236,0.5691053034055052,\"WIFFL\",\"BRO\",-97,[]],[false,null,-5079,6793615437970356479,\"171291-08-24T10:16:32.229138Z\",\"63572238-04-24T11:00:13.287Z\",null,0.7215959171612961,\"KWZLU\",\"GXH\",58,[]],[false,null,30698,-9219078548506735248,\"197633-02-20T09:12:49.579955Z\",\"286623354-12-11T19:15:45.735Z\",null,0.8001632261203552,null,\"KFM\",37,[]],[false,-485549586,10024,null,\"122137-10-05T20:22:21.831563Z\",\"278802275-11-05T23:22:18.593Z\",0.5780819,0.18586435581637295,\"DYOPH\",\"IMY\",109,[]],[false,-1604266757,-13852,4598876523645326656,\"204480-04-27T20:21:01.380246Z\",null,0.19736767,0.11591855759299885,\"DMIGQ\",\"VKH\",-44,[]],[true,-861621212,-20937,-6446120489339099836,\"79287-08-03T02:05:46.962686Z\",null,0.4349324,0.11296257318851766,\"CGFNW\",null,17,[]],[false,1772084256,-23044,-5828188148408093893,\"-252298-10-09T07:11:36.011048Z\",\"-270365729-01-24T04:33:47.165Z\",null,0.5764439692141042,\"BQQEM\",null,-104,[]],[true,-159178348,0,null,null,\"81404961-06-19T18:10:11.037Z\",0.5598187,0.5900836401674938,null,\"HPZ\",-99,[]],[false,-238129044,-32768,-8851773155849999621,\"-90192-03-24T17:45:15.784841Z\",\"-152632412-11-30T22:15:09.334Z\",0.7806183,null,\"CLNXF\",\"UWP\",-127,[]],[true,1665107665,0,-8306574409611146484,\"-109765-04-18T07:45:05.739795Z\",\"-243146933-02-10T16:15:15.931Z\",0.52387,null,\"NIJEE\",\"RUG\",-59,[]],[false,21764960,-32768,-5708280760166173503,\"-248236-04-27T14:06:03.509521Z\",null,0.77833515,0.533524384058538,\"VOCUG\",\"UNE\",69,[]],[true,null,0,5637967617527425113,null,null,null,0.5815065874358148,null,\"EVQ\",56,[]],[true,-416467698,-32768,null,\"201101-10-20T07:35:25.133598Z\",\"-175203601-12-02T01:02:02.378Z\",null,0.7430101994511517,\"DXCBJ\",null,58,[]]],\"count\":20}\r\n" +
+                        "0bdd\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[false,-727724771,24814,8920866532787660373,\"-51129-02-11T06:38:29.397464Z\",\"-169665660-01-09T01:58:28.119Z\",null,null,\"EHNRX\",\"ZSX\",80,[]],[false,-303295973,32312,6854658259142399220,\"273652-10-24T01:16:04.499209Z\",null,0.38179755,0.9687423276940171,\"EDRQQ\",\"LOF\",30,[]],[true,1985398001,-21442,7522482991756933150,\"20093-07-24T16:56:53.198086Z\",\"279864478-12-31T01:58:35.932Z\",null,0.05384400312338511,\"HVUVS\",\"OTS\",-79,[]],[false,-1966408995,-29572,-2406077911451945242,\"-254163-09-17T05:33:54.251307Z\",null,0.81233966,null,\"IKJSM\",\"SUQ\",70,[]],[false,2011884585,15913,4641238585508069993,\"186548-11-05T05:57:55.827139Z\",\"-277437004-09-03T08:55:41.803Z\",0.89989215,0.6583311519893554,\"ZIMNZ\",\"RMF\",-97,[]],[false,-907794648,5991,null,null,null,0.13264287,null,\"OHNZH\",null,-9,[]],[true,-1510166985,30598,6056145309392106540,null,null,0.54669005,null,\"MZVQE\",\"NDC\",-94,[]],[false,null,-11913,750145151786158348,\"-279681-08-19T06:26:33.186955Z\",\"-144112168-08-02T20:50:38.542Z\",0.8977236,0.5691053034055052,\"WIFFL\",\"BRO\",-97,[]],[false,null,7132,6793615437970356479,\"171291-08-24T10:16:32.229138Z\",\"63572238-04-24T11:00:13.287Z\",null,0.7215959171612961,\"KWZLU\",\"GXH\",58,[]],[false,null,7618,-9219078548506735248,\"197633-02-20T09:12:49.579955Z\",\"286623354-12-11T19:15:45.735Z\",null,0.8001632261203552,null,\"KFM\",37,[]],[false,-485549586,-8207,null,\"122137-10-05T20:22:21.831563Z\",\"278802275-11-05T23:22:18.593Z\",0.5780819,0.18586435581637295,\"DYOPH\",\"IMY\",109,[]],[false,-1604266757,21057,4598876523645326656,\"204480-04-27T20:21:01.380246Z\",null,0.19736767,0.11591855759299885,\"DMIGQ\",\"VKH\",-44,[]],[true,-861621212,23522,-6446120489339099836,\"79287-08-03T02:05:46.962686Z\",null,0.4349324,0.11296257318851766,\"CGFNW\",null,17,[]],[false,1772084256,12160,-5828188148408093893,\"-252298-10-09T07:11:36.011048Z\",\"-270365729-01-24T04:33:47.165Z\",null,0.5764439692141042,\"BQQEM\",null,-104,[]],[true,-159178348,-7837,null,null,\"81404961-06-19T18:10:11.037Z\",0.5598187,0.5900836401674938,null,\"HPZ\",-99,[]],[false,-238129044,5343,-8851773155849999621,\"-90192-03-24T17:45:15.784841Z\",\"-152632412-11-30T22:15:09.334Z\",0.7806183,null,\"CLNXF\",\"UWP\",-127,[]],[true,1665107665,-10912,-8306574409611146484,\"-109765-04-18T07:45:05.739795Z\",\"-243146933-02-10T16:15:15.931Z\",0.52387,null,\"NIJEE\",\"RUG\",-59,[]],[false,21764960,4771,-5708280760166173503,\"-248236-04-27T14:06:03.509521Z\",null,0.77833515,0.533524384058538,\"VOCUG\",\"UNE\",69,[]],[true,null,-17784,5637967617527425113,null,null,null,0.5815065874358148,null,\"EVQ\",56,[]],[true,-416467698,29019,null,\"201101-10-20T07:35:25.133598Z\",\"-175203601-12-02T01:02:02.378Z\",null,0.7430101994511517,\"DXCBJ\",null,58,[]]],\"count\":20}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -3441,6 +3441,51 @@ public class IODispatcherTest {
                         "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[37,7618,null,-9219078548506735248,\"286623354-12-11T19:15:45.735Z\",\"197633-02-20T09:12:49.579955Z\",null,0.8001632261203552,null,\"KFM\",false,[]],[109,-8207,-485549586,null,\"278802275-11-05T23:22:18.593Z\",\"122137-10-05T20:22:21.831563Z\",0.5780819,0.18586435581637295,\"DYOPH\",\"IMY\",false,[]]],\"count\":11}\r\n" +
                         "00\r\n" +
                         "\r\n");
+    }
+
+    @Test
+    public void testJsonQueryGeoHashColumnChars() throws Exception {
+        new HttpQueryTestBuilder()
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
+                        .withSendBufferSize(16 * 1024)
+                        .withConfiguredMaxQueryResponseRowLimit(configuredMaxQueryResponseRowLimit)
+                )
+                .withTempFolder(temp)
+                .run(engine -> {
+                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
+                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                        compiler.compile("create table y as (\n" +
+                                "select\n" +
+                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(1c)) geo1,\n" +
+                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(3c)) geo2,\n" +
+                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(7c)) geo4,\n" +
+                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(12c)) geo8," +
+                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(1b)) geo01\n" +
+                                "from long_sequence(3)\n" +
+                                ")", executionContext);
+
+                        String request = "SELECT+*+FROM+y";
+                        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                "GET /query?query=" + request + " HTTP/1.1\r\n",
+                                "0169\r\n" +
+                                        "{\"query\":\"SELECT * FROM y\",\"columns\":[" +
+                                        "{\"name\":\"geo1\",\"type\":\"GEOHASH(1c)\"}," +
+                                        "{\"name\":\"geo2\",\"type\":\"GEOHASH(3c)\"}," +
+                                        "{\"name\":\"geo4\",\"type\":\"GEOHASH(7c)\"}," +
+                                        "{\"name\":\"geo8\",\"type\":\"GEOHASH(12c)\"}," +
+                                        "{\"name\":\"geo01\",\"type\":\"GEOHASH(1b)\"}" +
+                                        "],\"dataset\":[" +
+                                        "[null,null,\"questdb\",\"u10m99dd3pbj\",\"1\"]," +
+                                        "[\"u\",\"u10\",\"questdb\",null,\"1\"]," +
+                                        "[\"q\",\"u10\",\"questdb\",\"questdb12345\",\"1\"]" +
+                                        "],\"count\":3}\r\n" +
+                                        "00\r\n"+
+                                        "\r\n"
+
+                        );
+                    }
+                });
     }
 
     @Test
@@ -3916,6 +3961,7 @@ public class IODispatcherTest {
     }
 
     @Test
+    @Ignore
     public void testJsonQueryWithCompressedResults1() throws Exception {
         Zip.init();
         assertMemoryLeak(() -> {
@@ -4008,6 +4054,7 @@ public class IODispatcherTest {
     }
 
     @Test
+    @Ignore
     public void testJsonQueryWithCompressedResults2() throws Exception {
         Zip.init();
         assertMemoryLeak(() -> {

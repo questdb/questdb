@@ -58,7 +58,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
                 for (int i = 0; i < columnCount; i++) {
-                    switch (metadata.getColumnType(i)) {
+                    switch (ColumnType.tagOf(metadata.getColumnType(i))) {
                         case ColumnType.STRING:
                             CharSequence a = record.getStr(i);
                             CharSequence b = record.getStrB(i);
@@ -212,7 +212,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             int expectedRow = 0;
             while (cursor.hasNext()) {
                 for (int col = 0, n = metadata.getColumnCount(); col < n; col++) {
-                    switch (metadata.getColumnType(col)) {
+                    switch (ColumnType.tagOf(metadata.getColumnType(col))) {
                         case ColumnType.BOOLEAN:
                             Assert.assertEquals(expected[expectedRow].getBool(col), record.getBool(col));
                             break;
@@ -429,7 +429,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                switch (metadata.getColumnType(i)) {
+                switch (ColumnType.tagOf(metadata.getColumnType(i))) {
                     case ColumnType.STRING:
                         CharSequence s = record.getStr(i);
                         if (s != null) {
@@ -474,7 +474,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     private static void testSymbolAPI(RecordMetadata metadata, RecordCursor cursor) {
         IntList symbolIndexes = null;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            if (metadata.getColumnType(i) == ColumnType.SYMBOL) {
+            if (ColumnType.isSymbol(metadata.getColumnType(i))) {
                 if (symbolIndexes == null) {
                     symbolIndexes = new IntList();
                 }
@@ -594,133 +594,215 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    private static void assertQueryNoVerify(
-            CharSequence expected,
-            CharSequence query,
-            @Nullable CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            @Nullable CharSequence ddl2,
-            @Nullable CharSequence expected2,
-            boolean supportsRandomAccess,
-            boolean checkSameStr,
-            boolean expectSize,
-            boolean sizeCanBeVariable
-    ) throws Exception {
+    private static void assertQueryNoVerify(CharSequence expected,
+                                            CharSequence query,
+                                            @Nullable CharSequence ddl,
+                                            @Nullable CharSequence expectedTimestamp,
+                                            @Nullable CharSequence ddl2,
+                                            @Nullable CharSequence expected2,
+                                            boolean supportsRandomAccess,
+                                            boolean checkSameStr,
+                                            boolean expectSize,
+                                            boolean sizeCanBeVariable) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
                 compiler.compile(ddl, sqlExecutionContext);
             }
-            printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, null);
+            printSqlResult(
+                    expected,
+                    query,
+                    expectedTimestamp,
+                    ddl2,
+                    expected2,
+                    supportsRandomAccess,
+                    checkSameStr,
+                    expectSize,
+                    sizeCanBeVariable,
+                    null);
         });
     }
 
-    protected static void assertQuery(
-            CharSequence expected,
-            CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp
-    ) throws Exception {
-        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, null, null, true, true, false, false);
+    protected static void assertQuery(CharSequence expected,
+                                      CharSequence query,
+                                      CharSequence ddl,
+                                      @Nullable CharSequence expectedTimestamp) throws Exception {
+        assertQueryNoVerify(
+                expected,
+                query,
+                ddl,
+                expectedTimestamp,
+                null,
+                null,
+                true,
+                true,
+                false,
+                false);
     }
 
-    protected static void assertQuery(
-            CharSequence expected,
-            CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            boolean supportsRandomAccess
-    ) throws Exception {
-        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, true, false, false);
+    protected static void assertQuery(CharSequence expected,
+                                      CharSequence query,
+                                      CharSequence ddl,
+                                      @Nullable CharSequence expectedTimestamp,
+                                      boolean supportsRandomAccess) throws Exception {
+        assertQueryNoVerify(
+                expected,
+                query,
+                ddl,
+                expectedTimestamp,
+                null,
+                null,
+                supportsRandomAccess,
+                true,
+                false,
+                false);
     }
 
-    protected static void assertQueryExpectSize(
-            CharSequence expected,
-            CharSequence query,
-            CharSequence ddl
-    ) throws Exception {
-        assertQueryNoVerify(expected, query, ddl, null, null, null, true, true, true, false);
+    protected static void assertQueryExpectSize(CharSequence expected,
+                                                CharSequence query,
+                                                CharSequence ddl) throws Exception {
+        assertQueryNoVerify(
+                expected,
+                query,
+                ddl,
+                null,
+                null,
+                null,
+                true,
+                true,
+                true,
+                false);
     }
 
-    protected static void assertQuery(
-            CharSequence expected,
-            CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            boolean supportsRandomAccess,
-            boolean checkSameStr
-    ) throws Exception {
-        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, checkSameStr, false, false);
+    protected static void assertQuery(CharSequence expected,
+                                      CharSequence query,
+                                      CharSequence ddl,
+                                      @Nullable CharSequence expectedTimestamp,
+                                      boolean supportsRandomAccess,
+                                      boolean checkSameStr) throws Exception {
+        assertQueryNoVerify(
+                expected,
+                query,
+                ddl,
+                expectedTimestamp,
+                null,
+                null,
+                supportsRandomAccess,
+                checkSameStr,
+                false,
+                false);
     }
 
-    protected static void assertQuery(
-            CharSequence expected,
-            CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            boolean supportsRandomAccess,
-            boolean checkSameStr,
-            boolean expectSize
-    ) throws Exception {
-        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, checkSameStr, expectSize, false);
+    protected static void assertQuery(CharSequence expected,
+                                      CharSequence query,
+                                      CharSequence ddl,
+                                      @Nullable CharSequence expectedTimestamp,
+                                      boolean supportsRandomAccess,
+                                      boolean checkSameStr,
+                                      boolean expectSize) throws Exception {
+        assertQueryNoVerify(
+                expected,
+                query,
+                ddl,
+                expectedTimestamp,
+                null,
+                null,
+                supportsRandomAccess,
+                checkSameStr,
+                expectSize,
+                false);
     }
 
-    protected static void assertQuery(
-            CharSequence expected,
-            CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            @Nullable CharSequence ddl2,
-            @Nullable CharSequence expected2
-    ) throws Exception {
-        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, ddl2, expected2, true, true, false, false);
+    protected static void assertQuery(CharSequence expected,
+                                      CharSequence query,
+                                      CharSequence ddl,
+                                      @Nullable CharSequence expectedTimestamp,
+                                      @Nullable CharSequence ddl2,
+                                      @Nullable CharSequence expected2) throws Exception {
+        assertQueryNoVerify(
+                expected,
+                query,
+                ddl,
+                expectedTimestamp,
+                ddl2,
+                expected2,
+                true,
+                true,
+                false,
+                false);
     }
 
-    protected static void assertQuery(
-            CharSequence expected,
-            CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            @Nullable CharSequence ddl2,
-            @Nullable CharSequence expected2,
-            boolean supportsRandomAccess
-    ) throws Exception {
-        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, true, false, false);
+    protected static void assertQuery(CharSequence expected,
+                                      CharSequence query,
+                                      CharSequence ddl,
+                                      @Nullable CharSequence expectedTimestamp,
+                                      @Nullable CharSequence ddl2,
+                                      @Nullable CharSequence expected2,
+                                      boolean supportsRandomAccess) throws Exception {
+        assertQueryNoVerify(
+                expected,
+                query,
+                ddl,
+                expectedTimestamp,
+                ddl2,
+                expected2,
+                supportsRandomAccess,
+                true,
+                false,
+                false);
     }
 
-    protected static void assertQuery(
-            CharSequence expected,
-            CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            @Nullable CharSequence ddl2,
-            @Nullable CharSequence expected2,
-            boolean supportsRandomAccess,
-            boolean checkSameStr,
-            boolean expectSize
-    ) throws Exception {
-        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false);
+    protected static void assertQuery(CharSequence expected,
+                                      CharSequence query,
+                                      CharSequence ddl,
+                                      @Nullable CharSequence expectedTimestamp,
+                                      @Nullable CharSequence ddl2,
+                                      @Nullable CharSequence expected2,
+                                      boolean supportsRandomAccess,
+                                      boolean checkSameStr,
+                                      boolean expectSize) throws Exception {
+        assertQueryNoVerify(
+                expected,
+                query,
+                ddl,
+                expectedTimestamp,
+                ddl2,
+                expected2,
+                supportsRandomAccess,
+                checkSameStr,
+                expectSize,
+                false);
     }
 
-    protected static void assertQuery(
-            CharSequence expected,
-            CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            @Nullable CharSequence ddl2,
-            @Nullable CharSequence expected2,
-            boolean supportsRandomAccess,
-            boolean checkSameStr,
-            boolean expectSize,
-            boolean sizeCanBeVariable
-    ) throws Exception {
-        assertQueryNoVerify(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
+    protected static void assertQuery(CharSequence expected,
+                                      CharSequence query,
+                                      CharSequence ddl,
+                                      @Nullable CharSequence expectedTimestamp,
+                                      @Nullable CharSequence ddl2,
+                                      @Nullable CharSequence expected2,
+                                      boolean supportsRandomAccess,
+                                      boolean checkSameStr,
+                                      boolean expectSize,
+                                      boolean sizeCanBeVariable) throws Exception {
+        assertQueryNoVerify(
+                expected,
+                query,
+                ddl,
+                expectedTimestamp,
+                ddl2,
+                expected2,
+                supportsRandomAccess,
+                checkSameStr,
+                expectSize,
+                sizeCanBeVariable);
     }
 
     protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory) throws SqlException {
         assertTimestamp(expectedTimestamp, factory, sqlExecutionContext);
     }
 
-    protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    protected static void assertTimestamp(CharSequence expectedTimestamp,
+                                          RecordCursorFactory factory,
+                                          SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (expectedTimestamp == null) {
             Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
         } else {
@@ -738,9 +820,16 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean supportsRandomAccess,
             SqlExecutionContext sqlExecutionContext,
             boolean checkSameStr,
-            boolean expectSize
-    ) throws SqlException {
-        assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, checkSameStr, expectSize, false);
+            boolean expectSize) throws SqlException {
+        assertFactoryCursor(
+                expected,
+                expectedTimestamp,
+                factory,
+                supportsRandomAccess,
+                sqlExecutionContext,
+                checkSameStr,
+                expectSize,
+                false);
     }
 
     void assertFactoryCursor(
@@ -751,8 +840,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             SqlExecutionContext sqlExecutionContext,
             boolean checkSameStr,
             boolean expectSize,
-            boolean sizeCanBeVariable
-    ) throws SqlException {
+            boolean sizeCanBeVariable) throws SqlException {
         assertTimestamp(expectedTimestamp, factory, sqlExecutionContext);
         assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, sqlExecutionContext);
         // make sure we get the same outcome when we get factory to create new cursor
@@ -765,8 +853,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             CharSequence query,
             @Nullable CharSequence ddl,
             int expectedPosition,
-            @NotNull CharSequence expectedMessage
-    ) throws Exception {
+            @NotNull CharSequence expectedMessage) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 if (ddl != null) {
@@ -791,26 +878,131 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         assertQuery(expected, query, expectedTimestamp, false);
     }
 
-    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess) throws SqlException {
+    protected void assertQuery(String expected,
+                               String query,
+                               String expectedTimestamp,
+                               boolean supportsRandomAccess) throws SqlException {
         assertQuery(compiler, expected, query, expectedTimestamp, supportsRandomAccess, sqlExecutionContext);
     }
 
-    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
-        assertQuery(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, true, expectSize);
+    protected void assertQuery(String expected,
+                               String query,
+                               String expectedTimestamp,
+                               boolean supportsRandomAccess,
+                               boolean expectSize) throws SqlException {
+        assertQuery(
+                compiler,
+                expected,
+                query,
+                expectedTimestamp,
+                sqlExecutionContext,
+                supportsRandomAccess,
+                true,
+                expectSize);
     }
 
-    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, boolean sizeCanBeVariable) throws SqlException {
-        assertQuery(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, true, expectSize, sizeCanBeVariable);
+    protected void assertQuery(String expected,
+                               String query,
+                               String expectedTimestamp,
+                               boolean supportsRandomAccess,
+                               boolean expectSize,
+                               boolean sizeCanBeVariable) throws SqlException {
+        assertQuery(
+                compiler,
+                expected,
+                query,
+                expectedTimestamp,
+                sqlExecutionContext,
+                supportsRandomAccess,
+                true,
+                expectSize,
+                sizeCanBeVariable);
     }
 
-    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext)
-            throws SqlException {
-        assertQuery(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, true, false);
+    protected void assertQuery(String expected,
+                               String query,
+                               String expectedTimestamp,
+                               boolean supportsRandomAccess,
+                               SqlExecutionContext sqlExecutionContext) throws SqlException {
+        assertQuery(
+                compiler,
+                expected,
+                query,
+                expectedTimestamp,
+                sqlExecutionContext,
+                supportsRandomAccess,
+                true,
+                false);
     }
 
-    protected void assertQuery(SqlCompiler compiler, String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext)
-            throws SqlException {
-        assertQuery(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, true, false);
+    protected void assertQuery(SqlCompiler compiler,
+                               String expected,
+                               String query,
+                               String expectedTimestamp,
+                               boolean supportsRandomAccess,
+                               SqlExecutionContext sqlExecutionContext) throws SqlException {
+        assertQuery(
+                compiler,
+                expected,
+                query,
+                expectedTimestamp,
+                sqlExecutionContext,
+                supportsRandomAccess,
+                true,
+                false);
+    }
+
+    protected void assertQuery(SqlCompiler compiler,
+                               String expected,
+                               String query,
+                               String expectedTimestamp,
+                               boolean supportsRandomAccess,
+                               SqlExecutionContext sqlExecutionContext,
+                               boolean expectSize) throws SqlException {
+        assertQuery(
+                compiler,
+                expected,
+                query,
+                expectedTimestamp,
+                sqlExecutionContext,
+                supportsRandomAccess,
+                true,
+                expectSize);
+    }
+
+    protected void assertQuery(String expected,
+                               String query,
+                               String expectedTimestamp,
+                               boolean supportsRandomAccess,
+                               SqlExecutionContext sqlExecutionContext,
+                               boolean checkSameStr) throws SqlException {
+        assertQuery(
+                compiler,
+                expected,
+                query,
+                expectedTimestamp,
+                sqlExecutionContext,
+                supportsRandomAccess,
+                checkSameStr,
+                false);
+    }
+
+    protected void assertQuery(String expected,
+                               String query,
+                               String expectedTimestamp,
+                               boolean supportsRandomAccess,
+                               SqlExecutionContext sqlExecutionContext,
+                               boolean checkSameStr,
+                               boolean expectSize) throws SqlException {
+        assertQuery(
+                compiler,
+                expected,
+                query,
+                expectedTimestamp,
+                sqlExecutionContext,
+                supportsRandomAccess,
+                checkSameStr,
+                expectSize);
     }
 
     protected void assertQuery(
@@ -818,34 +1010,19 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             String expected,
             String query,
             String expectedTimestamp,
-            boolean supportsRandomAccess,
             SqlExecutionContext sqlExecutionContext,
-            boolean expectSize
-    ) throws SqlException {
-        assertQuery(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, true, expectSize);
-    }
-
-    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext, boolean checkSameStr)
-            throws SqlException {
-        assertQuery(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, checkSameStr, false);
-    }
-
-    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext, boolean checkSameStr, boolean expectSize)
-            throws SqlException {
-        assertQuery(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, checkSameStr, expectSize);
-    }
-
-    protected void assertQuery(
-            SqlCompiler compiler,
-            String expected,
-            String query,
-            String expectedTimestamp,
-            SqlExecutionContext sqlExecutionContext, boolean supportsRandomAccess,
+            boolean supportsRandomAccess,
             boolean checkSameStr,
-            boolean expectSize
-    ) throws SqlException {
+            boolean expectSize ) throws SqlException {
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-            assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, checkSameStr, expectSize);
+            assertFactoryCursor(
+                    expected,
+                    expectedTimestamp,
+                    factory,
+                    supportsRandomAccess,
+                    sqlExecutionContext,
+                    checkSameStr,
+                    expectSize);
         }
     }
 
@@ -854,32 +1031,58 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             String expected,
             String query,
             String expectedTimestamp,
-            SqlExecutionContext sqlExecutionContext, boolean supportsRandomAccess,
+            SqlExecutionContext sqlExecutionContext,
+            boolean supportsRandomAccess,
             boolean checkSameStr,
             boolean expectSize,
-            boolean sizeCanBeVariable
-    ) throws SqlException {
+            boolean sizeCanBeVariable ) throws SqlException {
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-            assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, checkSameStr, expectSize, sizeCanBeVariable);
+            assertFactoryCursor(
+                    expected,
+                    expectedTimestamp,
+                    factory,
+                    supportsRandomAccess,
+                    sqlExecutionContext,
+                    checkSameStr,
+                    expectSize,
+                    sizeCanBeVariable);
         }
     }
 
-    protected void assertQueryAndCache(String expected, String query, String expectedTimestamp, boolean expectSize) throws SqlException {
+    protected void assertQueryAndCache(String expected,
+                                       String query,
+                                       String expectedTimestamp,
+                                       boolean expectSize) throws SqlException {
         assertQueryAndCache(expected, query, expectedTimestamp, false, expectSize);
     }
 
-    protected void assertQueryAndCache(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
+    protected void assertQueryAndCache(String expected,
+                                       String query,
+                                       String expectedTimestamp,
+                                       boolean supportsRandomAccess,
+                                       boolean expectSize) throws SqlException {
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-            assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, true, expectSize);
+            assertFactoryCursor(
+                    expected,
+                    expectedTimestamp,
+                    factory,
+                    supportsRandomAccess,
+                    sqlExecutionContext,
+                    true,
+                    expectSize);
         }
     }
 
-    protected void assertQueryPlain(
-            String expected,
-            String query
-    ) throws SqlException {
+    protected void assertQueryPlain(String expected, String query) throws SqlException {
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-            assertFactoryCursor(expected, null, factory, true, sqlExecutionContext, true, true);
+            assertFactoryCursor(
+                    expected,
+                    null,
+                    factory,
+                    true,
+                    sqlExecutionContext,
+                    true,
+                    true);
         }
     }
 

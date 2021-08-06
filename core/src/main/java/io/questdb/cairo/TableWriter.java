@@ -398,7 +398,7 @@ public class TableWriter implements Closeable {
         // rename _meta.swp to _meta
         renameSwapMetaToMeta(name);
 
-        if (type == ColumnType.SYMBOL) {
+        if (ColumnType.isSymbol(type)) {
             try {
                 createSymbolMapWriter(name, symbolCapacity, symbolCacheFlag);
             } catch (CairoException e) {
@@ -466,7 +466,7 @@ public class TableWriter implements Closeable {
         final int existingType = getColumnType(metaMem, columnIndex);
         LOG.info().$("adding index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$(", path=").$(path).$(']').$();
 
-        if (existingType != ColumnType.SYMBOL) {
+        if (!ColumnType.isSymbol(existingType)) {
             LOG.error().$("cannot create index for [column='").utf8(columnName).$(", type=").$(ColumnType.nameOf(existingType)).$(", path=").$(path).$(']').$();
             throw CairoException.instance(0).put("cannot create index for [column='").put(columnName).put(", type=").put(ColumnType.nameOf(existingType)).put(", path=").put(path).put(']');
         }
@@ -1262,7 +1262,7 @@ public class TableWriter implements Closeable {
         long mem1Size;
         if (actualPosition > 0) {
             // subtract column top
-            switch (type) {
+            switch (ColumnType.tagOf(type)) {
                 case ColumnType.BINARY:
                     assert mem2 != null;
                     readOffsetBytes(ff, mem2, actualPosition, buf);
@@ -1338,7 +1338,7 @@ public class TableWriter implements Closeable {
     }
 
     private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryA mem1, MemoryA mem2) {
-        switch (type) {
+        switch (ColumnType.sizeTag(type)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
                 nullers.add(() -> mem1.putByte((byte) 0));
@@ -1375,6 +1375,21 @@ public class TableWriter implements Closeable {
             case ColumnType.BINARY:
                 nullers.add(() -> mem2.putLong(mem1.putNullBin()));
                 break;
+            case ColumnType.GEOHASH:
+                switch (GeoHashes.sizeOf(type)) {
+                    case 1:
+                        nullers.add(() -> mem1.putByte((byte) GeoHashes.NULL));
+                        break;
+                    case 2:
+                        nullers.add(() -> mem1.putShort((short) GeoHashes.NULL));
+                        break;
+                    case 4:
+                        nullers.add(() -> mem1.putInt((int) GeoHashes.NULL));
+                        break;
+                    default:
+                        nullers.add(() -> mem1.putLong(GeoHashes.NULL));
+                }
+                break;
             default:
                 break;
         }
@@ -1398,7 +1413,7 @@ public class TableWriter implements Closeable {
                 final CharSequence columnName = metadata.getColumnName(columnIndex);
                 path.concat(columnName);
 
-                switch (columnType) {
+                switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.INT:
                     case ColumnType.LONG:
                     case ColumnType.BOOLEAN:
@@ -1412,6 +1427,7 @@ public class TableWriter implements Closeable {
                     case ColumnType.LONG256:
                         // Consider Symbols as fixed, check data file size
                     case ColumnType.SYMBOL:
+                    case ColumnType.GEOHASH:
                         attachPartitionCheckFilesMatchFixedColumn(ff, path, columnType, partitionSize);
                         break;
                     case ColumnType.STRING:
@@ -1494,7 +1510,7 @@ public class TableWriter implements Closeable {
             }
 
             // add new column metadata to bottom of list
-            ddlMem.putByte((byte) type);
+            ddlMem.putInt(type);
             long flags = 0;
             if (indexFlag) {
                 flags |= META_FLAG_BIT_INDEXED;
@@ -1506,7 +1522,6 @@ public class TableWriter implements Closeable {
 
             ddlMem.putLong(flags);
             ddlMem.putInt(indexValueBlockCapacity);
-            ddlMem.skip(META_COLUMN_DATA_RESERVED);
 
             long nameOffset = getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
@@ -1760,7 +1775,7 @@ public class TableWriter implements Closeable {
         final MemoryCARW oooSecondary;
         final MemoryCARW oooPrimary2 = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE);
         final MemoryCARW oooSecondary2;
-        switch (type) {
+        switch (ColumnType.tagOf(type)) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 secondary = Vm.getMARInstance();
@@ -1794,7 +1809,7 @@ public class TableWriter implements Closeable {
             int type = metadata.getColumnType(i);
             configureColumn(type, metadata.isColumnIndexed(i));
 
-            if (type == ColumnType.SYMBOL) {
+            if (ColumnType.isSymbol(type)) {
                 final int symbolIndex = denseSymbolMapWriters.size();
                 WriterTransientSymbolCountChangeHandler transientSymbolCountChangeHandler = new WriterTransientSymbolCountChangeHandler(symbolIndex);
                 denseSymbolTransientCountHandlers.add(transientSymbolCountChangeHandler);
@@ -1896,14 +1911,13 @@ public class TableWriter implements Closeable {
                 if (i != columnIndex) {
                     writeColumnEntry(i);
                 } else {
-                    ddlMem.putByte((byte) getColumnType(metaMem, i));
+                    ddlMem.putInt(getColumnType(metaMem, i));
                     long flags = META_FLAG_BIT_INDEXED;
                     if (isSequential(metaMem, i)) {
                         flags |= META_FLAG_BIT_SEQUENTIAL;
                     }
                     ddlMem.putLong(flags);
                     ddlMem.putInt(indexValueBlockSize);
-                    ddlMem.skip(META_COLUMN_DATA_RESERVED);
                 }
             }
 
@@ -2616,7 +2630,7 @@ public class TableWriter implements Closeable {
                                 final long srcOooVarSize;
                                 final MemoryMAR dstFixMem;
                                 final MemoryMAR dstVarMem;
-                                if (columnType != ColumnType.STRING && columnType != ColumnType.BINARY) {
+                                if (!ColumnType.isVariableLength(columnType)) {
                                     srcOooFixAddr = oooMem1.addressOf(0);
                                     srcOooFixSize = oooMem1.getAppendOffset();
                                     srcOooVarAddr = 0;
@@ -2637,7 +2651,7 @@ public class TableWriter implements Closeable {
                                         plen,
                                         columnName,
                                         columnCounter,
-                                        notTheTimestamp ? columnType : -columnType,
+                                        notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
                                         srcOooFixAddr,
                                         srcOooFixSize,
                                         srcOooVarAddr,
@@ -3437,7 +3451,7 @@ public class TableWriter implements Closeable {
                                 type,
                                 mergedTimestamps,
                                 rowCount,
-                                type == ColumnType.STRING || type == ColumnType.BINARY ? oooSortVarColumnRef : oooSortFixColumnRef
+                                ColumnType.isVariableLength(type) ? oooSortVarColumnRef : oooSortFixColumnRef
                         );
                         o3PendingCallbackTasks.add(task);
                     } finally {
@@ -3465,14 +3479,10 @@ public class TableWriter implements Closeable {
     }
 
     private void o3SortColumn(long mergedTimestamps, int i, int type, long rowCount) {
-        switch (type) {
-            case ColumnType.BINARY:
-            case ColumnType.STRING:
-                o3SortVarColumn(i, type, mergedTimestamps, rowCount);
-                break;
-            default:
-                o3SortFixColumn(i, type, mergedTimestamps, rowCount);
-                break;
+        if (ColumnType.isVariableLength(type)) {
+            o3SortVarColumn(i, type, mergedTimestamps, rowCount);
+        } else {
+            o3SortFixColumn(i, type, mergedTimestamps, rowCount);
         }
     }
 
@@ -3807,7 +3817,7 @@ public class TableWriter implements Closeable {
                 }
             });
 
-            if (columnType == ColumnType.SYMBOL) {
+            if (ColumnType.isSymbol(columnType)) {
                 removeLambda.remove(ff, SymbolMapWriter.offsetFileName(path.trimTo(rootLen), columnName));
                 removeLambda.remove(ff, SymbolMapWriter.charFileName(path.trimTo(rootLen), columnName));
                 removeLambda.remove(ff, BitmapIndexUtils.keyFileName(path.trimTo(rootLen), columnName));
@@ -4036,7 +4046,7 @@ public class TableWriter implements Closeable {
                 }
             });
 
-            if (columnType == ColumnType.SYMBOL) {
+            if (ColumnType.isSymbol(columnType)) {
                 renameFileOrLog(ff, SymbolMapWriter.offsetFileName(path.trimTo(rootLen), columnName), SymbolMapWriter.offsetFileName(other.trimTo(rootLen), newName));
                 renameFileOrLog(ff, SymbolMapWriter.charFileName(path.trimTo(rootLen), columnName), SymbolMapWriter.charFileName(other.trimTo(rootLen), newName));
                 renameFileOrLog(ff, BitmapIndexUtils.keyFileName(path.trimTo(rootLen), columnName), BitmapIndexUtils.keyFileName(other.trimTo(rootLen), newName));
@@ -4516,7 +4526,7 @@ public class TableWriter implements Closeable {
     }
 
     private void writeColumnEntry(int i) {
-        ddlMem.putByte((byte) getColumnType(metaMem, i));
+        ddlMem.putInt(getColumnType(metaMem, i));
         long flags = 0;
         if (isColumnIndexed(metaMem, i)) {
             flags |= META_FLAG_BIT_INDEXED;
@@ -4527,7 +4537,6 @@ public class TableWriter implements Closeable {
         }
         ddlMem.putLong(flags);
         ddlMem.putInt(getIndexBlockCapacity(metaMem, i));
-        ddlMem.skip(META_COLUMN_DATA_RESERVED);
     }
 
     private void writeColumnTop(CharSequence name) {
@@ -4826,6 +4835,26 @@ public class TableWriter implements Closeable {
                 throw CairoException.instance(0).put("Invalid timestamp: ").put(value);
             }
             putTimestamp(index, l);
+        }
+
+        public void putGeoHash(int index, long value) {
+            int type = metadata.getColumnType(index);
+            final MemoryA primaryColumn = getPrimaryColumn(index);
+            switch (ColumnType.sizeOf(type)) {
+                case 1:
+                    primaryColumn.putByte((byte)value);
+                    break;
+                case 2:
+                    primaryColumn.putShort((short) value);
+                    break;
+                case 4:
+                    primaryColumn.putInt((int) value);
+                    break;
+                default:
+                    primaryColumn.putLong(value);
+                    break;
+            }
+            notNull(index);
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {

@@ -412,7 +412,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void putValue(HttpChunkedResponseSocket socket, int type, Record rec, int col) {
-        switch (type) {
+        switch (ColumnType.tagOf(type)) {
             case ColumnType.BOOLEAN:
                 socket.put(rec.getBool(col));
                 break;

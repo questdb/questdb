@@ -100,7 +100,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
             );
         }
 
-        switch (keyType) {
+        switch (ColumnType.tagOf(keyType)) {
             case ColumnType.CHAR:
                 return getIntKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_CHAR);
             case ColumnType.INT:

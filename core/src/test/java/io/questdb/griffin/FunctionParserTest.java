@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.functions.*;
 import io.questdb.griffin.engine.functions.bool.InStrFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.OrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory;
 import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.*;
@@ -85,7 +86,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void overloadBetweenNullAndAnyTypeIsZero() {
-        for (int type = ColumnType.BOOLEAN; type <= ColumnType.MAX; type++) {
+        for (short type = ColumnType.BOOLEAN; type <= ColumnType.MAX; type++) {
             Assert.assertEquals(0, ColumnType.overloadDistance(ColumnType.NULL, type));
             Assert.assertEquals(0, ColumnType.overloadDistance(type, ColumnType.NULL));
         }
@@ -319,6 +320,15 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void testExplicitConstantFloat() throws SqlException {
         testConstantPassThru(new FloatConstant(200));
+    }
+
+    @Test
+    public void testExplicitConstantGeoHash() throws SqlException, NumericException {
+        long hash = GeoHashes.fromCoordinates(39.9830487269087, 0.02405432769681642, 6 * 5);
+        testConstantPassThru(new GeoHashConstant(hash, ColumnType.GEOHASH));
+        functions.clear();
+        sink.clear();
+        GeoHashes.toString(hash, 6, sink);
     }
 
     @Test
@@ -1119,6 +1129,31 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(
                 "io.questdb.griffin.engine.functions.groupby.CountGroupByFunction",
                 function.getClass().getCanonicalName());
+    }
+
+    @Test
+    public void testGeoHashFunction() throws SqlException {
+        functions.add(new CastStrToGeoHashFunctionFactory());
+
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("gh", ColumnType.geohashWithPrecision(25), null));
+
+        FunctionParser functionParser = createFunctionParser();
+        Record record = new Record() {
+            @Override
+            public long getGeoHash(int col) {
+                return getLong(col);
+            }
+
+            @Override
+            public long getLong(int col) {
+                return 847187636514L;
+            }
+        };
+
+        Function function = parseFunction("cast('sp052w92' as geohash(5c))", metadata, functionParser);
+        Assert.assertEquals(ColumnType.geohashWithPrecision(25), function.getType());
+        Assert.assertEquals(25854114, function.getGeoHash(record));
     }
 
     @Test

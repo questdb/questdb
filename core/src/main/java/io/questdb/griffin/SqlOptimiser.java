@@ -679,7 +679,7 @@ class SqlOptimiser {
             int index = m.getColumnIndexQuiet(timestamp.token);
             if (index == -1) {
                 throw SqlException.invalidColumn(timestamp.position, timestamp.token);
-            } else if (m.getColumnType(index) != ColumnType.TIMESTAMP) {
+            } else if (!ColumnType.isTimestamp(m.getColumnType(index))) {
                 throw SqlException.$(timestamp.position, "not a TIMESTAMP");
             }
         }
@@ -2126,7 +2126,7 @@ class SqlOptimiser {
     private void parseFunctionAndEnumerateColumns(@NotNull QueryModel model, @NotNull SqlExecutionContext executionContext) throws SqlException {
         assert model.getTableNameFunction() == null;
         final Function function = functionParser.parseFunction(model.getTableName(), AnyRecordMetadata.INSTANCE, executionContext);
-        if (function.getType() != ColumnType.CURSOR) {
+        if (!ColumnType.isCursor(function.getType())) {
             throw SqlException.$(model.getTableName().position, "function must return CURSOR");
         }
         model.setTableNameFunction(function);

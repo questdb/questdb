@@ -144,4 +144,9 @@ public abstract class LongFunction implements ScalarFunction {
     public final void getLong256(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    public long getGeoHash(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 }

@@ -129,4 +129,9 @@ public class CursorFunctionTest {
         function.getTimestamp(null);
     }
 
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoHash() {
+        function.getGeoHash(null);
+    }
+
 }

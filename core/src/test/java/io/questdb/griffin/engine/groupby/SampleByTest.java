@@ -42,6 +42,7 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class SampleByTest extends AbstractGriffinTest {
@@ -1968,6 +1969,84 @@ public class SampleByTest extends AbstractGriffinTest {
                         "cast(x % 256 as byte) b1,\n" +
                         "cast(x as timestamp) t1,\n" +
                         "cast(x as date) dt\n" +
+                        "from\n" +
+                        "long_sequence(100)");
+    }
+
+    @Test
+    @Ignore // TODO fix for geohash
+    public void testIndexSampleWithColumnTopsGeo() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table xx (s symbol, k timestamp)" +
+                    ", index(s capacity 256) timestamp(k) partition by DAY", sqlExecutionContext);
+
+            compiler.compile(
+                    "insert into xx " +
+                            "select " +
+                            "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                            "timestamp_sequence(0, 1 * 60 * 1000000L) k\n" +
+                            "from\n" +
+                            "long_sequence(100)\n", sqlExecutionContext);
+
+            compiler.compile("alter table xx add i1 int", sqlExecutionContext);
+            compiler.compile("alter table xx add c1 char", sqlExecutionContext);
+            compiler.compile("alter table xx add l1 long", sqlExecutionContext);
+
+            compiler.compile(
+                    "insert into xx " +
+                            "select " +
+                            "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                            "timestamp_sequence(100 * 60 * 1000000L, 1 * 60 * 1000000L) k,\n" +
+                            "cast(x + 100 as int) i1, \n" +
+                            "rnd_char() c1,\n" +
+                            "x as l1\n" +
+                            "from\n" +
+                            "long_sequence(100)", sqlExecutionContext);
+
+            compiler.compile("alter table xx add f1 float", sqlExecutionContext);
+            compiler.compile("alter table xx add d1 double", sqlExecutionContext);
+            compiler.compile("alter table xx add s1 symbol", sqlExecutionContext);
+            compiler.compile("alter table xx add ss1 short", sqlExecutionContext);
+            compiler.compile("alter table xx add b1 byte", sqlExecutionContext);
+            compiler.compile("alter table xx add t1 timestamp", sqlExecutionContext);
+            compiler.compile("alter table xx add dt date", sqlExecutionContext);
+            compiler.compile("alter table xx add ge geohash(5c)", sqlExecutionContext);
+        });
+
+        assertSampleByIndexQuery("fi1\tli1\tfc1\tlc1\tfl1\tlf1\tff1\tlf11\tfd1\tld1\tfs1\tls1\tfss1\tlss1\tfb1\tlb1\tfk\tlk\tft1\tlt1\tfdt\tldt\tk\ts\n" +
+                        "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:28:00.000000Z\t\t\t\t\t1970-01-01T00:00:00.000000Z\tb\n" +
+                        "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T00:30:00.000000Z\t1970-01-01T00:58:00.000000Z\t\t\t\t\t1970-01-01T00:30:00.000000Z\tb\n" +
+                        "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T01:00:00.000000Z\t1970-01-01T01:28:00.000000Z\t\t\t\t\t1970-01-01T01:00:00.000000Z\tb\n" +
+                        "NaN\t119\t\tG\tNaN\t19\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T01:30:00.000000Z\t1970-01-01T01:58:00.000000Z\t\t\t\t\t1970-01-01T01:30:00.000000Z\tb\n" +
+                        "121\t149\tS\tL\t21\t49\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T02:00:00.000000Z\t1970-01-01T02:28:00.000000Z\t\t\t\t\t1970-01-01T02:00:00.000000Z\tb\n" +
+                        "151\t179\tD\tR\t51\t79\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T02:30:00.000000Z\t1970-01-01T02:58:00.000000Z\t\t\t\t\t1970-01-01T02:30:00.000000Z\tb\n" +
+                        "181\t209\tZ\tV\t81\t109\tNaN\t204.5000\tNaN\t222.5\t\tc3\t0\t9\t0\t9\t1970-01-01T03:00:00.000000Z\t1970-01-01T03:28:00.000000Z\t\t1970-01-01T00:00:00.000009Z\t\t1970-01-01T00:00:00.009Z\t1970-01-01T03:00:00.000000Z\tb\n" +
+                        "211\t239\tD\tT\t111\t139\t205.5000\t219.5000\t227.5\t297.5\t\t\t11\t39\t11\t39\t1970-01-01T03:30:00.000000Z\t1970-01-01T03:58:00.000000Z\t1970-01-01T00:00:00.000011Z\t1970-01-01T00:00:00.000039Z\t1970-01-01T00:00:00.011Z\t1970-01-01T00:00:00.039Z\t1970-01-01T03:30:00.000000Z\tb\n" +
+                        "241\t269\tS\tL\t141\t169\t220.5000\t234.5000\t302.5\t372.5\tc3\tc3\t41\t69\t41\t69\t1970-01-01T04:00:00.000000Z\t1970-01-01T04:28:00.000000Z\t1970-01-01T00:00:00.000041Z\t1970-01-01T00:00:00.000069Z\t1970-01-01T00:00:00.041Z\t1970-01-01T00:00:00.069Z\t1970-01-01T04:00:00.000000Z\tb\n" +
+                        "271\t299\tO\tN\t171\t199\t235.5000\t249.5000\t377.5\t447.5\ta1\tc3\t71\t99\t71\t99\t1970-01-01T04:30:00.000000Z\t1970-01-01T04:58:00.000000Z\t1970-01-01T00:00:00.000071Z\t1970-01-01T00:00:00.000099Z\t1970-01-01T00:00:00.071Z\t1970-01-01T00:00:00.099Z\t1970-01-01T04:30:00.000000Z\tb\n",
+                "select first(i1) fi1, last(i1) li1, first(c1) fc1, " +
+                        "last(c1) lc1, first(l1) fl1, last(l1) lf1, first(f1) ff1, last(f1) lf1, " +
+                        "first(d1) fd1, last(d1) ld1, first(s1) fs1, last(s1) ls1, first(ss1) fss1, " +
+                        "last(ss1) lss1, first(b1) fb1, last(b1) lb1, first(k) fk, last(k) lk, first(t1) ft1, " +
+                        "last(t1) lt1, first(dt) fdt, last(dt) ldt, first(ge) fge, last(ge) lge, k, s\n" +
+                        "from xx " +
+                        "where s in ('b')" +
+                        "sample by 30m",
+                "insert into xx " +
+                        "select " +
+                        "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                        "timestamp_sequence(200 * 60 * 1000000L, 1 * 60 * 1000000L) k,\n" +
+                        "cast(x + 200 as int) i1, \n" +
+                        "rnd_char() c1, \n" +
+                        "x+100 as l1,\n" +
+                        "cast(x * 0.5 + 200 as float) f1, \n" +
+                        "x*2.5 + 200 d1,\n" +
+                        "rnd_symbol(null, 'a1', 'b2', 'c3') s1, \n" +
+                        "cast(x as SHORT) ss1,\n" +
+                        "cast(x % 256 as byte) b1,\n" +
+                        "cast(x as timestamp) t1,\n" +
+                        "cast(x as date) dt,\n" +
+                        "cast(cast(x as string) as geohash(5c)) ge\n" +
                         "from\n" +
                         "long_sequence(100)");
     }

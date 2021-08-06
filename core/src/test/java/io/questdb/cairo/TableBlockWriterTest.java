@@ -145,13 +145,14 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                             " rnd_long() j1," +
                             " timestamp_sequence(0, 1000000000) ts," +
                             " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m" +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_geohash(40) gh" +
                             " from long_sequence(1000)" +
                             ") TIMESTAMP (ts);",
                     sqlExecutionContext);
             CharSequence expected = select("SELECT * FROM source");
             runReplicationTests(expected,
-                    "(ch CHAR, ll LONG256, a1 INT, a INT, b BOOLEAN, c STRING, d DOUBLE, e FLOAT, f SHORT, f1 SHORT, g DATE, h TIMESTAMP, i SYMBOL, j LONG, j1 LONG, ts TIMESTAMP, l BYTE, m BINARY) TIMESTAMP(ts)",
+                    "(ch CHAR, ll LONG256, a1 INT, a INT, b BOOLEAN, c STRING, d DOUBLE, e FLOAT, f SHORT, f1 SHORT, g DATE, h TIMESTAMP, i SYMBOL, j LONG, j1 LONG, ts TIMESTAMP, l BYTE, m BINARY, gh GEOHASH(40B)) TIMESTAMP(ts)",
                     2);
         });
     }
@@ -178,13 +179,14 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                             " rnd_long() j1," +
                             " timestamp_sequence(0, 1000000000) ts," +
                             " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m" +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_geohash(40) gh" +
                             " from long_sequence(1000)" +
                             ") TIMESTAMP (ts) PARTITION BY DAY;",
                     sqlExecutionContext);
             CharSequence expected = select("SELECT * FROM source");
             runReplicationTests(expected,
-                    "(ch CHAR, ll LONG256, a1 INT, a INT, b BOOLEAN, c STRING, d DOUBLE, e FLOAT, f SHORT, f1 SHORT, g DATE, h TIMESTAMP, i SYMBOL, j LONG, j1 LONG, ts TIMESTAMP, l BYTE, m BINARY) TIMESTAMP(ts) PARTITION BY DAY",
+                    "(ch CHAR, ll LONG256, a1 INT, a INT, b BOOLEAN, c STRING, d DOUBLE, e FLOAT, f SHORT, f1 SHORT, g DATE, h TIMESTAMP, i SYMBOL, j LONG, j1 LONG, ts TIMESTAMP, l BYTE, m BINARY, gh GEOHASH(40B)) TIMESTAMP(ts) PARTITION BY DAY",
                     2);
         });
     }
@@ -558,7 +560,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 int columnType = writer.getMetadata().getColumnType(columnIndex);
-                if (columnType == ColumnType.SYMBOL) {
+                if (ColumnType.isSymbol(columnType)) {
                     SymbolMapReader symReader = reader.getSymbolMapReader(columnIndex);
                     writer.updateSymbols(columnIndex, symReader);
                 }

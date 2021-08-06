@@ -30,6 +30,7 @@ io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqTimestampFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqBooleanFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqBinaryFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqGeoHashGeoHashFunctionFactory
 
 #nullif
 io.questdb.griffin.engine.functions.eq.NullIfCharCharFunctionFactory
@@ -143,6 +144,7 @@ io.questdb.griffin.engine.functions.rnd.RndBinFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndDateFunctionFactory
 io.questdb.griffin.engine.functions.rnd.ListFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampShuffleFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndGeoHashFunctionFactory
 
 # date conversion functions
 
@@ -350,6 +352,8 @@ io.questdb.griffin.engine.functions.cast.CastStrToCharFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastStrToDateFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastStrToBinaryFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory
 
 # cast symbol to ...
 io.questdb.griffin.engine.functions.cast.CastSymbolToIntFunctionFactory

@@ -43,6 +43,7 @@ import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -2686,7 +2687,7 @@ public class TableWriterTest extends AbstractCairoTest {
         int productName = writer.getColumnIndex("productName");
         int category = writer.getColumnIndex("category");
         int price = writer.getColumnIndex("price");
-        boolean isSym = writer.getMetadata().getColumnType(productName) == ColumnType.SYMBOL;
+        boolean isSym = ColumnType.isSymbol(writer.getMetadata().getColumnType(productName));
 
         for (int i = 0; i < 10000; i++) {
             TableWriter.Row r = writer.newRow(ts += 60000L * 1000L);
@@ -2727,7 +2728,7 @@ public class TableWriterTest extends AbstractCairoTest {
         int supplier = writer.getColumnIndex("supplier");
         int category = writer.getColumnIndex("category");
         int price = writer.getColumnIndex("price");
-        boolean isSym = writer.getMetadata().getColumnType(productName) == ColumnType.SYMBOL;
+        boolean isSym = ColumnType.isSymbol(writer.getMetadata().getColumnType(productName));
 
         for (int i = 0; i < 10000; i++) {
             TableWriter.Row r = writer.newRow(ts += 60000L * 1000L);
@@ -2752,7 +2753,7 @@ public class TableWriterTest extends AbstractCairoTest {
         int supplier = writer.getColumnIndex("sup");
         int category = writer.getColumnIndex("category");
         int price = writer.getColumnIndex("price");
-        boolean isSym = writer.getMetadata().getColumnType(productName) == ColumnType.SYMBOL;
+        boolean isSym = ColumnType.isSymbol(writer.getMetadata().getColumnType(productName));
 
         for (int i = 0; i < 10000; i++) {
             TableWriter.Row r = writer.newRow(ts += 60000L * 1000L);
@@ -3391,7 +3392,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 ts = append10KProducts(ts, rnd, writer);
 
-                int columnType = writer.getMetadata().getColumnType("supplier");
+                int columnTypeTag = ColumnType.tagOf(writer.getMetadata().getColumnType("supplier"));
 
                 writer.renameColumn("supplier", "sup");
 
@@ -3399,7 +3400,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 try (Path path = new Path()) {
                     path.of(root).concat(model.getName());
                     final int plen = path.length();
-                    if (columnType == ColumnType.SYMBOL) {
+                    if (columnTypeTag == ColumnType.SYMBOL) {
                         Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.v").$()));
                         Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.o").$()));
                         Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.c").$()));
@@ -3417,7 +3418,7 @@ public class TableWriterTest extends AbstractCairoTest {
                             Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.d").$()));
                             Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.top").$()));
                             Assert.assertTrue(FF.exists(path.trimTo(plen).concat(lpsz).concat("sup.d").$()));
-                            if (columnType == ColumnType.BINARY || columnType == ColumnType.STRING) {
+                            if (columnTypeTag == ColumnType.BINARY || columnTypeTag == ColumnType.STRING) {
                                 Assert.assertTrue(FF.exists(path.trimTo(plen).concat(lpsz).concat("sup.i").$()));
                             }
                         }

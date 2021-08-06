@@ -115,7 +115,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                 }
                 ExpressionNode fillNode = fillValues.getQuick(fillIndex++);
                 try {
-                    switch (function.getType()) {
+                    switch (ColumnType.tagOf(function.getType())) {
                         case ColumnType.INT:
                             placeholderFunctions.add(IntConstant.newInstance(Numbers.parseInt(fillNode.token)));
                             break;

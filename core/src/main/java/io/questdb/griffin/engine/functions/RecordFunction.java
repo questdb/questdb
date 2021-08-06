@@ -169,6 +169,11 @@ public abstract class RecordFunction implements ScalarFunction {
     }
 
     @Override
+    public long getGeoHash(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public int getType() {
         return ColumnType.RECORD;
     }

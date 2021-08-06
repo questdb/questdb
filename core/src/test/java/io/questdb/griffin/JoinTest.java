@@ -36,6 +36,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class JoinTest extends AbstractGriffinTest {
@@ -2720,6 +2721,44 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testJoinWithGeohash() throws Exception {
+        testFullFat(() -> assertMemoryLeak(() -> {
+            final String query = "select g1, gg1, gg2, gg4, gg8, x.k " +
+                    "from x " +
+                    "join y on y.kk = x.k";
+
+            final String expected = "g1\tgg1\tgg2\tgg4\tgg8\tk\n" +
+                    "9v1s\t1\twh4\ts2z2\t10011100111100101000010010010000010001010\t1\n" +
+                    "46sw\tq\t71f\tfsnj\t11010111111011100000110010000111111101101\t2\n" +
+                    "jnw9\tb\tjj5\tksu7\t11101100011100010000100111000111100000001\t3\n" +
+                    "zfuq\ts\t76u\tq0s5\t11110001011010001010010100000110110100010\t4\n" +
+                    "hp4m\ty\tp1d\tp2n3\t10111100100011101101110001110010111011001\t5\n";
+
+
+            compiler.compile(
+                    "create table x as (select" +
+                            " cast(x as int) k, " +
+                            " rnd_geohash(20) g1" +
+                            " from long_sequence(5))",
+                    sqlExecutionContext
+            );
+
+            compiler.compile(
+                    "create table y as (select" +
+                            " cast(x as int) kk," +
+                            " rnd_geohash(15) gg2," +
+                            " rnd_geohash(20) gg4," +
+                            " rnd_geohash(5) gg1," +
+                            " rnd_geohash(41) gg8" +
+                            " from long_sequence(20))",
+                    sqlExecutionContext
+            );
+
+            assertQueryAndCache(expected, query, null, false);
+        }));
+    }
+
+    @Test
     public void testJoinOuterAllTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tkk1\ta1\tb1\tc1\td1\te1\tf1\tg1\ti1\tj1\tk1\tl1\tm1\tn1\n" +
@@ -3597,6 +3636,46 @@ public class JoinTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    @Ignore //TODO: geohash joins
+    public void testGeohashJoinOnGeohash() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t1 as (select " +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
+                    "x," +
+                    "timestamp_sequence(0, 1000000) ts " +
+                    "from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
+            compiler.compile("create table t2 as (select " +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
+                    "x," +
+                    "timestamp_sequence(0, 1000000) ts " +
+                    "from long_sequence(2)) timestamp(ts)", sqlExecutionContext);
+
+
+            String expected = "geo4\tgeo1\tx\tts\tgeo41\tgeo11\tx1\tts1\n" +
+                    "ques\tq\t1\t1970-01-01T00:00:00.000000Z\t\t\tNaN\t\n" +
+                    "1234\t3\t2\t1970-01-01T00:00:01.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "3456\t3\t3\t1970-01-01T00:00:02.000000Z\t\t\tNaN\t\n" +
+                    "3456\t1\t4\t1970-01-01T00:00:03.000000Z\t\t\tNaN\t\n" +
+                    "ques\t1\t5\t1970-01-01T00:00:04.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n" +
+                    "1234\t3\t6\t1970-01-01T00:00:05.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "1234\t1\t7\t1970-01-01T00:00:06.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "1234\tq\t8\t1970-01-01T00:00:07.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "ques\t1\t9\t1970-01-01T00:00:08.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n" +
+                    "ques\t1\t10\t1970-01-01T00:00:09.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n";
+
+            String sql = "with g1 as (select distinct * from t1)," +
+                    "g2 as (select distinct * from t2)" +
+                    "select * from g1 lt join g2 on g1.geo4 = g2.geo4";
+
+            compiler.setFullSatJoins(true);
+            assertSql(sql, expected);
+            compiler.setFullSatJoins(false);
+            assertSql(sql, expected);
+        });
+    }
 
     @Test
     public void testTypeMismatchFF() throws Exception {

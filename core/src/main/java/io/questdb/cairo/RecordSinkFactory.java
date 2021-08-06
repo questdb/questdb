@@ -95,11 +95,11 @@ public class RecordSinkFactory {
 
         int n = columnFilter.getColumnCount();
         for (int i = 0; i < n; i++) {
-
             int index = columnFilter.getColumnIndex(i);
             final int factor = columnFilter.getIndexFactor(index);
             index = (index * factor - 1);
-            switch (factor * columnTypes.getColumnType(index)) {
+            final int type = columnTypes.getColumnType(index);
+            switch (factor * ColumnType.tagOf(type)) {
                 case ColumnType.INT:
                     asm.aload(2);
                     asm.aload(1);
@@ -219,6 +219,30 @@ public class RecordSinkFactory {
                     asm.aload(2);
                     asm.iconst(Long.BYTES);
                     asm.invokeInterface(wSkip, 1);
+                    break;
+                case ColumnType.GEOHASH:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
+                    final int size = ColumnType.sizeOf(type);
+                    switch (size) {
+                        case 1:
+                            asm.invokeInterface(rGetByte, 1);
+                            asm.invokeInterface(wPutByte, 1);
+                            break;
+                        case 2:
+                            asm.invokeInterface(rGetShort, 1);
+                            asm.invokeInterface(wPutShort, 1);
+                            break;
+                        case 4:
+                            asm.invokeInterface(rGetInt, 1);
+                            asm.invokeInterface(wPutInt, 1);
+                            break;
+                        default:
+                            asm.invokeInterface(rGetLong, 1);
+                            asm.invokeInterface(wPutLong, 2);
+                            break;
+                    }
                     break;
                 default:
                     break;

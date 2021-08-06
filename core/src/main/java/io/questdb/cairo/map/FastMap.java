@@ -114,7 +114,8 @@ public class FastMap implements Map {
 
             for (int i = 0; i < columnSplit; i++) {
                 valueOffsets[i] = offset;
-                switch (valueTypes.getColumnType(i)) {
+                final int columnType = valueTypes.getColumnType(i);
+                switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.BYTE:
                     case ColumnType.BOOLEAN:
                         offset++;
@@ -137,9 +138,12 @@ public class FastMap implements Map {
                     case ColumnType.LONG256:
                         offset += Long256.BYTES;
                         break;
+                    case ColumnType.GEOHASH:
+                        offset += GeoHashes.sizeOf(columnType);
+                        break;
                     default:
                         close();
-                        throw CairoException.instance(0).put("value type is not supported: ").put(ColumnType.nameOf(valueTypes.getColumnType(i)));
+                        throw CairoException.instance(0).put("value type is not supported: ").put(ColumnType.nameOf(columnType));
                 }
             }
             this.value = new FastMapValue(valueOffsets);

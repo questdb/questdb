@@ -25,50 +25,65 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.std.ObjList;
 
 public final class Constants {
     private static final ObjList<ConstantFunction> nullConstants = new ObjList<>();
+    private static final ObjList<ConstantFunction> geoNullConstants = new ObjList<>();
     private static final ObjList<TypeConstant> typeConstants = new ObjList<>();
 
     static {
-        Constants.nullConstants.extendAndSet(ColumnType.INT, IntConstant.NULL);
-        Constants.nullConstants.extendAndSet(ColumnType.STRING, StrConstant.NULL);
-        Constants.nullConstants.extendAndSet(ColumnType.SYMBOL, SymbolConstant.NULL);
-        Constants.nullConstants.extendAndSet(ColumnType.LONG, LongConstant.NULL);
-        Constants.nullConstants.extendAndSet(ColumnType.DATE, DateConstant.NULL);
-        Constants.nullConstants.extendAndSet(ColumnType.TIMESTAMP, TimestampConstant.NULL);
-        Constants.nullConstants.extendAndSet(ColumnType.BYTE, ByteConstant.ZERO);
-        Constants.nullConstants.extendAndSet(ColumnType.SHORT, ShortConstant.ZERO);
-        Constants.nullConstants.extendAndSet(ColumnType.CHAR, CharConstant.ZERO);
-        Constants.nullConstants.extendAndSet(ColumnType.BOOLEAN, BooleanConstant.FALSE);
-        Constants.nullConstants.extendAndSet(ColumnType.DOUBLE, DoubleConstant.NULL);
-        Constants.nullConstants.extendAndSet(ColumnType.FLOAT, FloatConstant.NULL);
-        Constants.nullConstants.extendAndSet(ColumnType.BINARY, NullBinConstant.INSTANCE);
-        Constants.nullConstants.extendAndSet(ColumnType.LONG256, Long256NullConstant.INSTANCE);
+        nullConstants.extendAndSet(ColumnType.INT, IntConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.STRING, StrConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.SYMBOL, SymbolConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.LONG, LongConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.DATE, DateConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.TIMESTAMP, TimestampConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.BYTE, ByteConstant.ZERO);
+        nullConstants.extendAndSet(ColumnType.SHORT, ShortConstant.ZERO);
+        nullConstants.extendAndSet(ColumnType.CHAR, CharConstant.ZERO);
+        nullConstants.extendAndSet(ColumnType.BOOLEAN, BooleanConstant.FALSE);
+        nullConstants.extendAndSet(ColumnType.DOUBLE, DoubleConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.FLOAT, FloatConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.BINARY, NullBinConstant.INSTANCE);
+        nullConstants.extendAndSet(ColumnType.LONG256, Long256NullConstant.INSTANCE);
 
-        Constants.typeConstants.extendAndSet(ColumnType.INT, IntTypeConstant.INSTANCE);
-        Constants.typeConstants.extendAndSet(ColumnType.STRING, StrTypeConstant.INSTANCE);
-        Constants.typeConstants.extendAndSet(ColumnType.SYMBOL, SymbolTypeConstant.INSTANCE);
-        Constants.typeConstants.extendAndSet(ColumnType.LONG, LongTypeConstant.INSTANCE);
-        Constants.typeConstants.extendAndSet(ColumnType.DATE, DateTypeConstant.INSTANCE);
-        Constants.typeConstants.extendAndSet(ColumnType.TIMESTAMP, TimestampTypeConstant.INSTANCE);
-        Constants.typeConstants.extendAndSet(ColumnType.BYTE, ByteTypeConstant.INSTANCE);
-        Constants.typeConstants.extendAndSet(ColumnType.SHORT, ShortTypeConstant.INSTANCE);
-        Constants.typeConstants.extendAndSet(ColumnType.CHAR, CharTypeConstant.INSTANCE);
-        Constants.typeConstants.extendAndSet(ColumnType.BOOLEAN, BooleanTypeConstant.INSTANCE);
-        Constants.typeConstants.extendAndSet(ColumnType.DOUBLE, DoubleTypeConstant.INSTANCE);
-        Constants.typeConstants.extendAndSet(ColumnType.FLOAT, FloatTypeConstant.INSTANCE);
-        Constants.typeConstants.extendAndSet(ColumnType.BINARY, BinTypeConstant.INSTANCE);
-        Constants.typeConstants.extendAndSet(ColumnType.LONG256, Long256TypeConstant.INSTANCE);
+        for(int b = 0; b < GeoHashes.MAX_BITS_LENGTH; b++) {
+            int type = ColumnType.geohashWithPrecision(b + 1);
+            geoNullConstants.extendAndSet(b, GeoHashConstant.newInstance(GeoHashes.NULL, type));
+        }
+
+        typeConstants.extendAndSet(ColumnType.INT, IntTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.STRING, StrTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.SYMBOL, SymbolTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.LONG, LongTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.DATE, DateTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.TIMESTAMP, TimestampTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.BYTE, ByteTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.SHORT, ShortTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.CHAR, CharTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.BOOLEAN, BooleanTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.DOUBLE, DoubleTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.FLOAT, FloatTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.BINARY, BinTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.LONG256, Long256TypeConstant.INSTANCE);
+        // GEOHASH has 60 type constants
     }
 
     public static ConstantFunction getNullConstant(int columnType) {
-        return nullConstants.getQuick(columnType);
+        if (columnType < nullConstants.size()) {
+            return nullConstants.getQuick(columnType);
+        } else if (ColumnType.tagOf(columnType) == ColumnType.GEOHASH) {
+            int bitsPrecision = GeoHashes.getBitsPrecision(columnType);
+            return geoNullConstants.getQuick(bitsPrecision - 1);
+        }
+        throw new UnsupportedOperationException();
     }
 
     public static TypeConstant getTypeConstant(int columnType) {
+        // GEOHASH takes a different path, no need to extract tag
         return typeConstants.getQuick(columnType);
     }
 }

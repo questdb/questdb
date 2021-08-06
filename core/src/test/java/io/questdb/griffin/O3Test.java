@@ -261,6 +261,12 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    @Ignore // TODO fix geo hashes
+    public void testColumnTopMidMergeBlankGeohash() throws Exception {
+        executeVanilla(O3Test::testColumnTopMidMergeBlankColumnGeohash0);
+    }
+
+    @Test
     public void testColumnTopMidMergeBlankContended() throws Exception {
         executeWithPool(0, O3Test::testColumnTopMidMergeBlankColumn0);
     }
@@ -4551,6 +4557,63 @@ public class O3Test extends AbstractO3Test {
                         " rnd_bin() v12," +
                         " rnd_long256() v13," +
                         " rnd_long() v9" +
+                        " from long_sequence(100)" +
+                        ") timestamp (ts) partition by DAY",
+                executionContext
+        );
+
+        // create third table, which will contain both X and 1AM
+        assertO3DataCursors(
+                engine,
+                compiler,
+                executionContext,
+                "create table y as (x union all append)",
+                "y order by ts",
+                "insert into x select * from append",
+                "x"
+        );
+
+        assertIndexConsistency(compiler, executionContext);
+    }
+
+    private static void testColumnTopMidMergeBlankColumnGeohash0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_geohash(4) geo1," +
+                        " rnd_geohash(15) geo2," +
+                        " rnd_geohash(16) geo4," +
+                        " rnd_geohash(40) geo8" +
+                        " from long_sequence(500)" +
+                        ") timestamp (ts) partition by DAY",
+                executionContext
+        );
+
+        compiler.compile("alter table x add column v1 geohash(1c)", executionContext);
+        compiler.compile("alter table x add column v2 geohash(2c)", executionContext);
+        compiler.compile("alter table x add column v4 geohash(4c)", executionContext);
+        compiler.compile("alter table x add column v8 geohash(10c)", executionContext);
+
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " timestamp_sequence(518300000000L-1000L,100000L) ts," +
+                        " rnd_geohash(4) geo1," +
+                        " rnd_geohash(15) geo2," +
+                        " rnd_geohash(16) geo4," +
+                        " rnd_geohash(40) geo8," +
+                        //  ------------------- new columns ------------------
+                        " rnd_geohash(5) v1," +
+                        " rnd_geohash(10) v2," +
+                        " rnd_geohash(20) v4," +
+                        " rnd_geohash(50) v8" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 executionContext
