@@ -247,7 +247,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     @Override
-    protected void putUtf8Special(char c) {
+    public void putUtf8Special(char c) {
         if (c == '/' && Os.type == Os.WINDOWS) {
             put('\\');
         } else {

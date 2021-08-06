@@ -49,11 +49,6 @@ public class LogRecordSinkAdapter implements CharSink {
     }
 
     @Override
-    public CharSink encodeUtf8AndQuote(CharSequence cs) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public char[] getDoubleDigitsBuffer() {
         throw new UnsupportedOperationException();
     }
@@ -62,11 +57,6 @@ public class LogRecordSinkAdapter implements CharSink {
     public CharSink put(char c) {
         line.$(c);
         return this;
-    }
-
-    @Override
-    public CharSink putUtf8(char c) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

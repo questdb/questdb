@@ -367,11 +367,6 @@ public class LineProtoLexer implements Mutable, Closeable {
             return this;
         }
 
-        @Override
-        public CharSink put(char[] chars, int start, int len) {
-            throw new UnsupportedOperationException();
-        }
-
         private void extend() {
             int capacity = ((int) (bufferHi - buffer) * 2);
             if (capacity < 0) {

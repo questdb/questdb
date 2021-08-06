@@ -230,7 +230,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
     }
 
     @Override
-    protected void putUtf8Special(char c) {
+    public void putUtf8Special(char c) {
         switch (c) {
             case ' ':
             case ',':

@@ -832,16 +832,16 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public TableReplayModel reconcileSlaveState(long slaveTxData, long slaveMetaData, long slaveMetaDataSize) {
+    public TableSyncModel reconcileSlaveState(long slaveTxData, long slaveMetaData, long slaveMetaDataSize) {
         LOG.info().$("reconciling replay request [table=").$(tableName).I$();
         final LongIntHashMap hash = new LongIntHashMap();
-        final TableReplayModel model = new TableReplayModel();
+        final TableSyncModel model = new TableSyncModel();
 
         final int symbolsCount = Unsafe.getUnsafe().getInt(slaveTxData + TX_OFFSET_MAP_WRITER_COUNT);
         final int theirLast;
         if (Unsafe.getUnsafe().getLong(slaveTxData + TX_OFFSET_DATA_VERSION) != txFile.getDataVersion()) {
             // truncate
-            model.setTableAction(TableReplayModel.TABLE_ACTION_TRUNCATE);
+            model.setTableAction(TableSyncModel.TABLE_ACTION_TRUNCATE);
             theirLast = -1;
         } else {
             // hash partitions on slave side
@@ -981,15 +981,15 @@ public class TableWriter implements Closeable {
                 if (copyFrom > -1) {
                     int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4) - 1;
                     if (copyTo == -1) {
-                        model.addColumnMetaAction(TableReplayModel.COLUMN_META_ACTION_REMOVE, i, copyTo);
-                        model.addColumnMetaAction(TableReplayModel.COLUMN_META_ACTION_MOVE, copyFrom, i);
+                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_REMOVE, i, copyTo);
+                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_MOVE, copyFrom, i);
                     } else {
-                        model.addColumnMetaAction(TableReplayModel.COLUMN_META_ACTION_MOVE, copyFrom, copyTo + 1);
+                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_MOVE, copyFrom, copyTo + 1);
                     }
                 } else {
                     // new column
                     model.addColumnMetadata(metadata.getColumnQuick(i));
-                    model.addColumnMetaAction(TableReplayModel.COLUMN_META_ACTION_ADD, ++addedColumnMetadataIndex, i);
+                    model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, ++addedColumnMetadataIndex, i);
                 }
             }
         } finally {
@@ -3989,15 +3989,41 @@ public class TableWriter implements Closeable {
     private void processCommandQueue() {
         final long cursor = commandSubSeq.next();
         if (cursor > -1) {
-            TableWriterTask tsk = messageBus.getTableWriterCommandQueue().get(cursor);
-            switch (tsk.type) {
-                case 1: // slave replay
-                    long txMemSize = Unsafe.getUnsafe().getLong(tsk.data);
-                    long metaMemSize = Unsafe.getUnsafe().getLong(tsk.data + txMemSize + 8);
-                    reconcileSlaveState(tsk.data + 8, tsk.data + txMemSize + 16, metaMemSize);
-                    break;
+            final TableWriterTask cmd = messageBus.getTableWriterCommandQueue().get(cursor);
+            if (cmd.getTableId() == getMetadata().getId()) {
+                switch (cmd.getType()) {
+                    case TableWriterTask.TSK_SLAVE_SYNC:
+                        replHandleSlaveSync(cmd, cursor);
+                        break;
+                    default:
+                        commandSubSeq.done(cursor);
+                        break;
+                }
+            } else {
+                commandSubSeq.done(cursor);
             }
-            commandSubSeq.done(cursor);
+        }
+    }
+
+    private void replHandleSlaveSync(TableWriterTask cmd, long cursor) {
+        final long txMemSize = Unsafe.getUnsafe().getLong(cmd.getData());
+        final TableSyncModel model = reconcileSlaveState(
+                cmd.getData() + 8,
+                cmd.getData() + txMemSize + 16,
+                Unsafe.getUnsafe().getLong(cmd.getData() + txMemSize + 8)
+        );
+
+        // release command queue slot not to hold both queues
+        commandSubSeq.done(cursor);
+
+        final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
+        if (pubCursor > -1) {
+            final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
+            model.toBinary(event);
+            messageBus.getTableWriterEventPubSeq().done(cursor);
+            LOG.info().$("published slave sync event [table=").$(tableName).$(']').$();
+        } else {
+            LOG.info().$("could not publish slave sync event [table=").$(tableName).$(']').$();
         }
     }
 

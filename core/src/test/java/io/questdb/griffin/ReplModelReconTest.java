@@ -28,8 +28,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import io.questdb.tasks.TableWriterTask;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -483,22 +481,17 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                 TableWriterTask task = wq.get(cursor);
 
                 long txMem = w2.getRawTxnMemory();
-                long txMemSize = TableUtils.getTxMemorySize(txMem);
-                long metaMem = w2.getRawMetaMemory();
-                long metaMemSize = w2.getRawMetaMemorySize();
 
-                long tskSize = task.dataSize;
-                if (tskSize < txMemSize + metaMemSize + 16) {
-                    task.resize(txMemSize + metaMemSize + 16);
-                }
-
-                long p = task.data;
-                Unsafe.getUnsafe().putLong(p, txMemSize);
-                Vect.memcpy(txMem, p + 8, txMemSize);
-                Unsafe.getUnsafe().putLong(p + txMemSize + 8, metaMemSize);
-                Vect.memcpy(metaMem, p + txMemSize + 16, metaMemSize);
-
-                task.type = 1; // slave replay
+                task.fromSlaveSyncRequest(
+                        // we need to know master table ID from master's writer because
+                        // we are simulating replication from table X to table Y on the same database
+                        // In real world slave will have the same ID as master
+                        w1.getMetadata().getId(),
+                        txMem,
+                        TableUtils.getTxMemorySize(txMem),
+                        w2.getRawMetaMemory(),
+                        w2.getRawMetaMemorySize()
+                );
 
                 pubSeq.done(cursor);
 

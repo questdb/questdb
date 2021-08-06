@@ -26,8 +26,9 @@ package io.questdb.cairo;
 
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.tasks.TableWriterTask;
 
-public class TableReplayModel implements Mutable, Sinkable {
+public class TableSyncModel implements Mutable, Sinkable {
 
     public static final int TABLE_ACTION_KEEP = 0;
     public static final int TABLE_ACTION_TRUNCATE = 1;
@@ -93,6 +94,52 @@ public class TableReplayModel implements Mutable, Sinkable {
         tableAction = 0;
     }
 
+    public void fromBinary(long mem) {
+        long p = mem;
+        tableAction = Unsafe.getUnsafe().getInt(p += 4);
+        dataVersion = Unsafe.getUnsafe().getLong(p += 8);
+
+        int n = Unsafe.getUnsafe().getInt(p += 4);
+        for (int i = 0; i < n; i += SLOTS_PER_COLUMN_TOP) {
+            columnTops.add(Unsafe.getUnsafe().getLong(p += 8)); // timestamp
+            columnTops.add(Unsafe.getUnsafe().getInt(p += 4)); // column index
+            columnTops.add(Unsafe.getUnsafe().getLong(p += 8)); // column top
+            columnTops.add(0); // reserved
+        }
+
+        n = Unsafe.getUnsafe().getInt(p += 4);
+        for (int i = 0; i < n; i += SLOTS_PER_PARTITION) {
+            partitions.add(Unsafe.getUnsafe().getInt(p += 4)); // action
+            partitions.add(Unsafe.getUnsafe().getLong(p += 8)); // partition timestamp
+            partitions.add(Unsafe.getUnsafe().getLong(p += 8)); // start row
+            partitions.add(Unsafe.getUnsafe().getLong(p += 8)); // row count
+            partitions.add(Unsafe.getUnsafe().getLong(p += 8)); // name txn
+            partitions.add(Unsafe.getUnsafe().getLong(p += 8)); // data txn
+            partitions.add(0); // reserved
+            partitions.add(0); // reserved
+        }
+
+        n = Unsafe.getUnsafe().getInt(p += 4);
+/*
+        for (int i = 0; i < n; i++) {
+            final TableColumnMetadata metadata = addedColumnMetadata.getQuick(i);
+            final long offset = sink.skip(Integer.SIZE); // encode size prefixed column name
+            sink.encodeUtf8(metadata.getName());
+            sink.putAt(offset, (int) (sink.getAppendOffset() - offset));
+            sink.put(metadata.getType()); // column type
+            sink.put((byte) (metadata.isIndexed() ? 0 : 1)); // column indexed flag
+            sink.put(metadata.getIndexValueBlockCapacity());
+        }
+
+        n = columnMetaIndex.size();
+        sink.put(n); // column metadata shuffle index - drives rearrangement of existing columns on the slave
+        for (int i = 0; i < n; i += SLOTS_PER_COLUMN_META_INDEX) {
+            sink.put((int) columnMetaIndex.getQuick(i)); // action
+            sink.put(columnMetaIndex.getQuick(i + 1)); // (int,int) pair on where (from,to) column needs to move
+        }
+*/
+    }
+
     public long getDataVersion() {
         return dataVersion;
     }
@@ -111,6 +158,50 @@ public class TableReplayModel implements Mutable, Sinkable {
 
     public void setTableAction(int tableAction) {
         this.tableAction = tableAction;
+    }
+
+    public void toBinary(TableWriterTask sink) {
+        sink.put(tableAction);
+        sink.put(dataVersion);
+        int n = columnTops.size();
+        sink.put(n); // column top count
+        if (n > 0) {
+            for (int i = 0; i < n; i += SLOTS_PER_COLUMN_TOP) {
+                sink.put(columnTops.getQuick(i)); // partition timestamp
+                sink.put((int) columnTops.getQuick(i + 1)); // column index
+                sink.put(columnTops.getQuick(i + 2)); // column top
+            }
+        }
+
+        n = partitions.size();
+        sink.put(n); // partition count
+        for (int i = 0; i < n; i += SLOTS_PER_PARTITION) {
+            sink.put((int) partitions.getQuick(i)); // action
+            sink.put(partitions.getQuick(i + 1)); // partition timestamp
+            sink.put(partitions.getQuick(i + 2)); // start row
+            sink.put(partitions.getQuick(i + 3)); // row count
+            sink.put(partitions.getQuick(i + 4)); // name txn (suffix for partition name)
+            sink.put(partitions.getQuick(i + 5)); // data txn
+        }
+
+        n = addedColumnMetadata.size();
+        sink.put(n); // column metadata count - this is metadata only for column that have been added
+        for (int i = 0; i < n; i++) {
+            final TableColumnMetadata metadata = addedColumnMetadata.getQuick(i);
+            final long offset = sink.skip(Integer.SIZE); // encode size prefixed column name
+            sink.encodeUtf8(metadata.getName());
+            sink.putAt(offset, (int) (sink.getAppendOffset() - offset));
+            sink.put(metadata.getType()); // column type
+            sink.put((byte) (metadata.isIndexed() ? 0 : 1)); // column indexed flag
+            sink.put(metadata.getIndexValueBlockCapacity());
+        }
+
+        n = columnMetaIndex.size();
+        sink.put(n); // column metadata shuffle index - drives rearrangement of existing columns on the slave
+        for (int i = 0; i < n; i += SLOTS_PER_COLUMN_META_INDEX) {
+            sink.put((int) columnMetaIndex.getQuick(i)); // action
+            sink.put(columnMetaIndex.getQuick(i + 1)); // (int,int) pair on where (from,to) column needs to move
+        }
     }
 
     @Override

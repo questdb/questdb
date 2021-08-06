@@ -59,7 +59,7 @@ public class MetricsScrapeBenchmark {
 
     @Benchmark
     @Group
-    @GroupThreads(1)
+    @GroupThreads()
     public void testScrape() {
         metricsRegistry.scrapeIntoPrometheus(sink);
     }

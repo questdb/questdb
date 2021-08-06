@@ -43,81 +43,6 @@ public abstract class AbstractCharSink implements CharSink {
     }
 
     @Override
-    public CharSink encodeUtf8(CharSequence cs) {
-        return encodeUtf8(cs, 0, cs.length());
-    }
-
-    @Override
-    public CharSink encodeUtf8(CharSequence cs, int lo, int hi) {
-        int i = lo;
-        while (i < hi) {
-            char c = cs.charAt(i++);
-            if (c < 128) {
-                putUtf8Special(c);
-            } else {
-                i = putUtf8Internal(cs, hi, i, c);
-            }
-        }
-        return this;
-    }
-
-    @Override
-    public CharSink putUtf8(char c) {
-        if (c < 128) {
-            putUtf8Special(c);
-        } else if (c < 2048) {
-            put((char) (192 | c >> 6)).put((char) (128 | c & 63));
-        } else if (Character.isSurrogate(c)) {
-            put('?');
-        } else {
-            put((char) (224 | c >> 12)).put((char) (128 | c >> 6 & 63)).put((char) (128 | c & 63));
-        }
-        return this;
-    }
-
-    @Override
-    public CharSink encodeUtf8AndQuote(CharSequence cs) {
-        put('\"').encodeUtf8(cs).put('\"');
-        return this;
-    }
-
-    @Override
-    public CharSink put(int value) {
-        Numbers.append(this, value);
-        return this;
-    }
-
-    @Override
-    public CharSink put(long value) {
-        Numbers.append(this, value);
-        return this;
-    }
-
-    @Override
-    public CharSink put(float value, int scale) {
-        Numbers.append(this, value, scale);
-        return this;
-    }
-
-    @Override
-    public CharSink put(double value) {
-        Numbers.append(this, value);
-        return this;
-    }
-
-    @Override
-    public CharSink put(double value, int scale) {
-        Numbers.append(this, value, scale);
-        return this;
-    }
-
-    @Override
-    public CharSink put(boolean value) {
-        this.put(value ? "true" : "false");
-        return this;
-    }
-
-    @Override
     public CharSink put(Throwable e) {
         ObjHashSet<Throwable> dejaVu = tlSet.get();
         dejaVu.add(e);
@@ -142,58 +67,6 @@ public abstract class AbstractCharSink implements CharSink {
         }
 
         return this;
-    }
-
-    @Override
-    public CharSink put(Sinkable sinkable) {
-        sinkable.toSink(this);
-        return this;
-    }
-
-    @Override
-    public CharSink putISODate(long value) {
-        TimestampFormatUtils.appendDateTimeUSec(this, value);
-        return this;
-    }
-
-    @Override
-    public CharSink putISODateMillis(long value) {
-        io.questdb.std.datetime.millitime.DateFormatUtils.appendDateTime(this, value);
-        return this;
-    }
-
-    @Override
-    public CharSink putQuoted(CharSequence cs) {
-        put('\"').put(cs).put('\"');
-        return this;
-    }
-
-    private int encodeSurrogate(char c, CharSequence in, int pos, int hi) {
-        int dword;
-        if (Character.isHighSurrogate(c)) {
-            if (hi - pos < 1) {
-                put('?');
-                return pos;
-            } else {
-                char c2 = in.charAt(pos++);
-                if (Character.isLowSurrogate(c2)) {
-                    dword = Character.toCodePoint(c, c2);
-                } else {
-                    put('?');
-                    return pos;
-                }
-            }
-        } else if (Character.isLowSurrogate(c)) {
-            put('?');
-            return pos;
-        } else {
-            dword = c;
-        }
-        put((char) (240 | dword >> 18)).
-                put((char) (128 | dword >> 12 & 63)).
-                put((char) (128 | dword >> 6 & 63)).
-                put((char) (128 | dword & 63));
-        return pos;
     }
 
     private void put(StackTraceElement e) {
@@ -271,20 +144,5 @@ public abstract class AbstractCharSink implements CharSink {
         if (e.getMessage() != null) {
             put(": ").put(e.getMessage());
         }
-    }
-
-    protected int putUtf8Internal(CharSequence cs, int hi, int i, char c) {
-        if (c < 2048) {
-            put((char) (192 | c >> 6)).put((char) (128 | c & 63));
-        } else if (Character.isSurrogate(c)) {
-            i = encodeSurrogate(c, cs, i, hi);
-        } else {
-            put((char) (224 | c >> 12)).put((char) (128 | c >> 6 & 63)).put((char) (128 | c & 63));
-        }
-        return i;
-    }
-
-    protected void putUtf8Special(char c) {
-        put(c);
     }
 }
