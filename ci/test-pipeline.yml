@@ -13,6 +13,7 @@ variables:
 stages:
   - stage: StartBuildAgent
     displayName: "Start Building Agent"
+    condition: always()
     jobs:
       - job: StartArmAgent
         displayName: 'Start ARM Agent'
