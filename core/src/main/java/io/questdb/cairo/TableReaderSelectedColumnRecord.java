@@ -248,17 +248,21 @@ public class TableReaderSelectedColumnRecord implements Record {
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long offset = getAdjustedRecordIndex(col) * ColumnType.sizeOf(columnType);
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
-
-        final MemoryR column = reader.getColumn(absoluteColumnIndex);
-        switch (ColumnType.sizeOf(columnType)) {
-            case 1:
-                return column.getByte(offset);
-            case 2:
-                return column.getShort(offset);
-            case 4:
-                return column.getInt(offset);
-            default:
-                return column.getLong(offset);
+        if (absoluteColumnIndex > 0) {
+            final MemoryR column = reader.getColumn(absoluteColumnIndex);
+            switch (ColumnType.sizeOf(columnType)) {
+                case 1:
+                    return column.getByte(offset);
+                case 2:
+                    return column.getShort(offset);
+                case 4:
+                    return column.getInt(offset);
+                default:
+                    return column.getLong(offset);
+            }
+        } else {
+            // This is column top
+            return GeoHashes.NULL;
         }
     }
 

@@ -346,6 +346,37 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testWithColTops() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t1 as (select " +
+                    "x," +
+                    "timestamp_sequence(0, 1000000) ts " +
+                    "from long_sequence(2))", sqlExecutionContext);
+
+            compiler.compile("alter table t1 add a1 geohash(1c)", sqlExecutionContext);
+            compiler.compile("alter table t1 add a2 geohash(2c)", sqlExecutionContext);
+            compiler.compile("alter table t1 add a4 geohash(4c)", sqlExecutionContext);
+            compiler.compile("alter table t1 add a8 geohash(8c)", sqlExecutionContext);
+
+            compiler.compile("insert into t1 select x," +
+                    "timestamp_sequence(0, 1000000) ts," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(2c)) geo2," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
+                    "cast(rnd_str('questdb123456', '12345672', '901234567') as geohash(8c)) geo8 " +
+                    "from long_sequence(2)",
+                    sqlExecutionContext);
+
+            assertSql("t1",
+                    "x\tts\ta1\ta2\ta4\ta8\n" +
+                            "1\t1970-01-01T00:00:00.000000Z\t\t\t\t\n" +
+                            "2\t1970-01-01T00:00:01.000000Z\t\t\t\t\n" +
+                            "1\t1970-01-01T00:00:00.000000Z\tq\tqu\t1234\t90123456\n" +
+                            "2\t1970-01-01T00:00:01.000000Z\t3\t34\t3456\t12345672\n");
+        });
+    }
+
+    @Test
     public void testDistinctGeohashJoin() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table t1 as (select " +
