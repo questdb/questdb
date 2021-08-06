@@ -837,7 +837,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 3);
                 break;
             case ColumnType.TIMESTAMP:
-                final boolean designated = TimestampExtra.isDesignated(columnType);
+                final boolean designated = ColumnType.isDesignatedTimestamp(columnType);
                 if (designated) {
                     O3Utils.copyFromTimestampIndex(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr);
                 } else {
@@ -951,7 +951,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
                 break;
             case ColumnType.TIMESTAMP:
-                final boolean designated = TimestampExtra.isDesignated(columnType);
+                final boolean designated = ColumnType.isDesignatedTimestamp(columnType);
                 if (designated) {
                     Vect.oooCopyIndex(mergeIndexAddr, rowCount, dstFixAddr);
                 } else {

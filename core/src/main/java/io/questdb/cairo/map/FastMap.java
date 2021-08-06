@@ -139,7 +139,7 @@ public class FastMap implements Map {
                         offset += Long256.BYTES;
                         break;
                     case ColumnType.GEOHASH:
-                        offset += ColumnType.sizeOf(columnType);
+                        offset += GeoHashes.sizeOf(columnType);
                         break;
                     default:
                         close();

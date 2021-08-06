@@ -73,14 +73,16 @@ public class GeoHashes {
             throw NumericException.INSTANCE;
         }
         long result = 0;
-        for (int i = 0; i < bits.length(); i++) {
-            char c = bits.charAt(i);
-            if (c == '1') {
-                result = (result << 1) | 1;
-            } else if (c == '0') {
-                result = result << 1;
-            } else {
-                throw NumericException.INSTANCE;
+        for (int i = 0, n = bits.length(); i < n; i++) {
+            switch (bits.charAt(i)) {
+                case '0':
+                    result = result << 1;
+                    break;
+                case '1':
+                    result = (result << 1) | 1;
+                    break;
+                default:
+                    throw NumericException.INSTANCE;
             }
         }
         return result;

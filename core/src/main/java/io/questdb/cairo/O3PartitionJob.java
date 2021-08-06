@@ -416,8 +416,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 suffixLo = mergeO3Hi + 1;
                                 suffixType = O3_BLOCK_O3;
                                 suffixHi = Math.max(suffixLo, srcOooHi);
-                            } else {
-                                suffixType = O3_BLOCK_NONE;
                             }
                         } else {
 
@@ -822,7 +820,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 columnName,
                                 columnCounter,
                                 o3Basket.nextPartCounter(),
-                                notTheTimestamp ? columnType : TimestampExtra.setDesignated(columnType, true),
+                                notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
                                 timestampMergeIndexAddr,
                                 srcOooFixAddr,
                                 srcOooFixSize,
@@ -868,7 +866,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 columnName,
                                 columnCounter,
                                 o3Basket.nextPartCounter(),
-                                notTheTimestamp ? columnType : TimestampExtra.setDesignated(columnType, true),
+                                notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
                                 timestampMergeIndexAddr,
                                 srcOooFixAddr,
                                 srcOooFixSize,

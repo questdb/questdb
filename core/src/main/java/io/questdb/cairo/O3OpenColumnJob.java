@@ -116,7 +116,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 );
                 break;
             case ColumnType.TIMESTAMP:
-                final boolean designated = TimestampExtra.isDesignated(columnType);
+                final boolean designated = ColumnType.isDesignatedTimestamp(columnType);
                 if (designated) {
                     appendTimestampColumn(
                             columnCounter,
@@ -638,7 +638,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 );
                 break;
             case ColumnType.TIMESTAMP:
-                final boolean designated = TimestampExtra.isDesignated(columnType);
+                final boolean designated = ColumnType.isDesignatedTimestamp(columnType);
                 if (designated) {
                     appendTimestampColumn(
                             columnCounter,

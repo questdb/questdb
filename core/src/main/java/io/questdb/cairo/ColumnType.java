@@ -94,6 +94,7 @@ public final class ColumnType {
 
     private static final int OVERLOAD_MATRIX_SIZE = 32;
     private static final int[] overloadPriorityMatrix;
+    private static final int DESIGNATED_TIMESTAMP_BIT = 8;
 
     public static boolean isBinary(int columnType) {
         return columnType == BINARY;
@@ -109,6 +110,10 @@ public final class ColumnType {
 
     public static boolean isCursor(int columnType) {
         return columnType == CURSOR;
+    }
+
+    public static boolean isDesignatedTimestamp(int tsType) {
+        return ((tsType >> DESIGNATED_TIMESTAMP_BIT) & 1) == 1;
     }
 
     public static boolean isDouble(int columnType) {
@@ -149,6 +154,14 @@ public final class ColumnType {
 
     public static boolean isSymbolOrString(int columnType) {
         return columnType == SYMBOL || columnType == STRING;
+    }
+
+    public static int setDesignatedTimestampBit(int tsType, boolean designated) {
+        if (designated) {
+            return tsType | 1 << DESIGNATED_TIMESTAMP_BIT;
+        } else {
+            return tsType & ~(1 << DESIGNATED_TIMESTAMP_BIT);
+        }
     }
 
     static {

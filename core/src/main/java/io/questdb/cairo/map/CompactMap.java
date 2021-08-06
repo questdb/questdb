@@ -235,7 +235,7 @@ public class CompactMap implements Map {
         long o = startOffset;
         for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
             final int columnType = valueTypes.getColumnType(i);
-            int sz = ColumnType.sizeOf(columnType);
+            int sz;
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.BOOLEAN:
                 case ColumnType.BYTE:
@@ -261,7 +261,7 @@ public class CompactMap implements Map {
                     sz = Long256.BYTES;
                     break;
                 case ColumnType.GEOHASH:
-                    sz = ColumnType.sizeOf(columnType);
+                    sz = GeoHashes.sizeOf(columnType);
                     break;
                 default:
                     throw CairoException.instance(0).put("Unsupported column type: ").put(ColumnType.nameOf(valueTypes.getColumnType(i)));

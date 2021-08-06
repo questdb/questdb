@@ -34,11 +34,11 @@ import io.questdb.std.str.CharSink;
 
 public abstract class GeoHashFunction implements ScalarFunction {
 
-    protected int typep; // +number bits
+    protected int type; // +number bits
 
-    protected GeoHashFunction(int typep) {
-        assert ColumnType.GEOHASH == ColumnType.tagOf(typep);
-        this.typep = typep;
+    protected GeoHashFunction(int type) {
+        assert ColumnType.GEOHASH == ColumnType.tagOf(type);
+        this.type = type;
     }
 
     @Override
@@ -153,6 +153,6 @@ public abstract class GeoHashFunction implements ScalarFunction {
 
     @Override
     public final int getType() {
-        return typep;
+        return type;
     }
 }

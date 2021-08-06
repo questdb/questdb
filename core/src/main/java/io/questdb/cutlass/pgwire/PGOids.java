@@ -113,10 +113,6 @@ public class PGOids {
     }
 
     public static int getTypeOid(int type) {
-        return TYPE_OIDS.get(ColumnType.tagOf(type));
-    }
-
-    public static int getTypeOidQuick(int type) {
         return TYPE_OIDS.getQuick(ColumnType.tagOf(type));
     }
 
