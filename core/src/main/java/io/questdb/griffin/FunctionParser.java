@@ -561,7 +561,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     final short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
                     final int argType = arg.getType();
                     final short argTypeTag = ColumnType.tagOf(argType);
-                    final short sigArgTypeTag = sigArgType;
+                    final short sigArgTypeTag = ColumnType.tagOf(sigArgType);
 
                     if (sigArgTypeTag == argTypeTag) {
                         switch (match) {
@@ -722,7 +722,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     private Function functionToConstant(Function function) {
-        switch (function.getType()) {
+        switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.INT:
                 if (function instanceof IntConstant) {
                     return function;

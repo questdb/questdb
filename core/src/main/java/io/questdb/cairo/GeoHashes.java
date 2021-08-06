@@ -181,7 +181,7 @@ public class GeoHashes {
 
     public static int sizeOf(int columnType) {
         assert ColumnType.tagOf(columnType) == ColumnType.GEOHASH;
-        int bits = GeoHashes.getBitsPrecision(columnType);
+        int bits = getBitsPrecision(columnType);
         if (bits <= MAX_BITS_LENGTH) {
             return 1 << GEO_TYPE_SIZE_POW2[bits];
         }
@@ -190,7 +190,7 @@ public class GeoHashes {
 
     public static int pow2SizeOf(int columnType) {
         assert ColumnType.tagOf(columnType) == ColumnType.GEOHASH;
-        int bits = GeoHashes.getBitsPrecision(columnType);
+        int bits = getBitsPrecision(columnType);
         if (bits <= MAX_BITS_LENGTH) {
             return GEO_TYPE_SIZE_POW2[bits];
         }
