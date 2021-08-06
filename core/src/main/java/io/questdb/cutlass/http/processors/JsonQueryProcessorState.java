@@ -237,15 +237,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         socket.put(']');
     }
 
-    private void putBooleanValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private static void putBooleanValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         socket.put(rec.getBool(col));
     }
 
-    private void putByteValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private static void putByteValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         socket.put(rec.getByte(col));
     }
 
-    private void putCharValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private static void putCharValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         char c = rec.getChar(col);
         if (c == 0) {
             socket.put("\"\"");
@@ -254,7 +254,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
-    private void putDateValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private static void putDateValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         final long d = rec.getDate(col);
         if (d == Long.MIN_VALUE) {
             socket.put("null");
@@ -263,7 +263,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         socket.put('"').putISODateMillis(d).put('"');
     }
 
-    private void putIntValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private static void putIntValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         final int i = rec.getInt(col);
         if (i == Integer.MIN_VALUE) {
             socket.put("null");
@@ -272,13 +272,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
-    private void putLong256Value(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private static void putLong256Value(HttpChunkedResponseSocket socket, Record rec, int col) {
         socket.put('"');
         rec.getLong256(col, socket);
         socket.put('"');
     }
 
-    private void putLongValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private static void putLongValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         final long l = rec.getLong(col);
         if (l == Long.MIN_VALUE) {
             socket.put("null");
@@ -291,15 +291,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         socket.put(rec.getShort(col));
     }
 
-    private void putStrValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private static void putStrValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         putStringOrNull(socket, rec.getStr(col));
     }
 
-    private void putSymValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private static void putSymValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         putStringOrNull(socket, rec.getSym(col));
     }
 
-    private void putTimestampValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private static void putTimestampValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         final long t = rec.getTimestamp(col);
         if (t == Long.MIN_VALUE) {
             socket.put("null");
@@ -308,18 +308,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         socket.put('"').putISODate(t).put('"');
     }
 
-    private void putGeoHashValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+    private static void putGeoHashStringValue(HttpChunkedResponseSocket socket, Record rec, int col, int precision) {
         final long l = rec.getGeoHash(col);
         if (l == GeoHashes.NULL) {
             socket.put("null");
         } else {
-            final int columnType = columnTypes.getColumnType(col);
-            final int bitsPrecision = GeoHashes.getBitsPrecision(columnType);
             socket.put('\"');
-            if (bitsPrecision % 5 == 0) {
-                GeoHashes.toString(l, bitsPrecision / 5, socket);
+            if (precision < 0) {
+                GeoHashes.toString(l, -precision, socket);
             } else {
-                GeoHashes.toBitString(l, bitsPrecision, socket);
+                GeoHashes.toBitString(l, precision, socket);
             }
             socket.put('\"');
         }
@@ -352,13 +350,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             return true;
         }
 
-        int columnType = metadata.getColumnType(columnIndex);
-        if (ColumnType.isNull(columnType)) {
-            columnType = ColumnType.STRING;
-        }
-        this.columnTypes.add(columnType);
+        addColumnTypeAndName(metadata, columnIndex);
         this.columnSkewList.add(columnIndex);
-        this.columnNames.add(metadata.getColumnName(columnIndex));
         return false;
     }
 
@@ -391,10 +384,18 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             if (columnIndex > 0) {
                 socket.put(',');
             }
+            int columnType = columnTypes.getColumnType(columnIndex);
+            if (ColumnType.isGeoHash(columnType)) {
+                final int precision = GeoHashes.getBitsPrecision(columnType);
+                if (precision < 0 ) {
+                    // restore proper bits precision
+                    columnType = GeoHashes.setBitsPrecision(columnType, -5*precision);
+                }
+            }
             socket.put('{').
                     putQuoted("name").put(':').encodeUtf8AndQuote(columnNames.getQuick(columnIndex)).
                     put(',').
-                    putQuoted("type").put(':').putQuoted(ColumnType.nameOf(columnTypes.getColumnType(columnIndex)));
+                    putQuoted("type").put(':').putQuoted(ColumnType.nameOf(columnType));
             socket.put('}');
         }
     }
@@ -483,7 +484,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putLong256Value(socket, record, columnIdx);
                     break;
                 case ColumnType.GEOHASH:
-                    putGeoHashValue(socket, record, columnIdx);
+                    final int precision = GeoHashes.getBitsPrecision(columnType);
+                    putGeoHashStringValue(socket, record, columnIdx, precision);
                     break;
                 default:
                     assert false : "Not supported type in output " + ColumnType.nameOf(columnType);
@@ -601,16 +603,28 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         } else {
             columnCount = metadata.getColumnCount();
             for (int i = 0; i < columnCount; i++) {
-                int columnType = metadata.getColumnType(i);
-                if (ColumnType.isNull(columnType)) {
-                    columnType = ColumnType.STRING;
-                }
-                this.columnTypes.add(columnType);
-                this.columnNames.add(metadata.getColumnName(i));
+                addColumnTypeAndName(metadata, i);
             }
         }
         this.columnCount = columnCount;
         return true;
+    }
+
+    private void addColumnTypeAndName(RecordMetadata metadata, int i) {
+        int columnType = metadata.getColumnType(i);
+
+        if (ColumnType.isNull(columnType)) {
+            columnType = ColumnType.STRING;
+        }
+
+        if (ColumnType.isGeoHash(columnType)) {
+            final int bitsPrecision = GeoHashes.getBitsPrecision(columnType);
+            // negative precision for chars encoding
+            columnType = bitsPrecision % 5 != 0 ? columnType : GeoHashes.setBitsPrecision(columnType, -(bitsPrecision/5));
+        }
+
+        this.columnTypes.add(columnType);
+        this.columnNames.add(metadata.getColumnName(i));
     }
 
     private void onNoMoreData() {
