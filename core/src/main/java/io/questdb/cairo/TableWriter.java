@@ -2651,7 +2651,7 @@ public class TableWriter implements Closeable {
                                         plen,
                                         columnName,
                                         columnCounter,
-                                        notTheTimestamp ? columnType : TimestampExtra.setDesignated(columnType, true),
+                                        notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
                                         srcOooFixAddr,
                                         srcOooFixSize,
                                         srcOooVarAddr,

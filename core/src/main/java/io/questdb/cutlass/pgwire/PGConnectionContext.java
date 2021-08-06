@@ -1728,7 +1728,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         if (sendParameterDescription && n > 0 && activeBindVariableTypes.size() == 0) {
             activeBindVariableTypes.setPos(n);
             for (int i = 0; i < n; i++) {
-                activeBindVariableTypes.setQuick(i, Numbers.bswap(PGOids.getTypeOidQuick(bindVariableService.getFunction(i).getType())));
+                activeBindVariableTypes.setQuick(i, Numbers.bswap(PGOids.getTypeOid(bindVariableService.getFunction(i).getType())));
             }
         }
         if (isPortal) {

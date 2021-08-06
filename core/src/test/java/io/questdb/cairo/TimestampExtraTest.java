@@ -30,10 +30,10 @@ public class TimestampExtraTest {
     public void testSetDesignated() {
         int timestampCol = ColumnType.TIMESTAMP;
         Assert.assertEquals(ColumnType.TIMESTAMP, ColumnType.tagOf(timestampCol));
-        Assert.assertFalse(TimestampExtra.isDesignated(timestampCol));
-        int timestampColD = TimestampExtra.setDesignated(timestampCol, true);
+        Assert.assertFalse(ColumnType.isDesignatedTimestamp(timestampCol));
+        int timestampColD = ColumnType.setDesignatedTimestampBit(timestampCol, true);
         Assert.assertEquals(ColumnType.TIMESTAMP, ColumnType.tagOf(timestampColD));
-        Assert.assertTrue(TimestampExtra.isDesignated(timestampColD));
+        Assert.assertTrue(ColumnType.isDesignatedTimestamp(timestampColD));
         Assert.assertNotEquals(Integer.toBinaryString(timestampCol), Integer.toBinaryString(timestampColD));
     }
 }
