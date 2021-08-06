@@ -41,6 +41,20 @@ public class GeoHashesTest {
     }
 
     @Test
+    public void testBitsPrecisionNeg() {
+        Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(ColumnType.GEOHASH));
+        Assert.assertEquals(0, GeoHashes.getBitsPrecision(ColumnType.GEOHASH));
+
+        int geohashCol = GeoHashes.setBitsPrecision(ColumnType.GEOHASH, -5);
+        Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(geohashCol));
+        Assert.assertEquals(-5, GeoHashes.getBitsPrecision(geohashCol));
+        geohashCol = GeoHashes.setBitsPrecision(geohashCol, 24);
+        Assert.assertEquals(24, GeoHashes.getBitsPrecision(geohashCol));
+        geohashCol = GeoHashes.setBitsPrecision(geohashCol, -12);
+        Assert.assertEquals(-12, GeoHashes.getBitsPrecision(geohashCol));
+    }
+
+    @Test
     public void testStorageSize() {
         Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(ColumnType.GEOHASH));
         Assert.assertEquals(0, GeoHashes.getBitsPrecision(ColumnType.GEOHASH));

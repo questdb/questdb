@@ -176,7 +176,11 @@ public class GeoHashes {
 
     public static int getBitsPrecision(int type) {
         assert ColumnType.tagOf(type) == ColumnType.GEOHASH; // This maybe relaxed in the future
-        return (type >> BITS_OFFSET) & 0xFF;
+        return (byte)((type >> BITS_OFFSET) & 0xFF);
+    }
+
+    public static int setBitsPrecision(int type, int bits) {
+        return (type & ~(0xFF << 8)) | (Byte.toUnsignedInt((byte)bits) << 8);
     }
 
     public static int sizeOf(int columnType) {
