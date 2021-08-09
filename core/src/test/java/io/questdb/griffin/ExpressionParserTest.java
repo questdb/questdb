@@ -391,12 +391,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCastGeoHashCastStrWithCharsPrecision() throws SqlException {
-        x("'sp052w92'geohash(6c)cast", "cast('sp052w92' as geohash(6c))");
+        x("'sp052w92'geohash(6ccast", "cast('sp052w92' as geohash(6c))");
     }
 
     @Test
     public void testCastGeoHashCastStrWithBitsPrecision() throws SqlException {
-        x("'sp052w92'geohash(60b)cast", "cast('sp052w92' as geohash(60b))");
+        x("'sp052w92'geohash(60bcast", "cast('sp052w92' as geohash(60b))");
     }
 
     @Test
@@ -410,7 +410,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testCastGeoHashCastMissingSize2() {
         assertFail("cast('sp052w92' as geohash)",
                 19,
-                "not valid GEOHASH type literal");
+                "invalid type");
     }
 
     @Test
@@ -418,20 +418,6 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail("cast('sp052w92' as geohash(21b)",
                 4,
                 "unbalanced (");
-    }
-
-    @Test
-    public void testCastGeoHashCastMissingSize4() {
-        assertFail("cast('sp052w92' as geohash(21 b))",
-                27,
-                "invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
-    }
-
-    @Test
-    public void testCastGeoHashCastMissingSize5() {
-        assertFail("cast('sp052w92' as geohash(b))",
-                27,
-                "invalid GEOHASH size, must be number followed by 'C' or 'B' character");
     }
 
     @Test
@@ -443,12 +429,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testGeoHash1() throws SqlException {
-        x("geohash(6c)", "geohash(6c)");
+        x("geohash(6c", "geohash(6c)");
     }
 
     @Test
     public void testGeoHash2() throws SqlException {
-        x("geohash(31b)", "geohash(31b)");
+        x("geohash(31b", "geohash(31b)");
     }
 
     @Test
@@ -468,27 +454,6 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail("GEOHASH()",
                 8,
                 "invalid GEOHASH, invalid type precision");
-    }
-
-    @Test
-    public void testGeoHashFail3() {
-        assertFail("GEOHASH(13c)",
-                8,
-                "invalid GEOHASH type precision range, mast be [1, 60] bits, provided=65");
-    }
-
-    @Test
-    public void testGeoHashFail4() {
-        assertFail("GEOHASH(131b)",
-                8,
-                "invalid GEOHASH type precision range, mast be [1, 60] bits, provided=131");
-    }
-
-    @Test
-    public void testGeoHashFail5() {
-        assertFail("GEOHASH(-1c)",
-                8,
-                "invalid GEOHASH size, must be number followed by 'C' or 'B' character");
     }
 
     @Test

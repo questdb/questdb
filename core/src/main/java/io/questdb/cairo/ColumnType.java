@@ -339,7 +339,7 @@ public final class ColumnType {
         TYPE_SIZE_POW2[VAR_ARG] = -1;
         TYPE_SIZE_POW2[RECORD] = -1;
         TYPE_SIZE_POW2[NULL] = -1;
-        // GEOHASH: geohash column types has variable storage size, 1-8 bytes depending on type bit lenght
+        // GEOHASH: geohash column types has variable storage size, 1-8 bytes depending on type bit length
 
         TYPE_SIZE[UNDEFINED] = -1;
         TYPE_SIZE[BOOLEAN] = Byte.BYTES;
@@ -362,7 +362,7 @@ public final class ColumnType {
         TYPE_SIZE[VAR_ARG] = -1;
         TYPE_SIZE[RECORD] = -1;
         TYPE_SIZE[NULL] = 0;
-        // GEOHASH: geohash column types has variable storage size, 1-8 bytes depending on type bit lenght
+        // GEOHASH: geohash column types has variable storage size, 1-8 bytes depending on type bit length
     }
 
     private static short indexOf(short[] list, short value) {

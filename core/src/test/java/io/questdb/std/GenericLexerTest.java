@@ -225,8 +225,8 @@ public class GenericLexerTest {
         ts.of(fortune);
 
         Iterator<CharSequence> it = ts.iterator();
-        String [] parts = fortune.split("[ ]");
-        for (int i=0; i < parts.length; i++) {
+        String[] parts = fortune.split("[ ]");
+        for (int i = 0; i < parts.length; i++) {
             CharSequence e = it.next();
             Assert.assertEquals(parts[i], e.toString());
             if (i < parts.length - 1) {
@@ -235,5 +235,48 @@ public class GenericLexerTest {
             }
         }
         Assert.assertNull(ts.peek());
+    }
+
+    @Test
+    public void testImmutableOf1() {
+        String funcCall = "function(arg0)";
+
+        GenericLexer ts = new GenericLexer(4);
+        ts.defineSymbol("(");
+        ts.defineSymbol(")");
+        ts.defineSymbol(",");
+        ts.of(funcCall);
+
+        CharSequence function = ts.next();
+        Assert.assertEquals("function", function.toString());
+        int start = ts.lastTokenPosition();
+        Iterator<CharSequence> it = ts.iterator();
+        while (it.hasNext()) {
+            it.next();
+        }
+        CharSequence funcCallMinusRightParens = ts.immutableOf(start, ts.lastTokenPosition());
+        Assert.assertTrue(funcCallMinusRightParens instanceof GenericLexer.FloatingSequence);
+        Assert.assertEquals(funcCall.substring(0, funcCall.length() - 1), funcCallMinusRightParens.toString());
+    }
+
+    @Test(expected = IndexOutOfBoundsException.class)
+    public void testImmutableOf2() {
+        GenericLexer ts = new GenericLexer(4);
+        ts.of("orange");
+        ts.immutableOf(-1, ts.lastTokenPosition());
+    }
+
+    @Test(expected = IndexOutOfBoundsException.class)
+    public void testImmutableOf3() {
+        GenericLexer ts = new GenericLexer(4);
+        ts.of("orange");
+        ts.immutableOf(0, "orange".length() + 1);
+    }
+
+    @Test(expected = IndexOutOfBoundsException.class)
+    public void testImmutableOf4() {
+        GenericLexer ts = new GenericLexer(4);
+        ts.of("orange");
+        ts.immutableOf(1, 0);
     }
 }

@@ -54,6 +54,16 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         }
     }
 
+    public CharSequence immutableOf(int lo, int hi) {
+        if (lo < 0 || hi > _len || lo >= hi) {
+            throw new IndexOutOfBoundsException();
+        }
+        FloatingSequence that = csPool.next();
+        that.lo = lo;
+        that.hi = hi;
+        return that;
+    }
+
     public static CharSequence immutableOf(CharSequence value) {
         if (value instanceof InternalFloatingSequence) {
             GenericLexer lexer = ((InternalFloatingSequence) value).getParent();

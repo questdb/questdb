@@ -569,8 +569,8 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'm';
     }
 
-    public static boolean isGeoHashKeyword(CharSequence tok) {
-        if (tok.length() != 7) {
+    public static boolean startsWithGeoHashKeyword(CharSequence tok) {
+        if (tok.length() < 7) {
             return false;
         }
 
