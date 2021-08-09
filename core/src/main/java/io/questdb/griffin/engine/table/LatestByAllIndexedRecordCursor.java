@@ -26,6 +26,8 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -45,27 +47,27 @@ import org.jetbrains.annotations.NotNull;
 class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     private final int columnIndex;
     private final int hashColumnIndex;
+    private final int hashColumnType;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     protected long indexShift = 0;
     protected long aIndex;
     protected long aLimit;
 
     protected final DirectLongList prefixes;
-    protected final DirectLongList hashes;
 
     public LatestByAllIndexedRecordCursor(
             int columnIndex,
             int hashColumnIndex,
+            int hashColumnType,
             @NotNull DirectLongList rows,
-            @NotNull DirectLongList hashes,
             @NotNull IntList columnIndexes,
             @NotNull DirectLongList prefixes
     ) {
         super(rows, columnIndexes);
         this.columnIndex = columnIndex;
         this.hashColumnIndex = hashColumnIndex;
+        this.hashColumnType = hashColumnType;
         this.prefixes = prefixes;
-        this.hashes = hashes;
     }
 
     @Override
@@ -118,7 +120,6 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
             LatestByArguments.setRowsSize(argsAddress, 0);
         }
 
-        final int hashesLength = 8; //TODO: max hash size for AB hardcoded
         final long prefixesAddress = prefixes.getAddress();
         final long prefixesCount = prefixes.size();
 
@@ -147,12 +148,17 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
             final int partitionIndex = frame.getPartitionIndex();
 
             long hashColumnAddress = 0;
+
+            //hashColumnIndex can be -1 for latest by part only (no prefixes to match)
             if (hashColumnIndex > -1) {
                 final int columnBase = reader.getColumnBase(partitionIndex);
                 final int primaryColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, hashColumnIndex);
                 final MemoryR column = reader.getColumn(primaryColumnIndex);
                 hashColumnAddress = column.getPageAddress(0);
             }
+
+            // -1 must be dead case here
+            final int hashesColumnSize = ColumnType.isGeoHash(hashColumnType) ? GeoHashes.sizeOf(hashColumnType) : -1;
 
             int queuedCount = 0;
             for (long i = 0; i < taskCount; ++i) {
@@ -183,7 +189,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
                             partitionIndex,
                             valueBlockCapacity,
                             hashColumnAddress,
-                            hashesLength,
+                            hashesColumnSize,
                             prefixesAddress,
                             prefixesCount
                     );
@@ -200,7 +206,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
                             partitionIndex,
                             valueBlockCapacity,
                             hashColumnAddress,
-                            hashesLength,
+                            hashesColumnSize,
                             prefixesAddress,
                             prefixesCount,
                             doneLatch

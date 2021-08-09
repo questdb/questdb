@@ -2442,10 +2442,11 @@ public class SqlCodeGenerator implements Mutable {
                     prefixes
             );
 
-            int hashColumnIndex = -1;
+            int hashColumnIndex = -1; // latest by without prefix match part
             if (prefixes.size() > 1) {
                 CharSequence column = prefixes.get(0);
-                hashColumnIndex = reader.getMetadata().getColumnIndexQuiet(column);
+                hashColumnIndex = reader.getMetadata().getColumnIndex(column);
+                prefixes.remove(column);
             }
 
             model.setWhereClause(withinExtracted);

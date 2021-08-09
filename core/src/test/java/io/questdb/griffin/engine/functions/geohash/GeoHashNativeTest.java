@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.geohash;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.griffin.engine.table.LatestByArguments;
 import io.questdb.std.*;
@@ -108,7 +109,7 @@ public class GeoHashNativeTest {
             GeoHashes.toString(h, prec, sink);
             strh.add(sink);
         }
-        GeoHashes.fromStringToBits(strh, 0, (int) bits.size(), bits);
+        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap*5), bits);
         for (int i = 0; i < bits.size() / 2; i += 2) {
             final long b = bits.get(i);
             final long m = bits.get(i + 1);
@@ -126,7 +127,7 @@ public class GeoHashNativeTest {
         strh.add("$invalid");
         strh.add("questdb1234567890");
 
-        GeoHashes.fromStringToBits(strh, 0, (int) bits.size(), bits);
+        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap*5), bits);
         Assert.assertEquals(0, bits.size());
     }
 
@@ -137,7 +138,7 @@ public class GeoHashNativeTest {
         CharSequenceHashSet strh = new CharSequenceHashSet();
         strh.add("questdb");
 
-        GeoHashes.fromStringToBits(strh, 0, strh.size(), bits);
+        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap*5), bits);
         Assert.assertEquals(2, bits.size());
     }
 
@@ -148,7 +149,7 @@ public class GeoHashNativeTest {
         CharSequenceHashSet strh = new CharSequenceHashSet();
         strh.add("");
         strh.add("a medium sized banana");
-        GeoHashes.fromStringToBits(strh, 0, strh.size(), bits);
+        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap*5), bits);
         Assert.assertEquals(0, bits.size());
     }
 

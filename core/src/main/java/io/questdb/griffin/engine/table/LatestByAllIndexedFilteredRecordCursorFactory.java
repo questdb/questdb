@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
@@ -37,7 +38,6 @@ import org.jetbrains.annotations.Nullable;
 
 public class LatestByAllIndexedFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
     protected final DirectLongList prefixes;
-    protected final DirectLongList hashes;
 
     public LatestByAllIndexedFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -51,22 +51,23 @@ public class LatestByAllIndexedFilteredRecordCursorFactory extends AbstractTreeS
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
 
-        this.hashes = new DirectLongList(configuration.getSqlLatestByRowCount());
         this.prefixes = new DirectLongList(64);
-        // first element is column name
-        GeoHashes.fromStringToBits(prefixes, 1, prefixes.size(), this.prefixes);
+        int columnType = ColumnType.UNDEFINED;
+        if (hashColumnIndex > -1) {
+            columnType = metadata.getColumnType(hashColumnIndex);
+            GeoHashes.fromStringToBits(prefixes, columnType, this.prefixes);
+        }
 
         if (filter == null) {
-            this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, hashColumnIndex, rows, hashes, columnIndexes, this.prefixes);
+            this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, hashColumnIndex, columnType, rows, columnIndexes, this.prefixes);
         } else {
-            this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, hashColumnIndex, rows, hashes, filter, columnIndexes, this.prefixes);
+            this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, hashColumnIndex, columnType, rows, filter, columnIndexes, this.prefixes);
         }
     }
 
     @Override
     public void close() {
         super.close();
-        hashes.close();
         prefixes.close();
     }
 
