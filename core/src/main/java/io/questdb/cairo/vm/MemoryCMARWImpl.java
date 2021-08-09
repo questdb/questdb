@@ -284,7 +284,11 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             map0(ff, size);
             this.appendAddress = pageAddress + size;
         }
-        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
+        if (name != null) {
+            LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
+        } else {
+            LOG.debug().$("open [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
+        }
     }
 
     private void map0(FilesFacade ff, long size) {
