@@ -119,6 +119,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqBooleanFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqBinaryFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqGeoHashGeoHashFunctionFactory,
 
             //nullif
             io.questdb.griffin.engine.functions.eq.NullIfCharCharFunctionFactory,
@@ -216,6 +217,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.rnd.RndBinFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndDateFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.ListFunctionFactory,
+            io.questdb.griffin.engine.functions.rnd.RndGeoHashFunctionFactory,
 //                  date conversion functions,
             io.questdb.griffin.engine.functions.date.SysdateFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToTimestampVCFunctionFactory,
@@ -406,6 +408,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastStrToDateFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToBinaryFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory,
 //                  cast symbol to ...
             io.questdb.griffin.engine.functions.cast.CastSymbolToIntFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastSymbolToDoubleFunctionFactory,

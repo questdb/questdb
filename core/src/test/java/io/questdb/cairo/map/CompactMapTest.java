@@ -479,6 +479,74 @@ public class CompactMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGeoHashValueAccess() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int precisionBits = 10;
+            int geohashType = ColumnType.geohashWithPrecision(precisionBits);
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
+                model
+                        .col("a", ColumnType.LONG)
+                        .col("b", geohashType);
+                CairoTestUtils.create(model);
+            }
+
+            BytecodeAssembler asm = new BytecodeAssembler();
+            final int N = 1000;
+            final Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row row = writer.newRow();
+                    long rndGeohash = GeoHashes.fromCoordinates(rnd.nextDouble() * 180 - 90, rnd.nextDouble() * 360 - 180, precisionBits);
+                    row.putLong(0, i);
+                    row.putGeoHash(1, rndGeohash);
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = new TableReader(configuration, "x")) {
+                EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
+                entityColumnFilter.of(reader.getMetadata().getColumnCount());
+
+                try (CompactMap map = new CompactMap(
+                        1024 * 1024,
+                        new SymbolAsStrTypes(reader.getMetadata()),
+                        new ArrayColumnTypes().add(ColumnType.LONG)
+                        ,
+                        N,
+                        0.9,
+                        1, Integer.MAX_VALUE)) {
+
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
+                    RecordCursor cursor = reader.getCursor();
+
+                    long counter = 0;
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        MapKey key = map.withKey();
+                        key.put(record, sink);
+                        MapValue value = key.createValue();
+                        Assert.assertTrue(value.isNew());
+                        value.putLong(0, counter++);
+                    }
+
+                    cursor.toTop();
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        MapKey key = map.withKey();
+                        key.put(record, sink);
+                        MapValue value = key.findValue();
+                        Assert.assertNotNull(value);
+                        Assert.assertEquals(count++, value.getLong(0));
+                    }
+
+                    Assert.assertEquals(N, count);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testValueRandomWrite() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
 

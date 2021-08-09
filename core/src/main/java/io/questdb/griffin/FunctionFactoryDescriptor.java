@@ -147,6 +147,9 @@ public class FunctionFactoryDescriptor {
             case 'h':
                 sigArgType = ColumnType.LONG256;
                 break;
+            case 'g':
+                sigArgType = ColumnType.GEOHASH;
+                break;
             case 'o':
                 sigArgType = ColumnType.NULL;
                 break;
@@ -165,8 +168,8 @@ public class FunctionFactoryDescriptor {
         return (mask & CONST_MASK) != 0;
     }
 
-    public static int toType(int mask) {
-        return mask & TYPE_MASK;
+    public static short toType(int mask) {
+        return (short) (mask & TYPE_MASK);
     }
 
     public static int validateSignatureAndGetNameSeparator(String sig) throws SqlException {
@@ -233,7 +236,7 @@ public class FunctionFactoryDescriptor {
     public int getArgTypeMask(int index) {
         int arrayIndex = index / 2;
         long mask = argTypes[arrayIndex];
-        return (int) ((mask >>> (32 - (index % 2) * 32)));
+        return (int) (mask >>> (32 - (index % 2) * 32));
     }
 
     public long[] getArgTypes() {

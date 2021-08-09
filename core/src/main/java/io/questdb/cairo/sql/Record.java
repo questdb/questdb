@@ -274,6 +274,16 @@ public interface Record {
         return getLong(col);
     }
 
+    /**
+     * Gets the value of a geohash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default long getGeoHash(int col) {
+        throw new UnsupportedOperationException();
+    }
+
     @FunctionalInterface
     interface CharSequenceFunction {
         /**

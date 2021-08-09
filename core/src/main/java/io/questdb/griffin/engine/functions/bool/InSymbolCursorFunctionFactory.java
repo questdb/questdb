@@ -50,11 +50,11 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         // supported column types are STRING and SYMBOL
 
         final int zeroColumnType = cursorFunction.getRecordCursorFactory().getMetadata().getColumnType(0);
-        if (zeroColumnType != ColumnType.STRING && zeroColumnType != ColumnType.SYMBOL) {
+        if (!ColumnType.isSymbolOrString(zeroColumnType)) {
             throw SqlException.position(position).put("supported column types are STRING and SYMBOL, found: ").put(ColumnType.nameOf(zeroColumnType));
         }
 
-        final Record.CharSequenceFunction func = zeroColumnType == ColumnType.STRING ? Record.GET_STR : Record.GET_SYM;
+        final Record.CharSequenceFunction func = ColumnType.isString(zeroColumnType) ? Record.GET_STR : Record.GET_SYM;
 
         if (symbolFunction.getStaticSymbolTable() != null) {
             return new SymbolInCursorFunction(symbolFunction, cursorFunction, func);

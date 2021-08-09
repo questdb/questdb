@@ -693,7 +693,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final long offset = responseAsciiSink.skip();
         responseAsciiSink.putNetworkShort((short) columnCount);
         for (int i = 0; i < columnCount; i++) {
-            switch (activeSelectColumnTypes.getQuick(i)) {
+            final int type = activeSelectColumnTypes.getQuick(i);
+            final short columnBinaryFlag = getColumnBinaryFlag(type);
+            final int typeTag = ColumnType.tagOf(type);
+            final int tagWithFlag = toColumnBinaryType(columnBinaryFlag, typeTag);
+            switch (tagWithFlag) {
                 case BINARY_TYPE_INT:
                     appendIntColumnBin(record, i);
                     break;
@@ -1542,12 +1546,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         sink.putNetworkShort((short) n);
         for (int i = 0; i < n; i++) {
             final int typeFlag = activeSelectColumnTypes.getQuick(i);
-            final int columnType = toColumnType(typeFlag == ColumnType.NULL ? ColumnType.STRING : typeFlag);
+            final int columnType = toColumnType(ColumnType.isNull(typeFlag) ? ColumnType.STRING : typeFlag);
             sink.encodeUtf8Z(metadata.getColumnName(i));
             sink.putIntDirect(0); //tableOid ?
             sink.putNetworkShort((short) (i + 1)); //column number, starting from 1
-            sink.putNetworkInt(TYPE_OIDS.get(columnType)); // type
-            if (columnType < ColumnType.STRING) {
+            sink.putNetworkInt(PGOids.getTypeOid(columnType)); // type
+            if (ColumnType.tagOf(columnType) < ColumnType.STRING) {
                 // type size
                 // todo: cache small endian type sizes and do not check if type is valid - its coming from metadata, must be always valid
                 sink.putNetworkShort((short) ColumnType.sizeOf(columnType));
@@ -1560,7 +1564,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             sink.putIntDirect(INT_NULL_X);
             // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
             // format code
-            sink.putNetworkShort(typeFlag == ColumnType.BINARY ? 1 : getColumnBinaryFlag(typeFlag)); // format code
+            sink.putNetworkShort(ColumnType.isBinary(columnType) ? 1 : getColumnBinaryFlag(typeFlag)); // format code
         }
         sink.putLen(addr);
     }
@@ -1735,7 +1739,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         if (sendParameterDescription && n > 0 && activeBindVariableTypes.size() == 0) {
             activeBindVariableTypes.setPos(n);
             for (int i = 0; i < n; i++) {
-                activeBindVariableTypes.setQuick(i, Numbers.bswap(TYPE_OIDS.getQuick(bindVariableService.getFunction(i).getType())));
+                activeBindVariableTypes.setQuick(i, Numbers.bswap(PGOids.getTypeOid(bindVariableService.getFunction(i).getType())));
             }
         }
         if (isPortal) {
@@ -2050,7 +2054,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 RecordMetadata metadata = writer.getMetadata();
                 responseAsciiSink.putNetworkShort((short) metadata.getColumnCount());
                 for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    responseAsciiSink.putNetworkShort((short) TYPE_OIDS.get(metadata.getColumnType(i)));
+                    responseAsciiSink.putNetworkShort((short) PGOids.getTypeOid(metadata.getColumnType(i)));
                 }
             }
             responseAsciiSink.putLen(addr);

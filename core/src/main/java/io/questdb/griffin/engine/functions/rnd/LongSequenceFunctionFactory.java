@@ -51,29 +51,30 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         Function countFunc;
         final Function seedLoFunc;
         final Function seedHiFunc;
-        final int argCount = args.size();
-        if (argCount == 1 && SqlCompiler.isAssignableFrom(ColumnType.LONG, (countFunc = args.getQuick(0)).getType())) {
-            return new CursorFunction(
-                    new LongSequenceCursorFactory(METADATA, countFunc.getLong(null))
-            );
-        }
+        if (args != null) {
+            final int argCount = args.size();
+            if (argCount == 1 && SqlCompiler.isAssignableFrom(ColumnType.LONG, (countFunc = args.getQuick(0)).getType())) {
+                return new CursorFunction(
+                        new LongSequenceCursorFactory(METADATA, countFunc.getLong(null))
+                );
+            }
 
-        if (
-                argCount > 2
-                        && SqlCompiler.isAssignableFrom(ColumnType.LONG, (countFunc = args.getQuick(0)).getType())
-                        && SqlCompiler.isAssignableFrom(ColumnType.LONG, (seedLoFunc = args.getQuick(1)).getType())
-                        && SqlCompiler.isAssignableFrom(ColumnType.LONG, (seedHiFunc = args.getQuick(2)).getType())
-        ) {
-            return new CursorFunction(
-                    new SeedingLongSequenceCursorFactory(
-                            METADATA,
-                            countFunc.getLong(null),
-                            seedLoFunc.getLong(null),
-                            seedHiFunc.getLong(null)
-                    )
-            );
+            if (
+                    argCount > 2
+                            && SqlCompiler.isAssignableFrom(ColumnType.LONG, (countFunc = args.getQuick(0)).getType())
+                            && SqlCompiler.isAssignableFrom(ColumnType.LONG, (seedLoFunc = args.getQuick(1)).getType())
+                            && SqlCompiler.isAssignableFrom(ColumnType.LONG, (seedHiFunc = args.getQuick(2)).getType())
+            ) {
+                return new CursorFunction(
+                        new SeedingLongSequenceCursorFactory(
+                                METADATA,
+                                countFunc.getLong(null),
+                                seedLoFunc.getLong(null),
+                                seedHiFunc.getLong(null)
+                        )
+                );
+            }
         }
-
         throw SqlException.position(position).put("invalid arguments");
     }
 

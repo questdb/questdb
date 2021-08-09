@@ -34,8 +34,13 @@ public class RpnBuilder implements ExpressionParserListener {
     public void onNode(ExpressionNode node) {
         if (node.queryModel != null) {
             sink.put('(').put(node.queryModel).put(')');
+        } else if (node.token == null || !SqlKeywords.isGeoHashKeyword(node.token)) {
+            sink.put(node.token);
         } else {
             sink.put(node.token);
+            if (node.rhs != null) {
+                sink.put('(').put(node.rhs.token).put(')');
+            }
         }
     }
 

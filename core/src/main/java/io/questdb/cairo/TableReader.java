@@ -190,7 +190,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             closeColumn(getColumnBase(partitionIndex), columnIndex);
         }
 
-        if (metadata.getColumnType(columnIndex) == ColumnType.SYMBOL) {
+        if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
             // same goes for symbol map reader - replace object with maker instance
             Misc.free(symbolMapReaders.getAndSetQuick(columnIndex, EmptySymbolMapReader.INSTANCE));
         }
@@ -540,7 +540,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static void growColumn(MemoryR mem1, MemoryR mem2, int type, long rowCount) {
         if (rowCount > 0) {
             // subtract column top
-            switch (type) {
+            switch (ColumnType.tagOf(type)) {
                 default:
                     mem1.extend(rowCount << ColumnType.pow2SizeOf(type));
                     break;
@@ -978,7 +978,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int columnCount = metadata.getColumnCount();
         symbolMapReaders.setPos(columnCount);
         for (int i = 0; i < columnCount; i++) {
-            if (metadata.getColumnType(i) == ColumnType.SYMBOL) {
+            if (ColumnType.isSymbol(metadata.getColumnType(i))) {
                 SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl(configuration, path, metadata.getColumnName(i), symbolCountSnapshot.getQuick(symbolColumnIndex++));
                 symbolMapReaders.extendAndSet(i, symbolMapReader);
             }
@@ -1128,17 +1128,13 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b);
                 final int type = metadata.getColumnType(columnIndex);
 
-                switch (type) {
-                    case ColumnType.BINARY:
-                    case ColumnType.STRING:
-                        TableUtils.iFile(path.trimTo(plen), name);
-                        mem2 = openOrCreateMemory(path, columns, lastPartition, secondaryIndex, mem2);
-                        growColumn(mem1, mem2, type, partitionRowCount - columnTop);
-                        break;
-                    default:
-                        Misc.free(columns.getAndSetQuick(secondaryIndex, null));
-                        growColumn(mem1, null, type, partitionRowCount - columnTop);
-                        break;
+                if (ColumnType.isVariableLength(type)) {
+                    TableUtils.iFile(path.trimTo(plen), name);
+                    mem2 = openOrCreateMemory(path, columns, lastPartition, secondaryIndex, mem2);
+                    growColumn(mem1, mem2, type, partitionRowCount - columnTop);
+                } else {
+                    Misc.free(columns.getAndSetQuick(secondaryIndex, null));
+                    growColumn(mem1, null, type, partitionRowCount - columnTop);
                 }
 
                 columnTops.setQuick(columnBase / 2 + columnIndex, columnTop);
@@ -1276,7 +1272,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void reloadSymbolMapCounts() {
         int symbolMapIndex = 0;
         for (int i = 0; i < columnCount; i++) {
-            if (metadata.getColumnType(i) != ColumnType.SYMBOL) {
+            if (!ColumnType.isSymbol(metadata.getColumnType(i))) {
                 continue;
             }
             symbolMapReaders.getQuick(i).updateSymbolCount(symbolCountSnapshot.getQuick(symbolMapIndex++));
@@ -1284,7 +1280,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private SymbolMapReader reloadSymbolMapReader(int columnIndex, SymbolMapReader reader) {
-        if (metadata.getColumnType(columnIndex) == ColumnType.SYMBOL) {
+        if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
             if (reader instanceof SymbolMapReaderImpl) {
                 ((SymbolMapReaderImpl) reader).of(configuration, path, metadata.getColumnName(columnIndex), 0);
                 return reader;

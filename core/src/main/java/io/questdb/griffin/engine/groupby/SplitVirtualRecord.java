@@ -145,6 +145,11 @@ public class SplitVirtualRecord implements Record {
         return getFunction(col).getTimestamp(base);
     }
 
+    @Override
+    public long getGeoHash(int col) {
+        return getFunction(col).getGeoHash(base);
+    }
+
     public void of(Record record) {
         this.base = record;
     }

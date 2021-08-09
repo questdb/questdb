@@ -24,10 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -531,7 +528,7 @@ public final class SqlParser {
         final int type = toColumnType(lexer, columnType.token);
         columnCastModel.setType(type, columnName.position, columnType.position);
 
-        if (type == ColumnType.SYMBOL) {
+        if (ColumnType.isSymbol(type)) {
             CharSequence tok = tok(lexer, "'capacity', 'nocache', 'cache', 'index' or ')'");
 
             int symbolCapacity;
@@ -609,7 +606,7 @@ public final class SqlParser {
             }
 
             CharSequence tok;
-            if (type == ColumnType.SYMBOL) {
+            if (ColumnType.isSymbol(type)) {
                 tok = tok(lexer, "'capacity', 'nocache', 'cache', 'index' or ')'");
 
                 int symbolCapacity;
@@ -1626,11 +1623,53 @@ public final class SqlParser {
     }
 
     private int toColumnType(GenericLexer lexer, CharSequence tok) throws SqlException {
-        final int type = ColumnType.columnTypeOf(tok);
+        final short type = ColumnType.tagOf(tok);
         if (type == -1) {
             throw SqlException.$(lexer.lastTokenPosition(), "unsupported column type: ").put(tok);
         }
+        if (ColumnType.GEOHASH == type) {
+            return ColumnType.geohashWithPrecision(parseGeoHashSize(lexer));
+        }
         return type;
+    }
+
+    static int parseGeoHashSize(int position, CharSequence sizeStr) throws SqlException {
+        if (sizeStr.length() < 2) {
+            throw SqlException.position(position)
+                    .put("invalid GEOHASH size, must be number followed by 'C' or 'B' character");
+        }
+        int size;
+        try {
+            size = Numbers.parseInt(sizeStr, 0, sizeStr.length() - 1);
+        } catch (NumericException e) {
+            throw SqlException.position(position)
+                    .put("invalid GEOHASH size, must be number followed by 'C' or 'B' character");
+        }
+        switch (sizeStr.charAt(sizeStr.length() - 1)) {
+            case 'C':
+            case 'c':
+                size *= 5;
+                break;
+            case 'B':
+            case 'b':
+                break;
+            default:
+                throw SqlException.position(position)
+                        .put("invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
+        }
+        if (size < 1 || size > GeoHashes.MAX_BITS_LENGTH) {
+            throw SqlException.position(position)
+                    .put("invalid GEOHASH type precision range, mast be [1, 60] bits, provided=")
+                    .put(size);
+        }
+        return size;
+    }
+
+    private int parseGeoHashSize(GenericLexer lexer) throws SqlException {
+        expectTok(lexer, '(');
+        int size = parseGeoHashSize(lexer.lastTokenPosition(), expectLiteral(lexer).token);
+        expectTok(lexer, ')');
+        return size;
     }
 
     private @NotNull CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {

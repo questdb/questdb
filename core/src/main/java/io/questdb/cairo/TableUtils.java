@@ -173,7 +173,7 @@ public final class TableUtils {
             mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < count; i++) {
-                mem.putByte((byte) structure.getColumnType(i));
+                mem.putInt(structure.getColumnType(i));
                 long flags = 0;
                 if (structure.isIndexed(i)) {
                     flags |= META_FLAG_BIT_INDEXED;
@@ -185,7 +185,6 @@ public final class TableUtils {
 
                 mem.putLong(flags);
                 mem.putInt(structure.getIndexBlockCapacity(i));
-                mem.skip(META_COLUMN_DATA_RESERVED); // reserved
             }
             for (int i = 0; i < count; i++) {
                 mem.putStr(structure.getColumnName(i));
@@ -194,7 +193,7 @@ public final class TableUtils {
             // create symbol maps
             int symbolMapCount = 0;
             for (int i = 0; i < count; i++) {
-                if (structure.getColumnType(i) == ColumnType.SYMBOL) {
+                if (ColumnType.isSymbol(structure.getColumnType(i))) {
                     SymbolMapWriter.createSymbolMapFiles(
                             ff,
                             mem,
@@ -301,7 +300,7 @@ public final class TableUtils {
     }
 
     public static int getColumnType(MemoryR metaMem, int columnIndex) {
-        return metaMem.getByte(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
+        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
     }
 
     public static Timestamps.TimestampAddMethod getPartitionAdd(int partitionBy) {
@@ -678,7 +677,7 @@ public final class TableUtils {
 
             if (timestampIndex != -1) {
                 int timestampType = getColumnType(metaMem, timestampIndex);
-                if (timestampType != ColumnType.TIMESTAMP) {
+                if (!ColumnType.isTimestamp(timestampType)) {
                     throw validationException(metaMem).put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
                 }
             }
@@ -691,7 +690,7 @@ public final class TableUtils {
                 }
 
                 if (isColumnIndexed(metaMem, i)) {
-                    if (type != ColumnType.SYMBOL) {
+                    if (!ColumnType.isSymbol(type)) {
                         throw validationException(metaMem).put("Index flag is only supported for SYMBOL").put(" at [").put(i).put(']');
                     }
 
@@ -814,7 +813,7 @@ public final class TableUtils {
     }
 
     static long getColumnFlags(MemoryR metaMem, int columnIndex) {
-        return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 1);
+        return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4);
     }
 
     static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {
@@ -826,7 +825,7 @@ public final class TableUtils {
     }
 
     static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
-        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 9);
+        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
     }
 
     static int openMetaSwapFile(FilesFacade ff, MemoryMA mem, Path path, int rootLen, int retryCount) {

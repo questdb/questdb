@@ -565,7 +565,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             if (pageAddress > 0) {
                 saveFixedColToBufferWithLongAlignment(columnIndex, crossFrameRow, columnType, pageAddress, rowId);
             } else {
-                crossFrameRow.set(columnIndex, LongNullUtils.LONG_NULLs[columnType]);
+                crossFrameRow.set(columnIndex, LongNullUtils.getLongNull(columnType));
             }
         }
 
@@ -618,6 +618,11 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             @Override
             public long getTimestamp(int col) {
                 return currentRecord.getTimestamp(col);
+            }
+
+            @Override
+            public long getGeoHash(int col) {
+                return currentRecord.getGeoHash(col);
             }
 
             public void of(long index) {
@@ -679,6 +684,21 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 @Override
                 public long getTimestamp(int col) {
                     return Unsafe.getUnsafe().getLong(address + ((long) col << 3));
+                }
+
+                @Override
+                public long getGeoHash(int col) {
+                    final int columnType = groupByMetadata.getColumnType(col);
+                    switch (ColumnType.sizeOf(columnType)) {
+                        case 1:
+                            return Unsafe.getUnsafe().getByte(address + ((long) col << 3));
+                        case 2:
+                            return Unsafe.getUnsafe().getShort(address + ((long) col << 3));
+                        case 4:
+                            return Unsafe.getUnsafe().getInt(address + ((long) col << 3));
+                        default:
+                            return Unsafe.getUnsafe().getLong(address + ((long) col << 3));
+                    }
                 }
             }
 
@@ -777,6 +797,26 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                         return samplePeriodAddress.get(getRowId(TIMESTAMP_OUT_INDEX) - prevSamplePeriodOffset);
                     }
                     return getLong(col);
+                }
+
+                @Override
+                public long getGeoHash(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        final int columnType = groupByMetadata.getColumnType(col);
+                        switch (ColumnType.sizeOf(columnType)) {
+                            case 1:
+                                return Unsafe.getUnsafe().getByte(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
+                            case 2:
+                                return Unsafe.getUnsafe().getShort(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
+                            case 4:
+                                return Unsafe.getUnsafe().getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
+                            default:
+                                return Unsafe.getUnsafe().getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
+                        }
+                    } else {
+                        return Numbers.LONG_NaN; //TODO: geohash null?
+                    }
                 }
 
                 public SampleByDataRecord of(long currentRow) {

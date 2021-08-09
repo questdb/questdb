@@ -59,7 +59,7 @@ public class InsertStatementImpl implements InsertStatement {
         this.copier = copier;
         this.timestampFunction = timestampFunction;
         if (timestampFunction != null) {
-            if (timestampFunction.getType() != ColumnType.STRING) {
+            if (!ColumnType.isString(timestampFunction.getType())) {
                 rowFactory = this::getRowWithTimestamp;
             } else {
                 rowFactory = this::getRowWithStringTimestamp;

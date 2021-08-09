@@ -126,7 +126,7 @@ class ExpressionParser {
                 thisChar = tok.charAt(0);
                 prevBranch = thisBranch;
                 boolean processDefaultBranch = false;
-                int position = lexer.lastTokenPosition();
+                final int position = lexer.lastTokenPosition();
                 switch (thisChar) {
                     case '-':
                     case '+':
@@ -287,6 +287,44 @@ class ExpressionParser {
 
                         break;
 
+                    case 'g':
+                    case 'G':
+                        if (SqlKeywords.isGeoHashKeyword(tok)) {
+                            CharSequence originalGeoHashKeyword = GenericLexer.immutableOf(tok);
+                            CharSequence peek = lexer.peek();
+                            if (peek == null || peek.charAt(0) != '(') {
+                                processDefaultBranch = true;
+                                break;
+                            }
+                            SqlUtil.fetchNext(lexer); // consume '('
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok != null && tok.charAt(0) != ')') {
+                                SqlParser.parseGeoHashSize(lexer.lastTokenPosition(), tok);
+                                node = expressionNodePool.next().of(
+                                        ExpressionNode.CONSTANT,
+                                        originalGeoHashKeyword,
+                                        Integer.MIN_VALUE,
+                                        position);
+                                node.rhs = expressionNodePool.next().of(
+                                        ExpressionNode.CONSTANT,
+                                        GenericLexer.immutableOf(tok),
+                                        Integer.MIN_VALUE,
+                                        lexer.lastTokenPosition()
+                                );
+                                opStack.push(node);
+                                tok = SqlUtil.fetchNext(lexer);
+                                if (tok == null || tok.charAt(0) != ')') {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "invalid GEOHASH, missing ')'");
+                                }
+                            } else {
+                                throw SqlException.$(lexer.lastTokenPosition(), "invalid GEOHASH, invalid type precision");
+                            }
+                            thisBranch = BRANCH_LITERAL;
+                        } else {
+                            processDefaultBranch = true;
+                        }
+                        break;
+
                     case '(':
                         if (prevBranch == BRANCH_RIGHT_BRACE) {
                             throw SqlException.$(position, "not a method call");
@@ -353,12 +391,15 @@ class ExpressionParser {
                             } else {
                                 if (thisWasCast) {
                                     // validate type
-                                    final int columnType = ColumnType.columnTypeOf(node.token);
-
-                                    if ((columnType < 0 || columnType > ColumnType.LONG256) && !asPoppedNull) {
+                                    final short columnTypeTag = ColumnType.tagOf(node.token);
+                                    if ((columnTypeTag < ColumnType.BOOLEAN || columnTypeTag > ColumnType.GEOHASH) && !asPoppedNull) {
                                         throw SqlException.$(node.position, "invalid type");
                                     }
-
+                                    if (Chars.toLowerCaseAscii(node.token.charAt(0)) == 'g' &&
+                                            SqlKeywords.isGeoHashKeyword(node.token) &&
+                                            node.rhs == null) {
+                                        throw SqlException.$(node.position, "not valid GEOHASH type literal");
+                                    }
                                     node.type = ExpressionNode.CONSTANT;
                                 }
                                 argStackDepth = onNode(listener, node, argStackDepth);
@@ -508,7 +549,7 @@ class ExpressionParser {
                     case 'E':
 
                         if (prevBranch != BRANCH_DOT_DEREFERENCE) {
-//                         check if this is E'str'
+                            // check if this is E'str'
                             if (thisChar == 'E' && (tok.length() < 3 || tok.charAt(1) != '\'')) {
                                 processDefaultBranch = true;
                                 break;
@@ -564,8 +605,8 @@ class ExpressionParser {
                                     // timestamp with time zone '2005-04-02 12:00:00-07'
 
                                     // validate type
-                                    final int columnType = ColumnType.columnTypeOf(prevNode.token);
-                                    if (columnType < 0 || columnType > ColumnType.LONG256) {
+                                    final short columnType = ColumnType.tagOf(prevNode.token);
+                                    if (columnType < ColumnType.BOOLEAN || columnType > ColumnType.LONG256) {
                                         throw SqlException.$(prevNode.position, "invalid type");
                                     } else {
                                         ExpressionNode stringLiteral = expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, position);

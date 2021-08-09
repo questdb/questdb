@@ -84,7 +84,8 @@ public class RecordValueSinkFactory {
             asm.aload(1);
             asm.iconst(index);
 
-            switch (columnTypes.getColumnType(index)) {
+            int columnType = columnTypes.getColumnType(index);
+            switch (ColumnType.sizeTag(columnType)) {
                 case ColumnType.INT:
                 case ColumnType.SYMBOL:
                     asm.invokeInterface(rGetInt, 1);

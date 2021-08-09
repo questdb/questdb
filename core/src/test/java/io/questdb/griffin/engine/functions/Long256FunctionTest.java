@@ -140,4 +140,9 @@ public class Long256FunctionTest {
     public void testChar() {
         function.getChar(null);
     }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoHash() {
+        function.getGeoHash(null);
+    }
 }

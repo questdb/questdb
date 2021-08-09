@@ -144,4 +144,9 @@ public class DelegatingRecordImpl implements Record {
     public long getTimestamp(int col) {
         return base.getTimestamp(col);
     }
+
+    @Override
+    public long getGeoHash(int col) {
+        return base.getGeoHash(col);
+    }
 }

@@ -48,7 +48,7 @@ public class CairoLineProtoParserSupport {
      */
     public static void putValue(TableWriter.Row row, int columnType, int columnIndex, CharSequence value) throws BadCastException {
         try {
-            switch (columnType) {
+            switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.LONG:
                     row.putLong(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                     break;

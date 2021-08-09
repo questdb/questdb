@@ -114,7 +114,9 @@ public final class TestUtils {
             for (int i = 0; i < metadataExpected.getColumnCount(); i++) {
                 String columnName = metadataExpected.getColumnName(i);
                 try {
-                    switch (metadataExpected.getColumnType(i)) {
+                    int columnType = metadataExpected.getColumnType(i);
+                    int tagType = ColumnType.sizeTag(columnType);
+                    switch (tagType) {
                         case ColumnType.DATE:
                             Assert.assertEquals(r.getDate(i), l.getDate(i));
                             break;
@@ -491,7 +493,7 @@ public final class TestUtils {
         StringBuilder sql = new StringBuilder();
         sql.append("create table ").append(tableName).append(" as (").append(Misc.EOL).append("select").append(Misc.EOL);
         for (int i = 0; i < tableModel.getColumnCount(); i++) {
-            int colType = tableModel.getColumnType(i);
+            int colType = ColumnType.tagOf(tableModel.getColumnType(i));
             CharSequence colName = tableModel.getColumnName(i);
             switch (colType) {
                 case ColumnType.INT:

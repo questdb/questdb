@@ -227,7 +227,7 @@ public class RecordChainTest extends AbstractCairoTest {
 
     private void assertSame(Record expected, Record actual, RecordMetadata metadata) {
         for (int i = 0; i < metadata.getColumnCount(); i++) {
-            switch (metadata.getColumnType(i)) {
+            switch (ColumnType.tagOf(metadata.getColumnType(i))) {
                 case ColumnType.INT:
                     Assert.assertEquals(expected.getInt(i), actual.getInt(i));
                     break;

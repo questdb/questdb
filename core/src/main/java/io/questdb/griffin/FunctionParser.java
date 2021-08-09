@@ -81,7 +81,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             throw SqlException.invalidColumn(position, name);
         }
 
-        switch (metadata.getColumnType(index)) {
+        int columnType = metadata.getColumnType(index);
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
                 return BooleanColumn.newInstance(index);
             case ColumnType.BYTE:
@@ -110,10 +111,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 return TimestampColumn.newInstance(index);
             case ColumnType.RECORD:
                 return new RecordColumn(index, metadata.getMetadata(index));
+            case ColumnType.GEOHASH:
+                return GeoHashColumn.newInstance(index, columnType);
             case ColumnType.NULL:
                 return NullConstant.NULL;
-            default:
+            case ColumnType.LONG256:
                 return Long256Column.newInstance(index);
+            default:
+                throw SqlException.position(position)
+                        .put("unsupported column type ")
+                        .put(ColumnType.nameOf(columnType));
         }
     }
 
@@ -142,7 +149,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         Function function = getBindVariableService().getFunction(variableIndex);
         if (function == null) {
             // bind variable is undefined
-            return new IndexedParameterLinkFunction(variableIndex, -1, position);
+            return new IndexedParameterLinkFunction(variableIndex, ColumnType.UNDEFINED, position);
         }
         return new IndexedParameterLinkFunction(variableIndex, function.getType(), position);
     }
@@ -271,7 +278,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     functionStack.push(new StrConstant(node.token));
                     break;
                 case ExpressionNode.CONSTANT:
-                    functionStack.push(createConstant(node.position, node.token));
+                    if (!SqlKeywords.isGeoHashKeyword(node.token)) {
+                        functionStack.push(createConstant(node.position, node.token));
+                    } else {
+                        functionStack.push(createGeoHashTypeConstant(node));
+                    }
                     break;
                 case ExpressionNode.QUERY:
                     functionStack.push(createCursorFunction(node));
@@ -445,7 +456,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
         // type constant for 'CAST' operation
 
-        final int columnType = ColumnType.columnTypeOf(tok);
+        final short columnType = ColumnType.tagOf(tok);
 
         if (columnType >= ColumnType.BOOLEAN && columnType <= ColumnType.BINARY) {
             return Constants.getTypeConstant(columnType);
@@ -457,6 +468,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
         return new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
+    }
+
+    private TypeConstant createGeoHashTypeConstant(ExpressionNode node) throws SqlException {
+        assert node.rhs != null;
+        int bits = SqlParser.parseGeoHashSize(0, node.rhs.token);
+        return GeoHashTypeConstant.getInstanceByPrecision(bits);
     }
 
     private Function createFunction(
@@ -541,9 +558,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         break;
                     }
 
-                    final int sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
+                    final short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
+                    final int argType = arg.getType();
+                    final short argTypeTag = ColumnType.tagOf(argType);
+                    final short sigArgTypeTag = ColumnType.tagOf(sigArgType);
 
-                    if (sigArgType == arg.getType()) {
+                    if (sigArgTypeTag == argTypeTag) {
                         switch (match) {
                             case MATCH_NO_MATCH: // was it no match
                                 match = MATCH_EXACT_MATCH;
@@ -558,30 +578,32 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         continue;
                     }
 
-                    final int argType = arg.getType();
-
-                    int overloadDistance = ColumnType.overloadDistance(argType, sigArgType); // NULL to any is 0
+                    int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgType); // NULL to any is 0
                     sigArgTypeSum += overloadDistance;
                     // Overload with cast to higher precision
                     boolean overloadPossible = overloadDistance != ColumnType.NO_OVERLOAD;
 
                     // Overload when arg is double NaN to func which accepts INT, LONG
-                    overloadPossible |= argType == ColumnType.DOUBLE &&
+                    overloadPossible |= argTypeTag == ColumnType.DOUBLE &&
                             arg.isConstant() &&
                             Double.isNaN(arg.getDouble(null)) &&
-                            (sigArgType == ColumnType.LONG || sigArgType == ColumnType.INT);
+                            (sigArgTypeTag == ColumnType.LONG || sigArgTypeTag == ColumnType.INT);
 
                     // Implicit cast from CHAR to STRING
-                    overloadPossible |= argType == ColumnType.CHAR &&
-                            sigArgType == ColumnType.STRING;
+                    overloadPossible |= argTypeTag == ColumnType.CHAR &&
+                            sigArgTypeTag == ColumnType.STRING;
 
                     // Implicit cast from STRING to TIMESTAMP
-                    overloadPossible |= argType == ColumnType.STRING &&
-                            sigArgType == ColumnType.TIMESTAMP && !factory.isGroupBy();
+                    overloadPossible |= argTypeTag == ColumnType.STRING &&
+                            sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
+
+                    // Implicit cast from STRING to GEOHASH
+                    overloadPossible |= argTypeTag == ColumnType.STRING &&
+                            sigArgTypeTag == ColumnType.GEOHASH && !factory.isGroupBy();
 
                     // Implicit cast from SYMBOL to TIMESTAMP
-                    overloadPossible |= argType == ColumnType.SYMBOL &&
-                            sigArgType == ColumnType.TIMESTAMP && !factory.isGroupBy();
+                    overloadPossible |= argTypeTag == ColumnType.SYMBOL &&
+                            sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
                     overloadPossible |= arg.isUndefined();
 
@@ -589,7 +611,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     if (overloadPossible) {
                         switch (match) {
                             case MATCH_NO_MATCH: // no match?
-                                if (argType == ColumnType.NULL) {
+                                if (argTypeTag == ColumnType.NULL) {
                                     match = MATCH_PARTIAL_MATCH;
                                 } else {
                                     match = MATCH_FUZZY_MATCH; // upgrade to fuzzy match
@@ -667,15 +689,17 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
         for (int k = 0; k < candidateSigArgCount; k++) {
             final Function arg = args.getQuick(k);
-            final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k));
-            if (arg.getType() == ColumnType.DOUBLE && arg.isConstant() && Double.isNaN(arg.getDouble(null))) {
+            final short sigArgTypeTag = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k));
+            final short argTypeTag = ColumnType.tagOf(arg.getType());
+
+            if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Double.isNaN(arg.getDouble(null))) {
                 // substitute NaNs with appropriate types
-                if (sigArgType == ColumnType.LONG) {
+                if (sigArgTypeTag == ColumnType.LONG) {
                     args.setQuick(k, LongConstant.NULL);
-                } else if (sigArgType == ColumnType.INT) {
+                } else if (sigArgTypeTag == ColumnType.INT) {
                     args.setQuick(k, IntConstant.NULL);
                 }
-            } else if ((arg.getType() == ColumnType.STRING || arg.getType() == ColumnType.SYMBOL) && sigArgType == ColumnType.TIMESTAMP) {
+            } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL) && sigArgTypeTag == ColumnType.TIMESTAMP) {
                 // convert arguments if necessary
                 int position = argPositions.getQuick(k);
                 if (arg.isConstant()) {
@@ -683,7 +707,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     args.set(k, TimestampConstant.newInstance(timestamp));
                 } else {
                     AbstractUnaryTimestampFunction castFn;
-                    if (arg.getType() == ColumnType.STRING) {
+                    if (argTypeTag == ColumnType.STRING) {
                         castFn = new CastStrToTimestampFunctionFactory.Func(position, arg);
                     } else {
                         castFn = new CastSymbolToTimestampFunctionFactory.Func(arg);
@@ -698,7 +722,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     private Function functionToConstant(Function function) {
-        switch (function.getType()) {
+        switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.INT:
                 if (function instanceof IntConstant) {
                     return function;
@@ -752,6 +776,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     return function;
                 } else {
                     return new Long256Constant(function.getLong256A(null));
+                }
+            case ColumnType.GEOHASH:
+                if (function instanceof GeoHashConstant) {
+                    return function;
+                } else {
+                    return GeoHashConstant.newInstance(function.getGeoHash(null), function.getType());
                 }
             case ColumnType.DATE:
                 if (function instanceof DateConstant) {

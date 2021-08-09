@@ -132,7 +132,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             GroupByFunction function = groupByFunctions.getQuick(i);
             if (function.isScalar()) {
                 groupByScalarFunctions.add(function);
-                switch (function.getType()) {
+                switch (ColumnType.tagOf(function.getType())) {
                     case ColumnType.BYTE:
                         storeYFunctions.add(InterpolationUtil.STORE_Y_BYTE);
                         interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_BYTE);

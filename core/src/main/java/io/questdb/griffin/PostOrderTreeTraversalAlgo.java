@@ -71,7 +71,11 @@ final public class PostOrderTreeTraversalAlgo {
                 if (node != null) {
                     stack.push(node);
                     indexStack.push(0);
-                    node = node.rhs;
+                    if (node.token == null || !SqlKeywords.isGeoHashKeyword(node.token)) {
+                        node = node.rhs;
+                    } else {
+                        node = null;
+                    }
                 } else {
                     ExpressionNode peek = stack.peek();
                     assert peek != null;

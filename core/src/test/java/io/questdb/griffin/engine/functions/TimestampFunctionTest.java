@@ -155,4 +155,9 @@ public class TimestampFunctionTest {
     public void testLong256B() {
         function.getLong256B(null);
     }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoHash() {
+        function.getGeoHash(null);
+    }
 }

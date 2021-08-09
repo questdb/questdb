@@ -221,6 +221,14 @@ public class JoinRecord implements Record {
         return slave.getTimestamp(col - split);
     }
 
+    @Override
+    public long getGeoHash(int col) {
+        if (col < split) {
+            return master.getGeoHash(col);
+        }
+        return slave.getGeoHash(col - split);
+    }
+
     void of(Record master, Record slave) {
         this.master = master;
         this.slave = slave;
