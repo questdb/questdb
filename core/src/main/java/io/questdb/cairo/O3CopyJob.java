@@ -99,13 +99,31 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter
     ) {
+        LOG.debug().$("o3 copy [blockType=").$(blockType)
+                .$(", columnType=").$(columnType)
+                .$(", dstFixFd=").$(dstFixFd)
+                .$(", dstFixSize=").$(dstFixSize)
+                .$(", dstFixOffset=").$(dstFixOffset)
+                .$(", dstVarFd=").$(dstVarFd)
+                .$(", dstVarSize=").$(dstVarSize)
+                .$(", dstVarOffset=").$(dstVarOffset)
+                .$(", srcDataLo=").$(srcDataLo)
+                .$(", srcDataHi=").$(srcDataHi)
+                .$(", srcDataMax=").$(srcDataMax)
+                .$(", srcOooLo=").$(srcOooLo)
+                .$(", srcOooHi=").$(srcOooHi)
+                .$(", srcOooMax=").$(srcOooMax)
+                .$(", srcOooPartitionLo=").$(srcOooPartitionLo)
+                .$(", srcOooPartitionHi=").$(srcOooPartitionHi)
+                .I$();
+
         switch (blockType) {
             case O3_BLOCK_MERGE:
                 mergeCopy(
                         columnType,
                         timestampMergeIndexAddr,
-                        // this is a hack, when we have column top we can have only of of the two:
-                        // srcDataFixOffset, when we had to shift data to back fill nulls or
+                        // this is a hack, when we have column top we can have only of the two:
+                        // srcDataFixOffset, when we had to shift data to backfill nulls or
                         // srcDataTopOffset - if we kept the column top
                         // when one value is present the other will be 0
                         srcDataFixAddr + srcDataFixOffset - srcDataTop,
