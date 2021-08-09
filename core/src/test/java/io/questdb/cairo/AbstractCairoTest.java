@@ -63,6 +63,7 @@ public class AbstractCairoTest {
     protected static Metrics metrics = Metrics.enabled();
     protected static int capacity = -1;
     protected static int sampleByIndexSearchPageSize;
+    protected static CharSequence defaultMapType;
 
     @Rule
     public TestName testName = new TestName();
@@ -118,6 +119,14 @@ public class AbstractCairoTest {
             public int getSampleByIndexSearchPageSize() {
                 return sampleByIndexSearchPageSize > 0 ? sampleByIndexSearchPageSize : super.getSampleByIndexSearchPageSize();
             }
+
+            @Override
+            public CharSequence getDefaultMapType() {
+                if (defaultMapType == null) {
+                    return super.getDefaultMapType();
+                }
+                return defaultMapType;
+            }
         };
         engine = new CairoEngine(configuration);
         messageBus = engine.getMessageBus();
@@ -146,6 +155,7 @@ public class AbstractCairoTest {
         configOverrideCommitLag = -1;
         currentMicros = -1;
         sampleByIndexSearchPageSize = -1;
+        defaultMapType = null;
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {

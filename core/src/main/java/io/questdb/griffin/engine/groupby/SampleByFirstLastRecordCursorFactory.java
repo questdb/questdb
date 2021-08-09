@@ -685,20 +685,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 public long getTimestamp(int col) {
                     return Unsafe.getUnsafe().getLong(address + ((long) col << 3));
                 }
-
-                @Override
-                public long getGeoHash(int col, int columnType) {
-                    switch (ColumnType.sizeOf(columnType)) {
-                        case 1:
-                            return Unsafe.getUnsafe().getByte(address + ((long) col << 3));
-                        case 2:
-                            return Unsafe.getUnsafe().getShort(address + ((long) col << 3));
-                        case 4:
-                            return Unsafe.getUnsafe().getInt(address + ((long) col << 3));
-                        default:
-                            return Unsafe.getUnsafe().getLong(address + ((long) col << 3));
-                    }
-                }
             }
 
             private class SampleByDataRecord implements Record {

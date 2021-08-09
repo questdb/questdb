@@ -188,7 +188,7 @@ public class GeoHashes {
     public static int sizeOf(int columnType) {
         assert ColumnType.tagOf(columnType) == ColumnType.GEOHASH;
         int bits = getBitsPrecision(columnType);
-        if (bits <= MAX_BITS_LENGTH) {
+        if (bits <= MAX_BITS_LENGTH && bits > 0) {
             return 1 << GEO_TYPE_SIZE_POW2[bits];
         }
         return -1; // Corrupt metadata

@@ -185,20 +185,6 @@ final class FastMapRecord implements MapRecord {
     }
 
     @Override
-    public long getGeoHash(int columnIndex, int columnType) {
-        switch (ColumnType.sizeOf(columnType)) {
-            case 1:
-                return getByte(columnIndex);
-            case 2:
-                return getShort(columnIndex);
-            case 4:
-                return getInt(columnIndex);
-            default:
-                return getLong(columnIndex);
-        }
-    }
-
-    @Override
     public void getLong256(int columnIndex, CharSink sink) {
         long address = addressOfColumn(columnIndex);
         final long a = Unsafe.getUnsafe().getLong(address);

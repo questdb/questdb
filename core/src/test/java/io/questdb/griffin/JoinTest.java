@@ -36,7 +36,6 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class JoinTest extends AbstractGriffinTest {
@@ -3637,7 +3636,18 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGeohashJoinOnGeohash() throws Exception {
+    public void testJoinOnGeohashCompactMap() throws Exception {
+        defaultMapType = "compact";
+        testJoinOnGeohash();
+    }
+
+    @Test
+    public void testJoinOnGeohashFastMap() throws Exception {
+        defaultMapType = "fast";
+        testJoinOnGeohash();
+    }
+
+    private void testJoinOnGeohash() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table t1 as (select " +
                     "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
@@ -3673,6 +3683,35 @@ public class JoinTest extends AbstractGriffinTest {
             assertSql(sql, expected);
             compiler.setFullSatJoins(false);
             assertSql(sql, expected);
+        });
+    }
+
+    @Test
+    public void testJoinOnGeohashNonExactPrecisionNotAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t1 as (select " +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
+                    "x," +
+                    "timestamp_sequence(0, 1000000) ts " +
+                    "from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
+            compiler.compile("create table t2 as (select " +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
+                    "x," +
+                    "timestamp_sequence(0, 1000000) ts " +
+                    "from long_sequence(2)) timestamp(ts)", sqlExecutionContext);
+
+            String sql = "with g1 as (select distinct * from t1)," +
+                    "g2 as (select distinct * from t2)" +
+                    "select * from g1 lt join g2 on g1.geo4 = g2.geo1";
+
+            try {
+                assertSql(sql, "");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "join column type mismatch");
+            }
         });
     }
 
