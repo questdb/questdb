@@ -38,17 +38,15 @@ import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.TableWriterTask;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.ColumnType.SYMBOL;
-
 public class CairoEngine implements Closeable, WriterSource {
-    private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     public static final String BUSY_READER = "busyReader";
-
+    private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     private final WriterPool writerPool;
     private final ReaderPool readerPool;
     private final CairoConfiguration configuration;
@@ -57,6 +55,8 @@ public class CairoEngine implements Closeable, WriterSource {
     private final RingQueue<TelemetryTask> telemetryQueue;
     private final MPSequence telemetryPubSeq;
     private final SCSequence telemetrySubSeq;
+    private final RingQueue<TableWriterTask> tableWriterCmdQueue;
+    private final MCSequence tableWriterCmdSubSeq;
     private final long tableIdMemSize;
     private long tableIdFd = -1;
     private long tableIdMem = 0;
@@ -78,22 +78,13 @@ public class CairoEngine implements Closeable, WriterSource {
             this.telemetrySubSeq = null;
         }
         this.tableIdMemSize = Files.PAGE_SIZE;
+        // subscribe to table writer commands to provide cold command handling
+        this.tableWriterCmdQueue = messageBus.getTableWriterCommandQueue();
+        final FanOut fanOut = messageBus.getTableWriterCommandFanOut();
+        fanOut.and(tableWriterCmdSubSeq = new MCSequence(fanOut.current(), tableWriterCmdQueue.getCapacity()));
         openTableId();
         try {
             new EngineMigration(this, configuration).migrateEngineTo(ColumnType.VERSION);
-        } catch (Throwable e) {
-            close();
-            throw e;
-        }
-    }
-
-    public void openTableId() {
-        freeTableId();
-        FilesFacade ff = configuration.getFilesFacade();
-        Path path = Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-        try {
-            tableIdFd = TableUtils.openFileRWOrFail(ff, path);
-            this.tableIdMem = TableUtils.mapRW(ff, tableIdFd, tableIdMemSize);
         } catch (Throwable e) {
             close();
             throw e;
@@ -220,7 +211,7 @@ public class CairoEngine implements Closeable, WriterSource {
             CairoSecurityContext securityContext,
             CharSequence tableName
     ) {
-        return getReader(securityContext, tableName,  TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION);
+        return getReader(securityContext, tableName, TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION);
     }
 
     public TableReader getReader(
@@ -231,7 +222,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         TableReader reader = readerPool.get(tableName);
         if ((version > -1 && reader.getVersion() != version)
-            || tableId > -1 && reader.getMetadata().getId() != tableId) {
+                || tableId > -1 && reader.getMetadata().getId() != tableId) {
             reader.close();
             throw ReaderOutOfDateException.of(tableName);
         }
@@ -336,6 +327,19 @@ public class CairoEngine implements Closeable, WriterSource {
         return false;
     }
 
+    public void openTableId() {
+        freeTableId();
+        FilesFacade ff = configuration.getFilesFacade();
+        Path path = Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+        try {
+            tableIdFd = TableUtils.openFileRWOrFail(ff, path);
+            this.tableIdMem = TableUtils.mapRW(ff, tableIdFd, tableIdMemSize);
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
+    }
+
     public boolean releaseAllReaders() {
         return readerPool.releaseAll();
     }
@@ -404,6 +408,47 @@ public class CairoEngine implements Closeable, WriterSource {
     // It is useful for testing only
     public void resetTableId() {
         Unsafe.getUnsafe().putLong(tableIdMem, 0);
+    }
+
+    public void tick() {
+        final long cursor = tableWriterCmdSubSeq.next();
+        if (cursor > -1) {
+            TableWriterTask cmd = tableWriterCmdQueue.get(cursor);
+            switch (cmd.getType()) {
+                case TableWriterTask.TSK_SLAVE_SYNC:
+
+                    LOG.info()
+                            .$("sync cmd [tableName=").$(cmd.getTableName())
+                            .$(", tableId=").$(cmd.getTableId())
+                            .I$();
+
+                    try (TableWriter writer = writerPool.get(cmd.getTableName(), "slave sync")) {
+                        final TableSyncModel syncModel = writer.replHandleSyncCmd(cmd);
+                        // release command queue slot not to hold both queues
+                        tableWriterCmdSubSeq.done(cursor);
+                        writer.replPublishSyncEvent(syncModel);
+                    } catch (EntryUnavailableException e) {
+                        // ignore command, writer is busy
+                        // it will tick on its way back to pool or earlier
+                        tableWriterCmdSubSeq.done(cursor);
+                    } catch (Throwable e) {
+                        if (e instanceof Sinkable) {
+                            LOG.error()
+                                    .$("could not create table writer [tableName=").$(cmd.getTableName())
+                                    .$(", tableId=").$(cmd.getTableId())
+                                    .$(", ex=`").$((Sinkable) e).$('`')
+                                    .I$();
+                        } else {
+                            LOG.error()
+                                    .$("could not create table writer [tableName=").$(cmd.getTableName())
+                                    .$(", tableId=").$(cmd.getTableId())
+                                    .$(", ex=`").$(e).$('`')
+                                    .I$();
+                        }
+                    }
+
+            }
+        }
     }
 
     public void unlock(

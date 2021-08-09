@@ -34,6 +34,7 @@ public class TableWriterTask implements Closeable {
     public static final int TSK_SLAVE_SYNC = 1;
     private int type;
     private long tableId;
+    private String tableName;
     private long data;
     private long dataSize;
     private long appendPtr;
@@ -58,6 +59,7 @@ public class TableWriterTask implements Closeable {
 
     public void fromSlaveSyncRequest(
             long tableId,
+            String tableName,
             long txMem,
             long txMemSize,
             long metaMem,
@@ -74,6 +76,7 @@ public class TableWriterTask implements Closeable {
         Vect.memcpy(metaMem, p + txMemSize + 16, metaMemSize);
         this.type = TSK_SLAVE_SYNC;
         this.tableId = tableId;
+        this.tableName = tableName;
     }
 
     public long getAppendOffset() {
@@ -90,6 +93,10 @@ public class TableWriterTask implements Closeable {
 
     public long getTableId() {
         return tableId;
+    }
+
+    public String getTableName() {
+        return tableName;
     }
 
     public int getType() {

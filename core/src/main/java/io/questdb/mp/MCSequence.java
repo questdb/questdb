@@ -34,6 +34,11 @@ public class MCSequence extends AbstractMSequence {
         super(cycle, waitStrategy);
     }
 
+    public MCSequence(long value, int cycle) {
+        this(cycle);
+        this.value = value;
+    }
+
     public <T> void consumeAll(RingQueue<T> queue, QueueConsumer<T> consumer) {
         long cursor;
         do {

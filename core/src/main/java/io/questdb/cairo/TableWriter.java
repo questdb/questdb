@@ -99,7 +99,7 @@ public class TableWriter implements Closeable {
     private final MemoryMAR ddlMem;
     private final int mkDirMode;
     private final int fileOperationRetryCount;
-    private final CharSequence tableName;
+    private final String tableName;
     private final TableWriterMetadata metadata;
     private final CairoConfiguration configuration;
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
@@ -142,7 +142,7 @@ public class TableWriter implements Closeable {
     private final LongConsumer appendTimestampSetter;
     private final MemoryMR indexMem = Vm.getMRInstance();
     private final MemoryFR slaveMetaMem = new MemoryFCRImpl();
-    private final SCSequence commandSubSeq = new SCSequence();
+    private final SCSequence commandSubSeq;
     private long todoTxn;
     private MemoryARW o3TimestampMem;
     private final O3ColumnUpdateMethod o3MoveLagRef = this::o3MoveLag0;
@@ -222,7 +222,13 @@ public class TableWriter implements Closeable {
         o3PartitionUpdatePubSeq.then(o3PartitionUpdateSubSeq).then(o3PartitionUpdatePubSeq);
         final FanOut commandFanOut = this.messageBus.getTableWriterCommandFanOut();
         if (commandFanOut != null) {
+            // align our subscription to the current value of the fan out
+            // to avoid picking up commands fired ahead of this instantiation
+            commandSubSeq = new SCSequence(commandFanOut.current(), null);
             commandFanOut.and(commandSubSeq);
+        } else {
+            // dandling sequence
+            commandSubSeq = new SCSequence();
         }
         this.path = new Path();
         this.path.of(root).concat(tableName);
@@ -765,7 +771,7 @@ public class TableWriter implements Closeable {
         return symbolMapWriters.getQuick(columnIndex).put(symValue);
     }
 
-    public CharSequence getTableName() {
+    public String getTableName() {
         return tableName;
     }
 
@@ -833,7 +839,7 @@ public class TableWriter implements Closeable {
     }
 
     public TableSyncModel reconcileSlaveState(long slaveTxData, long slaveMetaData, long slaveMetaDataSize) {
-        LOG.info().$("reconciling replay request [table=").$(tableName).I$();
+        LOG.info().$("reconciling sync request [table=").$(tableName).I$();
         final LongIntHashMap hash = new LongIntHashMap();
         final TableSyncModel model = new TableSyncModel();
 
@@ -863,11 +869,12 @@ public class TableWriter implements Closeable {
             try {
                 final long ts = txFile.getPartitionTimestamp(i);
                 final long ourSize = i < ourLast ? txFile.getPartitionSize(i) : txFile.transientRowCount;
+                final long ourDataTxn = i < ourLast ? txFile.getPartitionDataTxn(i) : txFile.txn;
                 final int keyIndex = hash.keyIndex(ts);
                 if (keyIndex < 0) {
                     int slavePartitionIndex = hash.valueAt(keyIndex);
                     long p = slaveTxData + getPartitionTableIndexOffset(symbolsCount, slavePartitionIndex);
-                    // check if partition name txn is the same
+                    // check if partition name ourDataTxn is the same
                     if (Unsafe.getUnsafe().getLong(p + 16) == txFile.getPartitionNameTxn(i)) {
                         // this is the same partition roughly
                         final long theirSize = slavePartitionIndex / 4 < theirLast ?
@@ -883,7 +890,7 @@ public class TableWriter implements Closeable {
                                         theirSize,
                                         ourSize - theirSize,
                                         txFile.getPartitionNameTxn(i),
-                                        txFile.getPartitionDataTxn(i)
+                                        ourDataTxn
                                 );
                             } else {
                                 LOG.error()
@@ -893,14 +900,14 @@ public class TableWriter implements Closeable {
                             }
                         }
                     } else {
-                        // partition name txn is different, partition mutated
+                        // partition name ourDataTxn is different, partition mutated
                         model.addPartitionAction(
                                 0,
                                 ts,
                                 0,
                                 ourSize,
                                 txFile.getPartitionNameTxn(i),
-                                txFile.getPartitionDataTxn(i)
+                                ourDataTxn
                         );
                     }
                 } else {
@@ -911,7 +918,7 @@ public class TableWriter implements Closeable {
                             0,
                             ourSize,
                             txFile.getPartitionNameTxn(i),
-                            txFile.getPartitionDataTxn(i)
+                            ourDataTxn
                     );
                 }
 
@@ -1242,10 +1249,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public void tick() {
-        processCommandQueue();
-    }
-
     public void setLifecycleManager(LifecycleManager lifecycleManager) {
         this.lifecycleManager = lifecycleManager;
     }
@@ -1295,6 +1298,10 @@ public class TableWriter implements Closeable {
     public long size() {
         // This is uncommitted row count
         return txFile.getRowCount() + (hasO3() ? getO3RowCount() : 0L);
+    }
+
+    public void tick() {
+        processCommandQueue();
     }
 
     @Override
@@ -1850,7 +1857,7 @@ public class TableWriter implements Closeable {
         if (!distressed) {
             return;
         }
-        throw new CairoError("Table '" + tableName.toString() + "' is distressed");
+        throw new CairoError("Table '" + tableName + "' is distressed");
     }
 
     private void clearTodoLog() {
@@ -2310,6 +2317,9 @@ public class TableWriter implements Closeable {
                     logMem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
 
                     final MemoryLogAImpl spliceColumn1 = spliceColumns.getQuick(primaryIndex);
+                    if (spliceColumn1 == row.activeColumns.getQuick(primaryIndex)) {
+                        System.out.println("oopsie");
+                    }
                     spliceColumn1.of(logMem1, row.activeColumns.getQuick(primaryIndex));
 
                     final MemoryMAR logMem2 = logColumns.getQuick(secondaryIndex);
@@ -4007,7 +4017,16 @@ public class TableWriter implements Closeable {
             if (cmd.getTableId() == getMetadata().getId()) {
                 switch (cmd.getType()) {
                     case TableWriterTask.TSK_SLAVE_SYNC:
-                        replHandleSlaveSync(cmd, cursor);
+
+                        LOG.info()
+                                .$("sync cmd [tableName=").$(tableName)
+                                .$(", tableId=").$(cmd.getTableId())
+                                .I$();
+
+                        final TableSyncModel syncModel = replHandleSyncCmd(cmd);
+                        // release command queue slot not to hold both queues
+                        commandSubSeq.done(cursor);
+                        replPublishSyncEvent(syncModel);
                         break;
                     default:
                         commandSubSeq.done(cursor);
@@ -4016,28 +4035,6 @@ public class TableWriter implements Closeable {
             } else {
                 commandSubSeq.done(cursor);
             }
-        }
-    }
-
-    private void replHandleSlaveSync(TableWriterTask cmd, long cursor) {
-        final long txMemSize = Unsafe.getUnsafe().getLong(cmd.getData());
-        final TableSyncModel model = reconcileSlaveState(
-                cmd.getData() + 8,
-                cmd.getData() + txMemSize + 16,
-                Unsafe.getUnsafe().getLong(cmd.getData() + txMemSize + 8)
-        );
-
-        // release command queue slot not to hold both queues
-        commandSubSeq.done(cursor);
-
-        final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
-        if (pubCursor > -1) {
-            final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
-            model.toBinary(event);
-            messageBus.getTableWriterEventPubSeq().done(cursor);
-            LOG.info().$("published slave sync event [table=").$(tableName).$(']').$();
-        } else {
-            LOG.info().$("could not publish slave sync event [table=").$(tableName).$(']').$();
         }
     }
 
@@ -4557,6 +4554,27 @@ public class TableWriter implements Closeable {
         }
         txFile.reset();
         clearTodoLog();
+    }
+
+    TableSyncModel replHandleSyncCmd(TableWriterTask cmd) {
+        final long txMemSize = Unsafe.getUnsafe().getLong(cmd.getData());
+        return reconcileSlaveState(
+                cmd.getData() + 8,
+                cmd.getData() + txMemSize + 16,
+                Unsafe.getUnsafe().getLong(cmd.getData() + txMemSize + 8)
+        );
+    }
+
+    void replPublishSyncEvent(TableSyncModel model) {
+        final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
+        if (pubCursor > -1) {
+            final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
+            model.toBinary(event);
+            messageBus.getTableWriterEventPubSeq().done(pubCursor);
+            LOG.info().$("published slave sync event [table=").$(tableName).$(']').$();
+        } else {
+            LOG.info().$("could not publish slave sync event [table=").$(tableName).$(']').$();
+        }
     }
 
     private void restoreMetaFrom(CharSequence fromBase, int fromIndex) {
@@ -5087,6 +5105,26 @@ public class TableWriter implements Closeable {
             notNull(index);
         }
 
+        public void putGeoHash(int index, long value) {
+            int type = metadata.getColumnType(index);
+            final MemoryA primaryColumn = getPrimaryColumn(index);
+            switch (ColumnType.sizeOf(type)) {
+                case 1:
+                    primaryColumn.putByte((byte) value);
+                    break;
+                case 2:
+                    primaryColumn.putShort((short) value);
+                    break;
+                case 4:
+                    primaryColumn.putInt((int) value);
+                    break;
+                default:
+                    primaryColumn.putLong(value);
+                    break;
+            }
+            notNull(index);
+        }
+
         public void putInt(int index, int value) {
             getPrimaryColumn(index).putInt(value);
             notNull(index);
@@ -5165,26 +5203,6 @@ public class TableWriter implements Closeable {
                 throw CairoException.instance(0).put("Invalid timestamp: ").put(value);
             }
             putTimestamp(index, l);
-        }
-
-        public void putGeoHash(int index, long value) {
-            int type = metadata.getColumnType(index);
-            final MemoryA primaryColumn = getPrimaryColumn(index);
-            switch (ColumnType.sizeOf(type)) {
-                case 1:
-                    primaryColumn.putByte((byte)value);
-                    break;
-                case 2:
-                    primaryColumn.putShort((short) value);
-                    break;
-                case 4:
-                    primaryColumn.putInt((int) value);
-                    break;
-                default:
-                    primaryColumn.putLong(value);
-                    break;
-            }
-            notNull(index);
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {
