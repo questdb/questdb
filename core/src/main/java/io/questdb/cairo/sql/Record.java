@@ -280,7 +280,7 @@ public interface Record {
      * @param col numeric index of the column
      * @return geohash
      */
-    default long getGeoHash(int col) {
+    default long getGeoHash(int col, int type) {
         throw new UnsupportedOperationException();
     }
 

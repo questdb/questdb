@@ -621,8 +621,8 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             }
 
             @Override
-            public long getGeoHash(int col) {
-                return currentRecord.getGeoHash(col);
+            public long getGeoHash(int col, int columnType) {
+                return currentRecord.getGeoHash(col, columnType);
             }
 
             public void of(long index) {
@@ -687,8 +687,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
-                public long getGeoHash(int col) {
-                    final int columnType = groupByMetadata.getColumnType(col);
+                public long getGeoHash(int col, int columnType) {
                     switch (ColumnType.sizeOf(columnType)) {
                         case 1:
                             return Unsafe.getUnsafe().getByte(address + ((long) col << 3));
@@ -800,10 +799,9 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
-                public long getGeoHash(int col) {
+                public long getGeoHash(int col, int columnType) {
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
-                        final int columnType = groupByMetadata.getColumnType(col);
                         switch (ColumnType.sizeOf(columnType)) {
                             case 1:
                                 return Unsafe.getUnsafe().getByte(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));

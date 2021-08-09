@@ -160,7 +160,7 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
-    public long getGeoHash(int col) {
+    public long getGeoHash(int col, int columnType) {
         return getFunction(col).getGeoHash(base);
     }
 

@@ -3637,7 +3637,6 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore //TODO: geohash joins
     public void testGeohashJoinOnGeohash() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table t1 as (select " +

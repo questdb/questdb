@@ -308,14 +308,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         socket.put('"').putISODate(t).put('"');
     }
 
-    private static void putGeoHashStringValue(HttpChunkedResponseSocket socket, Record rec, int col, int precision) {
-        final long l = rec.getGeoHash(col);
+    private static void putGeoHashStringValue(HttpChunkedResponseSocket socket, Record rec, int col, int columnType) {
+        final int precision = GeoHashes.getBitsPrecision(columnType);
+        final long l = rec.getGeoHash(col, columnType);
         if (l == GeoHashes.NULL) {
             socket.put("null");
         } else {
             socket.put('\"');
-            if (precision < 0) {
-                GeoHashes.toString(l, -precision, socket);
+            if (precision % 5 == 0) {
+                GeoHashes.toString(l, precision / 5, socket);
             } else {
                 GeoHashes.toBitString(l, precision, socket);
             }
@@ -484,8 +485,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putLong256Value(socket, record, columnIdx);
                     break;
                 case ColumnType.GEOHASH:
-                    final int precision = GeoHashes.getBitsPrecision(columnType);
-                    putGeoHashStringValue(socket, record, columnIdx, precision);
+                    putGeoHashStringValue(socket, record, columnIdx, columnType);
                     break;
                 default:
                     assert false : "Not supported type in output " + ColumnType.nameOf(columnType);
@@ -615,12 +615,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
         if (ColumnType.isNull(columnType)) {
             columnType = ColumnType.STRING;
-        }
-
-        if (ColumnType.isGeoHash(columnType)) {
-            final int bitsPrecision = GeoHashes.getBitsPrecision(columnType);
-            // negative precision for chars encoding
-            columnType = bitsPrecision % 5 != 0 ? columnType : GeoHashes.setBitsPrecision(columnType, -(bitsPrecision/5));
         }
 
         this.columnTypes.add(columnType);

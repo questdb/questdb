@@ -154,8 +154,8 @@ class SelectedRecord implements Record {
     }
 
     @Override
-    public long getGeoHash(int col) {
-        return base.getGeoHash(getColumnIndex(col));
+    public long getGeoHash(int col, int columnType) {
+        return base.getGeoHash(getColumnIndex(col), columnType);
     }
 
     Record getBaseRecord() {

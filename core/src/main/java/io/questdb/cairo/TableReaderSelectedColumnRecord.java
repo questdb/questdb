@@ -242,9 +242,8 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
-    public long getGeoHash(int columnIndex) {
+    public long getGeoHash(int columnIndex, int columnType) {
         final int col = deferenceColumn(columnIndex);
-        final int columnType = reader.getMetadata().getColumnType(col);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long offset = getAdjustedRecordIndex(col) * ColumnType.sizeOf(columnType);
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);

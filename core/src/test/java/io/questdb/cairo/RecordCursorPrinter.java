@@ -158,7 +158,7 @@ public class RecordCursorPrinter {
                 break;
             case ColumnType.GEOHASH:
                 int bitsPrecision = GeoHashes.getBitsPrecision(m.getColumnType(i));
-                long hash = r.getGeoHash(i);
+                long hash = r.getGeoHash(i, m.getColumnType(i));
                 if (hash == GeoHashes.NULL) {
                     break; // optimisation
                 }

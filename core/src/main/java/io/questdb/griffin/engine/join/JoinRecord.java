@@ -222,11 +222,11 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public long getGeoHash(int col) {
+    public long getGeoHash(int col, int coumnType) {
         if (col < split) {
-            return master.getGeoHash(col);
+            return master.getGeoHash(col, coumnType);
         }
-        return slave.getGeoHash(col - split);
+        return slave.getGeoHash(col - split, coumnType);
     }
 
     void of(Record master, Record slave) {

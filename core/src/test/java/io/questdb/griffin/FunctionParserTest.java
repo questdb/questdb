@@ -1141,7 +1141,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         Record record = new Record() {
             @Override
-            public long getGeoHash(int col) {
+            public long getGeoHash(int col, int columnType) {
                 return getLong(col);
             }
 
