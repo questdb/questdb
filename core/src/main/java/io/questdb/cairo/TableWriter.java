@@ -220,7 +220,7 @@ public class TableWriter implements Closeable {
         this.o3PartitionUpdatePubSeq = new MPSequence(this.o3PartitionUpdateQueue.getCapacity());
         this.o3PartitionUpdateSubSeq = new SCSequence();
         o3PartitionUpdatePubSeq.then(o3PartitionUpdateSubSeq).then(o3PartitionUpdatePubSeq);
-        final FanOut commandFanOut = this.messageBus.getTableWriterCommandSubSeq();
+        final FanOut commandFanOut = this.messageBus.getTableWriterCommandFanOut();
         if (commandFanOut != null) {
             commandFanOut.and(commandSubSeq);
         }
@@ -1238,8 +1238,12 @@ public class TableWriter implements Closeable {
                 distressed = true;
             }
         } else {
-            processCommandQueue();
+            tick();
         }
+    }
+
+    public void tick() {
+        processCommandQueue();
     }
 
     public void setLifecycleManager(LifecycleManager lifecycleManager) {
@@ -1924,7 +1928,7 @@ public class TableWriter implements Closeable {
             o3ProcessPartitionRemoveCandidates();
         }
 
-        processCommandQueue();
+        tick();
     }
 
     void commitBlock(long firstTimestamp) {
@@ -2253,7 +2257,7 @@ public class TableWriter implements Closeable {
             Misc.free(txnScoreboard);
             Misc.free(path);
             Misc.free(o3TimestampMemCpy);
-            final FanOut commandFanOut = messageBus.getTableWriterCommandSubSeq();
+            final FanOut commandFanOut = messageBus.getTableWriterCommandFanOut();
             if (commandFanOut != null) {
                 commandFanOut.remove(commandSubSeq);
             }

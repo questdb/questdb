@@ -24,15 +24,14 @@
 
 package io.questdb.tasks;
 
+import io.questdb.std.Chars;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
-public class TableWriterTask implements Closeable, CharSink {
+public class TableWriterTask implements Closeable {
     public static final int TSK_SLAVE_SYNC = 1;
-    private final char[] doubleDigits = new char[21];
     private int type;
     private long tableId;
     private long data;
@@ -89,20 +88,6 @@ public class TableWriterTask implements Closeable, CharSink {
         return dataSize;
     }
 
-    @Override
-    public char[] getDoubleDigitsBuffer() {
-        return doubleDigits;
-    }
-
-    @Override
-    public CharSink put(char c) {
-        if (appendPtr >= appendLim) {
-            resize(dataSize * 2);
-        }
-        Unsafe.getUnsafe().putByte(appendPtr++, (byte) c);
-        return this;
-    }
-
     public long getTableId() {
         return tableId;
     }
@@ -111,8 +96,29 @@ public class TableWriterTask implements Closeable, CharSink {
         return type;
     }
 
-    public void putAt(long offset, int value) {
-        Unsafe.getUnsafe().putInt(data + offset, value);
+    public void put(CharSequence value) {
+        int len = value.length();
+        ensureCapacity(len * 2 + 4);
+        Unsafe.getUnsafe().putInt(appendPtr, len);
+        Chars.copyStrChars(value, 0, len, appendPtr + 4);
+        appendPtr += len * 2L + 4;
+    }
+
+    public void put(byte c) {
+        ensureCapacity(1);
+        Unsafe.getUnsafe().putByte(appendPtr++, c);
+    }
+
+    public void put(int value) {
+        ensureCapacity(4);
+        Unsafe.getUnsafe().putInt(appendPtr, value);
+        appendPtr += 4;
+    }
+
+    public void put(long value) {
+        ensureCapacity(8);
+        Unsafe.getUnsafe().putLong(appendPtr, value);
+        appendPtr += 8;
     }
 
     public void resize(long size) {
@@ -126,12 +132,9 @@ public class TableWriterTask implements Closeable, CharSink {
         }
     }
 
-    public long skip(int byteCount) {
+    private void ensureCapacity(int byteCount) {
         if (appendPtr + byteCount - 1 >= appendLim) {
             resize(Math.max(dataSize * 2, (appendPtr - data) + byteCount));
         }
-        final long offset = getAppendOffset();
-        appendPtr += byteCount;
-        return offset;
     }
 }

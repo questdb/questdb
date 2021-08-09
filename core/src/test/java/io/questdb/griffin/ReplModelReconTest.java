@@ -24,9 +24,12 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.TableSyncModel;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.mp.FanOut;
 import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.tasks.TableWriterTask;
 import io.questdb.test.tools.TestUtils;
@@ -495,11 +498,28 @@ public class ReplModelReconTest extends AbstractGriffinTest {
 
                 pubSeq.done(cursor);
 
-                w1.rollback();
+                w1.tick();
 
-//                sink.clear();
-//                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-//                Assert.assertTrue(w1.isTransactionLogEnabled());
+                // consume event from bus and make sure it is what we expect
+                final FanOut eventSubFanOut = engine.getMessageBus().getTableWriterEventFanOut();
+                // our sequence
+                SCSequence subSeq = new SCSequence();
+                eventSubFanOut.and(subSeq);
+
+                cursor = subSeq.next();
+                Assert.assertTrue(cursor > -1);
+
+                TableWriterTask event = engine.getMessageBus().getTableWriterEventQueue().get(cursor);
+
+                TableSyncModel model = new TableSyncModel();
+
+                model.fromBinary(event.getData());
+
+                subSeq.done(cursor);
+
+                sink.clear();
+                sink.put(model);
+                Assert.assertTrue(w1.isTransactionLogEnabled());
             }
 
             TestUtils.assertEquals(

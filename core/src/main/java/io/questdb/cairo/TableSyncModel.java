@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TableWriterTask;
 
 public class TableSyncModel implements Mutable, Sinkable {
@@ -96,48 +97,78 @@ public class TableSyncModel implements Mutable, Sinkable {
 
     public void fromBinary(long mem) {
         long p = mem;
-        tableAction = Unsafe.getUnsafe().getInt(p += 4);
-        dataVersion = Unsafe.getUnsafe().getLong(p += 8);
+        tableAction = Unsafe.getUnsafe().getInt(p);
+        p += 4;
+        dataVersion = Unsafe.getUnsafe().getLong(p);
+        p += 8;
 
-        int n = Unsafe.getUnsafe().getInt(p += 4);
+        int n = Unsafe.getUnsafe().getInt(p);
+        p += 4;
         for (int i = 0; i < n; i += SLOTS_PER_COLUMN_TOP) {
-            columnTops.add(Unsafe.getUnsafe().getLong(p += 8)); // timestamp
-            columnTops.add(Unsafe.getUnsafe().getInt(p += 4)); // column index
-            columnTops.add(Unsafe.getUnsafe().getLong(p += 8)); // column top
-            columnTops.add(0); // reserved
+            columnTops.add(
+                    Unsafe.getUnsafe().getLong(p),
+                    Unsafe.getUnsafe().getInt(p + 8),
+                    Unsafe.getUnsafe().getLong(p + 12),
+                    0
+            );
+
+            p += 20;
         }
 
-        n = Unsafe.getUnsafe().getInt(p += 4);
+        n = Unsafe.getUnsafe().getInt(p);
+        p += 4;
         for (int i = 0; i < n; i += SLOTS_PER_PARTITION) {
-            partitions.add(Unsafe.getUnsafe().getInt(p += 4)); // action
-            partitions.add(Unsafe.getUnsafe().getLong(p += 8)); // partition timestamp
-            partitions.add(Unsafe.getUnsafe().getLong(p += 8)); // start row
-            partitions.add(Unsafe.getUnsafe().getLong(p += 8)); // row count
-            partitions.add(Unsafe.getUnsafe().getLong(p += 8)); // name txn
-            partitions.add(Unsafe.getUnsafe().getLong(p += 8)); // data txn
-            partitions.add(0); // reserved
-            partitions.add(0); // reserved
+            partitions.add(
+                    Unsafe.getUnsafe().getInt(p), // action
+                    Unsafe.getUnsafe().getLong(p + 4), // partition timestamp
+                    Unsafe.getUnsafe().getLong(p + 12), // start row
+                    Unsafe.getUnsafe().getLong(p + 20), // row count
+                    Unsafe.getUnsafe().getLong(p + 28), // name txn
+                    Unsafe.getUnsafe().getLong(p + 36), // data txn
+                    0,
+                    0
+            );
+            p += 44;
         }
 
-        n = Unsafe.getUnsafe().getInt(p += 4);
-/*
+        n = Unsafe.getUnsafe().getInt(p);
+        p += 4;
+
+        // todo: thread local this instance
+        StringSink nameSink = new StringSink();
         for (int i = 0; i < n; i++) {
-            final TableColumnMetadata metadata = addedColumnMetadata.getQuick(i);
-            final long offset = sink.skip(Integer.SIZE); // encode size prefixed column name
-            sink.encodeUtf8(metadata.getName());
-            sink.putAt(offset, (int) (sink.getAppendOffset() - offset));
-            sink.put(metadata.getType()); // column type
-            sink.put((byte) (metadata.isIndexed() ? 0 : 1)); // column indexed flag
-            sink.put(metadata.getIndexValueBlockCapacity());
+            int nameLen = Unsafe.getUnsafe().getInt(p);
+            p += 4;
+
+            for (long lim = p + nameLen * 2L; p < lim; p += 2) {
+                nameSink.put(Unsafe.getUnsafe().getChar(p));
+            }
+            int type = Unsafe.getUnsafe().getInt(p);
+            p += 4;
+            boolean indexed = Unsafe.getUnsafe().getByte(p++) == 0;
+            int valueBlockCapacity = Unsafe.getUnsafe().getInt(p);
+            p += 4;
+            addedColumnMetadata.add(
+                    new TableColumnMetadata(
+                            Chars.toString(nameSink),
+                            type,
+                            indexed,
+                            valueBlockCapacity,
+                            true,
+                            null
+                    )
+            );
         }
 
-        n = columnMetaIndex.size();
-        sink.put(n); // column metadata shuffle index - drives rearrangement of existing columns on the slave
+        n = Unsafe.getUnsafe().getInt(p);
+        p += 4;
         for (int i = 0; i < n; i += SLOTS_PER_COLUMN_META_INDEX) {
-            sink.put((int) columnMetaIndex.getQuick(i)); // action
-            sink.put(columnMetaIndex.getQuick(i + 1)); // (int,int) pair on where (from,to) column needs to move
+            columnMetaIndex.add(
+                    (long) Unsafe.getUnsafe().getInt(p),
+                    Unsafe.getUnsafe().getLong(p + 4)
+            );
+            p += 12;
         }
-*/
     }
 
     public long getDataVersion() {
@@ -188,9 +219,7 @@ public class TableSyncModel implements Mutable, Sinkable {
         sink.put(n); // column metadata count - this is metadata only for column that have been added
         for (int i = 0; i < n; i++) {
             final TableColumnMetadata metadata = addedColumnMetadata.getQuick(i);
-            final long offset = sink.skip(Integer.SIZE); // encode size prefixed column name
-            sink.encodeUtf8(metadata.getName());
-            sink.putAt(offset, (int) (sink.getAppendOffset() - offset));
+            sink.put(metadata.getName());
             sink.put(metadata.getType()); // column type
             sink.put((byte) (metadata.isIndexed() ? 0 : 1)); // column indexed flag
             sink.put(metadata.getIndexValueBlockCapacity());

@@ -37,6 +37,7 @@ public class MemoryLogAImpl implements MemoryA {
     @Override
     public void close() {
         log = Misc.free(log);
+        assert main != this;
         main = Misc.free(main);
     }
 

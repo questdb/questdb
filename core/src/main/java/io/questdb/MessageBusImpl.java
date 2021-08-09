@@ -294,7 +294,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public FanOut getTableWriterCommandSubSeq() {
+    public FanOut getTableWriterCommandFanOut() {
         return tableWriterCommandSubSeq;
     }
 
@@ -309,7 +309,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public FanOut getTableWriterEventSubSeq() {
+    public FanOut getTableWriterEventFanOut() {
         return tableWriterEventSubSeq;
     }
 

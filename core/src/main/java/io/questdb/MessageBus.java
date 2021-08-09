@@ -106,13 +106,13 @@ public interface MessageBus extends Closeable {
 
     RingQueue<TableWriterTask> getTableWriterCommandQueue();
 
-    FanOut getTableWriterCommandSubSeq();
+    FanOut getTableWriterCommandFanOut();
 
     MPSequence getTableWriterEventPubSeq();
 
     RingQueue<TableWriterTask> getTableWriterEventQueue();
 
-    FanOut getTableWriterEventSubSeq();
+    FanOut getTableWriterEventFanOut();
 
     Sequence getVectorAggregatePubSeq();
 
