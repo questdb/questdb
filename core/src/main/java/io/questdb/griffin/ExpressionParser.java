@@ -290,21 +290,22 @@ class ExpressionParser {
 
                     case 'g':
                     case 'G':
-                        if (SqlKeywords.startsWithGeoHashKeyword(tok)) {
-                            CharSequence peek = lexer.peek();
-                            if (peek == null || peek.charAt(0) != '(') {
+                        if (SqlKeywords.isGeoHashKeyword(tok)) {
+                            CharSequence geohashTok = GenericLexer.immutableOf(tok);
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok == null || tok.charAt(0) != '(') {
+                                lexer.moveTo(position + 7, geohashTok);
+                                tok = geohashTok;
                                 processDefaultBranch = true;
                                 break;
                             }
-                            SqlUtil.fetchNext(lexer); // consume '('
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok != null && tok.charAt(0) != ')') {
-                                node = expressionNodePool.next().of(
+                                opStack.push(expressionNodePool.next().of(
                                         ExpressionNode.CONSTANT,
-                                        lexer.immutableOf(position, lexer.getPosition() - 1), // excludes ')'
+                                        lexer.immutablePairOf(geohashTok, tok),
                                         Integer.MIN_VALUE,
-                                        position);
-                                opStack.push(node);
+                                        position));
                                 tok = SqlUtil.fetchNext(lexer);
                                 if (tok == null || tok.charAt(0) != ')') {
                                     throw SqlException.$(lexer.lastTokenPosition(), "invalid GEOHASH, missing ')'");

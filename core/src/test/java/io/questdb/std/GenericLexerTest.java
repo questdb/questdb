@@ -205,7 +205,6 @@ public class GenericLexerTest {
     public void testPeek1() {
         GenericLexer ts = new GenericLexer(64);
         ts.defineSymbol(",");
-        ts.defineSymbol(" ");
         ts.of("Day-o, day-o");
 
         Assert.assertEquals("Day-o", ts.next().toString());
@@ -238,45 +237,45 @@ public class GenericLexerTest {
     }
 
     @Test
-    public void testImmutableOf1() {
-        String funcCall = "function(arg0)";
-
-        GenericLexer ts = new GenericLexer(4);
+    public void testMoveTo() {
+        GenericLexer ts = new GenericLexer(64);
+        String sql = "select count(*) from table";
         ts.defineSymbol("(");
         ts.defineSymbol(")");
-        ts.defineSymbol(",");
-        ts.of(funcCall);
+        ts.of(sql);
 
-        CharSequence function = ts.next();
-        Assert.assertEquals("function", function.toString());
-        int start = ts.lastTokenPosition();
         Iterator<CharSequence> it = ts.iterator();
+        int pos = -1;
         while (it.hasNext()) {
-            it.next();
+            CharSequence tok = it.next();
+            if (tok.equals("from")) {
+                pos = ts.lastTokenPosition();
+            }
         }
-        CharSequence funcCallMinusRightParens = ts.immutableOf(start, ts.lastTokenPosition());
-        Assert.assertTrue(funcCallMinusRightParens instanceof GenericLexer.FloatingSequence);
-        Assert.assertEquals(funcCall.substring(0, funcCall.length() - 1), funcCallMinusRightParens.toString());
+        ts.moveTo(pos, null);
+        Assert.assertTrue(ts.hasNext());
+        Assert.assertEquals("from", ts.next().toString());
     }
 
-    @Test(expected = IndexOutOfBoundsException.class)
-    public void testImmutableOf2() {
-        GenericLexer ts = new GenericLexer(4);
+    @Test
+    public void testImmutablePairOf1() {
+        GenericLexer ts = new GenericLexer(64);
         ts.of("orange");
-        ts.immutableOf(-1, ts.lastTokenPosition());
+        CharSequence cs = ts.next();
+        ts.immutablePairOf(GenericLexer.immutableOf(cs), cs);
     }
 
-    @Test(expected = IndexOutOfBoundsException.class)
-    public void testImmutableOf3() {
-        GenericLexer ts = new GenericLexer(4);
+    @Test(expected = UnsupportedOperationException.class)
+    public void testImmutablePairOf2() {
+        GenericLexer ts = new GenericLexer(64);
         ts.of("orange");
-        ts.immutableOf(0, "orange".length() + 1);
+        CharSequence cs = ts.next();
+        ts.immutablePairOf(cs, cs);
     }
 
-    @Test(expected = IndexOutOfBoundsException.class)
-    public void testImmutableOf4() {
-        GenericLexer ts = new GenericLexer(4);
-        ts.of("orange");
-        ts.immutableOf(1, 0);
+    @Test(expected = UnsupportedOperationException.class)
+    public void testImmutablePairOf3() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.immutablePairOf("", "");
     }
 }

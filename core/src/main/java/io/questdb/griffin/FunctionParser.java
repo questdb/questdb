@@ -461,7 +461,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
         // geohash?
         if (startsWithGeoHashKeyword(tok)) {
-            int bits = SqlParser.parseGeoHashSize(position, 8, tok);
+            int bits = SqlParser.parseGeoHashSize(position, 7, tok);
             return GeoHashTypeConstant.getInstanceByPrecision(bits);
         }
 

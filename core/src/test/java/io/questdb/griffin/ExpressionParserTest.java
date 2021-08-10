@@ -391,12 +391,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCastGeoHashCastStrWithCharsPrecision() throws SqlException {
-        x("'sp052w92'geohash(6ccast", "cast('sp052w92' as geohash(6c))");
+        x("'sp052w92'geohash6ccast", "cast('sp052w92' as geohash(6c))");
     }
 
     @Test
     public void testCastGeoHashCastStrWithBitsPrecision() throws SqlException {
-        x("'sp052w92'geohash(60bcast", "cast('sp052w92' as geohash(60b))");
+        x("'sp052w92'geohash60bcast", "cast('sp052w92' as geohash(60b))");
     }
 
     @Test
@@ -429,17 +429,31 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testGeoHash1() throws SqlException {
-        x("geohash(6c", "geohash(6c)");
+        x("geohash6c", "geohash(6c)");
     }
 
     @Test
     public void testGeoHash2() throws SqlException {
-        x("geohash(31b", "geohash(31b)");
+        x("geohash31b", "geohash(31b)");
     }
 
     @Test
     public void testGeoHash3() throws SqlException {
         x("GEOHASH", "GEOHASH");
+    }
+
+    @Test
+    public void testGeoHash4() throws SqlException {
+        x("geohash6c", "geohash ( 6c" +
+                "-- this is a comment, as you can see" +
+                "\n\n\r)");
+    }
+
+    @Test
+    public void testGeoHash5() throws SqlException {
+        x("geohash6c", " geohash\r\n  (\n 6c\n" +
+                "-- this is a comment, as you can see" +
+                "\n\n\r)-- my tralala");
     }
 
     @Test

@@ -569,6 +569,21 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'm';
     }
 
+    public static boolean isGeoHashKeyword(CharSequence tok) {
+        if (tok.length() != 7) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'g'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'h'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 's'
+                && (tok.charAt(i) | 32) == 'h';
+    }
+
     public static boolean startsWithGeoHashKeyword(CharSequence tok) {
         if (tok.length() < 7) {
             return false;
