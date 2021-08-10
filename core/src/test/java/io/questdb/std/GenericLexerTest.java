@@ -296,8 +296,18 @@ public class GenericLexerTest {
         pair.subSequence(0, 2);
     }
 
-    @Test
+    @Test(expected = IndexOutOfBoundsException.class)
     public void testImmutablePairOf6() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("geohash 31b");
+        CharSequence tok0 = GenericLexer.immutableOf(ts.next());
+        ts.next();
+        GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair) ts.immutablePairOf(tok0, ts.next());
+        pair.charAt(17_000);
+    }
+
+    @Test
+    public void testImmutablePairOf7() {
         GenericLexer ts = new GenericLexer(64);
         String culprit = "geohash 31b";
         ts.of(culprit);
