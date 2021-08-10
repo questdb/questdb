@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -237,24 +238,48 @@ public class GenericLexerTest {
     }
 
     @Test
-    public void testMoveTo() {
+    public void testImmutableOf() {
+        Assert.assertTrue(GenericLexer.immutableOf("immutable") instanceof String);
         GenericLexer ts = new GenericLexer(64);
-        String sql = "select count(*) from table";
-        ts.defineSymbol("(");
-        ts.defineSymbol(")");
-        ts.of(sql);
+        ts.of("cantaloupe");
+        CharSequence tok = ts.next();
+        Assert.assertTrue(tok instanceof GenericLexer.InternalFloatingSequence);
+        Assert.assertTrue(GenericLexer.immutableOf(tok) instanceof GenericLexer.FloatingSequence);
+    }
 
-        Iterator<CharSequence> it = ts.iterator();
-        int pos = -1;
-        while (it.hasNext()) {
-            CharSequence tok = it.next();
-            if (tok.equals("from")) {
-                pos = ts.lastTokenPosition();
-            }
-        }
-        ts.moveTo(pos, null);
-        Assert.assertTrue(ts.hasNext());
-        Assert.assertEquals("from", ts.next().toString());
+    @Test(expected = SqlException.class)
+    public void testAssertNoDot1() throws SqlException {
+        GenericLexer.assertNoDots(".", 0);
+    }
+
+    @Test(expected = SqlException.class)
+    public void testAssertNoDot2() throws SqlException {
+        GenericLexer.assertNoDots("..", 0);
+    }
+
+    @Test
+    public void testAssertNoDot3() throws SqlException {
+        Assert.assertEquals(",", GenericLexer.assertNoDots(",", 0));
+    }
+
+    @Test(expected = SqlException.class)
+    public void testAssertNoDotAndSlashes1() throws SqlException {
+        GenericLexer.assertNoDotsAndSlashes(".", 0);
+    }
+
+    @Test(expected = SqlException.class)
+    public void testAssertNoDotAndSlashes2() throws SqlException {
+        GenericLexer.assertNoDotsAndSlashes("/.", 0);
+    }
+
+    @Test
+    public void testAssertNoDotAndSlashes3() throws SqlException {
+        Assert.assertEquals(",", GenericLexer.assertNoDotsAndSlashes(",", 0));
+    }
+
+    @Test
+    public void testUnquote() {
+        Assert.assertEquals(GenericLexer.unquote("QuestDB"), GenericLexer.unquote("'QuestDB'"));
     }
 
     @Test
@@ -263,6 +288,10 @@ public class GenericLexerTest {
         ts.of("orange");
         CharSequence cs = ts.next();
         ts.immutablePairOf(GenericLexer.immutableOf(cs), cs);
+        Assert.assertEquals("orange", ts.getContent());
+        Assert.assertNull(ts.getUnparsed());
+        Assert.assertEquals(6, ts.getPosition());
+        Assert.assertEquals(6, ts.getTokenHi());
     }
 
     @Test(expected = UnsupportedOperationException.class)

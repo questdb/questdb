@@ -294,7 +294,7 @@ class ExpressionParser {
                             CharSequence geohashTok = GenericLexer.immutableOf(tok);
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok == null || tok.charAt(0) != '(') {
-                                lexer.moveTo(position + 7, geohashTok);
+                                lexer.backTo(position + 7, geohashTok);
                                 tok = geohashTok;
                                 processDefaultBranch = true;
                                 break;
