@@ -152,6 +152,54 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testCastMissingUnits() {
+        try {
+            String castExpr = "cast('sp052w92' as geohash(1))";
+            parseFunction(castExpr, metadata, functionParser);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(),
+                    "invalid GEOHASH size, must be number followed by 'C' or 'B' character");
+            Assert.assertEquals(19, e.getPosition());
+        }
+    }
+
+    @Test
+    public void testCastMissingSize() {
+        try {
+            String castExpr = "cast('sp052w92' as geohash(c))";
+            parseFunction(castExpr, metadata, functionParser);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(),
+                    "invalid GEOHASH size, must be number followed by 'C' or 'B' character");
+            Assert.assertEquals(19, e.getPosition());
+        }
+    }
+
+    @Test
+    public void testCastMissingSizeAndUnits() {
+        try {
+            String castExpr = "cast('sp052w92' as geohash())";
+            parseFunction(castExpr, metadata, functionParser);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(),
+                    "invalid GEOHASH, invalid type precision");
+            Assert.assertEquals(27, e.getPosition());
+        }
+    }
+
+    @Test
+    public void testCastMissingRightParens() {
+        try {
+            String castExpr = "cast('sp052w92' as geohash(2c)";
+            parseFunction(castExpr, metadata, functionParser);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(),
+                    "unbalanced (");
+            Assert.assertEquals(4, e.getPosition());
+        }
+    }
+
+    @Test
     public void testCastStringTooLongForGeohash() throws SqlException, NumericException {
         String castExpr = "cast('sp052w92bcde2569' as geohash(1c))";
         Function function = parseFunction(castExpr, metadata, functionParser);

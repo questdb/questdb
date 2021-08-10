@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -205,7 +206,6 @@ public class GenericLexerTest {
     public void testPeek1() {
         GenericLexer ts = new GenericLexer(64);
         ts.defineSymbol(",");
-        ts.defineSymbol(" ");
         ts.of("Day-o, day-o");
 
         Assert.assertEquals("Day-o", ts.next().toString());
@@ -225,8 +225,8 @@ public class GenericLexerTest {
         ts.of(fortune);
 
         Iterator<CharSequence> it = ts.iterator();
-        String [] parts = fortune.split("[ ]");
-        for (int i=0; i < parts.length; i++) {
+        String[] parts = fortune.split("[ ]");
+        for (int i = 0; i < parts.length; i++) {
             CharSequence e = it.next();
             Assert.assertEquals(parts[i], e.toString());
             if (i < parts.length - 1) {
@@ -235,5 +235,121 @@ public class GenericLexerTest {
             }
         }
         Assert.assertNull(ts.peek());
+    }
+
+    @Test
+    public void testImmutableOf() {
+        Assert.assertTrue(GenericLexer.immutableOf("immutable") instanceof String);
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("cantaloupe");
+        CharSequence tok = ts.next();
+        Assert.assertTrue(tok instanceof GenericLexer.InternalFloatingSequence);
+        Assert.assertTrue(GenericLexer.immutableOf(tok) instanceof GenericLexer.FloatingSequence);
+    }
+
+    @Test(expected = SqlException.class)
+    public void testAssertNoDot1() throws SqlException {
+        GenericLexer.assertNoDots(".", 0);
+    }
+
+    @Test(expected = SqlException.class)
+    public void testAssertNoDot2() throws SqlException {
+        GenericLexer.assertNoDots("..", 0);
+    }
+
+    @Test
+    public void testAssertNoDot3() throws SqlException {
+        Assert.assertEquals(",", GenericLexer.assertNoDots(",", 0));
+    }
+
+    @Test(expected = SqlException.class)
+    public void testAssertNoDotAndSlashes1() throws SqlException {
+        GenericLexer.assertNoDotsAndSlashes(".", 0);
+    }
+
+    @Test(expected = SqlException.class)
+    public void testAssertNoDotAndSlashes2() throws SqlException {
+        GenericLexer.assertNoDotsAndSlashes("/.", 0);
+    }
+
+    @Test
+    public void testAssertNoDotAndSlashes3() throws SqlException {
+        Assert.assertEquals(",", GenericLexer.assertNoDotsAndSlashes(",", 0));
+    }
+
+    @Test
+    public void testUnquote() {
+        Assert.assertEquals(GenericLexer.unquote("QuestDB"), GenericLexer.unquote("'QuestDB'"));
+    }
+
+    @Test
+    public void testImmutablePairOf1() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("orange");
+        CharSequence cs = ts.next();
+        ts.immutablePairOf(GenericLexer.immutableOf(cs), cs);
+        Assert.assertEquals("orange", ts.getContent());
+        Assert.assertNull(ts.getUnparsed());
+        Assert.assertEquals(6, ts.getPosition());
+        Assert.assertEquals(6, ts.getTokenHi());
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testImmutablePairOf2() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("orange");
+        CharSequence cs = ts.next();
+        ts.immutablePairOf(cs, cs);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testImmutablePairOf3() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.immutablePairOf("", "");
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testImmutablePairOf4() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("geohash 31b");
+        ts.immutablePairOf(GenericLexer.immutableOf(ts.next()), ts.next());
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testImmutablePairOf5() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("geohash 31b");
+        CharSequence tok0 = GenericLexer.immutableOf(ts.next());
+        ts.next();
+        CharSequence pair = ts.immutablePairOf(tok0, ts.next());
+        pair.subSequence(0, 2);
+    }
+
+    @Test(expected = IndexOutOfBoundsException.class)
+    public void testImmutablePairOf6() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("geohash 31b");
+        CharSequence tok0 = GenericLexer.immutableOf(ts.next());
+        ts.next();
+        GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair) ts.immutablePairOf(tok0, ts.next());
+        pair.charAt(17_000);
+    }
+
+    @Test
+    public void testImmutablePairOf7() {
+        GenericLexer ts = new GenericLexer(64);
+        String culprit = "geohash 31b";
+        ts.of(culprit);
+        CharSequence tok0 = GenericLexer.immutableOf(ts.next());
+        ts.next();
+        CharSequence tok1 = ts.next();
+        GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair) ts.immutablePairOf(tok0, tok1);
+        Assert.assertEquals(culprit.length() - 1, pair.length());
+        StringSink sink = Misc.getThreadLocalBuilder();
+        for (int i = 0; i < pair.length(); i++) {
+            sink.put(pair.charAt(i));
+        }
+        pair.clear();
+        Assert.assertEquals(pair.toString(), sink.toString());
     }
 }
