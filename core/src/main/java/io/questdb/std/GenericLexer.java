@@ -424,7 +424,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             if (index >= 0 && index < length()) {
                 return index < cs0.length() ? cs0.charAt(index) : cs1.charAt(index - cs0.length());
             }
-            throw new IndexOutOfBoundsException(index);
+            throw new IndexOutOfBoundsException();
         }
 
         @Override
