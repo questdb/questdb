@@ -45,6 +45,7 @@ import org.jetbrains.annotations.NotNull;
 import java.util.ArrayDeque;
 
 import static io.questdb.griffin.SqlKeywords.isNullKeyword;
+import static io.questdb.griffin.SqlKeywords.startsWithGeoHashKeyword;
 
 public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private static final Log LOG = LogFactory.getLog(FunctionParser.class);
@@ -278,11 +279,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     functionStack.push(new StrConstant(node.token));
                     break;
                 case ExpressionNode.CONSTANT:
-                    if (!SqlKeywords.isGeoHashKeyword(node.token)) {
-                        functionStack.push(createConstant(node.position, node.token));
-                    } else {
-                        functionStack.push(createGeoHashTypeConstant(node));
-                    }
+                    functionStack.push(createConstant(node.position, node.token));
                     break;
                 case ExpressionNode.QUERY:
                     functionStack.push(createCursorFunction(node));
@@ -462,18 +459,17 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             return Constants.getTypeConstant(columnType);
         }
 
+        // geohash?
+        if (startsWithGeoHashKeyword(tok)) {
+            int bits = SqlParser.parseGeoHashSize(position, 7, tok);
+            return GeoHashTypeConstant.getInstanceByPrecision(bits);
+        }
+
         throw SqlException.position(position).put("invalid constant: ").put(tok);
     }
-
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
         return new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
-    }
-
-    private TypeConstant createGeoHashTypeConstant(ExpressionNode node) throws SqlException {
-        assert node.rhs != null;
-        int bits = SqlParser.parseGeoHashSize(0, node.rhs.token);
-        return GeoHashTypeConstant.getInstanceByPrecision(bits);
     }
 
     private Function createFunction(

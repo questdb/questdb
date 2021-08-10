@@ -56,6 +56,13 @@ public class O3PurgeJob extends AbstractQueueConsumerJob<O3PurgeTask> {
         final long readerTxnCount = txnScoreboard.getActiveReaderCount(readerTxn);
         int errno = -1;
         if (txnScoreboard.isTxnAvailable(minTxnToExpect)) {
+            LOG.info().
+                    $("purging [path=").$(path)
+                    .$(", readerTxn=").$(readerTxn)
+                    .$(", readerTxnCount=").$(readerTxnCount)
+                    .$(", minTxnToExpect=").$(minTxnToExpect)
+                    .$(", nameTxnToRemove=").$(nameTxnToRemove)
+                    .I$();
             TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
             TableUtils.txnPartitionConditionally(path, nameTxnToRemove);
             path.slash$();
@@ -64,7 +71,9 @@ public class O3PurgeJob extends AbstractQueueConsumerJob<O3PurgeTask> {
                         $("purged [path=").$(path)
                         .$(", readerTxn=").$(readerTxn)
                         .$(", readerTxnCount=").$(readerTxnCount)
-                        .$(']').$();
+                        .$(", minTxnToExpect=").$(minTxnToExpect)
+                        .$(", nameTxnToRemove=").$(nameTxnToRemove)
+                        .I$();
                 return 0;
             }
         }

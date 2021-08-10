@@ -1628,19 +1628,23 @@ public final class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "unsupported column type: ").put(tok);
         }
         if (ColumnType.GEOHASH == type) {
-            return ColumnType.geohashWithPrecision(parseGeoHashSize(lexer));
+            expectTok(lexer, '(');
+            final int size = parseGeoHashSize(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
+            expectTok(lexer, ')');
+            return ColumnType.geohashWithPrecision(size);
         }
         return type;
     }
 
-    static int parseGeoHashSize(int position, CharSequence sizeStr) throws SqlException {
-        if (sizeStr.length() < 2) {
+    static int parseGeoHashSize(int position, int start, CharSequence sizeStr) throws SqlException {
+        assert start >= 0;
+        if (sizeStr.length() - start < 2) {
             throw SqlException.position(position)
                     .put("invalid GEOHASH size, must be number followed by 'C' or 'B' character");
         }
         int size;
         try {
-            size = Numbers.parseInt(sizeStr, 0, sizeStr.length() - 1);
+            size = Numbers.parseInt(sizeStr, start, sizeStr.length() - 1);
         } catch (NumericException e) {
             throw SqlException.position(position)
                     .put("invalid GEOHASH size, must be number followed by 'C' or 'B' character");
@@ -1662,13 +1666,6 @@ public final class SqlParser {
                     .put("invalid GEOHASH type precision range, mast be [1, 60] bits, provided=")
                     .put(size);
         }
-        return size;
-    }
-
-    private int parseGeoHashSize(GenericLexer lexer) throws SqlException {
-        expectTok(lexer, '(');
-        int size = parseGeoHashSize(lexer.lastTokenPosition(), expectLiteral(lexer).token);
-        expectTok(lexer, ')');
         return size;
     }
 

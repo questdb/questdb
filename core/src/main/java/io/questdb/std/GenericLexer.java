@@ -26,6 +26,8 @@ package io.questdb.std;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.std.str.AbstractCharSequence;
+import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
@@ -37,6 +39,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     private final IntObjHashMap<ObjList<CharSequence>> symbols = new IntObjHashMap<>();
     private final CharSequence flyweightSequence = new InternalFloatingSequence();
     private final ObjectPool<FloatingSequence> csPool;
+    private final ObjectPool<FloatingSequencePair> csPairPool;
     private CharSequence next = null;
     private int _lo;
     private int _hi;
@@ -48,10 +51,21 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     private int _start;
 
     public GenericLexer(int poolCapacity) {
-        this.csPool = new ObjectPool<>(FloatingSequence::new, poolCapacity);
+        csPool = new ObjectPool<>(FloatingSequence::new, poolCapacity);
+        csPairPool = new ObjectPool<>(FloatingSequencePair::new, poolCapacity);
         for (int i = 0, n = WHITESPACE.size(); i < n; i++) {
             defineSymbol(Chars.toString(WHITESPACE.get(i)));
         }
+    }
+
+    public CharSequence immutablePairOf(CharSequence value0, CharSequence value1) {
+        if (!(value0 instanceof FloatingSequence && value1 instanceof InternalFloatingSequence)) {
+            throw new UnsupportedOperationException("only pairs of floating sequences are allowed");
+        }
+        FloatingSequencePair seqPair = csPairPool.next();
+        seqPair.cs0 = (FloatingSequence) value0;
+        seqPair.cs1 = (FloatingSequence) immutableOf(value1);
+        return seqPair;
     }
 
     public static CharSequence immutableOf(CharSequence value) {
@@ -247,6 +261,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
 
     public void of(CharSequence cs, int lo, int hi) {
         this.csPool.clear();
+        this.csPairPool.clear();
         this.content = cs;
         this._start = lo;
         this._pos = lo;
@@ -258,8 +273,8 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
 
     public void restart() {
         this.csPool.clear();
+        this.csPairPool.clear();
         this._pos = this._start;
-        this.csPool.clear();
         this.next = null;
         this.unparsed = null;
         this.last = null;
@@ -267,6 +282,16 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
 
     public void unparse() {
         unparsed = last;
+    }
+
+    public void backTo(int position, CharSequence lastSeen) {
+        if (position < 0 || position > _len) {
+            throw new IndexOutOfBoundsException();
+        }
+        _pos = position;
+        last = lastSeen;
+        unparsed = null;
+        next = null;
     }
 
     private static CharSequence findToken0(char c, CharSequence content, int _pos, int _len, IntObjHashMap<ObjList<CharSequence>> symbols) {
@@ -381,6 +406,44 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             that.hi = lo + end;
             assert that.lo < that.hi;
             return that;
+        }
+    }
+
+    public class FloatingSequencePair extends AbstractCharSequence implements Mutable {
+
+        FloatingSequence cs0;
+        FloatingSequence cs1;
+
+        @Override
+        public int length() {
+            return cs0.length() + cs1.length();
+        }
+
+        @Override
+        public char charAt(int index) {
+            if (index >= 0 && index < length()) {
+                return index < cs0.length() ? cs0.charAt(index) : cs1.charAt(index - cs0.length());
+            }
+            throw new IndexOutOfBoundsException();
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            throw new UnsupportedOperationException();
+        }
+
+        @NotNull
+        @Override
+        public String toString() {
+            final CharSink b = Misc.getThreadLocalBuilder();
+            b.put(cs0);
+            b.put(cs1);
+            return b.toString();
+        }
+
+        @Override
+        public void clear() {
+            // no-op
         }
     }
 

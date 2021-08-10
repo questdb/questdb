@@ -2105,7 +2105,8 @@ public class TableWriter implements Closeable {
                             tableName,
                             task.getPartitionBy(),
                             task.getTimestamp(),
-                            txnScoreboard
+                            txnScoreboard,
+                            task.getMostRecentTxn()
                     );
                 } else if (cursor == -1) {
                     break;
@@ -3405,6 +3406,16 @@ public class TableWriter implements Closeable {
             long srcDataMax,
             boolean partitionMutates
     ) {
+        LOG.debug().$("o3 partition update [timestampMin=").$ts(timestampMin)
+                .$(", timestampMax=").$ts(timestampMax)
+                .$(", partitionTimestamp=").$ts(partitionTimestamp)
+                .$(", srcOooPartitionLo=").$(srcOooPartitionLo)
+                .$(", srcOooPartitionHi=").$(srcOooPartitionHi)
+                .$(", srcOooMax=").$(srcOooMax)
+                .$(", srcDataMax=").$(srcDataMax)
+                .$(", partitionMutates=").$(partitionMutates)
+                .I$();
+
         this.txFile.minTimestamp = Math.min(timestampMin, this.txFile.minTimestamp);
         final long partitionSize = srcDataMax + srcOooPartitionHi - srcOooPartitionLo + 1;
         final long rowDelta = srcOooPartitionHi - srcOooMax;
@@ -3582,8 +3593,7 @@ public class TableWriter implements Closeable {
 
             long maxCommittedTimestamp = 0;
             if (delta > 0) {
-                // If there are rows to move
-                // and we cannot move all uncommitted rows to o3 memory
+                // If there are rows to move, and we cannot move all uncommitted rows to o3 memory
                 // we have to set maxCommittedTimestamp in tx file
                 MemoryMAR timestampColumn = getPrimaryColumn(timestampIndex);
                 if (!timestampColumn.isMapped((committedTransientRowCount - 1) << 3, Long.BYTES)) {
