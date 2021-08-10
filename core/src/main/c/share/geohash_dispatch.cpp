@@ -23,9 +23,7 @@
  ******************************************************************************/
 
 #include "util.h"
-#include "bitmap_index_utils.h"
 #include "geohash_dispatch.h"
-#include <string>
 
 void MULTI_VERSION_NAME (simd_iota)(int64_t *array, const int64_t array_size, const int64_t start) {
     const int64_t step = 8;
@@ -53,43 +51,48 @@ void MULTI_VERSION_NAME (filter_with_prefix)(
         const int32_t hashes_type_size,
         const int64_t rows_count,
         const int64_t *prefixes,
-        const int64_t prefixes_count
+        const int64_t prefixes_count,
+        int64_t *out_filtered_count
 ) {
     switch (hashes_type_size) {
-        case 8:
-            filter_with_prefix_generic_vanilla<int8_t>(
+        case 1:
+            filter_with_prefix_generic<int8_t, Vec64c, Vec64cb>(
                     reinterpret_cast<const int8_t *>(hashes),
                     rows,
                     rows_count,
                     prefixes,
-                    prefixes_count
+                    prefixes_count,
+                    out_filtered_count
             );
             break;
-        case 16:
-            filter_with_prefix_generic<int16_t, Vec8s, Vec8sb>(
+        case 2:
+            filter_with_prefix_generic<int16_t, Vec32s, Vec32sb>(
                     reinterpret_cast<const int16_t *>(hashes),
                     rows,
                     rows_count,
                     prefixes,
-                    prefixes_count
+                    prefixes_count,
+                    out_filtered_count
             );
             break;
-        case 32:
-            filter_with_prefix_generic<int32_t, Vec8i, Vec8ib>(
+        case 4:
+            filter_with_prefix_generic<int32_t, Vec16i, Vec16ib>(
                     reinterpret_cast<const int32_t *>(hashes),
                     rows,
                     rows_count,
                     prefixes,
-                    prefixes_count
+                    prefixes_count,
+                    out_filtered_count
             );
             break;
-        case 64:
+        case 8:
             filter_with_prefix_generic<int64_t, Vec8q, Vec8qb>(
                     reinterpret_cast<const int64_t *>(hashes),
                     rows,
                     rows_count,
                     prefixes,
-                    prefixes_count
+                    prefixes_count,
+                    out_filtered_count
                     );
             break;
         default:

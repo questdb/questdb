@@ -27,6 +27,9 @@
 
 #include "util.h"
 #include "dispatcher.h"
+#include "bitmap_index_utils.h"
+#include <iostream>
+#include <bitset>
 
 constexpr int64_t unpack_length(int64_t packed_hash) { return packed_hash >> 60; }
 
@@ -40,37 +43,41 @@ void filter_with_prefix_generic(
         int64_t *rows,
         const int64_t rows_count,
         const int64_t *prefixes,
-        const int64_t prefixes_count
+        const int64_t prefixes_count,
+        int64_t *out_filtered_count
 ) {
-    int64_t i = 0;
-    const int step = 8;
+    int64_t i = 0; // input index
+    int64_t o = 0; // output index
+
+    constexpr int step = TVec::size();
     const int64_t limit = rows_count - step + 1;
+
     for (; i < limit; i += step) {
         MM_PREFETCH_T0(rows + i + 64);
-        Vec8q offset;
-        offset.load(rows + i);
 
-        TVec current_hashes_vec(
-                hashes[to_local_row_id(offset[0] -1)],
-                hashes[to_local_row_id(offset[1] -1)],
-                hashes[to_local_row_id(offset[2] -1)],
-                hashes[to_local_row_id(offset[3] -1)],
-                hashes[to_local_row_id(offset[4] -1)],
-                hashes[to_local_row_id(offset[5] -1)],
-                hashes[to_local_row_id(offset[6] -1)],
-                hashes[to_local_row_id(offset[7] -1)]);
+        //TODO: optimize load
+        TVec current_hashes_vec;
+        for (int j = 0; j < TVec::size(); ++j) {
+            current_hashes_vec.insert(j, hashes[to_local_row_id(rows[i + j] - 1)]);
+        }
 
         TVecB hit_mask(false);
-        for (size_t j = 0, sz = prefixes_count/2; j < sz; ++j) {
-            const T hash = static_cast<T>(prefixes[2*j]); // narrow cast for int/short/byte cases
-            const T mask = static_cast<T>(prefixes[2*j + 1]);
+        for (size_t j = 0, size = prefixes_count / 2; j < size; ++j) {
+            const T hash = static_cast<T>(prefixes[2 * j]); // narrow cast for int/short/byte cases
+            const T mask = static_cast<T>(prefixes[2 * j + 1]);
             TVec target_hash(hash); // broadcast hash
             TVec target_mask(mask); // broadcast mask
             hit_mask |= (current_hashes_vec & target_mask) == target_hash;
-
         }
-        TVec filtered = select(hit_mask, offset, 0);
-        filtered.store(rows + i);
+
+        uint64_t bits = to_bits(hit_mask);
+        if (bits != 0) {
+            while(bits) {
+                auto idx = bit_scan_forward(bits);
+                rows[o++] = rows[i + idx];
+                bits &= ~(1 << idx);
+            }
+        }
     }
 
     for (; i < rows_count; ++i) {
@@ -81,9 +88,11 @@ void filter_with_prefix_generic(
             const T mask = static_cast<T>(prefixes[2*j+1]);
             hit |= (current_hash & mask) == hash;
         }
-        const int64_t cv = rows[i];
-        rows[i] = hit ? cv : 0;
+        if (hit) {
+            rows[o++] = rows[i];
+        }
     }
+    *out_filtered_count = o;
 }
 
 template<typename T>
@@ -92,9 +101,11 @@ void filter_with_prefix_generic_vanilla(
         int64_t *rows,
         const int64_t rows_count,
         const int64_t *prefixes,
-        const int64_t prefixes_count
+        const int64_t prefixes_count,
+        int64_t *out_filtered_count
 ) {
-    int64_t i = 0;
+    int64_t i = 0; // input index
+    int64_t o = 0; // output index
     for (; i < rows_count; ++i) {
         const T current_hash = hashes[to_local_row_id(rows[i] - 1)];
         bool hit = false;
@@ -103,19 +114,21 @@ void filter_with_prefix_generic_vanilla(
             const T mask = static_cast<T>(prefixes[2*j+1]);
             hit |= (current_hash & mask) == hash;
         }
-        const int64_t cv = rows[i];
-        rows[i] = hit ? cv : 0;
+        if (hit) {
+            rows[o++] = rows[i];
+        }
     }
+    *out_filtered_count = o;
 }
-
 
 DECLARE_DISPATCHER_TYPE(filter_with_prefix,
                         const int64_t hashes,
                         int64_t *rows,
+                        const int32_t hashes_type_size,
                         const int64_t rows_count,
-                        const int32_t hash_length,
                         const int64_t *prefixes,
-                        const int64_t prefixes_count
+                        const int64_t prefixes_count,
+                        int64_t *out_filtered_count
 );
 
 DECLARE_DISPATCHER_TYPE(simd_iota, int64_t *array, const int64_t array_size, const int64_t start);
