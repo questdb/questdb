@@ -286,7 +286,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
 
     public void moveTo(int position, CharSequence lastSeen) {
         if (position < 0 || position > _len) {
-            throw new IndexOutOfBoundsException(position);
+            throw new IndexOutOfBoundsException();
         }
         _pos = position;
         last = lastSeen;
