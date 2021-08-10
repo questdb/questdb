@@ -278,4 +278,39 @@ public class GenericLexerTest {
         GenericLexer ts = new GenericLexer(64);
         ts.immutablePairOf("", "");
     }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testImmutablePairOf4() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("geohash 31b");
+        ts.immutablePairOf(GenericLexer.immutableOf(ts.next()), ts.next());
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testImmutablePairOf5() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("geohash 31b");
+        CharSequence tok0 = GenericLexer.immutableOf(ts.next());
+        ts.next();
+        CharSequence pair = ts.immutablePairOf(tok0, ts.next());
+        pair.subSequence(0, 2);
+    }
+
+    @Test
+    public void testImmutablePairOf6() {
+        GenericLexer ts = new GenericLexer(64);
+        String culprit = "geohash 31b";
+        ts.of(culprit);
+        CharSequence tok0 = GenericLexer.immutableOf(ts.next());
+        ts.next();
+        CharSequence tok1 = ts.next();
+        GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair) ts.immutablePairOf(tok0, tok1);
+        Assert.assertEquals(culprit.length() - 1, pair.length());
+        StringSink sink = Misc.getThreadLocalBuilder();
+        for (int i = 0; i < pair.length(); i++) {
+            sink.put(pair.charAt(i));
+        }
+        pair.clear();
+        Assert.assertEquals(pair.toString(), sink.toString());
+    }
 }
