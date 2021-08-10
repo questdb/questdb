@@ -73,8 +73,8 @@ public class TableWriter implements Closeable {
     private final static RemoveFileLambda REMOVE_OR_LOG = TableWriter::removeFileAndOrLog;
     private final static RemoveFileLambda REMOVE_OR_EXCEPTION = TableWriter::removeOrException;
     final ObjList<MemoryMAR> columns;
-    private final ObjList<MemoryMAR> logColumns;
-    private final ObjList<MemoryLogAImpl> spliceColumns;
+    private final ObjList<MemoryMA> logColumns;
+    private final ObjList<MemoryLogA> spliceColumns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
     private final ObjList<WriterTransientSymbolCountChangeHandler> denseSymbolTransientCountHandlers;
@@ -143,6 +143,7 @@ public class TableWriter implements Closeable {
     private final MemoryMR indexMem = Vm.getMRInstance();
     private final MemoryFR slaveMetaMem = new MemoryFCRImpl();
     private final SCSequence commandSubSeq;
+    private final LongIntHashMap replPartitionHash = new LongIntHashMap();
     private long todoTxn;
     private MemoryARW o3TimestampMem;
     private final O3ColumnUpdateMethod o3MoveLagRef = this::o3MoveLag0;
@@ -311,7 +312,6 @@ public class TableWriter implements Closeable {
             configureAppendPosition();
             purgeUnusedPartitions();
             clearTodoLog();
-
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -838,178 +838,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public TableSyncModel reconcileSlaveState(long slaveTxData, long slaveMetaData, long slaveMetaDataSize) {
-        LOG.info().$("reconciling sync request [table=").$(tableName).I$();
-        final LongIntHashMap hash = new LongIntHashMap();
-        final TableSyncModel model = new TableSyncModel();
-
-        final int symbolsCount = Unsafe.getUnsafe().getInt(slaveTxData + TX_OFFSET_MAP_WRITER_COUNT);
-        final int theirLast;
-        if (Unsafe.getUnsafe().getLong(slaveTxData + TX_OFFSET_DATA_VERSION) != txFile.getDataVersion()) {
-            // truncate
-            model.setTableAction(TableSyncModel.TABLE_ACTION_TRUNCATE);
-            theirLast = -1;
-        } else {
-            // hash partitions on slave side
-            int partitionCount = Unsafe.getUnsafe().getInt(slaveTxData + getPartitionTableSizeOffset(symbolsCount)) / 8;
-            theirLast = partitionCount / 4 - 1;
-            for (int i = 0; i < partitionCount; i += 4) {
-                long p = slaveTxData + getPartitionTableIndexOffset(symbolsCount, i);
-                long ts = Unsafe.getUnsafe().getLong(p);
-                hash.put(ts, i);
-            }
-        }
-        model.setDataVersion(txFile.getDataVersion());
-
-        // collate local partitions that need to be propagated to this slave
-        final int ourPartitionCount = txFile.getPartitionCount();
-        final int ourLast = ourPartitionCount - 1;
-
-        for (int i = 0; i < ourPartitionCount; i++) {
-            try {
-                final long ts = txFile.getPartitionTimestamp(i);
-                final long ourSize = i < ourLast ? txFile.getPartitionSize(i) : txFile.transientRowCount;
-                final long ourDataTxn = i < ourLast ? txFile.getPartitionDataTxn(i) : txFile.txn;
-                final int keyIndex = hash.keyIndex(ts);
-                if (keyIndex < 0) {
-                    int slavePartitionIndex = hash.valueAt(keyIndex);
-                    long p = slaveTxData + getPartitionTableIndexOffset(symbolsCount, slavePartitionIndex);
-                    // check if partition name ourDataTxn is the same
-                    if (Unsafe.getUnsafe().getLong(p + 16) == txFile.getPartitionNameTxn(i)) {
-                        // this is the same partition roughly
-                        final long theirSize = slavePartitionIndex / 4 < theirLast ?
-                                Unsafe.getUnsafe().getLong(p + 8) :
-                                Unsafe.getUnsafe().getLong(slaveTxData + TX_OFFSET_TRANSIENT_ROW_COUNT);
-
-                        if (theirSize != ourSize) {
-                            if (theirSize < ourSize) {
-                                // send append section
-                                model.addPartitionAction(
-                                        1,
-                                        ts,
-                                        theirSize,
-                                        ourSize - theirSize,
-                                        txFile.getPartitionNameTxn(i),
-                                        ourDataTxn
-                                );
-                            } else {
-                                LOG.error()
-                                        .$("slave partition is larger than that on master [table=").$(tableName)
-                                        .$(", ts=").$ts(ts)
-                                        .I$();
-                            }
-                        }
-                    } else {
-                        // partition name ourDataTxn is different, partition mutated
-                        model.addPartitionAction(
-                                0,
-                                ts,
-                                0,
-                                ourSize,
-                                txFile.getPartitionNameTxn(i),
-                                ourDataTxn
-                        );
-                    }
-                } else {
-                    // send whole partition
-                    model.addPartitionAction(
-                            0,
-                            ts,
-                            0,
-                            ourSize,
-                            txFile.getPartitionNameTxn(i),
-                            ourDataTxn
-                    );
-                }
-
-                setPathForPartition(path, partitionBy, ts, false);
-
-                int plen = path.length();
-                for (int j = 0; j < columnCount; j++) {
-                    final long top = TableUtils.readColumnTop(ff, path, metadata.getColumnName(j), plen, tempMem16b);
-                    if (top > 0) {
-                        model.addColumnTop(ts, j, top);
-                    }
-                }
-            } finally {
-                path.trimTo(rootLen);
-            }
-        }
-
-        slaveMetaMem.of(slaveMetaData, slaveMetaDataSize);
-
-        final LowerCaseCharSequenceIntHashMap slaveColumnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
-        // create column name - index map
-        // We will rely on this writer's metadata to convert CharSequence instances
-        // of column names to string in the map. The assumption here that most of the time
-        // column names will be the same
-
-        int slaveColumnCount = slaveMetaMem.getInt(TableUtils.META_OFFSET_COUNT);
-        long offset = TableUtils.getColumnNameOffset(slaveColumnCount);
-
-        // don't create strings in this loop, we already have them in columnNameIndexMap
-        for (int i = 0; i < slaveColumnCount; i++) {
-            final CharSequence name = slaveMetaMem.getStr(offset);
-            int ourColumnIndex = this.metadata.getColumnIndexQuiet(name);
-            if (ourColumnIndex > -1) {
-                slaveColumnNameIndexMap.put(this.metadata.getColumnName(ourColumnIndex), i);
-            } else {
-                slaveColumnNameIndexMap.put(Chars.toString(name), i);
-            }
-            offset += Vm.getStorageLength(name);
-        }
-
-        final long pTransitionIndex = TableUtils.createTransitionIndex(
-                metaMem,
-                slaveMetaMem,
-                slaveColumnCount,
-                slaveColumnNameIndexMap
-        );
-
-        try {
-            final long pIndexBase = pTransitionIndex + 8;
-
-            int addedColumnMetadataIndex = -1;
-            for (int i = 0; i < metadata.getColumnCount(); i++) {
-
-                final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L) - 1;
-
-                if (copyFrom == i) {
-                    // It appears that column hasn't changed its position. There are three possibilities here:
-                    // 1. Column has been deleted and re-added by the same name. We must check if file
-                    //    descriptor is still valid. If it isn't, reload the column from disk
-                    // 2. Column has been forced out of the reader via closeColumnForRemove(). This is required
-                    //    on Windows before column can be deleted. In this case we must check for marker
-                    //    instance and the column from disk
-                    // 3. Column hasn't been altered, and we can skip to next column.
-                    continue;
-                }
-
-                if (copyFrom > -1) {
-                    int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4) - 1;
-                    if (copyTo == -1) {
-                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_REMOVE, i, copyTo);
-                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_MOVE, copyFrom, i);
-                    } else {
-                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_MOVE, copyFrom, copyTo + 1);
-                    }
-                } else {
-                    // new column
-                    model.addColumnMetadata(metadata.getColumnQuick(i));
-                    model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, ++addedColumnMetadataIndex, i);
-                }
-            }
-        } finally {
-            TableUtils.freeTransitionIndex(pTransitionIndex);
-        }
-
-        if (model.getTableAction() != 0 || model.getPartitionCount() > 0) {
-            enableTransactionLog();
-        }
-
-        return model;
-    }
-
     public void removeColumn(CharSequence name) {
 
         checkDistressed();
@@ -1221,6 +1049,179 @@ public class TableWriter implements Closeable {
         }
 
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();
+    }
+
+    public TableSyncModel replCreateTableSyncModel(long slaveTxData, long slaveMetaData, long slaveMetaDataSize) {
+        LOG.info().$("reconciling sync request [table=").$(tableName).I$();
+        replPartitionHash.clear();
+
+        final TableSyncModel model = new TableSyncModel();
+
+        final int symbolsCount = Unsafe.getUnsafe().getInt(slaveTxData + TX_OFFSET_MAP_WRITER_COUNT);
+        final int theirLast;
+        if (Unsafe.getUnsafe().getLong(slaveTxData + TX_OFFSET_DATA_VERSION) != txFile.getDataVersion()) {
+            // truncate
+            model.setTableAction(TableSyncModel.TABLE_ACTION_TRUNCATE);
+            theirLast = -1;
+        } else {
+            // hash partitions on slave side
+            int partitionCount = Unsafe.getUnsafe().getInt(slaveTxData + getPartitionTableSizeOffset(symbolsCount)) / 8;
+            theirLast = partitionCount / 4 - 1;
+            for (int i = 0; i < partitionCount; i += 4) {
+                long p = slaveTxData + getPartitionTableIndexOffset(symbolsCount, i);
+                long ts = Unsafe.getUnsafe().getLong(p);
+                replPartitionHash.put(ts, i);
+            }
+        }
+        model.setDataVersion(txFile.getDataVersion());
+
+        // collate local partitions that need to be propagated to this slave
+        final int ourPartitionCount = txFile.getPartitionCount();
+        final int ourLast = ourPartitionCount - 1;
+
+        for (int i = 0; i < ourPartitionCount; i++) {
+            try {
+                final long ts = txFile.getPartitionTimestamp(i);
+                final long ourSize = i < ourLast ? txFile.getPartitionSize(i) : txFile.transientRowCount;
+                final long ourDataTxn = i < ourLast ? txFile.getPartitionDataTxn(i) : txFile.txn;
+                final int keyIndex = replPartitionHash.keyIndex(ts);
+                if (keyIndex < 0) {
+                    int slavePartitionIndex = replPartitionHash.valueAt(keyIndex);
+                    long p = slaveTxData + getPartitionTableIndexOffset(symbolsCount, slavePartitionIndex);
+                    // check if partition name ourDataTxn is the same
+                    if (Unsafe.getUnsafe().getLong(p + 16) == txFile.getPartitionNameTxn(i)) {
+                        // this is the same partition roughly
+                        final long theirSize = slavePartitionIndex / 4 < theirLast ?
+                                Unsafe.getUnsafe().getLong(p + 8) :
+                                Unsafe.getUnsafe().getLong(slaveTxData + TX_OFFSET_TRANSIENT_ROW_COUNT);
+
+                        if (theirSize != ourSize) {
+                            if (theirSize < ourSize) {
+                                // send append section
+                                model.addPartitionAction(
+                                        1,
+                                        ts,
+                                        theirSize,
+                                        ourSize - theirSize,
+                                        txFile.getPartitionNameTxn(i),
+                                        ourDataTxn
+                                );
+                            } else {
+                                LOG.error()
+                                        .$("slave partition is larger than that on master [table=").$(tableName)
+                                        .$(", ts=").$ts(ts)
+                                        .I$();
+                            }
+                        }
+                    } else {
+                        // partition name ourDataTxn is different, partition mutated
+                        model.addPartitionAction(
+                                0,
+                                ts,
+                                0,
+                                ourSize,
+                                txFile.getPartitionNameTxn(i),
+                                ourDataTxn
+                        );
+                    }
+                } else {
+                    // send whole partition
+                    model.addPartitionAction(
+                            0,
+                            ts,
+                            0,
+                            ourSize,
+                            txFile.getPartitionNameTxn(i),
+                            ourDataTxn
+                    );
+                }
+
+                setPathForPartition(path, partitionBy, ts, false);
+
+                int plen = path.length();
+                for (int j = 0; j < columnCount; j++) {
+                    final long top = TableUtils.readColumnTop(ff, path, metadata.getColumnName(j), plen, tempMem16b);
+                    if (top > 0) {
+                        model.addColumnTop(ts, j, top);
+                    }
+                }
+            } finally {
+                path.trimTo(rootLen);
+            }
+        }
+
+        slaveMetaMem.of(slaveMetaData, slaveMetaDataSize);
+
+        final LowerCaseCharSequenceIntHashMap slaveColumnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
+        // create column name - index map
+        // We will rely on this writer's metadata to convert CharSequence instances
+        // of column names to string in the map. The assumption here that most of the time
+        // column names will be the same
+
+        int slaveColumnCount = slaveMetaMem.getInt(TableUtils.META_OFFSET_COUNT);
+        long offset = TableUtils.getColumnNameOffset(slaveColumnCount);
+
+        // don't create strings in this loop, we already have them in columnNameIndexMap
+        for (int i = 0; i < slaveColumnCount; i++) {
+            final CharSequence name = slaveMetaMem.getStr(offset);
+            int ourColumnIndex = this.metadata.getColumnIndexQuiet(name);
+            if (ourColumnIndex > -1) {
+                slaveColumnNameIndexMap.put(this.metadata.getColumnName(ourColumnIndex), i);
+            } else {
+                slaveColumnNameIndexMap.put(Chars.toString(name), i);
+            }
+            offset += Vm.getStorageLength(name);
+        }
+
+        final long pTransitionIndex = TableUtils.createTransitionIndex(
+                metaMem,
+                slaveMetaMem,
+                slaveColumnCount,
+                slaveColumnNameIndexMap
+        );
+
+        try {
+            final long pIndexBase = pTransitionIndex + 8;
+
+            int addedColumnMetadataIndex = -1;
+            for (int i = 0; i < metadata.getColumnCount(); i++) {
+
+                final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L) - 1;
+
+                if (copyFrom == i) {
+                    // It appears that column hasn't changed its position. There are three possibilities here:
+                    // 1. Column has been deleted and re-added by the same name. We must check if file
+                    //    descriptor is still valid. If it isn't, reload the column from disk
+                    // 2. Column has been forced out of the reader via closeColumnForRemove(). This is required
+                    //    on Windows before column can be deleted. In this case we must check for marker
+                    //    instance and the column from disk
+                    // 3. Column hasn't been altered, and we can skip to next column.
+                    continue;
+                }
+
+                if (copyFrom > -1) {
+                    int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4) - 1;
+                    if (copyTo == -1) {
+                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_REMOVE, i, copyTo);
+                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_MOVE, copyFrom, i);
+                    } else {
+                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_MOVE, copyFrom, copyTo + 1);
+                    }
+                } else {
+                    // new column
+                    model.addColumnMetadata(metadata.getColumnQuick(i));
+                    model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, ++addedColumnMetadataIndex, i);
+                }
+            }
+        } finally {
+            TableUtils.freeTransitionIndex(pTransitionIndex);
+        }
+
+        if (model.getTableAction() != 0 || model.getPartitionCount() > 0) {
+            replTransactionLogPending();
+        }
+
+        return model;
     }
 
     public void rollback() {
@@ -2000,8 +2001,8 @@ public class TableWriter implements Closeable {
 
         final MemoryMAR logPrimary = Vm.getMARInstance();
         final MemoryMAR logSecondary;
-        final MemoryLogAImpl splicePrimary = new MemoryLogAImpl();
-        final MemoryLogAImpl spliceSecondary;
+        final MemoryLogA splicePrimary = new MemoryLogAImpl();
+        final MemoryLogA spliceSecondary;
 
         switch (ColumnType.tagOf(type)) {
             case ColumnType.BINARY:
@@ -2287,63 +2288,6 @@ public class TableWriter implements Closeable {
             freeTempMem();
             LOG.info().$("closed '").utf8(tableName).$('\'').$();
         }
-    }
-
-    private void enableTransactionLog() {
-        final long txn = getTxn();
-
-        LOG.info()
-                .$("enabling transaction log [table=").$(tableName)
-                .$(", txn=").$(txn)
-                .I$();
-
-        txnScoreboard.acquireTxn(txn);
-
-        try {
-            // copy txn file aside, so we know where data is for this transaction
-            path.concat(TXN_FILE_NAME).put('.').put(txn).$();
-            txFile.copyTo(path, LOG);
-            path.trimTo(rootLen);
-
-            path.concat("log").put('.').put(txn);
-            int plen = path.length();
-
-            // create dir
-            if (ff.mkdirs(path.slash$(), configuration.getMkDirMode()) == 0) {
-                for (int i = 0; i < columnCount; i++) {
-                    final CharSequence name = metadata.getColumnName(i);
-                    final int primaryIndex = getPrimaryColumnIndex(i);
-                    final int secondaryIndex = getSecondaryColumnIndex(i);
-                    final MemoryMAR logMem1 = logColumns.getQuick(primaryIndex);
-                    logMem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
-
-                    final MemoryLogAImpl spliceColumn1 = spliceColumns.getQuick(primaryIndex);
-                    if (spliceColumn1 == row.activeColumns.getQuick(primaryIndex)) {
-                        System.out.println("oopsie");
-                    }
-                    spliceColumn1.of(logMem1, row.activeColumns.getQuick(primaryIndex));
-
-                    final MemoryMAR logMem2 = logColumns.getQuick(secondaryIndex);
-                    if (logMem2 != null) {
-                        logMem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
-
-                        final MemoryLogAImpl spliceColumn2 = spliceColumns.getQuick(secondaryIndex);
-                        spliceColumn2.of(logMem2, row.activeColumns.getQuick(secondaryIndex));
-                    }
-                }
-                row.activeColumns = spliceColumns;
-            } else {
-                throw CairoException.instance(ff.errno()).put("Could not create directory: ").put(path);
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
-
-        LOG.info()
-                .$("enabled transaction log [table=").$(tableName)
-                .$(", txn=").$(txn)
-                .I$();
-
     }
 
     private void finishMetaSwapUpdate() {
@@ -4027,7 +3971,6 @@ public class TableWriter implements Closeable {
             if (cmd.getTableId() == getMetadata().getId()) {
                 switch (cmd.getType()) {
                     case TableWriterTask.TSK_SLAVE_SYNC:
-
                         LOG.info()
                                 .$("sync cmd [tableName=").$(tableName)
                                 .$(", tableId=").$(cmd.getTableId())
@@ -4566,9 +4509,65 @@ public class TableWriter implements Closeable {
         clearTodoLog();
     }
 
+    private void replEnableTransactionLog0(long txn) {
+        LOG.info()
+                .$("enabling transaction log [table=").$(tableName)
+                .$(", txn=").$(txn)
+                .I$();
+
+        txnScoreboard.acquireTxn(txn);
+
+        try {
+            // copy txn file aside, so we know where data is for this transaction
+            path.concat(TXN_FILE_NAME).put('.').put(txn).$();
+            txFile.copyTo(path, LOG);
+            path.trimTo(rootLen);
+
+            path.concat("log").put('.').put(txn);
+            int plen = path.length();
+
+            // create dir
+            if (ff.mkdirs(path.slash$(), configuration.getMkDirMode()) == 0) {
+                for (int i = 0; i < columnCount; i++) {
+                    final CharSequence name = metadata.getColumnName(i);
+                    final int primaryIndex = getPrimaryColumnIndex(i);
+                    final int secondaryIndex = getSecondaryColumnIndex(i);
+                    final MemoryMA logMem1 = logColumns.getQuick(primaryIndex);
+                    logMem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
+
+                    final MemoryLogA spliceColumn1 = spliceColumns.getQuick(primaryIndex);
+                    if (spliceColumn1 == row.activeColumns.getQuick(primaryIndex)) {
+                        System.out.println("oopsie");
+                    }
+                    spliceColumn1.of(logMem1, row.activeColumns.getQuick(primaryIndex));
+
+                    final MemoryMA logMem2 = logColumns.getQuick(secondaryIndex);
+                    if (logMem2 != null) {
+                        logMem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
+
+                        final MemoryLogA spliceColumn2 = spliceColumns.getQuick(secondaryIndex);
+                        spliceColumn2.of(logMem2, row.activeColumns.getQuick(secondaryIndex));
+                    }
+                }
+                row.activeColumns = spliceColumns;
+            } else {
+                throw CairoException.instance(ff.errno()).put("Could not create directory: ").put(path);
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
+
+        txFile.setTransactionLogTxn(txn);
+
+        LOG.info()
+                .$("enabled transaction log [table=").$(tableName)
+                .$(", txn=").$(txn)
+                .I$();
+    }
+
     TableSyncModel replHandleSyncCmd(TableWriterTask cmd) {
         final long txMemSize = Unsafe.getUnsafe().getLong(cmd.getData());
-        return reconcileSlaveState(
+        return replCreateTableSyncModel(
                 cmd.getData() + 8,
                 cmd.getData() + txMemSize + 16,
                 Unsafe.getUnsafe().getLong(cmd.getData() + txMemSize + 8)
@@ -4584,6 +4583,30 @@ public class TableWriter implements Closeable {
             LOG.info().$("published slave sync event [table=").$(tableName).$(']').$();
         } else {
             LOG.info().$("could not publish slave sync event [table=").$(tableName).$(']').$();
+        }
+    }
+
+    private void replTransactionLogPending() {
+        if (txFile.transactionLogTxn != Long.MIN_VALUE) {
+            // transaction log is already enabled, we should add another user to
+            // prevent switching transaction log off before everyone is done with it.
+            // We do still need to ensure when same "slave" requests sync we do not end up
+            // with maintaining transaction log forever
+            txFile.transactionLogUserCount++;
+            return;
+        }
+
+        // Set transaction log to pending, we will need it when we switch to O3.
+        // If we have O3 lag we will have to enable transaction log right away and copy the lag contents
+        // into this log
+        if (hasO3()) {
+            long o3LagRowCount = (masterRef - o3MasterRef + 1) / 2;
+            // todo: copy lag to the transaction log
+            txFile.transactionLogTxn = getTxn();
+        } else {
+            // no lag, set transaction log txn to pending (negative)
+            // we will enable transaction log when O3 kicks in
+            txFile.transactionLogTxn = -(getTxn() + 1);
         }
     }
 
@@ -5047,6 +5070,9 @@ public class TableWriter implements Closeable {
 
         private Row newRowO3(long timestamp) {
             LOG.info().$("switched to o3 [table=").utf8(tableName).$(']').$();
+            if (txFile.transactionLogTxn < 0 && txFile.transactionLogTxn != Long.MIN_VALUE) {
+                replEnableTransactionLog0(-txFile.transactionLogTxn - 1);
+            }
             txFile.beginPartitionSizeUpdate();
             o3OpenColumns();
             o3InError = false;

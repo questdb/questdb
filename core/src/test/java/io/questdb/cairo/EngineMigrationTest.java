@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -75,7 +74,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 );
 
                 String query = "select sum(c1) from x_none";
-                assertMigration(src, query);
+                assertMigration(query);
             }
         });
     }
@@ -95,7 +94,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 );
 
                 String query = "select sum(c1) from x_day";
-                assertMigration(src, query);
+                assertMigration(query);
             }
         });
     }
@@ -115,7 +114,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 );
 
                 String query = "select sum(c1) from x_month";
-                assertMigration(src, query);
+                assertMigration(query);
             }
         });
     }
@@ -135,7 +134,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 );
 
                 String query = "select sum(c1) from x_year";
-                assertMigration(src, query);
+                assertMigration(query);
             }
         });
     }
@@ -155,7 +154,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 );
 
                 String query = "select distinct s1, s2 from x_none";
-                assertMigration(src, query);
+                assertMigration(query);
             }
         });
     }
@@ -175,7 +174,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 );
 
                 String query = "select distinct s1, s2 from x_day";
-                assertMigration(src, query);
+                assertMigration(query);
             }
         });
     }
@@ -196,9 +195,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
                 String queryOld = "select sum(c1) from x_day where ts not in '2020-01-01'";
                 String queryNew = "select sum(c1) from x_day";
-                LongList removedTimestamps = new LongList();
-                removedTimestamps.add(TimestampFormatUtils.parseTimestamp("2020-01-01T00:00:00.000Z"));
-                assertMigration(src, queryOld, queryNew, removedTimestamps);
+                assertMigration(queryOld, queryNew, "/migration/assertMigrationPartitionsRemoved.zip");
             }
         });
     }
@@ -245,13 +242,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void testMigrateTxFileFailsToSaveTableMetaVersion() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "y_416", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()
-            ) {
-                CairoTestUtils.createTableWithVersion(model, 416);
-                downgradeTxFile(model, null);
-            }
             assertRemoveUpgradeFile();
-
+            replaceDbContent("/migration/testMigrateTxFileFailsToSaveTableMetaVersion.zip");
             DefaultCairoConfiguration config = new DefaultCairoConfiguration(root) {
                 private final FilesFacadeImpl ff = failToWriteMetaOffset(META_OFFSET_VERSION, "meta");
 
@@ -274,11 +266,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void testMigrateFailsToSaveTableMetaId() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "y_416", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()
-            ) {
-                CairoTestUtils.createTableWithVersion(model, 416);
-                downgradeTxFile(model, null);
-            }
+            replaceDbContent("/migration/testMigrateFailsToSaveTableMetaId.zip");
             assertRemoveUpgradeFile();
 
             DefaultCairoConfiguration config = new DefaultCairoConfiguration(root) {
@@ -303,11 +291,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void testMigrateToSaveGlobalUpdateVersion() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "y_416", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()
-            ) {
-                CairoTestUtils.createTableWithVersion(model, 416);
-                downgradeTxFile(model, null);
-            }
+            replaceDbContent("/migration/testMigrateFailsToSaveTableMetaId.zip");
             assertRemoveUpgradeFile();
 
             DefaultCairoConfiguration config = new DefaultCairoConfiguration(root) {
@@ -419,8 +403,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         }
 
         // Downgrade version meta
-        replaceDbContent("/migration/dbRoot_noid.zip");
-        downgradeMetaDataFile(src);
+        replaceDbContent("/migration/assertMetadataMigration.zip");
+        assertRemoveUpgradeFile();
 
         // Act
         new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
@@ -433,8 +417,9 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertEquals(expected, executeSql(queryNew));
 
         // Third time, downgrade and migrate
-        replaceDbContent("/migration/dbRoot_noid.zip");
-        downgradeMetaDataFile(src);
+        replaceDbContent("/migration/assertMetadataMigration.zip");
+        assertRemoveUpgradeFile();
+
         new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
         TestUtils.assertEquals(expected, executeSql(queryNew));
 
@@ -529,11 +514,11 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertMigration(TableModel src, String query) throws SqlException, IOException {
-        assertMigration(src, query, query, null);
+    private void assertMigration(String query) throws SqlException, IOException {
+        assertMigration(query, query, "/migration/assertMigrationPartitionsKept.zip");
     }
 
-    private void assertMigration(TableModel src, String queryOld, String queryNew, LongList removedPartitions) throws SqlException, IOException {
+    private void assertMigration(String queryOld, String queryNew, String file) throws SqlException, IOException {
         CharSequence expected = executeSql(queryOld).toString();
         if (!queryOld.equals(queryNew)) {
             // if queries are different they must produce different results
@@ -542,8 +527,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         }
 
         // There are no symbols, no partition, tx file is same. Downgrade version
-        replaceDbContent("/migration/dbRoot_noid.zip");
-        downgradeTxFile(src, removedPartitions);
+        replaceDbContent(file);
+        assertRemoveUpgradeFile();
 
         // Act
         new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
@@ -556,13 +541,14 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertEquals(expected, executeSql(queryNew));
 
         // Third time, downgrade and migrate
-        replaceDbContent("/migration/dbRoot_noid.zip");
-        downgradeTxFile(src, removedPartitions);
+        replaceDbContent(file);
+        assertRemoveUpgradeFile();
+
         new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
         TestUtils.assertEquals(expected, executeSql(queryNew));
     }
 
-    private void downgradeTxFile(TableModel src, LongList removedPartitions) {
+    private void downgradeTxFile(TableModel src) {
         engine.clear();
         downgradeMetaDataFile(src);
 
@@ -596,14 +582,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 }
 
                 // and stored removed partitions list
-                if (removedPartitions != null) {
-                    rwTx.putInt(removedPartitions.size());
-                    for (int i = 0; i < removedPartitions.size(); i++) {
-                        rwTx.putLong(removedPartitions.getQuick(i));
-                    }
-                } else {
-                    rwTx.putInt(0);
-                }
+                rwTx.putInt(0);
             }
 
             // and have file _archive in each folder the file size except last partition
@@ -685,7 +664,6 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     public void testAllColumns() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "x_cols", PartitionBy.NONE)) {
-
                 createPopulateTable(src.col("bool", ColumnType.BOOLEAN)
                                 .col("byte", ColumnType.BYTE)
                                 .col("short", ColumnType.SHORT)
@@ -703,7 +681,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 );
 
                 String query = "select * from x_cols";
-                assertMigration(src, query);
+                assertMigration(query);
             }
         });
     }
@@ -722,7 +700,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
                 try (TableModel model = new TableModel(configuration, "y_416", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()) {
                     CairoTestUtils.createTableWithVersion(model, 416);
-                    downgradeTxFile(model, null);
+                    downgradeTxFile(model);
                 }
 
                 try (TableModel model = new TableModel(configuration, "y_419", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()) {

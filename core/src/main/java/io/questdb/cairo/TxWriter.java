@@ -42,6 +42,7 @@ import static io.questdb.cairo.TableUtils.*;
 public final class TxWriter extends TxReader implements Closeable {
     private final FilesFacade ff;
     private long prevTransientRowCount;
+    private long prevRowCount;
     private int attachedPositionDirtyIndex;
     private int txPartitionCount;
     private long prevMaxTimestamp;
@@ -167,6 +168,12 @@ public final class TxWriter extends TxReader implements Closeable {
         txMem.putLong(TX_OFFSET_MIN_TIMESTAMP, minTimestamp);
         txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, maxTimestamp);
         txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, this.partitionTableVersion);
+        txMem.putLong(TX_OFFSET_TRANSACTION_LOG_TXN, transactionLogTxn);
+        if (transactionLogTxn != Long.MIN_VALUE) {
+            transactionLogRowCount += ((transientRowCount + fixedRowCount) - prevRowCount);
+            prevRowCount = transientRowCount + fixedRowCount;
+        }
+        txMem.putLong(TX_OFFSET_TRANSACTION_LOG_ROW_COUNT, transactionLogRowCount);
 
         // store symbol counts
         storeSymbolCounts(denseSymbolMapWriters);
@@ -296,6 +303,12 @@ public final class TxWriter extends TxReader implements Closeable {
         if (prevMinTimestamp == Long.MAX_VALUE) {
             prevMinTimestamp = minTimestamp;
         }
+    }
+
+    public void setTransactionLogTxn(long transactionLogTxn) {
+        this.transactionLogTxn = transactionLogTxn;
+        this.prevRowCount = transientRowCount + fixedRowCount;
+        this.transactionLogRowCount = 0;
     }
 
     public void switchPartitions(long timestamp) {

@@ -81,7 +81,10 @@ public final class TableUtils {
     static final long TX_OFFSET_MAX_TIMESTAMP = 32;
     static final long TX_OFFSET_DATA_VERSION = 48;
     static final long TX_OFFSET_PARTITION_TABLE_VERSION = 56;
-    static final long TX_OFFSET_MAP_WRITER_COUNT = 72;
+    static final long TX_OFFSET_TRANSACTION_LOG_TXN = 72;
+    static final long TX_OFFSET_TRANSACTION_LOG_ROW_COUNT = 80;
+    static final long TX_OFFSET_TRANSACTION_LOG_USER_COUNT = 88;
+    static final long TX_OFFSET_MAP_WRITER_COUNT = 128;
     /**
      * TXN file structure
      * struct {
@@ -558,6 +561,10 @@ public final class TableUtils {
         txMem.putLong(TX_OFFSET_DATA_VERSION, dataVersion);
         // partition table version
         txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, partitionTableVersion);
+
+        txMem.putLong(TX_OFFSET_TRANSACTION_LOG_TXN, Long.MIN_VALUE);
+        txMem.putLong(TX_OFFSET_TRANSACTION_LOG_ROW_COUNT, 0);
+        txMem.putLong(TX_OFFSET_TRANSACTION_LOG_USER_COUNT, 0);
 
         txMem.putInt(TX_OFFSET_MAP_WRITER_COUNT, symbolMapCount);
         for (int i = 0; i < symbolMapCount; i++) {

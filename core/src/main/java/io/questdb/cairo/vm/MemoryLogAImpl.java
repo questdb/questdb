@@ -25,13 +25,15 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryLogA;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
-public class MemoryLogAImpl implements MemoryA {
-    private MemoryA log;
+public class MemoryLogAImpl implements MemoryLogA {
+    private MemoryMA log;
     private MemoryA main;
 
     @Override
@@ -193,7 +195,8 @@ public class MemoryLogAImpl implements MemoryA {
         main.truncate();
     }
 
-    public void of(MemoryA log, MemoryA main) {
+    @Override
+    public void of(MemoryMA log, MemoryA main) {
         this.log = log;
         this.main = main;
     }

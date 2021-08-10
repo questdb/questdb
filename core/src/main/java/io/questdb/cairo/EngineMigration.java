@@ -41,7 +41,7 @@ import static io.questdb.cairo.TableUtils.*;
 public class EngineMigration {
     public static final int VERSION_TX_STRUCT_UPDATE_1 = 418;
     public static final int VERSION_TBL_META_COMMIT_LAG = 419;
-    public static final int VERSION_COLUMN_TYPE_ENCODING_CHANGED = 420;
+    public static final int VERSION_GEO_HASH_WAS_ADDED = 420;
 
     // All offsets hardcoded here in case TableUtils offset calculation changes
     // in future code version
@@ -252,6 +252,56 @@ public class EngineMigration {
     }
 
     private static class MigrationActions {
+        public static void addGeoHashCompatibleMetadataChangesAndProvisionTxnSpace(MigrationContext migrationContext) {
+            final FilesFacade ff = migrationContext.getFf();
+            Path path = migrationContext.getTablePath();
+            final int plen = path.length();
+
+            path.concat(META_FILE_NAME).$();
+
+            if (ff.exists(path)) {
+                // Metadata file should already be backed up
+                try (final MemoryMARW rwMem = migrationContext.rwMemory) {
+                    rwMem.wholeFile(ff, path);
+
+                    // column count
+                    final int columnCount = rwMem.getInt(TableUtils.META_OFFSET_COUNT);
+                    rwMem.putInt(TableUtils.META_OFFSET_VERSION, ColumnType.VERSION);
+
+                    long offset = TableUtils.META_OFFSET_COLUMN_TYPES;
+                    for (int i = 0; i < columnCount; i++) {
+                        final byte oldTypeId = rwMem.getByte(offset);
+                        final long oldFlags = rwMem.getLong(offset + 1);
+                        final int blockCapacity = rwMem.getInt(offset + 1 + 8);
+                        // column type id is int now
+                        // we grabbed 3 reserved bytes for extra type info
+                        // extra for old types is zeros
+                        rwMem.putInt(offset, oldTypeId + 1); // ColumnType.VERSION_420 - ColumnType.VERSION_419 = 1
+                        rwMem.putLong(offset + 4, oldFlags);
+                        rwMem.putInt(offset + 4 + 8, blockCapacity);
+                        offset += TableUtils.META_COLUMN_DATA_SIZE;
+                    }
+                }
+                path.trimTo(plen).concat(TXN_FILE_NAME).$();
+
+                long oldOffsetMapWriterCount = 72;
+                if (ff.exists(path)) {
+                    try (final MemoryMARW rwMem = migrationContext.rwMemory) {
+                        rwMem.wholeFile(ff, path);
+
+                        long sz = rwMem.size();
+                        rwMem.jumpTo(sz + TableUtils.TX_OFFSET_MAP_WRITER_COUNT - oldOffsetMapWriterCount);
+
+                        long addr = rwMem.getPageAddress(0);
+                        Vect.memmove(addr + TableUtils.TX_OFFSET_MAP_WRITER_COUNT, addr + oldOffsetMapWriterCount, sz - oldOffsetMapWriterCount);
+                    }
+                }
+                return;
+            }
+
+            LOG.error().$("meta file does not exist, nothing to migrate [path=").$(path).I$();
+        }
+
         public static void addTblMetaCommitLag(MigrationContext migrationContext) {
             Path path = migrationContext.getTablePath();
             final FilesFacade ff = migrationContext.getFf();
@@ -401,40 +451,6 @@ public class EngineMigration {
             }
             return false;
         }
-
-        public static void updateColumnTypeIds(MigrationContext migrationContext) {
-            final FilesFacade ff = migrationContext.getFf();
-            Path path = migrationContext.getTablePath();
-            path.concat(META_FILE_NAME).$();
-
-            if (!ff.exists(path)) {
-                LOG.error().$("meta file does not exist, nothing to migrate [path=").$(path).I$();
-                return;
-            }
-
-            // Metadata file should already be backed up
-            final MemoryMARW rwMem = migrationContext.rwMemory;
-            rwMem.of(ff, path, ff.getPageSize());
-
-            // column count
-            final int columnCount = rwMem.getInt(TableUtils.META_OFFSET_COUNT);
-            rwMem.putInt(TableUtils.META_OFFSET_VERSION, ColumnType.VERSION);
-
-            long offset = TableUtils.META_OFFSET_COLUMN_TYPES;
-            for (int i = 0; i < columnCount; i++) {
-                final byte oldTypeId = rwMem.getByte(offset);
-                final long oldFlags = rwMem.getLong(offset + 1);
-                final int blockCapacity = rwMem.getInt(offset + 1 + 8);
-                // column type id is int now
-                // we grabbed 3 reserved bytes for extra type info
-                // extra for old types is zeros
-                rwMem.putInt(offset, oldTypeId + 1); // ColumnType.VERSION_420 - ColumnType.VERSION_419 = 1
-                rwMem.putLong(offset + 4, oldFlags);
-                rwMem.putInt(offset + 4 + 8, blockCapacity);
-                offset += TableUtils.META_COLUMN_DATA_SIZE;
-            }
-            rwMem.close();
-        }
     }
 
     class MigrationContext {
@@ -512,6 +528,6 @@ public class EngineMigration {
         setByVersion(VERSION_THAT_ADDED_TABLE_ID, MigrationActions::assignTableId, 1);
         setByVersion(VERSION_TX_STRUCT_UPDATE_1, MigrationActions::rebuildTransactionFile, 0);
         setByVersion(VERSION_TBL_META_COMMIT_LAG, MigrationActions::addTblMetaCommitLag, 0);
-        setByVersion(VERSION_COLUMN_TYPE_ENCODING_CHANGED, MigrationActions::updateColumnTypeIds, 1);
+        setByVersion(VERSION_GEO_HASH_WAS_ADDED, MigrationActions::addGeoHashCompatibleMetadataChangesAndProvisionTxnSpace, 1);
     }
 }

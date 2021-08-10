@@ -102,12 +102,12 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
                 Assert.assertTrue(w1.isTransactionLogEnabled());
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-09T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":10000,\"nameTxn\":-1,\"dataTxn\":1,}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-09T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":10000,\"nameTxn\":-1,\"dataTxn\":1}]}",
                     sink
             );
         });
@@ -171,12 +171,12 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
                 Assert.assertTrue(w1.isTransactionLogEnabled());
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-09T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":10000,\"nameTxn\":-1,\"dataTxn\":1,}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-09T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":10000,\"nameTxn\":-1,\"dataTxn\":1}]}",
                     sink
             );
         });
@@ -240,12 +240,12 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
                 Assert.assertTrue(w1.isTransactionLogEnabled());
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-11T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":38800,\"nameTxn\":1,\"dataTxn\":0,}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-11T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":38800,\"nameTxn\":1,\"dataTxn\":0}]}",
                     sink
             );
         });
@@ -286,12 +286,12 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
                 Assert.assertTrue(w1.isTransactionLogEnabled());
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":1,}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":1}]}",
                     sink
             );
         });
@@ -334,12 +334,12 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
                 Assert.assertTrue(w1.isTransactionLogEnabled());
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":2,}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":2}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -354,12 +354,12 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
                 Assert.assertTrue(w1.isTransactionLogEnabled());
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"dataTxn\":3,}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"dataTxn\":3}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -395,7 +395,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"dataTxn\":3,}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"dataTxn\":3}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -414,8 +414,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             try (TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test")) {
                 masterId = w1.getMetadata().getId();
             }
-
-            engine.releaseAllWriters();
 
             try (
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test");
@@ -439,7 +437,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"dataTxn\":3,}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"dataTxn\":3}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -480,12 +478,12 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
                 Assert.assertTrue(w1.isTransactionLogEnabled());
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":1,}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":1}]}",
                     sink
             );
         });
@@ -527,7 +525,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
                 Assert.assertFalse(w1.isTransactionLogEnabled());
             }
 
@@ -585,12 +583,12 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
                 Assert.assertTrue(w1.isTransactionLogEnabled());
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":0,}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":0}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -633,12 +631,12 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
                 Assert.assertTrue(w1.isTransactionLogEnabled());
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":2,}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":11,\"toIndex\":-1},{\"action\":\"move\",\"fromIndex\":12,\"toIndex\":11},{\"action\":\"move\",\"fromIndex\":13,\"toIndex\":12},{\"action\":\"move\",\"fromIndex\":14,\"toIndex\":13},{\"action\":\"move\",\"fromIndex\":15,\"toIndex\":14},{\"action\":\"move\",\"fromIndex\":16,\"toIndex\":15}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":2}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":11,\"toIndex\":-1},{\"action\":\"move\",\"fromIndex\":12,\"toIndex\":11},{\"action\":\"move\",\"fromIndex\":13,\"toIndex\":12},{\"action\":\"move\",\"fromIndex\":14,\"toIndex\":13},{\"action\":\"move\",\"fromIndex\":15,\"toIndex\":14},{\"action\":\"move\",\"fromIndex\":16,\"toIndex\":15}]}",
                     sink
             );
         });
@@ -704,12 +702,12 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
                 Assert.assertTrue(w1.isTransactionLogEnabled());
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"truncate\",\"dataVersion\":1},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-10T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"dataTxn\":2,},{\"action\":\"whole\",\"ts\":\"2018-01-11T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"dataTxn\":2,},{\"action\":\"whole\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"dataTxn\":2,},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":3,}]}",
+                    "{\"table\":{\"action\":\"truncate\",\"dataVersion\":1},\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-10T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"dataTxn\":2},{\"action\":\"whole\",\"ts\":\"2018-01-11T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"dataTxn\":2},{\"action\":\"whole\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"dataTxn\":2},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":3}]}",
                     sink
             );
         });
@@ -752,7 +750,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.reconcileSlaveState(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
                 Assert.assertTrue(w1.isTransactionLogEnabled());
             }
 

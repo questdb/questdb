@@ -134,8 +134,7 @@ public class TableSyncModel implements Mutable, Sinkable {
         n = Unsafe.getUnsafe().getInt(p);
         p += 4;
 
-        // todo: thread local this instance
-        StringSink nameSink = new StringSink();
+        final StringSink nameSink = Misc.getThreadLocalBuilder();
         for (int i = 0; i < n; i++) {
             int nameLen = Unsafe.getUnsafe().getInt(p);
             p += 4;
@@ -297,7 +296,7 @@ public class TableSyncModel implements Mutable, Sinkable {
                 sink.putQuoted("startRow").put(':').put(partitions.getQuick(i + 2)).put(',');
                 sink.putQuoted("rowCount").put(':').put(partitions.getQuick(i + 3)).put(',');
                 sink.putQuoted("nameTxn").put(':').put(partitions.getQuick(i + 4)).put(',');
-                sink.putQuoted("dataTxn").put(':').put(partitions.getQuick(i + 5)).put(',');
+                sink.putQuoted("dataTxn").put(':').put(partitions.getQuick(i + 5));
                 sink.put('}');
             }
 
