@@ -345,10 +345,6 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
         createEqFunctionAndAssert(expectConst, expectedEq);
     }
 
-    private static Function createGeoValueFunction(int typep1, long hash1) {
-        return createGeoValueFunction(typep1, hash1, true);
-    }
-
     private static Function createGeoValueFunction(int typep1, long hash1, boolean isConstant) {
         switch (ColumnType.sizeOf(typep1)) {
             case 1:
