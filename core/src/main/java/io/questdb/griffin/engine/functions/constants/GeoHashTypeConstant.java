@@ -33,6 +33,26 @@ import io.questdb.griffin.engine.functions.GeoHashFunction;
 public class GeoHashTypeConstant extends GeoHashFunction implements TypeConstant {
     private final static GeoHashTypeConstant[] INSTANCES = new GeoHashTypeConstant[GeoHashes.MAX_BITS_LENGTH];
 
+    @Override
+    public byte getGeoHashByte(Record rec) {
+        return GeoHashes.BYTE_NULL;
+    }
+
+    @Override
+    public short getGeoHashShort(Record rec) {
+        return GeoHashes.SHORT_NULL;
+    }
+
+    @Override
+    public int getGeoHashInt(Record rec) {
+        return GeoHashes.INT_NULL;
+    }
+
+    @Override
+    public long getGeoHashLong(Record rec) {
+        return GeoHashes.NULL;
+    }
+
     static {
         for(int i = 0; i < GeoHashes.MAX_BITS_LENGTH; i++) {
             INSTANCES[i] = new GeoHashTypeConstant(ColumnType.geohashWithPrecision(i + 1));
@@ -45,11 +65,5 @@ public class GeoHashTypeConstant extends GeoHashFunction implements TypeConstant
 
     private GeoHashTypeConstant(int typep) {
         super(typep);
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        // This is only type indicator, in line with other type functions, return null
-        return GeoHashes.NULL;
     }
 }

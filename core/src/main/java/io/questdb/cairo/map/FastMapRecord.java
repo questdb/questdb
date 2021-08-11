@@ -252,6 +252,26 @@ final class FastMapRecord implements MapRecord {
     }
 
     @Override
+    public byte getGeoHashByte(int col) {
+        return getByte(col);
+    }
+
+    @Override
+    public short getGeoHashShort(int col) {
+        return getShort(col);
+    }
+
+    @Override
+    public int getGeoHashInt(int col) {
+        return getInt(col);
+    }
+
+    @Override
+    public long getGeoHashLong(int col) {
+        return getLong(col);
+    }
+
+    @Override
     public MapValue getValue() {
         return value.of(address0, false);
     }

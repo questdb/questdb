@@ -31,7 +31,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
@@ -158,7 +157,7 @@ public class RecordCursorPrinter {
                 break;
             case ColumnType.GEOHASH:
                 int bitsPrecision = GeoHashes.getBitsPrecision(m.getColumnType(i));
-                long hash = r.getGeoHash(i, m.getColumnType(i));
+                long hash = getGeoHash(r, i, m.getColumnType(i));
                 if (hash == GeoHashes.NULL) {
                     break; // optimisation
                 }
@@ -185,6 +184,19 @@ public class RecordCursorPrinter {
         }
         if (printTypes) {
             sink.put(':').put(ColumnType.nameOf(columnType));
+        }
+    }
+
+    private long getGeoHash(Record r, int column, int columnType) {
+        switch (ColumnType.sizeOf(columnType)) {
+            case 1:
+                return r.getGeoHashByte(column);
+            case 2:
+                return r.getGeoHashShort(column);
+            case 4:
+                return r.getGeoHashInt(column);
+            default:
+                return r.getGeoHashLong(column);
         }
     }
 }

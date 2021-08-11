@@ -66,8 +66,7 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
         Function function = parseFunction("cast(null as GeOhAsH(12c))", metadata, functionParser);
         Assert.assertTrue(function.isConstant());
         Assert.assertEquals(ColumnType.geohashWithPrecision(12*5), function.getType());
-        Assert.assertEquals(GeoHashes.NULL, function.getGeoHash(null));
-        Assert.assertEquals(GeoHashes.NULL, function.getLong(null));
+        Assert.assertEquals(GeoHashes.NULL, function.getGeoHashLong(null));
     }
 
     @Test
@@ -75,8 +74,7 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
         Function function = parseFunction("cast(null as GeOhAsH(60b))", metadata, functionParser);
         Assert.assertTrue(function.isConstant());
         Assert.assertEquals(ColumnType.geohashWithPrecision(60), function.getType());
-        Assert.assertEquals(GeoHashes.NULL, function.getGeoHash(null));
-        Assert.assertEquals(GeoHashes.NULL, function.getLong(null));
+        Assert.assertEquals(GeoHashes.NULL, function.getGeoHashLong(null));
     }
 
     @Test
@@ -84,8 +82,7 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
         Function function = parseFunction("cast('' as GeOhAsH(60b))", metadata, functionParser);
         Assert.assertTrue(function.isConstant());
         Assert.assertEquals(ColumnType.geohashWithPrecision(60), function.getType());
-        Assert.assertEquals(GeoHashes.NULL, function.getGeoHash(null));
-        Assert.assertEquals(GeoHashes.NULL, function.getLong(null));
+        Assert.assertEquals(GeoHashes.NULL, function.getGeoHashLong(null));
     }
 
     @Test

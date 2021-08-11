@@ -24,11 +24,16 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
 public class GeoHashes {
 
+    public static final byte BYTE_NULL = -1;
+    public static final short SHORT_NULL = -1;
+    public static final int INT_NULL = -1;
     public static final long NULL = -1L;
     public static final int MAX_BITS_LENGTH = 60;
     public static final int MAX_STRING_LENGTH = 12;
@@ -230,6 +235,19 @@ public class GeoHashes {
             for (int i = chars - 1; i >= 0; --i) {
                 sink.put(base32[(int) ((hash >> i * 5) & 0x1F)]);
             }
+        }
+    }
+
+    public static long getGeoLong(int type, Function func, Record rec) {
+        switch (ColumnType.sizeOf(type)) {
+            case Byte.BYTES:
+                return func.getGeoHashByte(rec);
+            case Short.BYTES:
+                return func.getGeoHashShort(rec);
+            case Integer.BYTES:
+                return func.getGeoHashInt(rec);
+            default:
+                return func.getGeoHashLong(rec);
         }
     }
 }

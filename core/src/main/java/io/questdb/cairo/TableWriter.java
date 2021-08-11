@@ -27,10 +27,7 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.cairo.SymbolMapWriter.TransientSymbolCountChangeHandler;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.SqlException;
@@ -1338,7 +1335,7 @@ public class TableWriter implements Closeable {
     }
 
     private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryA mem1, MemoryA mem2) {
-        switch (ColumnType.sizeTag(type)) {
+        switch (ColumnType.tagOf(type)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
                 nullers.add(() -> mem1.putByte((byte) 0));
@@ -1378,13 +1375,13 @@ public class TableWriter implements Closeable {
             case ColumnType.GEOHASH:
                 switch (GeoHashes.sizeOf(type)) {
                     case 1:
-                        nullers.add(() -> mem1.putByte((byte) GeoHashes.NULL));
+                        nullers.add(() -> mem1.putByte(GeoHashes.BYTE_NULL));
                         break;
                     case 2:
-                        nullers.add(() -> mem1.putShort((short) GeoHashes.NULL));
+                        nullers.add(() -> mem1.putShort(GeoHashes.SHORT_NULL));
                         break;
                     case 4:
-                        nullers.add(() -> mem1.putInt((int) GeoHashes.NULL));
+                        nullers.add(() -> mem1.putInt(GeoHashes.INT_NULL));
                         break;
                     default:
                         nullers.add(() -> mem1.putLong(GeoHashes.NULL));

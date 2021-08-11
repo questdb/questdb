@@ -276,22 +276,43 @@ public interface Record {
     }
 
     /**
-     * Gets the value of a geohash column by index
+     * Gets the value of a byte geohash column by index
      *
      * @param col numeric index of the column
      * @return geohash
      */
-    default long getGeoHash(int col, int type) {
-        switch (ColumnType.sizeOf(type)) {
-            default:
-                return getLong(col);
-            case Integer.BYTES:
-                return getInt(col);
-            case Short.BYTES:
-                return getShort(col);
-            case Byte.BYTES:
-                return getByte(col);
-        }
+    default byte getGeoHashByte(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the value of a short geohash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default short getGeoHashShort(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the value of an int geohash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default int getGeoHashInt(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the value of a long geohash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default long getGeoHashLong(int col) {
+        throw new UnsupportedOperationException();
     }
 
     @FunctionalInterface

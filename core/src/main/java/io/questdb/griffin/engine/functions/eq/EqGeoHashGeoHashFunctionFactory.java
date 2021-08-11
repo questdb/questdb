@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -35,8 +34,11 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+
+import static io.questdb.cairo.GeoHashes.getGeoLong;
 
 public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
     @Override
@@ -57,31 +59,38 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
                                 SqlExecutionContext sqlExecutionContext) {
         Function geohash1 = args.getQuick(0);
         Function geohash2 = args.getQuick(1);
-        if (geohash1.isConstant()) {
-            long hash1 = geohash1.getLong(null);
-            if (geohash2.isConstant()) {
-                long hash2 = geohash2.getLong(null);
-                if (geohash1.getType() == geohash2.getType()) {
-                    return BooleanConstant.of(hash1 == hash2);
-                }
-                if ((hash1 == GeoHashes.NULL || ColumnType.isNull(geohash1.getType())) &&
-                        (hash2 == GeoHashes.NULL || ColumnType.isNull(geohash2.getType()))) {
-                    // both values are null, any flavour of null
-                    return BooleanConstant.of(true);
-                }
-                return BooleanConstant.of(false);
-            }
-            return createHalfConstantFunc(geohash1, geohash2);
-        }
-        return geohash2.isConstant() ? createHalfConstantFunc(geohash2, geohash1) : new Func(geohash1, geohash2);
-    }
+        int type1p = geohash1.getType();
+        int type2p = geohash2.getType();
 
-    private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
-        if (constFunc.getLong(null) == GeoHashes.NULL ||
-                ColumnType.isNull(constFunc.getType())) {
-            return new NullCheckFunc(varFunc);
+        if (ColumnType.isNull(type1p) && ColumnType.isNull(type2p)) {
+            return BooleanConstant.of(true);
         }
-        return new ConstCheckFunc(varFunc, constFunc.getLong(null), constFunc.getType());
+        if (ColumnType.isNull(type1p)) {
+            type1p = type2p;
+            geohash1 = Constants.getNullConstant(type2p);
+        }
+        if (ColumnType.isNull(type2p)) {
+            type2p = type1p;
+            geohash2 = Constants.getNullConstant(type1p);
+        }
+
+        // Make sure we don't compare apples with pears once null type is ruled out
+        if (type1p != type2p) {
+            return BooleanConstant.of(false);
+        }
+
+        if (geohash1.isConstant()) {
+            long hash1 = getGeoLong(geohash1.getType(), geohash1, null);
+            if (geohash2.isConstant()) {
+                long hash2 = getGeoLong(type1p, geohash2, null);
+                return BooleanConstant.of(hash1 == hash2);
+            }
+
+            return new ConstCheckFunc(geohash2, hash1, type1p);
+        }
+        return geohash2.isConstant() ?
+                new ConstCheckFunc(geohash1, getGeoLong(type1p, geohash2, null), type1p) :
+                new Func(geohash1, geohash2, type1p);
     }
 
     private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
@@ -102,35 +111,19 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (typep == arg.getType() && hash == arg.getGeoHash(rec));
-        }
-    }
-
-    private static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function arg;
-
-        public NullCheckFunc(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (arg.getLong(rec) == GeoHashes.NULL || ColumnType.isNull(arg.getType()));
+            return negated != (typep == arg.getType() && hash == getGeoLong(typep, arg, rec));
         }
     }
 
     private static class Func extends NegatableBooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
+        private final int typep;
 
-        public Func(Function left, Function right) {
+        public Func(Function left, Function right, int typep) {
             this.left = left;
             this.right = right;
+            this.typep = typep;
         }
 
         @Override
@@ -145,16 +138,9 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final long hash1 = left.getLong(rec);
-            final int hash1Type = left.getType();
-            final long hash2 = right.getLong(rec);
-            final int hash2Type = right.getType();
-            if (hash1Type == hash2Type) {
-                return negated != (hash1 == hash2);
-            }
-            // both values are null, any flavour of null
-            return (hash1 == GeoHashes.NULL || ColumnType.isNull(hash1Type)) &&
-                    (hash2 == GeoHashes.NULL || ColumnType.isNull(hash2Type));
+            final long hash1 = getGeoLong(typep, left, rec);
+            final long hash2 = getGeoLong(typep, right, rec);
+            return hash1 == hash2;
         }
     }
 }

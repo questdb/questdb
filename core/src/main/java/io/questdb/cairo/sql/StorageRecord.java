@@ -22,22 +22,30 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.columns;
+package io.questdb.cairo.sql;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
-import io.questdb.griffin.engine.functions.GeoHashFunction;
 
-public class GeoHashColumnLong extends GeoHashFunction implements ScalarFunction {
-    private final int columnIndex;
-
-    public GeoHashColumnLong(int columnIndex, int columnType) {
-        super(columnType);
-        this.columnIndex = columnIndex;
+/**
+ * To be used for reading geohash values without need to special NULL handling
+ */
+public interface StorageRecord extends Record {
+    @Override
+    default byte getGeoHashByte(int col) {
+        return getByte(col);
     }
 
     @Override
-    public long getLong(Record rec) {
-        return rec.getLong(columnIndex);
+    default short getGeoHashShort(int col) {
+        return getShort(col);
+    }
+
+    @Override
+    default int getGeoHashInt(int col) {
+        return getInt(col);
+    }
+
+    @Override
+    default long getGeoHashLong(int col) {
+        return getLong(col);
     }
 }

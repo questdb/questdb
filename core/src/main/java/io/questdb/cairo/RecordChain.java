@@ -382,6 +382,30 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             return symbolTableResolver.getSymbolTable(col).valueBOf(getInt(col));
         }
 
+        @Override
+        public byte getGeoHashByte(int col) {
+            // No column tops, return byte from mem.
+            return mem.getByte(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public short getGeoHashShort(int col) {
+            // No column tops, return short from mem.
+            return mem.getShort(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public int getGeoHashInt(int col) {
+            // No column tops, return int from mem.
+            return mem.getInt(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public long getGeoHashLong(int col) {
+            // No column tops, return long from mem.
+            return mem.getLong(fixedWithColumnOffset(col));
+        }
+
         private long fixedWithColumnOffset(int index) {
             return fixedOffset + columnOffsets[index];
         }

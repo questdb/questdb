@@ -146,8 +146,23 @@ public class SplitVirtualRecord implements Record {
     }
 
     @Override
-    public long getGeoHash(int col, int columnType) {
-        return getFunction(col).getGeoHash(base);
+    public byte getGeoHashByte(int col) {
+        return getFunction(col).getGeoHashByte(base);
+    }
+
+    @Override
+    public short getGeoHashShort(int col) {
+        return getFunction(col).getGeoHashShort(base);
+    }
+
+    @Override
+    public int getGeoHashInt(int col) {
+        return getFunction(col).getGeoHashInt(base);
+    }
+
+    @Override
+    public long getGeoHashLong(int col) {
+        return getFunction(col).getGeoHashLong(base);
     }
 
     public void of(Record record) {

@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
@@ -242,28 +241,41 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
-    public long getGeoHash(int columnIndex, int columnType) {
+    public byte getGeoHashByte(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * ColumnType.sizeOf(columnType);
+        final long offset = getAdjustedRecordIndex(col);
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
-        if (absoluteColumnIndex > 0) {
-            final MemoryR column = reader.getColumn(absoluteColumnIndex);
-            switch (ColumnType.sizeOf(columnType)) {
-                case 1:
-                    return column.getByte(offset);
-                case 2:
-                    return column.getShort(offset);
-                case 4:
-                    return column.getInt(offset);
-                default:
-                    return column.getLong(offset);
-            }
-        } else {
-            // This is column top
-            return GeoHashes.NULL;
-        }
+        return absoluteColumnIndex == 0 ? GeoHashes.BYTE_NULL : reader.getColumn(absoluteColumnIndex).getByte(offset);
     }
+
+    @Override
+    public short getGeoHashShort(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Short.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        return absoluteColumnIndex == 0 ? GeoHashes.SHORT_NULL :reader.getColumn(absoluteColumnIndex).getShort(offset);
+    }
+
+    @Override
+    public int getGeoHashInt(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        return absoluteColumnIndex == 0 ? GeoHashes.INT_NULL : reader.getColumn(absoluteColumnIndex).getInt(offset);
+    }
+
+    @Override
+    public long getGeoHashLong(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Long.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        return absoluteColumnIndex == 0 ? GeoHashes.NULL : reader.getColumn(absoluteColumnIndex).getLong(offset);
+    }
+
 
     public void setRecordIndex(long recordIndex) {
         this.recordIndex = recordIndex;

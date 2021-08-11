@@ -621,8 +621,23 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             }
 
             @Override
-            public long getGeoHash(int col, int columnType) {
-                return currentRecord.getGeoHash(col, columnType);
+            public byte getGeoHashByte(int col) {
+                return currentRecord.getGeoHashByte(col);
+            }
+
+            @Override
+            public short getGeoHashShort(int col) {
+                return currentRecord.getGeoHashShort(col);
+            }
+
+            @Override
+            public int getGeoHashInt(int col) {
+                return currentRecord.getGeoHashInt(col);
+            }
+
+            @Override
+            public long getGeoHashLong(int col) {
+                return currentRecord.getGeoHashLong(col);
             }
 
             public void of(long index) {
@@ -637,7 +652,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 dataRecord.switchFrame();
             }
 
-            private class SampleByCrossRecord implements Record {
+            private class SampleByCrossRecord implements StorageRecord {
                 private final long address = crossFrameRow.getAddress();
 
                 @Override
@@ -785,21 +800,42 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
-                public long getGeoHash(int col, int columnType) {
+                public byte getGeoHashByte(int col) {
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
-                        switch (ColumnType.sizeOf(columnType)) {
-                            case 1:
-                                return Unsafe.getUnsafe().getByte(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
-                            case 2:
-                                return Unsafe.getUnsafe().getShort(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
-                            case 4:
-                                return Unsafe.getUnsafe().getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
-                            default:
-                                return Unsafe.getUnsafe().getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
-                        }
+                        return Unsafe.getUnsafe().getByte(pageAddress + getRowId(firstLastIndexByCol[col]));
                     } else {
-                        return Numbers.LONG_NaN; //TODO: geohash null?
+                        return GeoHashes.BYTE_NULL;
+                    }
+                }
+
+                @Override
+                public short getGeoHashShort(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getUnsafe().getShort(pageAddress + (getRowId(firstLastIndexByCol[col]) << 1));
+                    } else {
+                        return GeoHashes.SHORT_NULL;
+                    }
+                }
+
+                @Override
+                public int getGeoHashInt(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getUnsafe().getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) << 2));
+                    } else {
+                        return GeoHashes.INT_NULL;
+                    }
+                }
+
+                @Override
+                public long getGeoHashLong(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getUnsafe().getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
+                    } else {
+                        return GeoHashes.NULL;
                     }
                 }
 

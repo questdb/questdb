@@ -125,6 +125,21 @@ public class IntFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGeoHash() {
-        function.getGeoHash(null);
+        function.getGeoHashLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoHashInt() {
+        function.getGeoHashInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoHashByte() {
+        function.getGeoHashByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoHashShor() {
+        function.getGeoHashShort(null);
     }
 }

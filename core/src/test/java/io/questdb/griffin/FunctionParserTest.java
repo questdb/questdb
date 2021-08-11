@@ -1141,8 +1141,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         Record record = new Record() {
             @Override
-            public long getGeoHash(int col, int columnType) {
-                return getLong(col);
+            public int getGeoHashInt(int col) {
+                return (int) getLong(col);
             }
 
             @Override
@@ -1153,7 +1153,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
         Function function = parseFunction("cast('sp052w92' as geohash(5c))", metadata, functionParser);
         Assert.assertEquals(ColumnType.geohashWithPrecision(25), function.getType());
-        Assert.assertEquals(25854114, function.getGeoHash(record));
+        Assert.assertEquals(25854114, function.getGeoHashInt(record));
     }
 
     @Test
