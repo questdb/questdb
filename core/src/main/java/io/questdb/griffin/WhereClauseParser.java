@@ -1080,11 +1080,11 @@ final class WhereClauseParser implements Mutable {
             CharSequenceHashSet prefixes
     ) throws SqlException {
 
+        prefixes.clear();
         if (node == null) return null;
 
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal
-        prefixes.clear();
 
         if (removeWithin(translator, node, metadata, prefixes)) {
             return collapseWithinNodes(node);
