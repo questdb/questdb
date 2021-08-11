@@ -245,8 +245,7 @@ public class TableReaderSelectedColumnRecord implements Record {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long offset = getAdjustedRecordIndex(col);
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
-        return absoluteColumnIndex == 0 ? GeoHashes.BYTE_NULL : reader.getColumn(absoluteColumnIndex).getByte(offset);
+        return offset < 0 ? GeoHashes.BYTE_NULL : reader.getColumn(index).getByte(offset);
     }
 
     @Override
@@ -254,8 +253,7 @@ public class TableReaderSelectedColumnRecord implements Record {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long offset = getAdjustedRecordIndex(col) * Short.BYTES;
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
-        return absoluteColumnIndex == 0 ? GeoHashes.SHORT_NULL :reader.getColumn(absoluteColumnIndex).getShort(offset);
+        return offset < 0 ? GeoHashes.SHORT_NULL : reader.getColumn(index).getShort(offset);
     }
 
     @Override
@@ -263,8 +261,7 @@ public class TableReaderSelectedColumnRecord implements Record {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
-        return absoluteColumnIndex == 0 ? GeoHashes.INT_NULL : reader.getColumn(absoluteColumnIndex).getInt(offset);
+        return offset < 0 ? GeoHashes.INT_NULL : reader.getColumn(index).getInt(offset);
     }
 
     @Override
@@ -272,10 +269,8 @@ public class TableReaderSelectedColumnRecord implements Record {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long offset = getAdjustedRecordIndex(col) * Long.BYTES;
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
-        return absoluteColumnIndex == 0 ? GeoHashes.NULL : reader.getColumn(absoluteColumnIndex).getLong(offset);
+        return offset < 0 ? GeoHashes.NULL : reader.getColumn(index).getLong(offset);
     }
-
 
     public void setRecordIndex(long recordIndex) {
         this.recordIndex = recordIndex;
