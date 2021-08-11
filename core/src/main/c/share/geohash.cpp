@@ -107,6 +107,11 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latesByAndFilterP
                 &filtered_count
         );
 
+        auto filtered_start = rows + out_args->key_lo + rows_count_prev;
+        auto len = filtered_count * sizeof(int64_t);
+        auto dst = rows + out_args->key_lo + out_args->filtered_size;
+        __MEMMOVE(reinterpret_cast<void *>(dst), reinterpret_cast<void *>(filtered_start), len);
+
         out_args->filtered_size += filtered_count;
     } else {
         out_args->filtered_size = std::distance(found_start, found_stop);

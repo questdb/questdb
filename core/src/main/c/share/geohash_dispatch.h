@@ -28,8 +28,7 @@
 #include "util.h"
 #include "dispatcher.h"
 #include "bitmap_index_utils.h"
-#include <iostream>
-#include <bitset>
+#include "rosti.h"
 
 constexpr int64_t unpack_length(int64_t packed_hash) { return packed_hash >> 60; }
 
