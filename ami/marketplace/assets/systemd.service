@@ -1,0 +1,30 @@
+[Unit]
+Description=QuestDB
+Documentation=https://www.questdb.io/docs/introduction
+After=network.target
+RequiresMountsFor=/var/lib/questdb
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=2
+Environment=QDB_PACKAGE=ami
+ExecStart=/usr/bin/java \
+    --add-exports java.base/jdk.internal.math=io.questdb \
+    -p /usr/local/bin/questdb.jar \
+    -m io.questdb/io.questdb.ServerMain \
+    -DQuestDB-Runtime-66535 \
+    -ea -Dnoebug \
+    -XX:+UnlockExperimentalVMOptions \
+    -XX:+AlwaysPreTouch \
+    -XX:+UseParallelOldGC \
+    -d /var/lib/questdb
+ExecReload=/bin/kill -s HUP $MAINPID
+# Prevent writes to /usr, /boot, and /etc
+ProtectSystem=full
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=questdb
+
+[Install]
+WantedBy=multi-user.target

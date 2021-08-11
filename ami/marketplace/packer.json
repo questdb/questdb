@@ -1,0 +1,67 @@
+{
+  "_comment": "Packer Template for demo. Based on Amazon Linux 2",
+  "variables": {
+    "aws_region": "eu-west-1",
+    "base_ami_name": "questdb",
+    "questdb_version": "6.0.4"
+  },
+  "builders": [
+    {
+      "name": "questdb-ami-amazon-linux-2",
+      "ami_name": "{{ user `base_ami_name` }}-{{ user `questdb_version` }}-amzn2-x86_64-ebs",
+      "ami_description": "An Amazon Linux2 instance with QuestDB-{{ user `questdb_version` }} installed and running",
+      "ami_regions": ["{{user `aws_region`}}"],
+      "instance_type": "t3.large",
+      "region": "{{user `aws_region`}}",
+      "type": "amazon-ebs",
+      "force_deregister": "true",
+      "force_delete_snapshot": "true",
+      "source_ami_filter": {
+        "filters": {
+          "name": "questdb-master*"
+        },
+        "owners": ["self"],
+        "most_recent": true
+      },
+      "launch_block_device_mappings": [ {
+        "device_name": "/dev/xvdb",
+        "volume_size": 100,
+        "delete_on_termination": true
+      }],
+      
+      "ssh_username": "ec2-user",
+      "tags": {
+        "OS_Version": "Amazon Linux 2",
+        "Base_AMI_Name": "{{ .SourceAMIName }}",
+        "Name": "{{ user `base_ami_name` }}-{{ user `questdb_version` }}-amzn2-x86_64-ebs"
+      }
+    }
+  ],
+  "provisioners": [
+    {
+      "type": "file",
+      "source": "./assets",
+      "destination": "/tmp"
+    },
+    {
+      "type": "file",
+      "source": "./scripts",
+      "destination": "/tmp"
+    },
+    {
+      "environment_vars": [
+        "QUESTDB_VERSION={{user `questb_version`}}"
+      ],
+      "type": "shell",
+      "execute_command": "echo 'packer' | sudo -S sh -c '{{ .Vars }} {{ .Path }}'",
+      "scripts": ["build.bash"]
+    },
+    {
+      "type": "shell",
+      "inline": [
+        "rm .ssh/authorized_keys",
+        "sudo rm /root/.ssh/authorized_keys"
+      ]
+    }
+  ]
+}
