@@ -137,7 +137,7 @@ include(${ZLIB_SOURCE_DIR}/CMakeLists.txt)
 # ZLIB_SRCS is defined in Zlib Cmake config
 add_library(questdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS})
 
-set(DEBUG_OPTIONS "-Wall;-g;-O0")
+set(DEBUG_OPTIONS "-Wall;-g;-O2")
 set(RELEASE_OPTIONS "-O3")
 
 if (AARCH64)
