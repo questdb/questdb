@@ -486,6 +486,16 @@
       "contributions": [
         "bug"
       ]
+    },
+    {
+      "login": "tim2skew",
+      "name": "tim2skew",
+      "avatar_url": "https://avatars.githubusercontent.com/u/54268285?v=4",
+      "profile": "https://github.com/tim2skew",
+      "contributions": [
+        "bug",
+        "userTesting"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
