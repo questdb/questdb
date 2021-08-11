@@ -109,6 +109,44 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSameTypeSameNonConstInt() {
+        createEqFunctionNonConstAndAssert(
+                (int)1E9, ColumnType.geohashWithPrecision(30),
+                (int)1E9, ColumnType.geohashWithPrecision(30),
+                true,
+                false);
+    }
+
+    @Test
+    public void testSameTypeSameNonConstLong() {
+        createEqFunctionNonConstAndAssert(
+                (long) 1E12, ColumnType.geohashWithPrecision(32),
+                (long) 1E12 + 1, ColumnType.geohashWithPrecision(32),
+                false,
+                false);
+    }
+
+    @Test
+    public void testSameTypeSameNonConstShort() {
+        short value = new Rnd().nextShort();
+        createEqFunctionNonConstAndAssert(
+                value, ColumnType.geohashWithPrecision(15),
+                value + 1, ColumnType.geohashWithPrecision(15),
+                false,
+                false);
+    }
+
+    @Test
+    public void testSameTypeSameNonConstByte() {
+        byte value = new Rnd().nextByte();
+        createEqFunctionNonConstAndAssert(
+                value, ColumnType.geohashWithPrecision(2),
+                value, ColumnType.geohashWithPrecision(2),
+                true,
+                false);
+    }
+
+    @Test
     public void testNull1() {
         args.add(NullConstant.NULL);
         args.add(geoByteNullNonConstFunction);
@@ -280,6 +318,12 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     private void createEqFunctionAndAssert(long hash1, int typep1, long hash2, int typep2, boolean expectedEq, boolean expectConst) {
         args.add(createGeoValueFunction(typep1, hash1, false));
         args.add(createGeoValueFunction(typep2, hash2, true));
+        createEqFunctionAndAssert(expectConst, expectedEq);
+    }
+
+    private void createEqFunctionNonConstAndAssert(long hash1, int typep1, long hash2, int typep2, boolean expectedEq, boolean expectConst) {
+        args.add(createGeoValueFunction(typep1, hash1, false));
+        args.add(createGeoValueFunction(typep2, hash2, false));
         createEqFunctionAndAssert(expectConst, expectedEq);
     }
 
