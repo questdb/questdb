@@ -74,7 +74,7 @@ void filter_with_prefix_generic(
             while(bits) {
                 auto idx = bit_scan_forward(bits);
                 rows[o++] = rows[i + idx];
-                bits &= ~(1 << idx);
+                bits &= ~(1ull << idx);
             }
         }
     }
