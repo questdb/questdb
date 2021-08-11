@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 package io.questdb.cairo;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
@@ -172,5 +173,35 @@ public class GeoHashesTest {
         }
         Assert.assertEquals(expected, everything.toString());
         Assert.assertEquals("GEOHASH", ColumnType.nameOf(ColumnType.GEOHASH));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromString1() throws NumericException {
+        GeoHashes.fromString("", -1, 0);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromString2() throws NumericException {
+        GeoHashes.fromString("", 1, 1);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromString3() throws NumericException {
+        GeoHashes.fromString("", 1, 62);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromString4() throws NumericException {
+        GeoHashes.fromString("questdb", 1, 8);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromString5() throws NumericException {
+        GeoHashes.fromString(null, 1, 2);
+    }
+
+    @Test
+    public void testFromString6() throws NumericException {
+        Assert.assertEquals(27760644473312309L, GeoHashes.fromString("'sp052w92p1p'", 1, 11));
     }
 }

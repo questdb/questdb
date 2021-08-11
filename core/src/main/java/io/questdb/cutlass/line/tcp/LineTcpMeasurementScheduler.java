@@ -735,6 +735,33 @@ class LineTcpMeasurementScheduler implements Closeable {
                             final int colType = writer.getMetadata().getColumnType(colIndex);
                             if (ColumnType.isString(colType)) {
                                 row.putStr(colIndex, job.floatingCharSink);
+                            } else if (ColumnType.isGeoHash(colType)) {
+                                // TODO: add test that creates schema first and goes through the paces
+                                int typeChars = GeoHashes.getBitsPrecision(colType) / 5;
+                                int valueChars = job.floatingCharSink.length();
+                                if (valueChars >= typeChars) {
+                                    try {
+                                        row.putGeoHash(colIndex, GeoHashes.fromString(job.floatingCharSink, Math.min(valueChars, typeChars)));
+                                    } catch (NumericException e) {
+                                        throw CairoException.instance(0)
+                                                .put("not a valid GEOHASH value [columnIndex=")
+                                                .put(colIndex)
+                                                .put(", columnType=")
+                                                .put(ColumnType.nameOf(colType))
+                                                .put(", suppliedValue=")
+                                                .put(job.floatingCharSink.toString())
+                                                .put(']');
+                                    }
+                                } else if (valueChars == 0) {
+                                    row.putGeoHash(colIndex, GeoHashes.NULL);
+                                } else {
+                                    throw CairoException.instance(0)
+                                            .put("GEOHASH value does not have enough precision [columnIndex=")
+                                            .put(colIndex)
+                                            .put(", columnType=")
+                                            .put(ColumnType.nameOf(colType))
+                                            .put(']');
+                                }
                             } else {
                                 throw CairoException.instance(0)
                                         .put("cast error for line protocol string [columnIndex=").put(colIndex)

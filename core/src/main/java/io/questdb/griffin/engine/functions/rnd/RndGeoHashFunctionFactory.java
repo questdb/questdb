@@ -47,12 +47,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(
-            int position, ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    public Function newInstance(int position,
+                                ObjList<Function> args,
+                                IntList argPositions,
+                                CairoConfiguration configuration,
+                                SqlExecutionContext sqlExecutionContext) throws SqlException {
         int bits = args.getQuick(0).getInt(null);
         if (bits < 1 || bits > GeoHashes.MAX_BITS_LENGTH) {
             throw SqlException.$(argPositions.getQuick(0), "precision must be in [1..60] range");

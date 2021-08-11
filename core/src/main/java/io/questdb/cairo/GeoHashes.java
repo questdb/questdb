@@ -129,11 +129,19 @@ public class GeoHashes {
     }
 
     public static long fromString(CharSequence hash, int parseLen) throws NumericException {
-        if (parseLen == 0 || parseLen > MAX_STRING_LENGTH || hash == null || parseLen > hash.length()) {
+        return fromString(hash, 0, parseLen);
+    }
+
+    public static long fromString(CharSequence hash, int start, int parseLen) throws NumericException {
+        if (hash == null ||
+                start < 0 ||
+                start + parseLen == 0 ||
+                start + parseLen > MAX_STRING_LENGTH ||
+                start + parseLen > hash.length()) {
             throw NumericException.INSTANCE;
         }
         long output = 0;
-        for (int i = 0; i < parseLen; ++i) {
+        for (int i = start; i < start + parseLen; ++i) {
             char c = hash.charAt(i);
             if (c > MIN_CHAR && c < MAX_CHAR) {
                 byte idx = base32Indexes[(int) c - 48];

@@ -210,10 +210,10 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             for (int i = 0; i < columnCount; i++) {
                 final long value = columnIndexAndType.getQuick(i);
                 CairoLineProtoParserSupport.putValue(
-                        row
-                        , Numbers.decodeHighInt(value)
-                        , Numbers.decodeLowInt(value)
-                        , cache.get(columnValues.getQuick(i))
+                        row,
+                        Numbers.decodeHighInt(value),
+                        Numbers.decodeLowInt(value),
+                        cache.get(columnValues.getQuick(i))
                 );
             }
             row.append();
@@ -319,7 +319,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
     private void parseFieldValue(CachedCharSequence value, CharSequenceCache cache) {
         int valueType = CairoLineProtoParserSupport.getValueType(value);
-        if (valueType == -1) {
+        if (valueType == ColumnType.UNDEFINED) {
             switchModeToSkipLine();
         } else {
             parseValue(value, valueType, cache);
@@ -329,7 +329,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     @SuppressWarnings("unused")
     private void parseFieldValueNewTable(CachedCharSequence value, CharSequenceCache cache) {
         int valueType = CairoLineProtoParserSupport.getValueType(value);
-        if (valueType == -1) {
+        if (valueType == ColumnType.UNDEFINED) {
             switchModeToSkipLine();
         } else {
             parseValueNewTable(value, valueType);
@@ -346,8 +346,8 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     private void parseValue(CachedCharSequence value, int valueType, CharSequenceCache cache) {
-        assert valueType > -1;
-        if (columnType > -1) {
+        assert valueType > ColumnType.UNDEFINED;
+        if (columnType > ColumnType.UNDEFINED) {
             boolean valid;
             final int valueTypeTag = ColumnType.tagOf(valueType);
             final int columnTypeTag = ColumnType.tagOf(columnType);
@@ -364,7 +364,9 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                     valid = columnTypeTag == ColumnType.BOOLEAN;
                     break;
                 case ColumnType.STRING:
-                    valid = columnTypeTag == ColumnType.STRING;
+                    valid = columnTypeTag == ColumnType.STRING ||
+                            (columnTypeTag == ColumnType.GEOHASH &&
+                                    (GeoHashes.getBitsPrecision(columnType) <= 5 * (value.length() - 2) || value.length() == 2));
                     break;
                 case ColumnType.DOUBLE:
                     valid = columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT;
@@ -412,7 +414,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
     private void prepareNewColumn(CachedCharSequence token) {
         columnName = token.getCacheAddress();
-        columnType = -1;
+        columnType = ColumnType.UNDEFINED;
     }
 
     private void switchModeToAppend() {

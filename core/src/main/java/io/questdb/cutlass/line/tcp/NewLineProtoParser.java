@@ -33,7 +33,7 @@ import io.questdb.std.str.DirectByteCharSequence;
 import java.io.Closeable;
 
 public class NewLineProtoParser implements Closeable {
-    public static final long NULL_TIMESTAMP = Long.MIN_VALUE;
+    public static final long NULL_TIMESTAMP = Numbers.LONG_NaN;
     public static final byte ENTITY_TYPE_TAG = 0;
     public static final byte ENTITY_TYPE_FLOAT = 1;
     public static final byte ENTITY_TYPE_INTEGER = 2;

@@ -26,6 +26,7 @@ package io.questdb.cutlass.line;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableWriter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -93,6 +94,15 @@ public class CairoLineProtoParserSupport {
                 case ColumnType.TIMESTAMP:
                     row.putTimestamp(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                     break;
+                case ColumnType.GEOHASH:
+                    if (value.length() == 2) {
+                        row.putGeoHash(columnIndex, GeoHashes.NULL);
+                    } else {
+                        int typeChars = GeoHashes.getBitsPrecision(columnType) / 5;
+                        int valueChars = value.length() - 2;
+                        row.putGeoHash(columnIndex, GeoHashes.fromString(value, 1, Math.min(valueChars, typeChars)));
+                    }
+                    break;
                 default:
                     break;
             }
@@ -129,7 +139,7 @@ public class CairoLineProtoParserSupport {
             case '"':
                 if (len < 2 || token.charAt(0) != '\"') {
                     LOG.error().$("incorrectly quoted string: ").$(token).$();
-                    return -1;
+                    return ColumnType.UNDEFINED;
                 }
                 return ColumnType.STRING;
             default:
