@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
@@ -64,7 +63,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final StringSink query = new StringSink();
     private final StringSink columnsQueryParameter = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
-    private final ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+    private final IntList columnTypesAndFlags = new IntList();
     private final ObjList<String> columnNames = new ObjList<>();
     private final HttpConnectionContext httpConnectionContext;
     private final IntList columnSkewList = new IntList();
@@ -114,7 +113,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     public void clear() {
         columnCount = 0;
         columnSkewList.clear();
-        columnTypes.clear();
+        columnTypesAndFlags.clear();
         columnNames.clear();
         cursor = Misc.free(cursor);
         record = null;
@@ -308,36 +307,35 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         socket.put('"').putISODate(t).put('"');
     }
 
-    private static void putGeoHashStringByteValue(HttpChunkedResponseSocket socket, Record rec, int col, int columnType) {
+    private static void putGeoHashStringByteValue(HttpChunkedResponseSocket socket, Record rec, int col, int columnType, int bitFlags) {
         byte l = rec.getGeoHashByte(col);
-        putGeoHashStringValue(socket, columnType, l);
+        putGeoHashStringValue(socket, columnType, l, bitFlags);
     }
 
-    private static void putGeoHashStringShortValue(HttpChunkedResponseSocket socket, Record rec, int col, int columnType) {
+    private static void putGeoHashStringShortValue(HttpChunkedResponseSocket socket, Record rec, int col, int columnType, int bitFlags) {
         short l = rec.getGeoHashShort(col);
-        putGeoHashStringValue(socket, columnType, l);
+        putGeoHashStringValue(socket, columnType, l, bitFlags);
     }
 
-    private static void putGeoHashStringIntValue(HttpChunkedResponseSocket socket, Record rec, int col, int columnType) {
+    private static void putGeoHashStringIntValue(HttpChunkedResponseSocket socket, Record rec, int col, int columnType, int bitFlags) {
         int l = rec.getGeoHashInt(col);
-        putGeoHashStringValue(socket, columnType, l);
+        putGeoHashStringValue(socket, columnType, l, bitFlags);
     }
 
-    private static void putGeoHashStringLongValue(HttpChunkedResponseSocket socket, Record rec, int col, int columnType) {
+    private static void putGeoHashStringLongValue(HttpChunkedResponseSocket socket, Record rec, int col, int columnType, int bitFlags) {
         long l = rec.getGeoHashLong(col);
-        putGeoHashStringValue(socket, columnType, l);
+        putGeoHashStringValue(socket, columnType, l, bitFlags);
     }
 
-    private static void putGeoHashStringValue(HttpChunkedResponseSocket socket, int columnType, long value) {
-        final int precision = GeoHashes.getBitsPrecision(columnType);
+    private static void putGeoHashStringValue(HttpChunkedResponseSocket socket, int columnType, long value, int bitFlags) {
         if (value == GeoHashes.NULL) {
             socket.put("null");
         } else {
             socket.put('\"');
-            if (precision % 5 == 0) {
-                GeoHashes.toString(value, precision / 5, socket);
+            if (bitFlags < 0) {
+                GeoHashes.toString(value, -bitFlags, socket);
             } else {
-                GeoHashes.toBitString(value, precision, socket);
+                GeoHashes.toBitString(value, bitFlags, socket);
             }
             socket.put('\"');
         }
@@ -404,14 +402,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             if (columnIndex > 0) {
                 socket.put(',');
             }
-            int columnType = columnTypes.getColumnType(columnIndex);
-            if (ColumnType.isGeoHash(columnType)) {
-                final int precision = GeoHashes.getBitsPrecision(columnType);
-                if (precision < 0 ) {
-                    // restore proper bits precision
-                    columnType = GeoHashes.setBitsPrecision(columnType, -5*precision);
-                }
-            }
+            int columnType = columnTypesAndFlags.getQuick(2 * columnIndex);
             socket.put('{').
                     putQuoted("name").put(':').encodeUtf8AndQuote(columnNames.getQuick(columnIndex)).
                     put(',').
@@ -459,7 +450,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             }
 
             int columnIdx = columnSkewList.size() > 0 ? columnSkewList.getQuick(columnIndex) : columnIndex;
-            final int columnType = columnTypes.getColumnType(columnIndex);
+            int columnType = columnTypesAndFlags.getQuick(2 * columnIndex);
             switch (ColumnType.storageTag(columnType)) {
                 case ColumnType.BOOLEAN:
                     putBooleanValue(socket, record, columnIdx);
@@ -504,16 +495,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putLong256Value(socket, record, columnIdx);
                     break;
                 case ColumnType.GEOBYTE:
-                    putGeoHashStringByteValue(socket, record, columnIdx, columnType);
+                    putGeoHashStringByteValue(socket, record, columnIdx, columnType, columnTypesAndFlags.getQuick(2 * columnIndex + 1));
                     break;
                 case ColumnType.GEOSHORT:
-                    putGeoHashStringShortValue(socket, record, columnIdx, columnType);
+                    putGeoHashStringShortValue(socket, record, columnIdx, columnType, columnTypesAndFlags.getQuick(2 * columnIndex + 1));
                     break;
                 case ColumnType.GEOINT:
-                    putGeoHashStringIntValue(socket, record, columnIdx, columnType);
+                    putGeoHashStringIntValue(socket, record, columnIdx, columnType, columnTypesAndFlags.getQuick(2 * columnIndex + 1));
                     break;
                 case ColumnType.GEOLONG:
-                    putGeoHashStringLongValue(socket, record, columnIdx, columnType);
+                    putGeoHashStringLongValue(socket, record, columnIdx, columnType, columnTypesAndFlags.getQuick(2 * columnIndex + 1));
                     break;
                 default:
                     assert false : "Not supported type in output " + ColumnType.nameOf(columnType);
@@ -645,7 +636,19 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             columnType = ColumnType.STRING;
         }
 
-        this.columnTypes.add(columnType);
+        int flags = 0;
+        if (ColumnType.tagOf(columnType) == ColumnType.GEOHASH) {
+            int bitSize = GeoHashes.getBitsPrecision(columnType);
+            if (bitSize % 5 == 0) {
+                // It's 5 bit per char. If it's integer number of chars value to be serialized as chars
+                flags = -bitSize / 5;
+            } else {
+                // value to be serialized as bit array
+                flags = bitSize;
+            }
+        }
+        this.columnTypesAndFlags.add(columnType);
+        this.columnTypesAndFlags.add(flags);
         this.columnNames.add(metadata.getColumnName(i));
     }
 

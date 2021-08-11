@@ -3700,28 +3700,32 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.compile("create table t1 as (select " +
                     "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
                     "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(2c)) geo2," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(8c)) geo8," +
                     "x," +
                     "timestamp_sequence(0, 1000000) ts " +
                     "from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
             compiler.compile("create table t2 as (select " +
                     "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
                     "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(2c)) geo2," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(8c)) geo8," +
                     "x," +
                     "timestamp_sequence(0, 1000000) ts " +
                     "from long_sequence(2)) timestamp(ts)", sqlExecutionContext);
 
 
-            String expected = "geo4\tgeo1\tx\tts\tgeo41\tgeo11\tx1\tts1\n" +
-                    "ques\tq\t1\t1970-01-01T00:00:00.000000Z\t\t\tNaN\t\n" +
-                    "1234\t3\t2\t1970-01-01T00:00:01.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
-                    "3456\t3\t3\t1970-01-01T00:00:02.000000Z\t\t\tNaN\t\n" +
-                    "3456\t1\t4\t1970-01-01T00:00:03.000000Z\t\t\tNaN\t\n" +
-                    "ques\t1\t5\t1970-01-01T00:00:04.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n" +
-                    "1234\t3\t6\t1970-01-01T00:00:05.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
-                    "1234\t1\t7\t1970-01-01T00:00:06.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
-                    "1234\tq\t8\t1970-01-01T00:00:07.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
-                    "ques\t1\t9\t1970-01-01T00:00:08.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n" +
-                    "ques\t1\t10\t1970-01-01T00:00:09.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n";
+            String expected = "geo4\tgeo1\tgeo2\tgeo8\tx\tts\tgeo41\tgeo11\tgeo21\tgeo81\tx1\tts1\n" +
+                    "ques\tq\t12\t\t1\t1970-01-01T00:00:00.000000Z\t\t\t\t\tNaN\t\n" +
+                    "3456\t3\t34\t\t2\t1970-01-01T00:00:01.000000Z\t3456\tq\t12\t\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "ques\t1\t12\t\t3\t1970-01-01T00:00:02.000000Z\t\t\t\t\tNaN\t\n" +
+                    "1234\t1\t12\t\t4\t1970-01-01T00:00:03.000000Z\t1234\t3\t12\t\t2\t1970-01-01T00:00:01.000000Z\n" +
+                    "ques\t1\tqu\t\t5\t1970-01-01T00:00:04.000000Z\t\t\t\t\tNaN\t\n" +
+                    "1234\tq\tqu\t\t6\t1970-01-01T00:00:05.000000Z\t1234\t3\t12\t\t2\t1970-01-01T00:00:01.000000Z\n" +
+                    "ques\t1\t34\t\t7\t1970-01-01T00:00:06.000000Z\t\t\t\t\tNaN\t\n" +
+                    "1234\tq\t34\t\t8\t1970-01-01T00:00:07.000000Z\t1234\t3\t12\t\t2\t1970-01-01T00:00:01.000000Z\n" +
+                    "3456\t3\tqu\t\t9\t1970-01-01T00:00:08.000000Z\t3456\tq\t12\t\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "3456\tq\t12\t\t10\t1970-01-01T00:00:09.000000Z\t3456\tq\t12\t\t1\t1970-01-01T00:00:00.000000Z\n";
 
             String sql = "with g1 as (select distinct * from t1)," +
                     "g2 as (select distinct * from t2)" +
