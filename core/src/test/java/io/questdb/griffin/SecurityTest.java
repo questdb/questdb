@@ -402,7 +402,9 @@ public class SecurityTest extends AbstractGriffinTest {
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(none)",
                         null,
-                        true, readOnlyExecutionContext);
+                        false,
+                        readOnlyExecutionContext
+                );
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));

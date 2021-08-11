@@ -22,37 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm;
+package io.questdb.cairo.vm.api;
 
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryLogA;
-import io.questdb.cairo.vm.api.MemoryMA;
-import io.questdb.std.Misc;
-
-public class MemoryLogAImpl implements MemoryLogA<MemoryA> {
-    private MemoryMA log;
-    private MemoryA main;
-
-    @Override
-    public void close() {
-        log = Misc.free(log);
-        assert main != this;
-        main = Misc.free(main);
-    }
-
-    @Override
-    public void of(MemoryMA log, MemoryA main) {
-        this.log = log;
-        this.main = main;
-    }
-
-    @Override
-    public MemoryMA getLogMemory() {
-        return log;
-    }
-
-    @Override
-    public MemoryA getMainMemory() {
-        return main;
-    }
+public interface MemoryCA extends MemoryA {
+    long getAddress();
 }

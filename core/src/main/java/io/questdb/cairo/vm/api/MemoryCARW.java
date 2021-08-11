@@ -29,7 +29,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.*;
 
-public interface MemoryCARW extends MemoryCR, MemoryARW {
+public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA {
 
     default long putBin(BinarySequence value) {
         if (value != null) {
@@ -52,6 +52,11 @@ public interface MemoryCARW extends MemoryCR, MemoryARW {
             return offset;
         }
         return putNullBin();
+    }
+
+    @Override
+    default long getAddress() {
+        return getPageAddress(0);
     }
 
     @Override

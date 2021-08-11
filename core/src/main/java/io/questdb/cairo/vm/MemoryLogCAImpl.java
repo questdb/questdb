@@ -24,26 +24,24 @@
 
 package io.questdb.cairo.vm;
 
-import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryCA;
 import io.questdb.cairo.vm.api.MemoryLogA;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.Misc;
 
-public class MemoryLogAImpl implements MemoryLogA<MemoryA> {
+public class MemoryLogCAImpl implements MemoryLogA<MemoryCA>, MemoryCA {
     private MemoryMA log;
-    private MemoryA main;
+    private MemoryCA main;
 
     @Override
     public void close() {
         log = Misc.free(log);
-        assert main != this;
         main = Misc.free(main);
     }
 
     @Override
-    public void of(MemoryMA log, MemoryA main) {
-        this.log = log;
-        this.main = main;
+    public long getAddress() {
+        return main.getAddress();
     }
 
     @Override
@@ -52,7 +50,12 @@ public class MemoryLogAImpl implements MemoryLogA<MemoryA> {
     }
 
     @Override
-    public MemoryA getMainMemory() {
+    public MemoryCA getMainMemory() {
         return main;
+    }
+
+    public void of(MemoryMA log, MemoryCA main) {
+        this.log = log;
+        this.main = main;
     }
 }

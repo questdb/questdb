@@ -278,7 +278,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean supportsRandomAccess,
             boolean checkSameStr,
             boolean expectSize
-    ) {
+    ) throws SqlException {
         assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, false, sqlExecutionContext);
     }
 
@@ -289,7 +289,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize,
             boolean sizeCanBeVariable
-    ) {
+    ) throws SqlException {
         assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, sqlExecutionContext);
     }
 
@@ -301,127 +301,141 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean sizeExpected,
             boolean sizeCanBeVariable, // this means size() can either be -1 in some cases or known in others
             SqlExecutionContext sqlExecutionContext
-    ) {
+    ) throws SqlException {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            if (expected == null) {
-                Assert.assertFalse(cursor.hasNext());
-                cursor.toTop();
-                Assert.assertFalse(cursor.hasNext());
+            Assert.assertEquals(supportsRandomAccess, factory.recordCursorSupportsRandomAccess());
+            if (
+                    assertCursor(
+                            expected,
+                            supportsRandomAccess,
+                            checkSameStr,
+                            sizeExpected,
+                            sizeCanBeVariable,
+                            cursor, factory.getMetadata()
+                    )
+            ) {
                 return;
             }
-
-            TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
-
-            final RecordMetadata metadata = factory.getMetadata();
-
-            testSymbolAPI(metadata, cursor);
-            cursor.toTop();
-            testStringsLong256AndBinary(metadata, cursor, checkSameStr);
-
-            // test API where same record is being updated by cursor
-            cursor.toTop();
-            Record record = cursor.getRecord();
-            Assert.assertNotNull(record);
-            sink.clear();
-            printer.printHeader(metadata, sink);
-            long count = 0;
-            long cursorSize = cursor.size();
-            while (cursor.hasNext()) {
-                printer.print(record, metadata, sink);
-                count++;
-            }
-
-            if (!sizeCanBeVariable) {
-                Assert.assertTrue((sizeExpected && cursorSize != -1) || (!sizeExpected && cursorSize <= 0));
-            }
-            Assert.assertTrue(cursorSize == -1 || count == cursorSize);
-
-            TestUtils.assertEquals(expected, sink);
-
-            if (supportsRandomAccess) {
-
-                Assert.assertTrue(factory.recordCursorSupportsRandomAccess());
-
-                cursor.toTop();
-
-                sink.clear();
-                rows.clear();
-                while (cursor.hasNext()) {
-                    rows.add(record.getRowId());
-                }
-
-                final Record rec = cursor.getRecordB();
-                printer.printHeader(metadata, sink);
-                for (int i = 0, n = rows.size(); i < n; i++) {
-                    cursor.recordAt(rec, rows.getQuick(i));
-                    printer.print(rec, metadata, sink);
-                }
-
-                TestUtils.assertEquals(expected, sink);
-
-                sink.clear();
-
-                final Record factRec = cursor.getRecordB();
-                printer.printHeader(metadata, sink);
-                for (int i = 0, n = rows.size(); i < n; i++) {
-                    cursor.recordAt(factRec, rows.getQuick(i));
-                    printer.print(factRec, metadata, sink);
-                }
-
-                TestUtils.assertEquals(expected, sink);
-
-                // test that absolute positioning of record does not affect state of record cursor
-                if (rows.size() > 0) {
-                    sink.clear();
-
-                    cursor.toTop();
-                    int target = rows.size() / 2;
-                    printer.printHeader(metadata, sink);
-                    while (target-- > 0 && cursor.hasNext()) {
-                        printer.print(record, metadata, sink);
-                    }
-
-                    // no obliterate record with absolute positioning
-                    for (int i = 0, n = rows.size(); i < n; i++) {
-                        cursor.recordAt(factRec, rows.getQuick(i));
-                    }
-
-                    // not continue normal fetch
-                    while (cursor.hasNext()) {
-                        printer.print(record, metadata, sink);
-                    }
-
-                    TestUtils.assertEquals(expected, sink);
-                }
-            } else {
-                Assert.assertFalse(factory.recordCursorSupportsRandomAccess());
-                try {
-                    record.getRowId();
-                    Assert.fail();
-                } catch (UnsupportedOperationException ignore) {
-                }
-
-                try {
-                    cursor.getRecordB();
-                    Assert.fail();
-                } catch (UnsupportedOperationException ignore) {
-                }
-
-                try {
-                    cursor.recordAt(record, 0);
-                    Assert.fail();
-                } catch (UnsupportedOperationException ignore) {
-                }
-            }
-        } catch (SqlException e) {
-            e.printStackTrace();
         }
 
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             testSymbolAPI(factory.getMetadata(), cursor);
-        } catch (SqlException e) {
-            e.printStackTrace();
         }
+    }
+
+    public static boolean assertCursor(
+            CharSequence expected,
+            boolean supportsRandomAccess,
+            boolean checkSameStr,
+            boolean sizeExpected,
+            boolean sizeCanBeVariable,
+            RecordCursor cursor,
+            RecordMetadata metadata
+    ) {
+        if (expected == null) {
+            Assert.assertFalse(cursor.hasNext());
+            cursor.toTop();
+            Assert.assertFalse(cursor.hasNext());
+            return true;
+        }
+
+        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
+
+        testSymbolAPI(metadata, cursor);
+        cursor.toTop();
+        testStringsLong256AndBinary(metadata, cursor, checkSameStr);
+
+        // test API where same record is being updated by cursor
+        cursor.toTop();
+        Record record = cursor.getRecord();
+        Assert.assertNotNull(record);
+        sink.clear();
+        printer.printHeader(metadata, sink);
+        long count = 0;
+        long cursorSize = cursor.size();
+        while (cursor.hasNext()) {
+            printer.print(record, metadata, sink);
+            count++;
+        }
+
+        if (!sizeCanBeVariable) {
+            Assert.assertTrue((sizeExpected && cursorSize != -1) || (!sizeExpected && cursorSize <= 0));
+        }
+        Assert.assertTrue(cursorSize == -1 || count == cursorSize);
+
+        TestUtils.assertEquals(expected, sink);
+
+        if (supportsRandomAccess) {
+            cursor.toTop();
+            sink.clear();
+            rows.clear();
+            while (cursor.hasNext()) {
+                rows.add(record.getRowId());
+            }
+
+            final Record rec = cursor.getRecordB();
+            printer.printHeader(metadata, sink);
+            for (int i = 0, n = rows.size(); i < n; i++) {
+                cursor.recordAt(rec, rows.getQuick(i));
+                printer.print(rec, metadata, sink);
+            }
+
+            TestUtils.assertEquals(expected, sink);
+
+            sink.clear();
+
+            final Record factRec = cursor.getRecordB();
+            printer.printHeader(metadata, sink);
+            for (int i = 0, n = rows.size(); i < n; i++) {
+                cursor.recordAt(factRec, rows.getQuick(i));
+                printer.print(factRec, metadata, sink);
+            }
+
+            TestUtils.assertEquals(expected, sink);
+
+            // test that absolute positioning of record does not affect state of record cursor
+            if (rows.size() > 0) {
+                sink.clear();
+
+                cursor.toTop();
+                int target = rows.size() / 2;
+                printer.printHeader(metadata, sink);
+                while (target-- > 0 && cursor.hasNext()) {
+                    printer.print(record, metadata, sink);
+                }
+
+                // no obliterate record with absolute positioning
+                for (int i = 0, n = rows.size(); i < n; i++) {
+                    cursor.recordAt(factRec, rows.getQuick(i));
+                }
+
+                // not continue normal fetch
+                while (cursor.hasNext()) {
+                    printer.print(record, metadata, sink);
+                }
+
+                TestUtils.assertEquals(expected, sink);
+            }
+        } else {
+            try {
+                record.getRowId();
+                Assert.fail();
+            } catch (UnsupportedOperationException ignore) {
+            }
+
+            try {
+                cursor.getRecordB();
+                Assert.fail();
+            } catch (UnsupportedOperationException ignore) {
+            }
+
+            try {
+                cursor.recordAt(record, 0);
+                Assert.fail();
+            } catch (UnsupportedOperationException ignore) {
+            }
+        }
+        return false;
     }
 
     private static void testStringsLong256AndBinary(RecordMetadata metadata, RecordCursor cursor, boolean checkSameStr) {
@@ -1012,7 +1026,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             SqlExecutionContext sqlExecutionContext,
             boolean supportsRandomAccess,
             boolean checkSameStr,
-            boolean expectSize ) throws SqlException {
+            boolean expectSize) throws SqlException {
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertFactoryCursor(
                     expected,
@@ -1034,7 +1048,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean supportsRandomAccess,
             boolean checkSameStr,
             boolean expectSize,
-            boolean sizeCanBeVariable ) throws SqlException {
+            boolean sizeCanBeVariable) throws SqlException {
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertFactoryCursor(
                     expected,

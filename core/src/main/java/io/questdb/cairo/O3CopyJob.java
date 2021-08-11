@@ -804,7 +804,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         Vect.memcpy(src + (srcLo << shl), dst, (srcHi - srcLo + 1) << shl);
     }
 
-    private static void copyO3(
+    static void copyO3(
             int columnType,
             long srcOooFixAddr,
             long srcOooFixSize,

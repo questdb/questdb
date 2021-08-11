@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.MemoryLogAImpl;
+import io.questdb.cairo.vm.MemoryLogCAImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.SqlException;
@@ -74,7 +75,7 @@ public class TableWriter implements Closeable {
     private final static RemoveFileLambda REMOVE_OR_EXCEPTION = TableWriter::removeOrException;
     final ObjList<MemoryMAR> columns;
     private final ObjList<MemoryMA> logColumns;
-    private final ObjList<MemoryLogA> spliceColumns;
+    private final ObjList<MemoryLogA<MemoryA>> replSpliceColumns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
     private final ObjList<WriterTransientSymbolCountChangeHandler> denseSymbolTransientCountHandlers;
@@ -145,7 +146,8 @@ public class TableWriter implements Closeable {
     private final SCSequence commandSubSeq;
     private final LongIntHashMap replPartitionHash = new LongIntHashMap();
     private long todoTxn;
-    private MemoryARW o3TimestampMem;
+    private MemoryCA o3TimestampMem;
+    private MemoryLogCAImpl replO3TimestampMem = new MemoryLogCAImpl();
     private final O3ColumnUpdateMethod o3MoveLagRef = this::o3MoveLag0;
     private MemoryARW o3TimestampMemCpy;
     private long lockFd = -1;
@@ -281,7 +283,7 @@ public class TableWriter implements Closeable {
             this.refs.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount * 2);
             this.logColumns = new ObjList<>(columnCount * 2);
-            this.spliceColumns = new ObjList<>(columnCount * 2);
+            this.replSpliceColumns = new ObjList<>(columnCount * 2);
             this.o3Columns = new ObjList<>(columnCount * 2);
             this.o3Columns2 = new ObjList<>(columnCount * 2);
             this.row.activeColumns = columns;
@@ -791,8 +793,12 @@ public class TableWriter implements Closeable {
         return tempMem16b != 0;
     }
 
+    public boolean isTransactionLogPending() {
+        return txFile.transactionLogTxn != Long.MIN_VALUE && txFile.transactionLogTxn < 0;
+    }
+
     public boolean isTransactionLogEnabled() {
-        return row.activeColumns == spliceColumns;
+        return txFile.transactionLogTxn > -1;
     }
 
     public TableBlockWriter newBlock() {
@@ -2001,8 +2007,8 @@ public class TableWriter implements Closeable {
 
         final MemoryMAR logPrimary = Vm.getMARInstance();
         final MemoryMAR logSecondary;
-        final MemoryLogA splicePrimary = new MemoryLogAImpl();
-        final MemoryLogA spliceSecondary;
+        final MemoryLogA<MemoryA> splicePrimary = new MemoryLogAImpl();
+        final MemoryLogA<MemoryA> spliceSecondary;
 
         switch (ColumnType.tagOf(type)) {
             case ColumnType.BINARY:
@@ -2031,8 +2037,8 @@ public class TableWriter implements Closeable {
         configureNullSetters(o3NullSetters, type, oooPrimary, oooSecondary);
         logColumns.add(logPrimary);
         logColumns.add(logSecondary);
-        spliceColumns.add(splicePrimary);
-        spliceColumns.add(spliceSecondary);
+        replSpliceColumns.add(splicePrimary);
+        replSpliceColumns.add(spliceSecondary);
 
         if (indexFlag) {
             indexers.extendAndSet((columns.size() - 1) / 2, new SymbolColumnIndexer());
@@ -2334,7 +2340,7 @@ public class TableWriter implements Closeable {
         Misc.freeObjListAndKeepObjects(o3Columns);
         Misc.freeObjListAndKeepObjects(o3Columns2);
         Misc.freeObjListAndKeepObjects(logColumns);
-        Misc.freeObjListAndKeepObjects(spliceColumns);
+        Misc.freeObjListAndKeepObjects(replSpliceColumns);
     }
 
     private void freeIndexers() {
@@ -2686,7 +2692,7 @@ public class TableWriter implements Closeable {
             // we need to compare 'partitionTimestampHi', which is appropriately truncated to DAY/MONTH/YEAR
             // to this.maxTimestamp, which isn't truncated yet. So we need to truncate it first
             LOG.info().$("sorting o3 [table=").$(tableName).$(']').$();
-            final long sortedTimestampsAddr = o3TimestampMem.addressOf(0);
+            final long sortedTimestampsAddr = o3TimestampMem.getAddress();
 
             // ensure there is enough size
             if (o3RowCount > 600 || !o3QuickSortEnabled) {
@@ -3232,7 +3238,7 @@ public class TableWriter implements Closeable {
             // Special case, designated timestamp column
             // Move values and set index to  0..o3LagRowCount
             final long sourceOffset = o3RowCount * 16;
-            final long mergeMemAddr = o3TimestampMem.addressOf(0);
+            final long mergeMemAddr = o3TimestampMem.getAddress();
             Vect.shiftTimestampIndex(mergeMemAddr + sourceOffset, o3LagRowCount, mergeMemAddr);
             o3TimestampMem.jumpTo(o3LagRowCount * 16);
         }
@@ -4535,21 +4541,26 @@ public class TableWriter implements Closeable {
                     final MemoryMA logMem1 = logColumns.getQuick(primaryIndex);
                     logMem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
 
-                    final MemoryLogA spliceColumn1 = spliceColumns.getQuick(primaryIndex);
+                    final MemoryLogA<MemoryA> spliceColumn1 = replSpliceColumns.getQuick(primaryIndex);
+
                     if (spliceColumn1 == row.activeColumns.getQuick(primaryIndex)) {
                         System.out.println("oopsie");
+                        assert false;
                     }
+
                     spliceColumn1.of(logMem1, row.activeColumns.getQuick(primaryIndex));
 
                     final MemoryMA logMem2 = logColumns.getQuick(secondaryIndex);
                     if (logMem2 != null) {
                         logMem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
 
-                        final MemoryLogA spliceColumn2 = spliceColumns.getQuick(secondaryIndex);
+                        final MemoryLogA<MemoryA> spliceColumn2 = replSpliceColumns.getQuick(secondaryIndex);
                         spliceColumn2.of(logMem2, row.activeColumns.getQuick(secondaryIndex));
                     }
                 }
-                row.activeColumns = spliceColumns;
+                row.activeColumns = replSpliceColumns;
+                replO3TimestampMem.of(logColumns.getQuick(getPrimaryColumnIndex(metadata.getTimestampIndex())), o3TimestampMem);
+                o3TimestampMem = replO3TimestampMem;
             } else {
                 throw CairoException.instance(ff.errno()).put("Could not create directory: ").put(path);
             }
@@ -4572,6 +4583,88 @@ public class TableWriter implements Closeable {
                 cmd.getData() + txMemSize + 16,
                 Unsafe.getUnsafe().getLong(cmd.getData() + txMemSize + 8)
         );
+    }
+
+    private void replO3CopyLagToLog(long o3LagRowCount) {
+        for (int i = 0; i < columnCount; i++) {
+            final int i1 = getPrimaryColumnIndex(i);
+            final int i2 = getSecondaryColumnIndex(i);
+            final int columnType = metadata.getColumnType(i);
+            final MemoryCARW o3Col1 = o3Columns.getQuick(i1);
+            final MemoryCARW o3Col2 = o3Columns.getQuick(i2);
+            final MemoryMA logCol1 = logColumns.getQuick(i1);
+            final MemoryMA logCol2 = logColumns.getQuick(i2);
+
+            final long srcOooFixAddr;
+            final long srcOooFixSize;
+            final long srcOooVarAddr;
+            final long srcOooVarSize;
+            final long dstFixAddr;
+            final long dstVarAddr;
+            final long logCol1Offset;
+            final long logCol2Offset;
+
+            if (ColumnType.isVariableLength(columnType)) {
+                srcOooVarAddr = o3Col1.getPageAddress(0);
+                srcOooVarSize = o3Col1.getAppendOffset();
+                srcOooFixAddr = o3Col2.getPageAddress(0);
+                srcOooFixSize = o3Col2.getAppendOffset();
+
+                logCol1Offset = logCol1.getAppendOffset();
+                logCol1.jumpTo(srcOooVarSize);
+                dstVarAddr = TableUtils.mapRW(ff, logCol1.getFd(), srcOooVarSize);
+
+                logCol2Offset = logCol2.getAppendOffset();
+                logCol2.jumpTo(srcOooFixSize);
+                try {
+                    dstFixAddr = TableUtils.mapRW(ff, logCol2.getFd(), srcOooFixSize);
+                } catch (Throwable e) {
+                    ff.munmap(dstVarAddr, srcOooVarSize);
+                    // in case of exception we also need to restore append position of
+                    logCol1.jumpTo(logCol1Offset);
+                    logCol2.jumpTo(logCol2Offset);
+                    throw e;
+                }
+            } else {
+                srcOooFixAddr = o3Col1.getPageAddress(0);
+                srcOooFixSize = o3Col1.getAppendOffset();
+                srcOooVarAddr = 0;
+                srcOooVarSize = 0;
+
+                logCol1Offset = logCol1.getAppendOffset();
+                logCol1.jumpTo(srcOooFixSize);
+                dstFixAddr = TableUtils.mapRW(ff, logCol1.getFd(), srcOooFixSize);
+                dstVarAddr = 0;
+                logCol2Offset = 0;
+            }
+
+            try {
+                O3CopyJob.copyO3(
+                        columnType,
+                        srcOooFixAddr,
+                        srcOooFixSize,
+                        srcOooVarAddr,
+                        srcOooVarSize,
+                        0,
+                        o3LagRowCount,
+                        dstFixAddr,
+                        dstVarAddr,
+                        0,
+                        0
+                );
+            } catch (Throwable e) {
+                ff.munmap(dstFixAddr, srcOooFixSize);
+                if (dstVarAddr != 0) {
+                    ff.munmap(dstVarAddr, srcOooVarSize);
+                }
+
+                logCol1.jumpTo(logCol1Offset);
+                if (logCol2 != null) {
+                    logCol2.jumpTo(logCol2Offset);
+                }
+                throw e;
+            }
+        }
     }
 
     void replPublishSyncEvent(TableSyncModel model) {
@@ -4600,9 +4693,11 @@ public class TableWriter implements Closeable {
         // If we have O3 lag we will have to enable transaction log right away and copy the lag contents
         // into this log
         if (hasO3()) {
-            long o3LagRowCount = (masterRef - o3MasterRef + 1) / 2;
-            // todo: copy lag to the transaction log
-            txFile.transactionLogTxn = getTxn();
+            final long o3LagRowCount = (masterRef - o3MasterRef + 1) / 2;
+            final long txn = getTxn();
+            replEnableTransactionLog0(txn);
+            replO3CopyLagToLog(o3LagRowCount);
+            txFile.transactionLogTxn = txn;
         } else {
             // no lag, set transaction log txn to pending (negative)
             // we will enable transaction log when O3 kicks in
@@ -5070,15 +5165,15 @@ public class TableWriter implements Closeable {
 
         private Row newRowO3(long timestamp) {
             LOG.info().$("switched to o3 [table=").utf8(tableName).$(']').$();
-            if (txFile.transactionLogTxn < 0 && txFile.transactionLogTxn != Long.MIN_VALUE) {
-                replEnableTransactionLog0(-txFile.transactionLogTxn - 1);
-            }
             txFile.beginPartitionSizeUpdate();
             o3OpenColumns();
             o3InError = false;
             o3MasterRef = masterRef;
-            o3TimestampSetter(timestamp);
             rowFunction = o3RowFunction;
+            o3TimestampSetter(timestamp);
+            if (txFile.transactionLogTxn < 0 && txFile.transactionLogTxn != Long.MIN_VALUE) {
+                replEnableTransactionLog0(-txFile.transactionLogTxn - 1);
+            }
             return row;
         }
     }
