@@ -477,6 +477,15 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "g-metan",
+      "name": "Gennady",
+      "avatar_url": "https://avatars.githubusercontent.com/u/88013490?v=4",
+      "profile": "https://github.com/g-metan",
+      "contributions": [
+        "bug"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
