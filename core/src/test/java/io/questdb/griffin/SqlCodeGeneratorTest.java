@@ -1948,15 +1948,15 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
 
     @Test
-    public void testLatestByAllIndexedGeohash() throws Exception {
+    public void testLatestByAllIndexedGeoHash1c() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    createGeohashTable();
-                    assertQuery("time\tuuid\thash8\n" +
-                                    "2021-05-10T23:59:59.150000Z\tXXX\tf91t48s7\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n" +
-                                    "2021-05-12T00:00:00.186000Z\tZZZ\tvepe7h62\n",
-                            "select * from pos latest by uuid where hash8 within('f91', 'z31w', 'vepe7h')",
+                    createGeoHashTable(1);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.150000Z\tXXX\tf\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
+                                    "2021-05-12T00:00:00.186000Z\tZZZ\tv\n",
+                            "select * from pos latest by uuid where hash within('f', 'z', 'v')",
                             "time",
                             true,
                             true,
@@ -1966,14 +1966,15 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestByAllIndexedGeohashTimeRange() throws Exception {
+    public void testLatestByAllIndexedGeoHash2c() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    createGeohashTable();
-                    assertQuery(
-                            "time\tuuid\thash8\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n",
-                            "select * from pos latest by uuid where time in '2021-05-11' and hash8 within ('z31','bbx')",
+                    createGeoHashTable(2);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
+                                    "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
+                            "select * from pos latest by uuid where hash within('f9', 'z3', 've')",
                             "time",
                             true,
                             true,
@@ -1982,9 +1983,232 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 });
     }
 
-    private void createGeohashTable() throws SqlException {
+    @Test
+    public void testLatestByAllIndexedGeoHash4c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(4);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.150000Z\tXXX\tf91t\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
+                                    "2021-05-12T00:00:00.186000Z\tZZZ\tvepe\n",
+                            "select * from pos latest by uuid where hash within('f91', 'z31w', 'vepe')",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHash8c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(8);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.150000Z\tXXX\tf91t48s7\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n" +
+                                    "2021-05-12T00:00:00.186000Z\tZZZ\tvepe7h62\n",
+                            "select * from pos latest by uuid where hash within('f91', 'z31w', 'vepe7h')",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashTimeRange1c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(1);
+                    assertQuery(
+                            "time\tuuid\thash\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
+                                    "2021-05-11T00:00:00.111000Z\tddd\tb\n",
+                            "select * from pos latest by uuid where time in '2021-05-11' and hash within ('z','b')",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashTimeRange2c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    assertQuery(
+                            "time\tuuid\thash\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
+                                    "2021-05-11T00:00:00.111000Z\tddd\tbc\n",
+                            "select * from pos latest by uuid where time in '2021-05-11' and hash within ('z','b')",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashTimeRange4c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(4);
+                    assertQuery(
+                            "time\tuuid\thash\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
+                                    "2021-05-11T00:00:00.111000Z\tddd\tbcnk\n",
+                            "select * from pos latest by uuid where time in '2021-05-11' and hash within ('z','b')",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashTimeRange8c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(8);
+                    assertQuery(
+                            "time\tuuid\thash\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n",
+                            "select * from pos latest by uuid where time in '2021-05-11' and hash within ('z31','bbx')",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashRnd1c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createRndGeoHashTable();
+                    assertQuery(
+                            "geo1\tts\n" +
+                                    "x\t1970-01-17T21:43:20.000000Z\n" +
+                                    "x\t1970-01-18T02:38:20.000000Z\n" +
+                                    "y\t1970-01-18T03:03:20.000000Z\n" +
+                                    "x\t1970-01-18T03:06:40.000000Z\n" +
+                                    "y\t1970-01-18T05:53:20.000000Z\n" +
+                                    "y\t1970-01-18T07:41:40.000000Z\n" +
+                                    "y\t1970-01-18T08:18:20.000000Z\n" +
+                                    "z\t1970-01-18T08:35:00.000000Z\n",
+                            "select geo1, ts from x latest by s where geo1 within('x', 'y', 'z')",
+                            "ts",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashRnd2c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createRndGeoHashTable();
+                    assertQuery(
+                            "geo2\tts\n" +
+                                    "z7g\t1970-01-17T18:45:00.000000Z\n" +
+                                    "xzu\t1970-01-17T21:06:40.000000Z\n" +
+                                    "yyg\t1970-01-18T01:36:40.000000Z\n" +
+                                    "yds\t1970-01-18T01:56:40.000000Z\n" +
+                                    "yjx\t1970-01-18T05:03:20.000000Z\n" +
+                                    "ymx\t1970-01-18T05:53:20.000000Z\n" +
+                                    "y8x\t1970-01-18T06:45:00.000000Z\n" +
+                                    "y25\t1970-01-18T06:48:20.000000Z\n" +
+                                    "yvh\t1970-01-18T06:55:00.000000Z\n" +
+                                    "y1n\t1970-01-18T07:28:20.000000Z\n" +
+                                    "zs4\t1970-01-18T08:03:20.000000Z\n",
+                            "select geo2, ts from x latest by s where geo2 within('x', 'y', 'z')",
+                            "ts",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashRnd4c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createRndGeoHashTable();
+                    assertQuery(
+                            "geo4\tts\n" +
+                                    "zd4gu\t1970-01-17T20:06:40.000000Z\n" +
+                                    "xwnjg\t1970-01-18T01:36:40.000000Z\n" +
+                                    "yv6gp\t1970-01-18T02:48:20.000000Z\n" +
+                                    "z4wbx\t1970-01-18T05:51:40.000000Z\n" +
+                                    "zejr0\t1970-01-18T06:43:20.000000Z\n" +
+                                    "ybsge\t1970-01-18T06:45:00.000000Z\n" +
+                                    "zdhfv\t1970-01-18T06:53:20.000000Z\n" +
+                                    "z4t7w\t1970-01-18T07:45:00.000000Z\n" +
+                                    "xxusm\t1970-01-18T07:55:00.000000Z\n" +
+                                    "x1dse\t1970-01-18T08:18:20.000000Z\n" +
+                                    "zmt6j\t1970-01-18T08:38:20.000000Z\n",
+                            "select geo4, ts from x latest by s where geo4 within('x', 'y', 'z')",
+                            "ts",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashRnd8c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createRndGeoHashTable();
+                    assertQuery(
+                            "geo4\tts\n" +
+                                    "yv6gp\t1970-01-18T02:48:20.000000Z\n" +
+                                    "z4wbx\t1970-01-18T05:51:40.000000Z\n" +
+                                    "ybsge\t1970-01-18T06:45:00.000000Z\n" +
+                                    "z4t7w\t1970-01-18T07:45:00.000000Z\n" +
+                                    "xxusm\t1970-01-18T07:55:00.000000Z\n",
+                            "select geo4, ts from x latest by s where geo4 within('xx', 'y', 'z4')",
+                            "ts",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    private void createRndGeoHashTable() throws SqlException {
         compiler.compile(
-                "create table pos(time timestamp, uuid symbol, hash8 geohash(8c))" +
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol(113, 4, 4, 2) s," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_geohash(5) geo1," +
+                        " rnd_geohash(15) geo2," +
+                        " rnd_geohash(25) geo4," +
+                        " rnd_geohash(40) geo8" +
+                        " from long_sequence(10000)" +
+                        "), index(s) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+    }
+
+    private void createGeoHashTable(int chars) throws SqlException {
+        compiler.compile(
+                String.format("create table pos(time timestamp, uuid symbol, hash geohash(%dc))", chars) +
                 ", index(uuid) timestamp(time) partition by DAY",
                 sqlExecutionContext
         );
