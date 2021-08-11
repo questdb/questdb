@@ -532,6 +532,17 @@
       "contributions": [
         "bug"
       ]
+    },
+    {
+      "login": "mugendi",
+      "name": "Anthony Mugendi",
+      "avatar_url": "https://avatars.githubusercontent.com/u/5348246?v=4",
+      "profile": "https://github.com/mugendi",
+      "contributions": [
+        "ideas",
+        "bug",
+        "doc"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
