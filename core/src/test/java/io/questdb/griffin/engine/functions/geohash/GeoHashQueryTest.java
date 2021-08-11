@@ -465,4 +465,48 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testGeohashEqualsTest() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t1 as (select " +
+                    "cast(rnd_str('questdb', '1234567') as geohash(7c)) geo4, " +
+                    "x " +
+                    "from long_sequence(3))", sqlExecutionContext);
+
+            assertSql("select * from t1 where geo4 = cast('questdb' as geohash(7c))",
+                    "geo4\tx\n" +
+                            "questdb\t1\n" +
+                            "questdb\t2\n");
+        });
+    }
+
+    @Test
+    public void testGeohashNotEqualsTest() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t1 as (select " +
+                    "cast(rnd_str('questdb', '1234567') as geohash(7c)) geo4, " +
+                    "x " +
+                    "from long_sequence(3))", sqlExecutionContext);
+
+            assertSql("select * from t1 where geo4 != cast('questdb' as geohash(7c))",
+                    "geo4\tx\n" +
+                            "1234567\t3\n");
+        });
+    }
+
+    @Test
+    public void testGeohashNotEqualsNullTest() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t1 as (select " +
+                    "cast(rnd_str('questdb', '1234567') as geohash(7c)) geo4, " +
+                    "x " +
+                    "from long_sequence(3))", sqlExecutionContext);
+
+            assertSql("select * from t1 where cast(geo4 as geohash(5c)) != geo4 ",
+                    "geo4\tx\n" +
+                            "questdb\t1\n" +
+                            "questdb\t2\n" +
+                            "1234567\t3\n");
+        });
+    }
 }

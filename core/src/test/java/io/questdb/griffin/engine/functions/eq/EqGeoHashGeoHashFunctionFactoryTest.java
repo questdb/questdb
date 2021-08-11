@@ -29,7 +29,11 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.GeoHashFunction;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.functions.constants.GeoHashConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
@@ -310,7 +314,15 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                     ")", sqlExecutionContext);
             assertSql(
                     "x where a != b",
-                    "a\tb\n"
+                    "a\tb\n" +
+                            "01001110110\t0010000110110\n" +
+                            "10001101001\t1111101110110\n" +
+                            "10000101010\t1110010000001\n" +
+                            "11000000101\t0000101011100\n" +
+                            "10011100111\t0011100001011\n" +
+                            "01110110001\t1011000100110\n" +
+                            "11010111111\t1000110001001\n" +
+                            "10010110001\t0101011010111\n"
             );
         });
     }
@@ -381,9 +393,19 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     private void createEqFunctionAndAssert(boolean isConstant, boolean expectedEq) {
-        Function func = factory.newInstance(-1, args, null, null, null);
+        Function func =  factory.newInstance(-1, args, null, null, null);
         Assert.assertEquals(expectedEq, func.getBool(null));
         Assert.assertEquals(isConstant, func.isConstant());
+        if (func instanceof NegatableBooleanFunction) {
+            try {
+                NegatingFunctionFactory nf = new NegatingFunctionFactory("noteq", factory);
+                func = nf.newInstance(-1, args, null, null, null);
+                Assert.assertEquals(!expectedEq, func.getBool(null));
+            } catch (SqlException e) {
+                e.printStackTrace();
+                Assert.fail();
+            }
+        }
     }
 
     private static class EasyGeoHashFunction extends GeoHashFunction {
