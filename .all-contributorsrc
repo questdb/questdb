@@ -552,6 +552,17 @@
       "contributions": [
         "bug"
       ]
+    },
+    {
+      "login": "mingodad",
+      "name": "Domingo Alvarez Duarte",
+      "avatar_url": "https://avatars.githubusercontent.com/u/462618?v=4",
+      "profile": "https://github.com/mingodad",
+      "contributions": [
+        "ideas",
+        "bug",
+        "doc"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
