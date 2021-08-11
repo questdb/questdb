@@ -2523,16 +2523,19 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     }
 
     private static void setNull(int columnType, long addr, long count) {
-        switch (ColumnType.sizeTag(columnType)) {
+        switch (ColumnType.storageTag(columnType)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
+            case ColumnType.GEOBYTE:
                 Vect.memset(addr, count, 0);
                 break;
             case ColumnType.CHAR:
             case ColumnType.SHORT:
+            case ColumnType.GEOSHORT:
                 Vect.setMemoryShort(addr, (short) 0, count);
                 break;
             case ColumnType.INT:
+            case ColumnType.GEOINT:
                 Vect.setMemoryInt(addr, Numbers.INT_NaN, count);
                 break;
             case ColumnType.FLOAT:
@@ -2544,6 +2547,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
+            case ColumnType.GEOLONG:
                 Vect.setMemoryLong(addr, Numbers.LONG_NaN, count);
                 break;
             case ColumnType.DOUBLE:

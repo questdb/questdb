@@ -90,6 +90,26 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
+    public byte getGeoHashByte(int col) {
+        return (byte)values[col];
+    }
+
+    @Override
+    public short getGeoHashShort(int col) {
+        return (short) values[col];
+    }
+
+    @Override
+    public int getGeoHashInt(int col) {
+        return (int) values[col];
+    }
+
+    @Override
+    public long getGeoHashLong(int col) {
+        return values[col];
+    }
+
+    @Override
     public boolean isNew() {
         return false;
     }

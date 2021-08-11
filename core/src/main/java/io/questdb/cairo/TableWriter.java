@@ -27,10 +27,7 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.cairo.SymbolMapWriter.TransientSymbolCountChangeHandler;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.SqlException;
@@ -1338,7 +1335,7 @@ public class TableWriter implements Closeable {
     }
 
     private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryA mem1, MemoryA mem2) {
-        switch (ColumnType.sizeTag(type)) {
+        switch (ColumnType.storageTag(type)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
                 nullers.add(() -> mem1.putByte((byte) 0));
@@ -1375,21 +1372,17 @@ public class TableWriter implements Closeable {
             case ColumnType.BINARY:
                 nullers.add(() -> mem2.putLong(mem1.putNullBin()));
                 break;
-            case ColumnType.GEOHASH:
-                switch (GeoHashes.sizeOf(type)) {
-                    case 1:
-                        nullers.add(() -> mem1.putByte((byte) GeoHashes.NULL));
-                        break;
-                    case 2:
-                        nullers.add(() -> mem1.putShort((short) GeoHashes.NULL));
-                        break;
-                    case 4:
-                        nullers.add(() -> mem1.putInt((int) GeoHashes.NULL));
-                        break;
-                    default:
-                        nullers.add(() -> mem1.putLong(GeoHashes.NULL));
-                }
+            case ColumnType.GEOBYTE:
+                nullers.add(() -> mem1.putByte(GeoHashes.BYTE_NULL));
                 break;
+            case ColumnType.GEOSHORT:
+                nullers.add(() -> mem1.putShort(GeoHashes.SHORT_NULL));
+                break;
+            case ColumnType.GEOINT:
+                nullers.add(() -> mem1.putInt(GeoHashes.INT_NULL));
+                break;
+            case ColumnType.GEOLONG:
+                nullers.add(() -> mem1.putLong(GeoHashes.NULL));
             default:
                 break;
         }

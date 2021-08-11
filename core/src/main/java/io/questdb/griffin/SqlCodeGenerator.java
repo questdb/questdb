@@ -732,9 +732,10 @@ public class SqlCodeGenerator implements Mutable {
                     executionContext.pushTimestampRequiredFlag(joinsRequiringTimestamp[nextJointType]);
                 }
 
+                RecordCursorFactory slave = null;
                 try {
                     // compile
-                    RecordCursorFactory slave = generateQuery(slaveModel, executionContext, index > 0);
+                    slave = generateQuery(slaveModel, executionContext, index > 0);
 
                     // check if this is the root of joins
                     if (master == null) {
@@ -890,7 +891,12 @@ public class SqlCodeGenerator implements Mutable {
                                 break;
                         }
                     }
-                } finally {
+                } catch (Throwable th) {
+                    Misc.free(master);
+                    Misc.free(slave);
+                    throw th;
+                }
+                finally {
                     executionContext.popTimestampRequiredFlag();
                 }
 
@@ -2907,8 +2913,10 @@ public class SqlCodeGenerator implements Mutable {
         // compare types and populate keyTypes
         keyTypes.clear();
         for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
-            int columnTypeA = ColumnType.tagOf(slaveMetadata.getColumnType(listColumnFilterA.getColumnIndexFactored(k)));
-            int columnTypeB = ColumnType.tagOf(masterMetadata.getColumnType(listColumnFilterB.getColumnIndexFactored(k)));
+            // Don't use tagOf(columnType) to compare the types.
+            // Key types have to much exactly except SYMBOL and STRING special case
+            int columnTypeA = slaveMetadata.getColumnType(listColumnFilterA.getColumnIndexFactored(k));
+            int columnTypeB = masterMetadata.getColumnType(listColumnFilterB.getColumnIndexFactored(k));
             if (columnTypeB != columnTypeA && !(ColumnType.isSymbolOrString(columnTypeB) && ColumnType.isSymbolOrString(columnTypeA))) {
                 // index in column filter and join context is the same
                 throw SqlException.$(jc.aNodes.getQuick(k).position, "join column type mismatch");
