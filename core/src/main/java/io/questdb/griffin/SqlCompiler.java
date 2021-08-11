@@ -1064,7 +1064,7 @@ public class SqlCompiler implements Closeable {
 
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && tok.charAt(0) != ')') {
-                    int geosizeBits = SqlParser.parseGeoHashSize(lexer.lastTokenPosition(), tok);
+                    int geosizeBits = SqlParser.parseGeoHashSize(lexer.lastTokenPosition(), 0, tok);
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || tok.charAt(0) != ')') {
                         if (tok != null) {

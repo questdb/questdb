@@ -98,7 +98,7 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
         assertFailure("cast(null as GEOHASH)",
                 null,
                 13,
-                "not valid GEOHASH type literal");
+                "invalid type");
     }
 
     @Test
@@ -113,15 +113,15 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
     public void testCastNullGeoHashMissingSize4() throws Exception {
         assertFailure("cast(null as GEOHASH(21 b))",
                 null,
-                21,
-                "invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
+                24,
+                "invalid GEOHASH, missing ')'");
     }
 
     @Test
     public void testCastNullGeoHashMissingSize5() throws Exception {
         assertFailure("cast(null as GEOHASH(c))",
                 null,
-                21,
+                13,
                 "invalid GEOHASH size, must be number followed by 'C' or 'B' character");
     }
 
