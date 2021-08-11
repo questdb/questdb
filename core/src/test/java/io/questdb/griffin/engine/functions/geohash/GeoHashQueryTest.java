@@ -465,6 +465,34 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
         });
     }
 
+
+    @Test
+    public void testDirectWriteEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t1 as (select " +
+                    "rnd_geohash(5) geo1," +
+                    "rnd_geohash(15) geo2," +
+                    "rnd_geohash(20) geo4," +
+                    "rnd_geohash(40) geo8," +
+                    "x " +
+                    "from long_sequence(0))", sqlExecutionContext);
+
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "t1", "test")) {
+                for(int i = 0; i < 2; i++) {
+                    TableWriter.Row row = writer.newRow();
+                    row.putGeoHash(4, i);
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            assertSql("t1",
+                    "geo1\tgeo2\tgeo4\tgeo8\tx\n" +
+                            "\t\t\t\t0\n" +
+                            "\t\t\t\t1\n");
+        });
+    }
+
     @Test
     public void testGeohashEqualsTest() throws Exception {
         assertMemoryLeak(() -> {

@@ -49,12 +49,16 @@ public class RecordSinkFactory {
         final int interfaceClassIndex = asm.poolClass(RecordSink.class);
 
         final int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
+        final int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoHashInt", "(I)I");
         final int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
+        final int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoHashLong", "(I)J");
         final int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
         final int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         final int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
         final int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
+        final int rGetGeoByte = asm.poolInterfaceMethod(Record.class, "getGeoHashByte", "(I)B");
         final int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
+        final int rGetGeoShort = asm.poolInterfaceMethod(Record.class, "getGeoHashShort", "(I)S");
         final int rGetChar = asm.poolInterfaceMethod(Record.class, "getChar", "(I)C");
         final int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
         final int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
@@ -99,7 +103,7 @@ public class RecordSinkFactory {
             final int factor = columnFilter.getIndexFactor(index);
             index = (index * factor - 1);
             final int type = columnTypes.getColumnType(index);
-            switch (factor * ColumnType.tagOf(type)) {
+            switch (factor * ColumnType.storageTag(type)) {
                 case ColumnType.INT:
                     asm.aload(2);
                     asm.aload(1);
@@ -220,29 +224,33 @@ public class RecordSinkFactory {
                     asm.iconst(Long.BYTES);
                     asm.invokeInterface(wSkip, 1);
                     break;
-                case ColumnType.GEOHASH:
+                case ColumnType.GEOBYTE:
                     asm.aload(2);
                     asm.aload(1);
                     asm.iconst(getSkewedIndex(index, skewIndex));
-                    final int size = ColumnType.sizeOf(type);
-                    switch (size) {
-                        case 1:
-                            asm.invokeInterface(rGetByte, 1);
-                            asm.invokeInterface(wPutByte, 1);
-                            break;
-                        case 2:
-                            asm.invokeInterface(rGetShort, 1);
-                            asm.invokeInterface(wPutShort, 1);
-                            break;
-                        case 4:
-                            asm.invokeInterface(rGetInt, 1);
-                            asm.invokeInterface(wPutInt, 1);
-                            break;
-                        default:
-                            asm.invokeInterface(rGetLong, 1);
-                            asm.invokeInterface(wPutLong, 2);
-                            break;
-                    }
+                    asm.invokeInterface(rGetGeoByte, 1);
+                    asm.invokeInterface(wPutByte, 1);
+                    break;
+                case ColumnType.GEOSHORT:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
+                    asm.invokeInterface(rGetGeoShort, 1);
+                    asm.invokeInterface(wPutShort, 1);
+                    break;
+                case ColumnType.GEOINT:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
+                    asm.invokeInterface(rGetGeoInt, 1);
+                    asm.invokeInterface(wPutInt, 1);
+                    break;
+                case ColumnType.GEOLONG:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
+                    asm.invokeInterface(rGetGeoLong, 1);
+                    asm.invokeInterface(wPutLong, 2);
                     break;
                 default:
                     break;

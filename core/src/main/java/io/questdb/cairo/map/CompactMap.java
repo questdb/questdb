@@ -31,10 +31,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.engine.LimitOverflowException;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Long256;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
+import io.questdb.std.*;
 
 /**
  * Storage structure to support queries such as "select distinct ...",
@@ -140,11 +137,11 @@ public class CompactMap implements Map {
     private final int nResizes;
     private final int maxResizes;
 
-    public CompactMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor, int maxResizes, int maxPages) {
+    public CompactMap(int pageSize, @Transient ColumnTypes keyTypes, @Transient ColumnTypes valueTypes, long keyCapacity, double loadFactor, int maxResizes, int maxPages) {
         this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes, maxPages);
     }
 
-    CompactMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor, HashFunction hashFunction, int maxResizes, int maxPages) {
+    CompactMap(int pageSize, @Transient ColumnTypes keyTypes, @Transient ColumnTypes valueTypes, long keyCapacity, double loadFactor, HashFunction hashFunction, int maxResizes, int maxPages) {
         this.entries = Vm.getARWInstance(pageSize, maxPages);
         this.entrySlots = Vm.getARWInstance(pageSize, maxPages);
         try {

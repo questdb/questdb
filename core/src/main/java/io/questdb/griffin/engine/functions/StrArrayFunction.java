@@ -149,7 +149,6 @@ public abstract class StrArrayFunction implements Function {
         throw new UnsupportedOperationException();
     }
 
-
     @Override
     public byte getGeoHashByte(Record rec) {
         throw new UnsupportedOperationException();

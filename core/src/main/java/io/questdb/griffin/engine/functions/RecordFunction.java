@@ -168,7 +168,6 @@ public abstract class RecordFunction implements ScalarFunction {
         throw new UnsupportedOperationException();
     }
 
-
     @Override
     public byte getGeoHashByte(Record rec) {
         throw new UnsupportedOperationException();

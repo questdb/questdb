@@ -2719,12 +2719,13 @@ public class JoinTest extends AbstractGriffinTest {
         }));
     }
 
-    @Test
-    public void testJoinWithGeohash() throws Exception {
+    private void testJoinWithGeohash() throws Exception {
         testFullFat(() -> assertMemoryLeak(() -> {
-            final String query = "select g1, gg1, gg2, gg4, gg8, x.k " +
-                    "from x " +
-                    "join y on y.kk = x.k";
+            final String query = "with x1 as (select distinct * from x)," +
+                    "y1 as (select distinct * from y) " +
+                    "select g1, gg1, gg2, gg4, gg8, x1.k " +
+                    "from x1 " +
+                    "join y1 on y1.kk = x1.k";
 
             final String expected = "g1\tgg1\tgg2\tgg4\tgg8\tk\n" +
                     "9v1s\t1\twh4\ts2z2\t10011100111100101000010010010000010001010\t1\n" +
@@ -2753,7 +2754,54 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, null, false);
+            compiler.setFullSatJoins(true);
+            assertSql(query, expected);
+            compiler.setFullSatJoins(false);
+            assertSql(query, expected);
+        }));
+    }
+
+    private void testJoinWithGeohash2() throws Exception {
+        testFullFat(() -> assertMemoryLeak(() -> {
+            final String query = "with x1 as (select distinct * from x)," +
+                    "y1 as (select distinct * from y) " +
+                    "select g1, gg1, gg2, gg4, gg8, x1.k " +
+                    "from x1 " +
+                    "lt join y1 on x1.l = y1.l";
+
+            final String expected = "g1\tgg1\tgg2\tgg4\tgg8\tk\n" +
+                    "9v1s\t\t\t\t\t1970-01-01T00:00:00.000001Z\n" +
+                    "46sw\t1\twh4\ts2z2\t10011100111100101000010010010000010001010\t1970-01-01T00:00:00.000002Z\n" +
+                    "jnw9\tq\t71f\tfsnj\t11010111111011100000110010000111111101101\t1970-01-01T00:00:00.000003Z\n" +
+                    "zfuq\tb\tjj5\tksu7\t11101100011100010000100111000111100000001\t1970-01-01T00:00:00.000004Z\n" +
+                    "hp4m\ts\t76u\tq0s5\t11110001011010001010010100000110110100010\t1970-01-01T00:00:00.000005Z\n";
+
+
+            compiler.compile(
+                    "create table x as (select" +
+                            " 1 as l, " +
+                            " cast(x as timestamp) k, " +
+                            " rnd_geohash(20) g1" +
+                            " from long_sequence(5)) timestamp(k)",
+                    sqlExecutionContext
+            );
+
+            compiler.compile(
+                    "create table y as (select" +
+                            " 1 as l, " +
+                            " cast(x as timestamp) kk," +
+                            " rnd_geohash(15) gg2," +
+                            " rnd_geohash(20) gg4," +
+                            " rnd_geohash(5) gg1," +
+                            " rnd_geohash(41) gg8" +
+                            " from long_sequence(20))  timestamp(kk)",
+                    sqlExecutionContext
+            );
+
+            compiler.setFullSatJoins(true);
+            assertSql(query, expected);
+            compiler.setFullSatJoins(false);
+            assertSql(query, expected);
         }));
     }
 
@@ -3684,6 +3732,30 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.setFullSatJoins(false);
             assertSql(sql, expected);
         });
+    }
+
+    @Test
+    public void testJoinWithGeohashCompactMap() throws Exception {
+        defaultMapType = "compact";
+        testJoinWithGeohash();
+    }
+
+    @Test
+    public void testJoinWithGeohashCompactMap2() throws Exception {
+        defaultMapType = "compact";
+        testJoinWithGeohash2();
+    }
+
+    @Test
+    public void testJoinWithGeohashFastMap() throws Exception {
+        defaultMapType = "fast";
+        testJoinWithGeohash();
+    }
+
+    @Test
+    public void testJoinWithGeohashFastMap2() throws Exception {
+        defaultMapType = "fast";
+        testJoinWithGeohash2();
     }
 
     @Test

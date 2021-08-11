@@ -652,7 +652,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 dataRecord.switchFrame();
             }
 
-            private class SampleByCrossRecord implements StorageRecord {
+            private class SampleByCrossRecord implements Record {
                 private final long address = crossFrameRow.getAddress();
 
                 @Override
