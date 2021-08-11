@@ -45,6 +45,7 @@ public class LatestByAllIndexedFilteredRecordCursorFactory extends AbstractTreeS
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             int hashColumnIndex,
+            int hashColumnType,
             @Nullable Function filter,
             @NotNull IntList columnIndexes,
             @NotNull CharSequenceHashSet prefixes
@@ -52,16 +53,14 @@ public class LatestByAllIndexedFilteredRecordCursorFactory extends AbstractTreeS
         super(metadata, dataFrameCursorFactory, configuration);
 
         this.prefixes = new DirectLongList(64);
-        int columnType = ColumnType.UNDEFINED;
-        if (hashColumnIndex > -1) {
-            columnType = metadata.getColumnType(hashColumnIndex);
-            GeoHashes.fromStringToBits(prefixes, columnType, this.prefixes);
+        if (hashColumnIndex > -1 && ColumnType.isGeoHash(hashColumnType)) {
+            GeoHashes.fromStringToBits(prefixes, hashColumnType, this.prefixes);
         }
 
         if (filter == null) {
-            this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, hashColumnIndex, columnType, rows, columnIndexes, this.prefixes);
+            this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, hashColumnIndex, hashColumnType, rows, columnIndexes, this.prefixes);
         } else {
-            this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, hashColumnIndex, columnType, rows, filter, columnIndexes, this.prefixes);
+            this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, hashColumnIndex, hashColumnType, rows, filter, columnIndexes, this.prefixes);
         }
     }
 
