@@ -260,7 +260,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testO3TriggerTransactionLog() throws Exception {
         assertMemoryLeak(() -> {
             SharedRandom.RANDOM.set(new Rnd());
@@ -346,7 +345,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                             " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                             " rnd_symbol(4,4,4,2) ik," +
                             " rnd_long() j," +
-                            " cast(to_timestamp('2018-01-09', 'yyyy-MM-dd') + 30000*10000L + ((x-1)/4) * 1000000L + (4-(x-1)%4)*80009L  as timestamp) ts," +
+                            " cast(to_timestamp('2018-01-09', 'yyyy-MM-dd') + 30000*10000L + ((x-1)/4) * 1000000L + (4-(x-1)%4)*80009L  as timestamp) k," +
                             " rnd_byte(2,50) l," +
                             " rnd_bin(10, 20, 2) m," +
                             " rnd_str(5,16,2) n," +
@@ -356,17 +355,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            sink.clear();
-            TestUtils.printSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "transaction_log('x')",
-                    sink
-            );
-
-            System.out.println(sink);
-
-//            compiler.compile("insert batch 20000 commitLag 3d into x select * from chunk2", sqlExecutionContext);
+            compiler.compile("insert batch 20000 commitLag 3d into x select * from chunk2", sqlExecutionContext);
 
             // we should now have transaction log, which can be retrieved via function call
             // if we copy new chunk, which was outside of transaction log and transaction log itself into 'y'
@@ -375,11 +364,24 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             compiler.compile("insert into y select * from chunk1", sqlExecutionContext);
 //            compiler.compile("insert into y select * from transaction_log('x')", sqlExecutionContext);
 //
+            sink.clear();
+            TestUtils.printSql(
+                    compiler,
+                    sqlExecutionContext,
+//                    "select i, sym, amt, timestamp, b, c, d, e,f,g,ik,j,l,m,n,o  from chunk2",
+//                    "select i, sym, amt, timestamp, b, c, d, e,f,g,ik,j,l,m,n,o from transaction_log('x')",
+//                    "select k  from chunk2",
+                    "select k  from transaction_log('x')",
+                    sink
+            );
+
+            System.out.println(sink);
+
             TestUtils.assertSqlCursors(
                     compiler,
                     sqlExecutionContext,
-                    "x",
-                    "y",
+                    "select count() from chunk2",
+                    "select count() from transaction_log('x')",
                     LOG
             );
 

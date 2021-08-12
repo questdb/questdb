@@ -5164,10 +5164,10 @@ public class TableWriter implements Closeable {
             o3InError = false;
             o3MasterRef = masterRef;
             rowFunction = o3RowFunction;
-            o3TimestampSetter(timestamp);
             if (txFile.transactionLogTxn < 0 && txFile.transactionLogTxn != Long.MIN_VALUE) {
                 replEnableTransactionLog0(-txFile.transactionLogTxn - 1);
             }
+            o3TimestampSetter(timestamp);
             return row;
         }
     }
