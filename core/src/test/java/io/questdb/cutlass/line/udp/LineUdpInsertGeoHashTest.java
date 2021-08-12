@@ -59,16 +59,16 @@ public class LineUdpInsertGeoHashTest extends AbstractCairoTest {
                     receiver.start();
                     sendGeoHashLines(10);
                     assertReader("geohash\ttimestamp\n" +
-                            "9v1s8h\t1970-01-01T00:00:01.000000Z\n" +
-                            "46swgj\t1970-01-01T00:00:02.000000Z\n" +
-                            "jnw97u\t1970-01-01T00:00:03.000000Z\n" +
-                            "zfuqd3\t1970-01-01T00:00:04.000000Z\n" +
-                            "hp4muv\t1970-01-01T00:00:05.000000Z\n" +
-                            "wh4b6v\t1970-01-01T00:00:06.000000Z\n" +
-                            "s2z2fy\t1970-01-01T00:00:07.000000Z\n" +
-                            "1cjjwk\t1970-01-01T00:00:08.000000Z\n" +
-                            "mmt894\t1970-01-01T00:00:09.000000Z\n" +
-                            "71ftmp\t1970-01-01T00:00:10.000000Z\n",
+                                    "9v1s8h\t1970-01-01T00:00:01.000000Z\n" +
+                                    "46swgj\t1970-01-01T00:00:02.000000Z\n" +
+                                    "jnw97u\t1970-01-01T00:00:03.000000Z\n" +
+                                    "zfuqd3\t1970-01-01T00:00:04.000000Z\n" +
+                                    "hp4muv\t1970-01-01T00:00:05.000000Z\n" +
+                                    "wh4b6v\t1970-01-01T00:00:06.000000Z\n" +
+                                    "s2z2fy\t1970-01-01T00:00:07.000000Z\n" +
+                                    "1cjjwk\t1970-01-01T00:00:08.000000Z\n" +
+                                    "mmt894\t1970-01-01T00:00:09.000000Z\n" +
+                                    "71ftmp\t1970-01-01T00:00:10.000000Z\n",
                             10);
                 }
             }
@@ -84,7 +84,7 @@ public class LineUdpInsertGeoHashTest extends AbstractCairoTest {
                     receiver.start();
                     sendGeoHashLine("");
                     assertReader("geohash\ttimestamp\n" +
-                            "\t1970-01-01T00:00:01.000000Z\n",
+                                    "\t1970-01-01T00:00:01.000000Z\n",
                             1);
                 }
             }
@@ -114,7 +114,7 @@ public class LineUdpInsertGeoHashTest extends AbstractCairoTest {
                     receiver.start();
                     sendGeoHashLine("sp052w92p1p8");
                     assertReader("geohash\ttimestamp\n" +
-                            "sp052w\t1970-01-01T00:00:01.000000Z\n",
+                                    "sp052w\t1970-01-01T00:00:01.000000Z\n",
                             1);
                 }
             }
@@ -161,14 +161,12 @@ public class LineUdpInsertGeoHashTest extends AbstractCairoTest {
 
     private static void assertReader(String expected, int numLines) {
         try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), TABLE_NAME)) {
-            if (Os.type == Os.LINUX_AMD64) {
-                for (int attempts = 1000; attempts > 0; attempts--) {
-                    if (reader.size() >= numLines) {
-                        break;
-                    }
-                    LockSupport.parkNanos(1);
-                    reader.reload();
+            for (int attempts = 28_02_78; attempts > 0; attempts--) {
+                if (reader.size() >= numLines) {
+                    break;
                 }
+                LockSupport.parkNanos(1);
+                reader.reload();
             }
             TestUtils.assertReader(expected, reader, sink);
         }
