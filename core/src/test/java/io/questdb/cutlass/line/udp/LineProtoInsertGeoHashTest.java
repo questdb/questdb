@@ -22,10 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line;
+package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cutlass.line.LineProtoSender;
 import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineProtoReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
@@ -33,6 +34,7 @@ import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -55,7 +57,7 @@ public class LineProtoInsertGeoHashTest extends AbstractCairoTest {
     public void testInsertValidGeoHashesWhenSchemaExists() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (LineProtoReceiver receiver = new LineProtoReceiver(RCVR_CONF, engine, null)) {
+                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
                     createTable(engine);
                     receiver.start();
                     sendGeoHashLines();
@@ -79,7 +81,7 @@ public class LineProtoInsertGeoHashTest extends AbstractCairoTest {
     public void testInsertNullGeoHashWhenSchemaExists() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (LineProtoReceiver receiver = new LineProtoReceiver(RCVR_CONF, engine, null)) {
+                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
                     createTable(engine);
                     receiver.start();
                     sendGeoHashLine("");
@@ -94,7 +96,7 @@ public class LineProtoInsertGeoHashTest extends AbstractCairoTest {
     public void testInsertLowerPrecisionGeoHashWhenSchemaExists() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (LineProtoReceiver receiver = new LineProtoReceiver(RCVR_CONF, engine, null)) {
+                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
                     createTable(engine);
                     receiver.start();
                     sendGeoHashLine("sp");
@@ -108,7 +110,7 @@ public class LineProtoInsertGeoHashTest extends AbstractCairoTest {
     public void testInsertHigherPrecisionGeoHashWhenSchemaExists() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (LineProtoReceiver receiver = new LineProtoReceiver(RCVR_CONF, engine, null)) {
+                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
                     createTable(engine);
                     receiver.start();
                     sendGeoHashLine("sp052w92p1p8");
@@ -117,6 +119,19 @@ public class LineProtoInsertGeoHashTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static AbstractLineProtoReceiver createLineProtoReceiver(CairoEngine engine) {
+        AbstractLineProtoReceiver lpr;
+        switch (Os.type) {
+            case Os.LINUX_AMD64:
+                lpr = new LinuxMMLineProtoReceiver(RCVR_CONF, engine, null);
+                break;
+            default:
+                lpr = new LineProtoReceiver(RCVR_CONF, engine, null);
+        }
+        System.out.printf("REMOVE ME, Os.type: %d%n", Os.type);
+        return lpr;
     }
 
     private static void createTable(CairoEngine engine) {
