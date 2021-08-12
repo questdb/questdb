@@ -167,9 +167,15 @@ public class GeoHashes {
                 }
                 final int bits = 5 * prefix.length();
                 final int shift = columnBits - bits;
-                final long norm = hash << shift;
+                long norm = hash << shift;
                 long mask = bitmask(bits, shift);
                 mask |= 1L << (columnSize * 8 - 1); // set the most significant bit to ignore null from prefix matching
+                // if the prefix is more precise than hashes,
+                // exclude it from matching
+                if(bits > columnBits) {
+                    norm = 0L;
+                    mask = -1L;
+                }
                 prefixesBits.add(norm);
                 prefixesBits.add(mask);
             } catch (NumericException e) {
