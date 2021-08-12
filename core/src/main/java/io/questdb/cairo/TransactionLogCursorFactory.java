@@ -41,44 +41,108 @@ public class TransactionLogCursorFactory implements RecordCursorFactory {
     private final CairoEngine engine;
     private final String tableName;
     private final TransactionLogCursor cursor;
+    private final ObjList<MemoryMR> columns = new ObjList<>();
+    private final RecordMetadata metadata;
+    private long readerVersion = -1;
+    private long transactionLogTxn = -1;
+    private TableReader reader;
 
-    public TransactionLogCursorFactory(CairoEngine engine, String tableName) {
+    public TransactionLogCursorFactory(CairoEngine engine, String tableName, RecordMetadata metadata) {
         this.engine = engine;
         this.tableName = tableName;
-        this.cursor = new TransactionLogCursor(engine.getConfiguration());
+        this.metadata = metadata;
+        this.cursor = new TransactionLogCursor();
+    }
+
+    @Override
+    public void close() {
+        this.reader = Misc.free(reader);
+        Misc.freeObjList(columns);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        return null;
+        this.reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName);
+        final long txn = reader.getTransactionLogTxn();
+        if (reader.getVersion() != readerVersion || txn != transactionLogTxn) {
+            Misc.freeObjListAndKeepObjects(this.columns);
+            if (txn != Long.MIN_VALUE) {
+                openTransactionLogColumns(
+                        engine.getConfiguration(),
+                        reader,
+                        this.columns
+                );
+            }
+        }
+
+        this.readerVersion = reader.getVersion();
+        this.transactionLogTxn = txn;
+        cursor.init();
+        return cursor;
     }
 
     @Override
     public RecordMetadata getMetadata() {
-        return null;
+        return metadata;
     }
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return false;
+        return true;
     }
 
-    public static class TransactionLogCursor implements RecordCursor {
+    private static void openTransactionLogColumns(CairoConfiguration configuration, TableReader reader, ObjList<MemoryMR> columns) {
+        final int columnCount = reader.getColumnCount();
+        columns.setPos(columnCount * 2);
 
-        private final ObjList<MemoryMR> columns = new ObjList<>();
+        final Path path = Path.getThreadLocal(configuration.getRoot());
+        path.concat(reader.getTableName()).concat("log").put('.').put(reader.getTransactionLogTxn());
+        int plen = path.length();
+
+        for (int i = 0; i < columnCount; i++) {
+            MemoryMR col = columns.getQuick(i * 2);
+            if (col == null) {
+                col = new MemoryCMRImpl();
+                columns.setQuick(i * 2, col);
+            }
+
+            final int columnType = reader.getMetadata().getColumnType(i);
+            final CharSequence columnName = reader.getMetadata().getColumnName(i);
+
+            if (ColumnType.isVariableLength(columnType)) {
+                col.wholeFile(
+                        configuration.getFilesFacade(),
+                        TableUtils.iFile(path.trimTo(plen), columnName)
+                );
+
+                col = columns.getQuick(i * 2 + 1);
+                if (col == null) {
+                    col = new MemoryCMRImpl();
+                    columns.setQuick(i * 2 + 1, col);
+                }
+
+                col.wholeFile(
+                        configuration.getFilesFacade(),
+                        TableUtils.dFile(path.trimTo(plen), columnName)
+                );
+            } else {
+                col.wholeFile(
+                        configuration.getFilesFacade(),
+                        TableUtils.dFile(path.trimTo(plen), columnName)
+                );
+            }
+        }
+    }
+
+
+    private class TransactionLogCursor implements RecordCursor {
         private final TransactionLogRecord recordA = new TransactionLogRecord();
         private final TransactionLogRecord recordB = new TransactionLogRecord();
-        private final CairoConfiguration configuration;
         private long rowCount;
-        private TableReader reader;
-
-        public TransactionLogCursor(CairoConfiguration configuration) {
-            this.configuration = configuration;
-        }
 
         @Override
         public void close() {
-            Misc.freeObjList(columns);
+            reader = Misc.free(reader);
         }
 
         @Override
@@ -116,52 +180,10 @@ public class TransactionLogCursorFactory implements RecordCursorFactory {
             return rowCount;
         }
 
-        public void of(TableReader reader) {
+        public void init() {
             recordA.row = -1;
             recordB.row = -1;
             this.rowCount = reader.getTransactionLogRowCount();
-            this.reader = reader;
-
-            final int columnCount = reader.getColumnCount();
-            this.columns.setPos(columnCount * 2);
-
-            final Path path = Path.getThreadLocal(configuration.getRoot());
-            path.concat(reader.getTableName()).concat("log").put('.').put(reader.getTransactionLogTxn());
-            int plen = path.length();
-
-            for (int i = 0; i < columnCount; i++) {
-                MemoryMR col = columns.getQuick(i * 2);
-                if (col == null) {
-                    col = new MemoryCMRImpl();
-                    columns.setQuick(i * 2, col);
-                }
-
-                final int columnType = reader.getMetadata().getColumnType(i);
-                final CharSequence columnName = reader.getMetadata().getColumnName(i);
-
-                if (ColumnType.isVariableLength(columnType)) {
-                    col.wholeFile(
-                            configuration.getFilesFacade(),
-                            TableUtils.iFile(path.trimTo(plen), columnName)
-                    );
-
-                    col = columns.getQuick(i * 2 + 1);
-                    if (col == null) {
-                        col = new MemoryCMRImpl();
-                        columns.setQuick(i * 2 + 1, col);
-                    }
-
-                    col.wholeFile(
-                            configuration.getFilesFacade(),
-                            TableUtils.dFile(path.trimTo(plen), columnName)
-                    );
-                } else {
-                    col.wholeFile(
-                            configuration.getFilesFacade(),
-                            TableUtils.dFile(path.trimTo(plen), columnName)
-                    );
-                }
-            }
         }
 
         private class TransactionLogRecord implements Record {

@@ -811,6 +811,10 @@ public final class TableUtils {
         return path.concat(columnName).put(FILE_SUFFIX_D).$();
     }
 
+    static LPSZ transactionLogDir(Path path, long txn) {
+        return path.concat("log").put('.').put(txn);
+    }
+
     static LPSZ topFile(Path path, CharSequence columnName) {
         return path.concat(columnName).put(".top").$();
     }

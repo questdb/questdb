@@ -4522,7 +4522,8 @@ public class TableWriter implements Closeable {
             txFile.copyTo(path, LOG);
             path.trimTo(rootLen);
 
-            path.concat("log").put('.').put(txn);
+            TableUtils.transactionLogDir(path, txn);
+
             int plen = path.length();
 
             // create dir

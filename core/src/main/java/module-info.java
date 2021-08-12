@@ -543,6 +543,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory,
             io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory,
+            io.questdb.griffin.engine.functions.table.TableTransactionLogFunctionFactory,
+
             // first
             io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory,
 //                  Change string case
