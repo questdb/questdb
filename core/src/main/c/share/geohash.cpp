@@ -34,8 +34,8 @@ DECLARE_DISPATCHER(simd_iota);
 
 JNIEXPORT void JNICALL
 Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_iota(
-        JNIEnv *e,
-        jclass cl,
+        JNIEnv */*env*/,
+        jclass /*cl*/,
         jlong address,
         jlong size,
         jlong init
@@ -51,8 +51,8 @@ DECLARE_DISPATCHER(filter_with_prefix);
 JNIEXPORT void JNICALL
 Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latesByAndFilterPrefix
         (
-                JNIEnv *env,
-                jclass cl,
+                JNIEnv */*env*/,
+                jclass /*cl*/,
                 jlong keysMemory,
                 jlong keysMemorySize,
                 jlong valuesMemory,
@@ -121,8 +121,8 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latesByAndFilterP
 JNIEXPORT jlong JNICALL
 Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_slideFoundBlocks
         (
-                JNIEnv *env,
-                jclass cl,
+                JNIEnv */*env*/,
+                jclass /*cl*/,
                 jlong argsAddress,
                 jlong argsCount
         ) {
