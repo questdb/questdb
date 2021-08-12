@@ -29,7 +29,7 @@ import io.questdb.cairo.vm.api.MemoryLogA;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.Misc;
 
-public class MemoryLogCAImpl implements MemoryLogA<MemoryCA>, MemoryCA {
+public class ReplMemoryLogCAImpl implements MemoryLogA<MemoryCA>, MemoryCA {
     private MemoryMA log;
     private MemoryCA main;
 
@@ -57,5 +57,13 @@ public class MemoryLogCAImpl implements MemoryLogA<MemoryCA>, MemoryCA {
     public void of(MemoryMA log, MemoryCA main) {
         this.log = log;
         this.main = main;
+    }
+
+    @Override
+    public void putLong128(long timestamp, long row) {
+        // O3 timestamp memory stores timestamp and row
+        // transaction log does not need row numbers
+        getLogMemory().putLong(timestamp);
+        getMainMemory().putLong128(timestamp, row);
     }
 }

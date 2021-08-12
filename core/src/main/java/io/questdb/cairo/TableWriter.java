@@ -30,7 +30,7 @@ import io.questdb.cairo.SymbolMapWriter.TransientSymbolCountChangeHandler;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.MemoryLogAImpl;
-import io.questdb.cairo.vm.MemoryLogCAImpl;
+import io.questdb.cairo.vm.ReplMemoryLogCAImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.SqlException;
@@ -144,7 +144,7 @@ public class TableWriter implements Closeable {
     private final LongIntHashMap replPartitionHash = new LongIntHashMap();
     private long todoTxn;
     private MemoryCA o3TimestampMem;
-    private MemoryLogCAImpl replO3TimestampMem = new MemoryLogCAImpl();
+    private ReplMemoryLogCAImpl replO3TimestampMem = new ReplMemoryLogCAImpl();
     private final O3ColumnUpdateMethod o3MoveLagRef = this::o3MoveLag0;
     private MemoryARW o3TimestampMemCpy;
     private long lockFd = -1;
