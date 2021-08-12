@@ -2020,6 +2020,23 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByAllIndexedGeoHashExcludeLongPrefix() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" ,
+                            "select * from pos latest by uuid where hash within('f9', 'z3', 'vepe7h')",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
     public void testLatestByAllIndexedGeoHashTimeRange1c() throws Exception {
         assertMemoryLeak(
                 () -> {
