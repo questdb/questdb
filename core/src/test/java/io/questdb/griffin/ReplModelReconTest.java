@@ -350,7 +350,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             // have table reader recover the transaction log
             try (TableReader r = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
                 // todo: make this cursor a part of table reader and reusable
-                try (TransactionLogCursor cursor = new TransactionLogCursor(engine.getConfiguration())) {
+                try (TransactionLogCursorFactory.TransactionLogCursor cursor = new TransactionLogCursorFactory.TransactionLogCursor(engine.getConfiguration())) {
                     cursor.of(r);
                     String expected = "i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\to\n" +
                             "11\tmsft\t2.592\t2018-01-01T02:12:00.000000Z\ttrue\tX\tNaN\tNaN\t824\t2015-07-04T15:37:31.425Z\t\t-7846705642525506251\t2018-01-09T00:05:00.240027Z\t43\t00000000 b5 87 19 1f 19 a9 83 4f 55 cd a4 8d 11\tVTTOVYBW\t0x582117b525c52aeb2e4268a0619e593a94aaafeae72c7701eb55c3062ebcf762\n" +
