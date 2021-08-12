@@ -736,7 +736,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                             if (ColumnType.isString(colType)) {
                                 row.putStr(colIndex, job.floatingCharSink);
                             } else if (ColumnType.isGeoHash(colType)) {
-                                // TODO: add test that creates schema first and goes through the paces
                                 int typeChars = GeoHashes.getBitsPrecision(colType) / 5;
                                 int valueChars = job.floatingCharSink.length();
                                 if (valueChars >= typeChars) {

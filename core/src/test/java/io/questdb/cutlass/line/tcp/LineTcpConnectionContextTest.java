@@ -1175,6 +1175,87 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testInsertValidGeoHashesWhenSchemaExists() throws Exception {
+        runInContext(() -> {
+            try (TableModel model = new TableModel(configuration, "tracking", PartitionBy.NONE)) {
+                CairoTestUtils.create(model.col("geohash", ColumnType.geohashWithPrecision(30)).timestamp());
+            }
+            microSecondTicks = 1465839830102800L;
+            recvBuffer = "tracking geohash=\"9v1s8h\" 1000000000\n" +
+                    "tracking geohash=\"46swgj\" 2000000000\n" +
+                    "tracking geohash=\"jnw97u\" 3000000000\n" +
+                    "tracking geohash=\"zfuqd3\" 4000000000\n" +
+                    "tracking geohash=\"hp4muv\" 5000000000\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "geohash\ttimestamp\n" +
+                    "9v1s8h\t1970-01-01T00:00:01.000000Z\n" +
+                    "46swgj\t1970-01-01T00:00:02.000000Z\n" +
+                    "jnw97u\t1970-01-01T00:00:03.000000Z\n" +
+                    "zfuqd3\t1970-01-01T00:00:04.000000Z\n" +
+                    "hp4muv\t1970-01-01T00:00:05.000000Z\n";
+            assertTable(expected, "tracking");
+        });
+    }
+
+    @Test
+    public void testInsertNullGeoHashWhenSchemaExists() throws Exception {
+        runInContext(() -> {
+            try (TableModel model = new TableModel(configuration, "tracking", PartitionBy.NONE)) {
+                CairoTestUtils.create(model.col("geohash", ColumnType.geohashWithPrecision(30)).timestamp());
+            }
+            microSecondTicks = 1465839830102800L;
+            recvBuffer = "tracking geohash=\"\" 1000000000\n" +
+                    "tracking geohash=\"\" 2000000000\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "geohash\ttimestamp\n" +
+                    "\t1970-01-01T00:00:01.000000Z\n" +
+                    "\t1970-01-01T00:00:02.000000Z\n";
+            assertTable(expected, "tracking");
+        });
+    }
+
+    @Test
+    public void testInsertLowerPrecisionGeoHashWhenSchemaExists() throws Exception {
+        runInContext(() -> {
+            try (TableModel model = new TableModel(configuration, "tracking", PartitionBy.NONE)) {
+                CairoTestUtils.create(model.col("geohash", ColumnType.geohashWithPrecision(30)).timestamp());
+            }
+            microSecondTicks = 1465839830102800L;
+            recvBuffer = "tracking geohash=\"sp\" 1000000000\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "geohash\ttimestamp\n";
+            assertTable(expected, "tracking");
+        });
+    }
+
+    @Test
+    public void testInsertHigherPrecisionGeoHashWhenSchemaExists() throws Exception {
+        runInContext(() -> {
+            try (TableModel model = new TableModel(configuration, "tracking", PartitionBy.NONE)) {
+                CairoTestUtils.create(model.col("geohash", ColumnType.geohashWithPrecision(30)).timestamp());
+            }
+            microSecondTicks = 1465839830102800L;
+            recvBuffer = "tracking geohash=\"sp052w92p1p8\" 1000000000\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "geohash\ttimestamp\n" +
+                    "sp052w\t1970-01-01T00:00:01.000000Z\n";
+            assertTable(expected, "tracking");
+        });
+    }
+
     private void addTable() {
         try (
                 @SuppressWarnings("resource")
