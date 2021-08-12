@@ -661,6 +661,11 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
+                public byte getGeoHashByte(int col) {
+                    return Unsafe.getUnsafe().getByte(address + ((long) col << 3));
+                }
+
+                @Override
                 public char getChar(int col) {
                     return Unsafe.getUnsafe().getChar(address + ((long) col << 3));
                 }
@@ -681,12 +686,27 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
+                public int getGeoHashInt(int col) {
+                    return Unsafe.getUnsafe().getInt(address + ((long) col << 3));
+                }
+
+                @Override
                 public long getLong(int col) {
                     return Unsafe.getUnsafe().getLong(address + ((long) col << 3));
                 }
 
                 @Override
+                public long getGeoHashLong(int col) {
+                    return Unsafe.getUnsafe().getLong(address + ((long) col << 3));
+                }
+
+                @Override
                 public short getShort(int col) {
+                    return Unsafe.getUnsafe().getShort(address + ((long) col << 3));
+                }
+
+                @Override
+                public short getGeoHashShort(int col) {
                     return Unsafe.getUnsafe().getShort(address + ((long) col << 3));
                 }
 

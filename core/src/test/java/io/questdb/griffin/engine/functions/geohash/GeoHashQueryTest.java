@@ -537,4 +537,18 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                             "1234567\t3\n");
         });
     }
+
+    @Test
+    public void testGeohashSimpleGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t1 as (select " +
+                    "cast(rnd_str('questdb', '1234567') as geohash(7c)) geo4, " +
+                    "x " +
+                    "from long_sequence(3))", sqlExecutionContext);
+
+            assertSql("select first(geo4), last(geo4) from t1",
+                    "first\tlast\n" +
+                            "questdb\t1234567\n");
+        });
+    }
 }
