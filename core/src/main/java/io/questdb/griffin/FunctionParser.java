@@ -718,7 +718,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     private Function functionToConstant(Function function) {
-        switch (ColumnType.tagOf(function.getType())) {
+        int type = function.getType();
+        switch (ColumnType.tagOf(type)) {
             case ColumnType.INT:
                 if (function instanceof IntConstant) {
                     return function;
@@ -777,7 +778,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 if (function instanceof GeoHashConstant) {
                     return function;
                 } else {
-                    return GeoHashConstant.newInstance(function.getGeoHash(null), function.getType());
+                    switch (ColumnType.sizeOf(type)) {
+                        case Byte.BYTES:
+                            return GeoHashConstant.newInstance(function.getGeoHashByte(null), type);
+                        case Short.BYTES:
+                            return GeoHashConstant.newInstance(function.getGeoHashShort(null), type);
+                        case Integer.BYTES:
+                            return GeoHashConstant.newInstance(function.getGeoHashInt(null), type);
+                        default:
+                            return GeoHashConstant.newInstance(function.getGeoHashLong(null), type);
+                    }
                 }
             case ColumnType.DATE:
                 if (function instanceof DateConstant) {

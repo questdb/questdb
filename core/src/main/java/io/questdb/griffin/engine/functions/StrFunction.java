@@ -136,8 +136,24 @@ public abstract class StrFunction implements ScalarFunction {
         throw new UnsupportedOperationException();
     }
 
+
     @Override
-    public long getGeoHash(Record rec) {
+    public byte getGeoHashByte(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getGeoHashShort(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getGeoHashInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getGeoHashLong(Record rec) {
         throw new UnsupportedOperationException();
     }
 

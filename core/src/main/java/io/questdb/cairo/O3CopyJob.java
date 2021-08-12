@@ -923,13 +923,15 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarOffset
     ) {
         final long rowCount = srcOooHi - srcOooLo + 1 + srcDataHi - srcDataLo + 1;
-        switch (ColumnType.sizeTag(columnType)) {
+        switch (ColumnType.storageTag(columnType)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
+            case ColumnType.GEOBYTE:
                 Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
                 break;
             case ColumnType.SHORT:
             case ColumnType.CHAR:
+            case ColumnType.GEOSHORT:
                 Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
                 break;
             case ColumnType.STRING:
@@ -961,11 +963,13 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             case ColumnType.INT:
             case ColumnType.FLOAT:
             case ColumnType.SYMBOL:
+            case ColumnType.GEOINT:
                 Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
                 break;
             case ColumnType.DOUBLE:
             case ColumnType.LONG:
             case ColumnType.DATE:
+            case ColumnType.GEOLONG:
                 Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
                 break;
             case ColumnType.TIMESTAMP:

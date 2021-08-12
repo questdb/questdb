@@ -107,22 +107,30 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public byte getByte(Record rec) {
-            return (byte) getLong(rec);
+        public byte getGeoHashByte(Record rec) {
+            assert bitsPrecision < 8;
+            return (byte) getGeoHashLong0(rec);
         }
 
         @Override
-        public short getShort(Record rec) {
-            return (short) getLong(rec);
+        public short getGeoHashShort(Record rec) {
+            assert bitsPrecision >= 8 && bitsPrecision < 16;
+            return (short) getGeoHashLong0(rec);
         }
 
         @Override
-        public int getInt(Record rec) {
-            return (int) getLong(rec);
+        public int getGeoHashInt(Record rec) {
+            assert bitsPrecision >= 16 && bitsPrecision < 32;
+            return (int) getGeoHashLong0(rec);
         }
 
         @Override
-        public long getLong(Record rec) {
+        public long getGeoHashLong(Record rec) {
+            assert bitsPrecision >= 32;
+            return getGeoHashLong0(rec);
+        }
+
+        private long getGeoHashLong0(Record rec) {
             try {
                 return getGeoHashImpl(arg.getStr(rec), position, bitsPrecision);
             } catch (SqlException | NumericException e) {

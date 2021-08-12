@@ -50,12 +50,10 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     private long varAppendOffset = 0L;
     private long nextRecordOffset = -1L;
     private RecordCursor symbolTableResolver;
-    private final ColumnTypes columnTypes;
 
     public RecordChain(@Transient ColumnTypes columnTypes, RecordSink recordSink, long pageSize, int maxPages) {
         this.mem = Vm.getARWInstance(pageSize, maxPages);
         this.recordSink = recordSink;
-        this.columnTypes = columnTypes;
         int count = columnTypes.getColumnCount();
         long varOffset = 0L;
         long fixOffset = 0L;
@@ -384,18 +382,27 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         @Override
-        public long getGeoHash(int col) {
-            final int columnType = columnTypes.getColumnType(col);
-            switch (ColumnType.sizeOf(columnType)) {
-                case 1:
-                    return mem.getByte(fixedWithColumnOffset(col));
-                case 2:
-                    return mem.getShort(fixedWithColumnOffset(col));
-                case 4:
-                    return mem.getInt(fixedWithColumnOffset(col));
-                default:
-                    return mem.getLong(fixedWithColumnOffset(col));
-            }
+        public byte getGeoHashByte(int col) {
+            // No column tops, return byte from mem.
+            return mem.getByte(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public short getGeoHashShort(int col) {
+            // No column tops, return short from mem.
+            return mem.getShort(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public int getGeoHashInt(int col) {
+            // No column tops, return int from mem.
+            return mem.getInt(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public long getGeoHashLong(int col) {
+            // No column tops, return long from mem.
+            return mem.getLong(fixedWithColumnOffset(col));
         }
 
         private long fixedWithColumnOffset(int index) {

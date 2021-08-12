@@ -67,6 +67,13 @@ public final class ColumnType {
 
     public static final short NULL = 20;
 
+    // Virtual storage types, only needed to flatten storage switch extension with GEOHASH column types
+    public static final short GEOBYTE = 1001;
+    public static final short GEOSHORT = 1002;
+    public static final short GEOINT = 1004;
+    public static final short GEOLONG = 1008;
+
+
     public static final short MAX = NULL;
     public static final int NO_OVERLOAD = 10000;
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
@@ -198,20 +205,20 @@ public final class ColumnType {
         return (short) (type & 0xFF);
     }
 
-    public static int sizeTag(int type) {
+    public static int storageTag(int type) {
         short tagType = tagOf(type & 0xFF);
         if (tagType != GEOHASH) {
             return tagType;
         }
         switch (GeoHashes.sizeOf(type)) {
             case 1:
-                return BYTE;
+                return GEOBYTE;
             case 2:
-                return SHORT;
+                return GEOSHORT;
             case 4:
-                return INT;
+                return GEOINT;
             case 8:
-                return LONG;
+                return GEOLONG;
         }
         throw new UnsupportedOperationException("Invalid geohash size" + sizeOf(type));
     }

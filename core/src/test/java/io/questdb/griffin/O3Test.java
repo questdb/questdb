@@ -261,7 +261,6 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    @Ignore // TODO fix geo hashes
     public void testColumnTopMidMergeBlankGeohash() throws Exception {
         executeVanilla(O3Test::testColumnTopMidMergeBlankColumnGeohash0);
     }
@@ -4629,8 +4628,6 @@ public class O3Test extends AbstractO3Test {
                 "insert into x select * from append",
                 "x"
         );
-
-        assertIndexConsistency(compiler, executionContext);
     }
 
     private static void testColumnTopNewPartitionMiddleOfTable0(

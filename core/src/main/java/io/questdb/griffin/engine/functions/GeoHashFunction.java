@@ -72,6 +72,11 @@ public abstract class GeoHashFunction implements ScalarFunction {
     }
 
     @Override
+    public final long getLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public double getDouble(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -144,11 +149,6 @@ public abstract class GeoHashFunction implements ScalarFunction {
     @Override
     public final void getStr(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getGeoHash(Record rec) {
-        return getLong(rec);
     }
 
     @Override

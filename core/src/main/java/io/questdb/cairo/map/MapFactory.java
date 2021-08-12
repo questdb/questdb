@@ -27,6 +27,7 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.std.Chars;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -79,7 +80,7 @@ public class MapFactory {
             return new CompactMap(
                     configuration.getSqlMapPageSize(),
                     keyTypes,
-                    null, // todo: test
+                    GenericRecordMetadata.EMPTY,
                     configuration.getSqlMapKeyCapacity(),
                     configuration.getSqlCompactMapLoadFactor(),
                     configuration.getSqlMapMaxResizes(),

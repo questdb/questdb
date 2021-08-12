@@ -607,23 +607,6 @@ public class FastMapTest extends AbstractCairoTest {
     @Test
     public void testValueAccess() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-                model
-                        .col("a", ColumnType.BYTE)
-                        .col("b", ColumnType.SHORT)
-                        .col("c", ColumnType.INT)
-                        .col("d", ColumnType.LONG)
-                        .col("e", ColumnType.DATE)
-                        .col("f", ColumnType.TIMESTAMP)
-                        .col("g", ColumnType.FLOAT)
-                        .col("h", ColumnType.DOUBLE)
-                        .col("i", ColumnType.STRING)
-                        .col("j", ColumnType.SYMBOL)
-                        .col("k", ColumnType.BOOLEAN)
-                        .col("l", ColumnType.BINARY);
-                CairoTestUtils.create(model);
-            }
-
             final int N = 1000;
             final Rnd rnd = new Rnd();
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
@@ -649,6 +632,10 @@ public class FastMapTest extends AbstractCairoTest {
                                 .add(ColumnType.DATE)
                                 .add(ColumnType.TIMESTAMP)
                                 .add(ColumnType.BOOLEAN)
+                                .add(ColumnType.geohashWithPrecision(5))
+                                .add(ColumnType.geohashWithPrecision(10))
+                                .add(ColumnType.geohashWithPrecision(20))
+                                .add(ColumnType.geohashWithPrecision(40))
                         ,
                         N,
                         0.9f,
@@ -661,7 +648,7 @@ public class FastMapTest extends AbstractCairoTest {
 
                     RecordCursor cursor = reader.getCursor();
                     Record record = cursor.getRecord();
-                    populateMap(map, rnd2, cursor, sink);
+                    populateMapGeo(map, rnd2, cursor, sink);
 
                     cursor.toTop();
                     rnd2.reset();
@@ -680,6 +667,10 @@ public class FastMapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd2.nextLong(), value.getDate(6));
                         Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
                         Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
+                        Assert.assertEquals((byte)Math.abs(rnd2.nextByte()), value.getGeoHashByte(9));
+                        Assert.assertEquals((short)Math.abs(rnd2.nextShort()), value.getGeoHashShort(10));
+                        Assert.assertEquals(Math.abs(rnd2.nextInt()), value.getGeoHashInt(11));
+                        Assert.assertEquals(Math.abs(rnd2.nextLong()), value.getGeoHashLong(12));
                     }
                 }
             }
@@ -1056,6 +1047,30 @@ public class FastMapTest extends AbstractCairoTest {
             value.putDate(6, rnd2.nextLong());
             value.putTimestamp(7, rnd2.nextLong());
             value.putBool(8, rnd2.nextBoolean());
+        }
+    }
+
+    private void populateMapGeo(Map map, Rnd rnd2, RecordCursor cursor, RecordSink sink) {
+        long counter = 0;
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            MapKey key = map.withKey();
+            key.put(record, sink);
+            MapValue value = key.createValue();
+            Assert.assertTrue(value.isNew());
+            value.putLong(0, ++counter);
+            value.putInt(1, rnd2.nextInt());
+            value.putShort(2, rnd2.nextShort());
+            value.putByte(3, rnd2.nextByte());
+            value.putFloat(4, rnd2.nextFloat());
+            value.putDouble(5, rnd2.nextDouble());
+            value.putDate(6, rnd2.nextLong());
+            value.putTimestamp(7, rnd2.nextLong());
+            value.putBool(8, rnd2.nextBoolean());
+            value.putByte(9, (byte) Math.abs(rnd2.nextByte()));
+            value.putShort(10, (short) Math.abs(rnd2.nextShort()));
+            value.putInt(11, Math.abs(rnd2.nextInt()));
+            value.putLong(12, Math.abs(rnd2.nextLong()));
         }
     }
 

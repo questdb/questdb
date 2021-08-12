@@ -205,13 +205,17 @@ public class SqlCompiler implements Closeable {
         int interfaceClassIndex = asm.poolClass(RecordToRowCopier.class);
 
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
+        int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoHashInt", "(I)I");
         int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
+        int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoHashLong", "(I)J");
         int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
         int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
         //
         int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
+        int rGetGeoByte = asm.poolInterfaceMethod(Record.class, "getGeoHashByte", "(I)B");
         int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
+        int rGetGeoShort = asm.poolInterfaceMethod(Record.class, "getGeoHashShort", "(I)S");
         int rGetChar = asm.poolInterfaceMethod(Record.class, "getChar", "(I)C");
         int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
         int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
@@ -623,14 +627,14 @@ public class SqlCompiler implements Closeable {
                         case 1:
                             // impossible conversion
                             if (sizeTo == 1) {
-                                asm.invokeInterface(rGetByte, 1);
+                                asm.invokeInterface(rGetGeoByte, 1);
                                 asm.invokeVirtual(wPutByte);
                             }
                             break;
                         case 2:
                             switch (sizeTo) {
                                 case 1:
-                                    asm.invokeInterface(rGetShort, 1);
+                                    asm.invokeInterface(rGetGeoShort, 1);
                                     asm.i2l();
                                     asm.iconst(fromColumnType);
                                     asm.iconst(toColumnType);
@@ -640,7 +644,7 @@ public class SqlCompiler implements Closeable {
                                     asm.invokeVirtual(wPutByte);
                                     break;
                                 case 2:
-                                    asm.invokeInterface(rGetShort, 1);
+                                    asm.invokeInterface(rGetGeoShort, 1);
                                     asm.invokeVirtual(wPutShort);
                                     break;
                                 default:
@@ -650,7 +654,7 @@ public class SqlCompiler implements Closeable {
                         case 4:
                             switch (sizeTo) {
                                 case 1:
-                                    asm.invokeInterface(rGetInt, 1);
+                                    asm.invokeInterface(rGetGeoInt, 1);
                                     asm.i2l();
                                     asm.iconst(fromColumnType);
                                     asm.iconst(toColumnType);
@@ -660,7 +664,7 @@ public class SqlCompiler implements Closeable {
                                     asm.invokeVirtual(wPutByte);
                                     break;
                                 case 2:
-                                    asm.invokeInterface(rGetInt, 1);
+                                    asm.invokeInterface(rGetGeoInt, 1);
                                     asm.i2l();
                                     asm.iconst(fromColumnType);
                                     asm.iconst(toColumnType);
@@ -670,7 +674,7 @@ public class SqlCompiler implements Closeable {
                                     asm.invokeVirtual(wPutShort);
                                     break;
                                 case 4:
-                                    asm.invokeInterface(rGetInt, 1);
+                                    asm.invokeInterface(rGetGeoInt, 1);
                                     asm.invokeVirtual(wPutInt);
                                     break;
                                 default:
@@ -680,7 +684,7 @@ public class SqlCompiler implements Closeable {
                         case 8:
                             switch (sizeTo) {
                                 case 1:
-                                    asm.invokeInterface(rGetLong, 1);
+                                    asm.invokeInterface(rGetGeoLong, 1);
                                     asm.iconst(fromColumnType);
                                     asm.iconst(toColumnType);
                                     asm.invokeStatic(geohashTruncatePrecision);
@@ -689,7 +693,7 @@ public class SqlCompiler implements Closeable {
                                     asm.invokeVirtual(wPutByte);
                                     break;
                                 case 2:
-                                    asm.invokeInterface(rGetLong, 1);
+                                    asm.invokeInterface(rGetGeoLong, 1);
                                     asm.iconst(fromColumnType);
                                     asm.iconst(toColumnType);
                                     asm.invokeStatic(geohashTruncatePrecision);
@@ -698,7 +702,7 @@ public class SqlCompiler implements Closeable {
                                     asm.invokeVirtual(wPutShort);
                                     break;
                                 case 4:
-                                    asm.invokeInterface(rGetLong, 1);
+                                    asm.invokeInterface(rGetGeoLong, 1);
                                     asm.iconst(fromColumnType);
                                     asm.iconst(toColumnType);
                                     asm.invokeStatic(geohashTruncatePrecision);
@@ -706,7 +710,7 @@ public class SqlCompiler implements Closeable {
                                     asm.invokeVirtual(wPutInt);
                                     break;
                                 case 8:
-                                    asm.invokeInterface(rGetLong, 1);
+                                    asm.invokeInterface(rGetGeoLong, 1);
                                     asm.invokeVirtual(wPutLong);
                                     break;
                                 default:
@@ -717,7 +721,7 @@ public class SqlCompiler implements Closeable {
                         case 0:
                             asm.pop();
                             asm.pop();
-                            asm.iconst((int) GeoHashes.NULL);
+                            asm.iconst(GeoHashes.INT_NULL);
                             switch (sizeTo) {
                                 case 1:
                                     asm.invokeVirtual(wPutByte);
