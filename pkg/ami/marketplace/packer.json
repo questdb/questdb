@@ -1,18 +1,21 @@
 {
   "_comment": "Packer Template for demo. Based on Amazon Linux 2",
   "variables": {
-    "aws_region": "eu-west-1",
     "base_ami_name": "questdb",
-    "questdb_version": "6.0.4"
+    "region": "eu-west-1",
+    "ami_regions": "",
+    "questdb_version": "",
+    "ami_groups": ""
   },
   "builders": [
     {
       "name": "questdb-ami-amazon-linux-2",
       "ami_name": "{{ user `base_ami_name` }}-{{ user `questdb_version` }}-amzn2-x86_64-ebs",
       "ami_description": "An Amazon Linux2 instance with QuestDB-{{ user `questdb_version` }} installed and running",
-      "ami_regions": ["{{user `aws_region`}}"],
+      "ami_regions": "{{user `ami_regions`}}",
+      "ami_groups": "{{user `ami_groups`}}",
       "instance_type": "t3.large",
-      "region": "{{user `aws_region`}}",
+      "region": "{{user `region`}}",
       "type": "amazon-ebs",
       "force_deregister": "true",
       "force_delete_snapshot": "true",
@@ -50,7 +53,7 @@
     },
     {
       "environment_vars": [
-        "QUESTDB_VERSION={{user `questb_version`}}"
+        "QUESTDB_VERSION={{user `questdb_version`}}"
       ],
       "type": "shell",
       "execute_command": "echo 'packer' | sudo -S sh -c '{{ .Vars }} {{ .Path }}'",
