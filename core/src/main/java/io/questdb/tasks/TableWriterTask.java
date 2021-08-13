@@ -39,6 +39,8 @@ public class TableWriterTask implements Closeable {
     private long dataSize;
     private long appendPtr;
     private long appendLim;
+    private long instance;
+    private long ip;
 
     public TableWriterTask(long size) {
         data = Unsafe.calloc(size);
@@ -91,8 +93,28 @@ public class TableWriterTask implements Closeable {
         return dataSize;
     }
 
+    public long getInstance() {
+        return instance;
+    }
+
+    public void setInstance(long instance) {
+        this.instance = instance;
+    }
+
+    public long getIp() {
+        return ip;
+    }
+
+    public void setIp(long ip) {
+        this.ip = ip;
+    }
+
     public long getTableId() {
         return tableId;
+    }
+
+    public void setTableId(long tableId) {
+        this.tableId = tableId;
     }
 
     public String getTableName() {

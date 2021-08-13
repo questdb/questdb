@@ -1055,7 +1055,6 @@ public class TableWriter implements Closeable {
     }
 
     public TableSyncModel replCreateTableSyncModel(long slaveTxData, long slaveMetaData, long slaveMetaDataSize) {
-        LOG.info().$("reconciling sync request [table=").$(tableName).I$();
         replPartitionHash.clear();
 
         final TableSyncModel model = new TableSyncModel();
@@ -3970,15 +3969,20 @@ public class TableWriter implements Closeable {
             if (cmd.getTableId() == getMetadata().getId()) {
                 switch (cmd.getType()) {
                     case TableWriterTask.TSK_SLAVE_SYNC:
+                        final long dst = cmd.getInstance();
+                        final long dstIP = cmd.getIp();
+                        final long tableId = cmd.getTableId();
                         LOG.info()
-                                .$("sync cmd [tableName=").$(tableName)
-                                .$(", tableId=").$(cmd.getTableId())
+                                .$("received replication SYNC cmd [tableName=").$(tableName)
+                                .$(", tableId=").$(tableId)
+                                .$(", src=").$(dst)
+                                .$(", srcIP=").$ip(dstIP)
                                 .I$();
 
                         final TableSyncModel syncModel = replHandleSyncCmd(cmd);
                         // release command queue slot not to hold both queues
                         commandSubSeq.done(cursor);
-                        replPublishSyncEvent(syncModel);
+                        replPublishSyncEvent(syncModel, tableId, dst, dstIP);
                         break;
                     default:
                         commandSubSeq.done(cursor);
@@ -4661,15 +4665,28 @@ public class TableWriter implements Closeable {
         }
     }
 
-    void replPublishSyncEvent(TableSyncModel model) {
+    void replPublishSyncEvent(TableSyncModel model, long tableId, long dst, long dstIP) {
         final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
         if (pubCursor > -1) {
             final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
             model.toBinary(event);
+            event.setInstance(dst);
+            event.setInstance(dstIP);
+            event.setTableId(tableId);
             messageBus.getTableWriterEventPubSeq().done(pubCursor);
-            LOG.info().$("published slave sync event [table=").$(tableName).$(']').$();
+            LOG.info()
+                    .$("published replication SYNC event [table=").$(tableName)
+                    .$(", tableId=").$(tableId)
+                    .$(", dst=").$(dst)
+                    .$(", dstIP=").$ip(dstIP)
+                    .I$();
         } else {
-            LOG.info().$("could not publish slave sync event [table=").$(tableName).$(']').$();
+            LOG.error()
+                    .$("could not publish slave sync event [table=").$(tableName)
+                    .$(", tableId=").$(tableId)
+                    .$(", dst=").$(dst)
+                    .$(", dstIP=").$ip(dstIP)
+                    .I$();
         }
     }
 

@@ -261,6 +261,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     @Test
     public void testO3TriggerTransactionLog() throws Exception {
         assertMemoryLeak(() -> {
+
             SharedRandom.RANDOM.set(new Rnd());
 
             compiler.compile(
@@ -315,20 +316,23 @@ public class ReplModelReconTest extends AbstractGriffinTest {
 
             compiler.compile("insert into x select * from chunk1", sqlExecutionContext);
 
-            try (
-                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
-                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
-            ) {
-                sink.clear();
-                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-                Assert.assertTrue(w1.isTransactionLogPending());
+            long masterId;
+            try (TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test")) {
+                masterId = w1.getMetadata().getId();
             }
 
-            TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":13600,\"rowCount\":10000,\"nameTxn\":-1,\"dataTxn\":2}]}",
-                    sink
-            );
 
+            try (
+                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test");
+                    SimpleLocalClient client = new SimpleLocalClient(engine)
+            ) {
+                sendAndAssertSync(masterId, w2, client);
+                // send a couple of sync requests to check that master does not freak out
+                sendAndAssertSync(masterId, w2, client);
+            }
+
+
+            // O3 chunk (chunk2)
             compiler.compile(
                     "create table chunk2 as (" +
                             "select" +
@@ -354,7 +358,33 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
+            compiler.compile(
+                    "create table chunk3 as (" +
+                            "select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-13T14:11:40', 'yyyy-MM-ddTHH:mm:ss'), 30000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o" +
+                            " from long_sequence(100)" +
+                            ")",
+                    sqlExecutionContext
+            );
+
             compiler.compile("insert batch 20000 commitLag 3d into x select * from chunk2", sqlExecutionContext);
+            compiler.compile("insert into x select * from chunk3", sqlExecutionContext);
 
             // we should now have transaction log, which can be retrieved via function call
             // if we copy new chunk, which was outside of transaction log and transaction log itself into 'y'
@@ -372,6 +402,26 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     LOG
             );
         });
+    }
+
+    private void sendAndAssertSync(long masterId, TableWriter w2, SimpleLocalClient client) {
+        client.publishSyncCmd(
+                "x",
+                masterId,
+                w2
+        );
+
+        engine.tick();
+
+        sink.clear();
+        TableSyncModel model = client.consumeSyncModel();
+        Assert.assertNotNull(model);
+        sink.put(model);
+
+        TestUtils.assertEquals(
+                "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":13600,\"rowCount\":10000,\"nameTxn\":-1,\"dataTxn\":2}]}",
+                sink
+        );
     }
 
     @Test
