@@ -190,7 +190,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_truncate
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
         (JNIEnv *e, jclass cl, jlong fd, jlong len) {
     // F_ALLOCATECONTIG - try to allocate continuous space.
-    fstore_t flags = {F_ALLOCATECONTIG, F_PEOFPOSMODE, 0, len};
+    fstore_t flags = {F_ALLOCATECONTIG, F_PEOFPOSMODE, 0, len, 0};
     int result = fcntl(fd, F_PREALLOCATE, &flags);
     if (result == -1) {
         // F_ALLOCATEALL - try to allocate non-continuous space.
