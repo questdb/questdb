@@ -259,6 +259,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
     public void testO3TriggerTransactionLog() throws Exception {
         assertMemoryLeak(() -> {
 
@@ -390,15 +391,26 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             // if we copy new chunk, which was outside of transaction log and transaction log itself into 'y'
             // we would expect to end up with the same 'x' and 'y'
 
-            compiler.compile("insert into y select * from chunk1", sqlExecutionContext);
-            compiler.compile("insert into y select * from transaction_log('x')", sqlExecutionContext);
+//            compiler.compile("insert into y select * from chunk1", sqlExecutionContext);
+//            compiler.compile("insert into y select * from transaction_log('x')", sqlExecutionContext);
+
+            sink.clear();
+            TestUtils.printSql(
+                    compiler,
+                    sqlExecutionContext,
+//                    "select m from chunk2 union all select m from chunk3",
+                    "select m from transaction_log('x')",
+                    sink
+            );
+
+            System.out.println(sink);
 
             // tables should be the same
             TestUtils.assertSqlCursors(
                     compiler,
                     sqlExecutionContext,
-                    "x",
-                    "y",
+                    "select m from chunk2 union all select m from chunk3",
+                    "select m from transaction_log('x')",
                     LOG
             );
         });

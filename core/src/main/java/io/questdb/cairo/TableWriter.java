@@ -27,7 +27,10 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.cairo.SymbolMapWriter.TransientSymbolCountChangeHandler;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.MemoryLogAImpl;
 import io.questdb.cairo.vm.ReplMemoryLogCAImpl;
@@ -144,11 +147,12 @@ public class TableWriter implements Closeable {
     private final LongIntHashMap replPartitionHash = new LongIntHashMap();
     private long todoTxn;
     private MemoryCA o3TimestampMem;
-    private ReplMemoryLogCAImpl replO3TimestampMem = new ReplMemoryLogCAImpl();
     private final O3ColumnUpdateMethod o3MoveLagRef = this::o3MoveLag0;
+    private ReplMemoryLogCAImpl replO3TimestampMem = new ReplMemoryLogCAImpl();
     private MemoryARW o3TimestampMemCpy;
     private long lockFd = -1;
     private LongConsumer timestampSetter;
+    private LongConsumer replTimestampSetter;
     private int columnCount;
     private RowFunction rowFunction = openPartitionFunction;
     private boolean avoidIndexOnCommit = false;
@@ -305,7 +309,7 @@ public class TableWriter implements Closeable {
             }
 
             configureColumnMemory();
-            timestampSetter = configureTimestampSetter();
+            configureTimestampSetter();
             this.appendTimestampSetter = timestampSetter;
             this.txFile.readRowCounts();
             configureAppendPosition();
@@ -790,12 +794,12 @@ public class TableWriter implements Closeable {
         return tempMem16b != 0;
     }
 
-    public boolean isTransactionLogPending() {
-        return txFile.transactionLogTxn != Long.MIN_VALUE && txFile.transactionLogTxn < 0;
-    }
-
     public boolean isTransactionLogEnabled() {
         return txFile.transactionLogTxn > -1;
+    }
+
+    public boolean isTransactionLogPending() {
+        return txFile.transactionLogTxn != Long.MIN_VALUE && txFile.transactionLogTxn < 0;
     }
 
     public TableBlockWriter newBlock() {
@@ -2068,15 +2072,16 @@ public class TableWriter implements Closeable {
         populateDenseIndexerList();
     }
 
-    private LongConsumer configureTimestampSetter() {
+    private void configureTimestampSetter() {
         int index = metadata.getTimestampIndex();
         if (index == -1) {
-            return value -> {
+            timestampSetter = value -> {
             };
         } else {
             nullSetters.setQuick(index, NOOP);
             o3NullSetters.setQuick(index, NOOP);
-            return getPrimaryColumn(index)::putLong;
+            timestampSetter = getPrimaryColumn(index)::putLong;
+            replTimestampSetter = replSpliceColumns.getQuick(getPrimaryColumnIndex(index))::putLong;
         }
     }
 
@@ -2981,8 +2986,24 @@ public class TableWriter implements Closeable {
             if (o3LagRowCount == 0) {
                 this.o3MasterRef = -1;
                 rowFunction = switchPartitionFunction;
-                row.activeColumns = columns;
-                row.activeNullSetters = nullSetters;
+                // transaction log is either not required or pending
+                if (txFile.transactionLogTxn < 0) {
+                    row.activeColumns = columns;
+                    row.activeNullSetters = nullSetters;
+                } else {
+                    // transaction log is still required
+                    // we do not need to change active columns, they already should be splice columns
+                    for (int i = 0; i < columnCount; i++) {
+                        final MemoryLogA<MemoryA> mem1 = replSpliceColumns.getQuick(i * 2);
+                        mem1.of(logColumns.getQuick(i * 2), columns.getQuick(i * 2));
+
+                        final MemoryLogA<MemoryA> mem2 = replSpliceColumns.getQuick(i * 2 + 1);
+                        if (mem2 != null) {
+                            mem2.of(logColumns.getQuick(i * 2 + 1), columns.getQuick(i * 2 + 1));
+                        }
+                    }
+                    timestampSetter = replTimestampSetter;
+                }
                 LOG.debug().$("lag segment is empty").$();
             } else {
                 // adjust O3 master ref so that virtual row count becomes equal to value of "o3LagRowCount"
