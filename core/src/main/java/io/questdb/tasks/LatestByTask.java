@@ -80,7 +80,7 @@ public class LatestByTask {
     }
 
     public boolean run() {
-        GeoHashNative.latesByAndFilterPrefix(
+        GeoHashNative.latestByAndFilterPrefix(
                 keyBaseAddress,
                 keysMemorySize,
                 valueBaseAddress,

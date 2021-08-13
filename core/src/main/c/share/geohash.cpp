@@ -34,8 +34,8 @@ DECLARE_DISPATCHER(simd_iota);
 
 JNIEXPORT void JNICALL
 Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_iota(
-        JNIEnv *e,
-        jclass cl,
+        JNIEnv */*env*/,
+        jclass /*cl*/,
         jlong address,
         jlong size,
         jlong init
@@ -49,10 +49,10 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_iota(
 DECLARE_DISPATCHER(filter_with_prefix);
 
 JNIEXPORT void JNICALL
-Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latesByAndFilterPrefix
+Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latestByAndFilterPrefix
         (
-                JNIEnv *env,
-                jclass cl,
+                JNIEnv */*env*/,
+                jclass /*cl*/,
                 jlong keysMemory,
                 jlong keysMemorySize,
                 jlong valuesMemory,
@@ -87,8 +87,8 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latesByAndFilterP
             blockValueCountMod);
 
     auto rows_count_after = out_args->rows_size;
-    const auto *hashes = reinterpret_cast<const int64_t *>(hashesAddress);
-    const auto hash_length = static_cast<int32_t>(hashLength);
+    const auto hashes = reinterpret_cast<void *>(hashesAddress);
+    const auto hashes_storage_size = static_cast<int32_t>(hashLength);
     const auto *prefixes = reinterpret_cast<const int64_t *>(prefixesAddress);
     const auto prefixes_count = static_cast<int64_t>(prefixesCount);
 
@@ -96,23 +96,22 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latesByAndFilterP
     auto found_stop = rows + out_args->key_lo + rows_count_after;
 
     if (hashes && prefixes && prefixes_count) {
-
+        int64_t filtered_count = 0;
         filter_with_prefix(
                 hashes,
                 rows + out_args->key_lo + rows_count_prev,
+                hashes_storage_size,
                 rows_count_after - rows_count_prev,
-                hash_length,
                 prefixes,
-                prefixes_count
+                prefixes_count,
+                &filtered_count
         );
 
         auto filtered_start = rows + out_args->key_lo + rows_count_prev;
-        auto filtered_stop = rows + out_args->key_lo + rows_count_after;
-        auto p = std::partition(filtered_start, filtered_stop, [](int64_t n) { return n != 0; });
-        auto filtered_count = std::distance(filtered_start, p);
         auto len = filtered_count * sizeof(int64_t);
         auto dst = rows + out_args->key_lo + out_args->filtered_size;
         __MEMMOVE(reinterpret_cast<void *>(dst), reinterpret_cast<void *>(filtered_start), len);
+
         out_args->filtered_size += filtered_count;
     } else {
         out_args->filtered_size = std::distance(found_start, found_stop);
@@ -122,8 +121,8 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latesByAndFilterP
 JNIEXPORT jlong JNICALL
 Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_slideFoundBlocks
         (
-                JNIEnv *env,
-                jclass cl,
+                JNIEnv */*env*/,
+                jclass /*cl*/,
                 jlong argsAddress,
                 jlong argsCount
         ) {
