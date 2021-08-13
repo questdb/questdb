@@ -25,7 +25,7 @@
 #include "util.h"
 #include "geohash_dispatch.h"
 
-void MULTI_VERSION_NAME (simd_iota)(int64_t *array, const int64_t array_size, const int64_t start) {
+void MULTI_VERSION_NAME (simd_iota)(int64_t *array, int64_t array_size, int64_t start) {
     const int64_t step = 8;
     int64_t i = 0;
 
@@ -46,7 +46,7 @@ void MULTI_VERSION_NAME (simd_iota)(int64_t *array, const int64_t array_size, co
 }
 
 void MULTI_VERSION_NAME (filter_with_prefix)(
-        const int64_t hashes, // raw pointer from java
+        const void *hashes, // raw pointer from java
         int64_t *rows,
         const int32_t hashes_type_size,
         const int64_t rows_count,
@@ -57,7 +57,7 @@ void MULTI_VERSION_NAME (filter_with_prefix)(
     switch (hashes_type_size) {
         case 1:
             filter_with_prefix_generic<int8_t, Vec64c, Vec64cb>(
-                    reinterpret_cast<const int8_t *>(hashes),
+                    static_cast<const int8_t *>(hashes),
                     rows,
                     rows_count,
                     prefixes,
@@ -67,7 +67,7 @@ void MULTI_VERSION_NAME (filter_with_prefix)(
             break;
         case 2:
             filter_with_prefix_generic<int16_t, Vec32s, Vec32sb>(
-                    reinterpret_cast<const int16_t *>(hashes),
+                    static_cast<const int16_t *>(hashes),
                     rows,
                     rows_count,
                     prefixes,
@@ -77,7 +77,7 @@ void MULTI_VERSION_NAME (filter_with_prefix)(
             break;
         case 4:
             filter_with_prefix_generic<int32_t, Vec16i, Vec16ib>(
-                    reinterpret_cast<const int32_t *>(hashes),
+                    static_cast<const int32_t *>(hashes),
                     rows,
                     rows_count,
                     prefixes,
@@ -87,7 +87,7 @@ void MULTI_VERSION_NAME (filter_with_prefix)(
             break;
         case 8:
             filter_with_prefix_generic<int64_t, Vec8q, Vec8qb>(
-                    reinterpret_cast<const int64_t *>(hashes),
+                    static_cast<const int64_t *>(hashes),
                     rows,
                     rows_count,
                     prefixes,

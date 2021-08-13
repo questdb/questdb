@@ -30,7 +30,7 @@
 
 extern "C" {
 
-DECLARE_DISPATCHER(simd_iota);
+DECLARE_DISPATCHER(simd_iota)
 
 JNIEXPORT void JNICALL
 Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_iota(
@@ -46,10 +46,10 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_iota(
     simd_iota(array, array_size, init_value);
 }
 
-DECLARE_DISPATCHER(filter_with_prefix);
+DECLARE_DISPATCHER(filter_with_prefix)
 
 JNIEXPORT void JNICALL
-Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latesByAndFilterPrefix
+Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latestByAndFilterPrefix
         (
                 JNIEnv */*env*/,
                 jclass /*cl*/,
@@ -87,7 +87,7 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latesByAndFilterP
             blockValueCountMod);
 
     auto rows_count_after = out_args->rows_size;
-    const auto hashes = static_cast<int64_t>(hashesAddress);
+    const auto hashes = reinterpret_cast<void *>(hashesAddress);
     const auto hashes_storage_size = static_cast<int32_t>(hashLength);
     const auto *prefixes = reinterpret_cast<const int64_t *>(prefixesAddress);
     const auto prefixes_count = static_cast<int64_t>(prefixesCount);

@@ -30,19 +30,15 @@
 #include "bitmap_index_utils.h"
 #include "rosti.h"
 
-constexpr int64_t unpack_length(int64_t packed_hash) { return packed_hash >> 60; }
-
-constexpr int64_t unpack_hash(int64_t packed_hash) { return packed_hash & 0x0fffffffffffffffll; }
-
 constexpr int64_t bitmask(uint8_t count, uint8_t shift) { return ((static_cast<int64_t>(1) << count) - 1) << shift; }
 
 template<typename T, typename TVec, typename TVecB>
 void filter_with_prefix_generic(
         const T *hashes,
         int64_t *rows,
-        const int64_t rows_count,
+        int64_t rows_count,
         const int64_t *prefixes,
-        const int64_t prefixes_count,
+        int64_t prefixes_count,
         int64_t *out_filtered_count
 ) {
     int64_t i = 0; // input index
@@ -98,9 +94,9 @@ template<typename T>
 void filter_with_prefix_generic_vanilla(
         const T *hashes,
         int64_t *rows,
-        const int64_t rows_count,
+        int64_t rows_count,
         const int64_t *prefixes,
-        const int64_t prefixes_count,
+        int64_t prefixes_count,
         int64_t *out_filtered_count
 ) {
     int64_t i = 0; // input index
@@ -121,15 +117,15 @@ void filter_with_prefix_generic_vanilla(
 }
 
 DECLARE_DISPATCHER_TYPE(filter_with_prefix,
-                        const int64_t hashes,
+                        const void *hashes,
                         int64_t *rows,
-                        const int32_t hashes_type_size,
-                        const int64_t rows_count,
+                        int32_t hashes_type_size,
+                        int64_t rows_count,
                         const int64_t *prefixes,
-                        const int64_t prefixes_count,
+                        int64_t prefixes_count,
                         int64_t *out_filtered_count
-);
+)
 
-DECLARE_DISPATCHER_TYPE(simd_iota, int64_t *array, const int64_t array_size, const int64_t start);
+DECLARE_DISPATCHER_TYPE(simd_iota, int64_t *array, int64_t array_size, int64_t start)
 
 #endif //QUESTDB_GEOHASH_DISPATCH_H
