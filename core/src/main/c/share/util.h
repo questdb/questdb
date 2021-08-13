@@ -29,10 +29,10 @@
 #include <cstdint>
 #include "jni.h"
 
-#if defined(__GNUC__) && (__GNUC__ >= 4)
-#define ATTR_UNUSED __attribute__((unused))
-#else
+#if (defined(__GNUC__) && !defined(__clang__))
 #define ATTR_UNUSED
+#else
+#define ATTR_UNUSED __attribute__((unused))
 #endif
 
 #if (defined(__GNUC__) && !defined(__clang__))
