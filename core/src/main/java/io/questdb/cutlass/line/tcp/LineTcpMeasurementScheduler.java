@@ -736,29 +736,29 @@ class LineTcpMeasurementScheduler implements Closeable {
                             if (ColumnType.isString(colType)) {
                                 row.putStr(colIndex, job.floatingCharSink);
                             } else if (ColumnType.isGeoHash(colType)) {
-                                int typeChars = GeoHashes.getBitsPrecision(colType) / 5;
-                                int valueChars = job.floatingCharSink.length();
-                                if (valueChars >= typeChars) {
-                                    try {
-                                        row.putGeoHash(colIndex, GeoHashes.fromString(job.floatingCharSink, Math.min(valueChars, typeChars)));
-                                    } catch (NumericException e) {
-                                        throw CairoException.instance(0)
-                                                .put("not a valid GEOHASH value [columnIndex=")
-                                                .put(colIndex)
-                                                .put(", columnType=")
-                                                .put(ColumnType.nameOf(colType))
-                                                .put(", suppliedValue=")
-                                                .put(job.floatingCharSink.toString())
-                                                .put(']');
+                                int geoChars = GeoHashes.getBitsPrecision(colType) / 5; // truncate excess bits
+                                if (geoChars == 0) {
+                                    geoChars++;
+                                }
+                                try {
+                                    switch (ColumnType.storageTag(colType)) {
+                                        case ColumnType.GEOBYTE:
+                                            row.putGeoHash(colIndex, geoChars, 1, job.floatingCharSink);
+                                            break;
+                                        case ColumnType.GEOSHORT:
+                                            row.putGeoHash(colIndex, geoChars, 2, job.floatingCharSink);
+                                            break;
+                                        case ColumnType.GEOINT:
+                                            row.putGeoHash(colIndex, geoChars, 4, job.floatingCharSink);
+                                            break;
+                                        default:
+                                            row.putGeoHash(colIndex, geoChars, 8, job.floatingCharSink);
                                     }
-                                } else if (valueChars == 0) {
-                                    row.putGeoHash(colIndex, GeoHashes.NULL);
-                                } else {
+                                } catch (NumericException err) {
                                     throw CairoException.instance(0)
-                                            .put("GEOHASH value does not have enough precision [columnIndex=")
-                                            .put(colIndex)
-                                            .put(", columnType=")
-                                            .put(ColumnType.nameOf(colType))
+                                            .put("incorrect GEOHASH Value [columnIndex=").put(colIndex)
+                                            .put(", columnType=").put(ColumnType.nameOf(colType))
+                                            .put(", offender=").put(job.floatingCharSink.toString())
                                             .put(']');
                                 }
                             } else {

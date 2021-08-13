@@ -58,6 +58,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final CairoConfiguration configuration;
     private final LongList columnNameType = new LongList();
     private final LongList columnIndexAndType = new LongList();
+    private final IntIntHashMap columnTypeToGeoCharSize = new IntIntHashMap();
     private final LongList columnValues = new LongList();
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final MicrosecondClock clock;
@@ -187,10 +188,11 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         try {
             for (int i = 0; i < columnCount; i++) {
                 CairoLineProtoParserSupport.putValue(
-                        row
-                        , (int) columnNameType.getQuick(i * 2 + 1)
-                        , i
-                        , cache.get(columnValues.getQuick(i))
+                        row,
+                        (int) columnNameType.getQuick(i * 2 + 1),
+                        columnTypeToGeoCharSize,
+                        i,
+                        cache.get(columnValues.getQuick(i))
                 );
             }
             row.append();
@@ -212,6 +214,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 CairoLineProtoParserSupport.putValue(
                         row,
                         Numbers.decodeHighInt(value),
+                        columnTypeToGeoCharSize,
                         Numbers.decodeLowInt(value),
                         cache.get(columnValues.getQuick(i))
                 );
@@ -237,6 +240,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private void clearState() {
         columnNameType.clear();
         columnIndexAndType.clear();
+        columnTypeToGeoCharSize.clear();
         columnValues.clear();
     }
 
@@ -364,9 +368,17 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                     valid = columnTypeTag == ColumnType.BOOLEAN;
                     break;
                 case ColumnType.STRING:
-                    valid = columnTypeTag == ColumnType.STRING ||
-                            (columnTypeTag == ColumnType.GEOHASH &&
-                                    (GeoHashes.getBitsPrecision(columnType) <= 5 * (value.length() - 2) || value.length() == 2));
+                    valid = columnTypeTag == ColumnType.STRING;
+                    if (columnTypeTag == ColumnType.GEOHASH) {
+                        int geoChars = GeoHashes.getBitsPrecision(columnType) / 5; // truncates excess bits for char size
+                        if (geoChars == 0) {
+                            geoChars++;
+                        }
+                        if (geoChars <= (value.length() - 2) || value.length() == 2) {
+                            valid = true;
+                            columnTypeToGeoCharSize.put(columnType, geoChars);
+                        }
+                    }
                     break;
                 case ColumnType.DOUBLE:
                     valid = columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT;

@@ -208,7 +208,7 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
         Assert.assertTrue(function.isConstant());
         Assert.assertEquals(5, GeoHashes.getBitsPrecision(function.getType()));
-        Assert.assertEquals(GeoHashes.fromStringNl("s"), function.getGeoHashByte(null));
+        Assert.assertEquals(GeoHashes.fromString("s", 1), function.getGeoHashByte(null));
     }
 
     private void assertGeoHashLongStrEquals(String expectedGeohash, Function function) {

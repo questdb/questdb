@@ -23,12 +23,15 @@
  ******************************************************************************/
 
 package io.questdb.cairo;
+
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class GeoHashesTest {
+
     @Test
     public void testBitsPrecision() {
         Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(ColumnType.GEOHASH));
@@ -176,32 +179,55 @@ public class GeoHashesTest {
     }
 
     @Test(expected = NumericException.class)
-    public void testFromString1() throws NumericException {
+    public void testFromStringNegativeStartWillFail() throws NumericException {
         GeoHashes.fromString("", -1, 0);
     }
 
     @Test(expected = NumericException.class)
-    public void testFromString2() throws NumericException {
-        GeoHashes.fromString("", 1, 1);
+    public void testFromStringNegativeParseLenWillFail() throws NumericException {
+        GeoHashes.fromString("", 0, -1);
     }
 
     @Test(expected = NumericException.class)
-    public void testFromString3() throws NumericException {
-        GeoHashes.fromString("", 1, 62);
+    public void testFromStringOverMaxStringLengthWillFail() throws NumericException {
+        GeoHashes.fromString("123456789abcde", 1, GeoHashes.MAX_STRING_LENGTH + 2);
     }
 
     @Test(expected = NumericException.class)
-    public void testFromString4() throws NumericException {
-        GeoHashes.fromString("questdb", 1, 8);
-    }
-
-    @Test(expected = NumericException.class)
-    public void testFromString5() throws NumericException {
-        GeoHashes.fromString(null, 1, 2);
+    public void testFromStringThatIsShorterThanRequiredLenWillFail() throws NumericException {
+        GeoHashes.fromString("123", 1, 7);
     }
 
     @Test
-    public void testFromString6() throws NumericException {
+    public void testFromStringYieldsNullDueToNullString() throws NumericException {
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromString(null, 1, 1));
+    }
+
+    @Test
+    public void testFromStringYieldsNullDueToZeroRequiredLen2() throws NumericException {
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromString("''", 1, 0));
+    }
+
+    @Test
+    public void testFromStringYieldsNullDueToEmptyString() throws NumericException {
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromString("", 1, 1));
+    }
+
+    @Test
+    public void testFromStringJustOneChar() throws NumericException {
+        Assert.assertEquals(24, GeoHashes.fromString("ast", 1, 1));
+    }
+
+    @Test
+    public void testFromStringIgnoreQuotes() throws NumericException {
         Assert.assertEquals(27760644473312309L, GeoHashes.fromString("'sp052w92p1p'", 1, 11));
+    }
+
+    @Test
+    public void testFromStringIgnoreQuotesTruncate() throws NumericException {
+        Assert.assertEquals(807941, GeoHashes.fromString("'sp052w92p1p'", 1, 4));
+        StringSink sink = Misc.getThreadLocalBuilder();
+        GeoHashes.toString(807941, 4, sink);
+        Assert.assertEquals("sp05", sink.toString());
     }
 }

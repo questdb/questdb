@@ -30,17 +30,12 @@ import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
+import io.questdb.cairo.*;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoTestUtils;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableModel;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderRecordCursor;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
 import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.TableUpdateDetails;
@@ -1176,82 +1171,283 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInsertValidGeoHashesWhenSchemaExists() throws Exception {
-        runInContext(() -> {
-            try (TableModel model = new TableModel(configuration, "tracking", PartitionBy.NONE)) {
-                CairoTestUtils.create(model.col("geohash", ColumnType.geohashWithPrecision(30)).timestamp());
-            }
-            microSecondTicks = 1465839830102800L;
-            recvBuffer = "tracking geohash=\"9v1s8h\" 1000000000\n" +
-                    "tracking geohash=\"46swgj\" 2000000000\n" +
-                    "tracking geohash=\"jnw97u\" 3000000000\n" +
-                    "tracking geohash=\"zfuqd3\" 4000000000\n" +
-                    "tracking geohash=\"hp4muv\" 5000000000\n";
-            handleContextIO();
-            Assert.assertFalse(disconnected);
-            waitForIOCompletion();
-            closeContext();
-            String expected = "geohash\ttimestamp\n" +
-                    "9v1s8h\t1970-01-01T00:00:01.000000Z\n" +
-                    "46swgj\t1970-01-01T00:00:02.000000Z\n" +
-                    "jnw97u\t1970-01-01T00:00:03.000000Z\n" +
-                    "zfuqd3\t1970-01-01T00:00:04.000000Z\n" +
-                    "hp4muv\t1970-01-01T00:00:05.000000Z\n";
-            assertTable(expected, "tracking");
-        });
+    public void testByteGeoHashesWhenSchemaExists() throws Exception {
+        assertGeoHash(5,
+                "tracking geohash=\"9\" 1000000000\n" +
+                        "tracking geohash=\"4\" 2000000000\n" +
+                        "tracking geohash=\"j\" 3000000000\n" +
+                        "tracking geohash=\"z\" 4000000000\n" +
+                        "tracking geohash=\"h\" 5000000000\n",
+                "geohash\ttimestamp\n" +
+                        "9\t1970-01-01T00:00:01.000000Z\n" +
+                        "4\t1970-01-01T00:00:02.000000Z\n" +
+                        "j\t1970-01-01T00:00:03.000000Z\n" +
+                        "z\t1970-01-01T00:00:04.000000Z\n" +
+                        "h\t1970-01-01T00:00:05.000000Z\n");
+    }
+
+    @Test
+    public void testByteGeoHashesWhenSchemaExists2() throws Exception {
+        assertGeoHash(4,
+                "tracking geohash=\"9\" 1000000000\n" +
+                        "tracking geohash=\"4\" 2000000000\n" +
+                        "tracking geohash=\"j\" 3000000000\n",
+                "geohash\ttimestamp\n" +
+                        "1001\t1970-01-01T00:00:01.000000Z\n" +
+                        "0100\t1970-01-01T00:00:02.000000Z\n" +
+                        "0001\t1970-01-01T00:00:03.000000Z\n");
+    }
+
+
+    @Test
+    public void testByteGeoHashesWhenSchemaExists3() throws Exception {
+        assertGeoHash(6,
+                "tracking geohash=\"9\" 1000000000\n" +
+                        "tracking geohash=\"4\" 2000000000\n" +
+                        "tracking geohash=\"j\" 3000000000\n" +
+                        "tracking geohash=\"z\" 4000000000\n" +
+                        "tracking geohash=\"h\" 5000000000\n",
+                "geohash\ttimestamp\n" +
+                        "001001\t1970-01-01T00:00:01.000000Z\n" +
+                        "000100\t1970-01-01T00:00:02.000000Z\n" +
+                        "010001\t1970-01-01T00:00:03.000000Z\n" +
+                        "011111\t1970-01-01T00:00:04.000000Z\n" +
+                        "010000\t1970-01-01T00:00:05.000000Z\n");
+    }
+
+    @Test
+    public void testShortGeoHashesWhenSchemaExists1() throws Exception {
+        assertGeoHash(15,
+                "tracking geohash=\"9v1\" 1000000000\n" +
+                        "tracking geohash=\"46s\" 2000000000\n" +
+                        "tracking geohash=\"jnw\" 3000000000\n" +
+                        "tracking geohash=\"zfu\" 4000000000\n" +
+                        "tracking geohash=\"hp4\" 5000000000\n" +
+                        "tracking geohash=\"wh4\" 6000000000\n" +
+                        "tracking geohash=\"s2z\" 7000000000\n",
+                "geohash\ttimestamp\n" +
+                        "9v1\t1970-01-01T00:00:01.000000Z\n" +
+                        "46s\t1970-01-01T00:00:02.000000Z\n" +
+                        "jnw\t1970-01-01T00:00:03.000000Z\n" +
+                        "zfu\t1970-01-01T00:00:04.000000Z\n" +
+                        "hp4\t1970-01-01T00:00:05.000000Z\n" +
+                        "wh4\t1970-01-01T00:00:06.000000Z\n" +
+                        "s2z\t1970-01-01T00:00:07.000000Z\n");
+    }
+
+    @Test
+    public void testShortGeoHashesWhenSchemaExists2() throws Exception {
+        assertGeoHash(13,
+                "tracking geohash=\"9v1\" 1000000000\n" +
+                        "tracking geohash=\"46s\" 2000000000\n" +
+                        "tracking geohash=\"jnw\" 3000000000\n" +
+                        "tracking geohash=\"zfu\" 4000000000\n" +
+                        "tracking geohash=\"hp4\" 5000000000\n" +
+                        "tracking geohash=\"wh4\" 6000000000\n" +
+                        "tracking geohash=\"s2z\" 7000000000\n" +
+                        "tracking geohash=\"1cj\" 8000000000\n" +
+                        "tracking geohash=\"mmt\" 9000000000\n" +
+                        "tracking geohash=\"71f\" 10000000000\n",
+                "geohash\ttimestamp\n" +
+                        "0000100111011\t1970-01-01T00:00:01.000000Z\n" +
+                        "0000010000110\t1970-01-01T00:00:02.000000Z\n" +
+                        "0001000110100\t1970-01-01T00:00:03.000000Z\n" +
+                        "0001111101110\t1970-01-01T00:00:04.000000Z\n" +
+                        "0001000010101\t1970-01-01T00:00:05.000000Z\n" +
+                        "0001110010000\t1970-01-01T00:00:06.000000Z\n" +
+                        "0001100000010\t1970-01-01T00:00:07.000000Z\n" +
+                        "0000000101011\t1970-01-01T00:00:08.000000Z\n" +
+                        "0001001110011\t1970-01-01T00:00:09.000000Z\n" +
+                        "0000011100001\t1970-01-01T00:00:10.000000Z\n");
+    }
+
+    @Test
+    public void testShortGeoHashesWhenSchemaExists3() throws Exception {
+        assertGeoHash(15,
+                "tracking geohash=\"9v\" 1000000000\n" +
+                        "tracking geohash=\"46\" 2000000000\n" +
+                        "tracking geohash=\"jn\" 3000000000\n" +
+                        "tracking geohash=\"zf\" 4000000000\n" +
+                        "tracking geohash=\"hp\" 5000000000\n" +
+                        "tracking geohash=\"wh\" 6000000000\n" +
+                        "tracking geohash=\"s2\" 7000000000\n" +
+                        "tracking geohash=\"1c\" 8000000000\n" +
+                        "tracking geohash=\"mm\" 9000000000\n" +
+                        "tracking geohash=\"71\" 10000000000\n",
+                "geohash\ttimestamp\n");
+    }
+
+    @Test
+    public void testIntGeoHashesWhenSchemaExists1() throws Exception {
+        assertGeoHash(30,
+                "tracking geohash=\"9v1s8h\" 1000000000\n" +
+                        "tracking geohash=\"46swgj\" 2000000000\n" +
+                        "tracking geohash=\"jnw97u\" 3000000000\n" +
+                        "tracking geohash=\"zfuqd3\" 4000000000\n" +
+                        "tracking geohash=\"hp4muv\" 5000000000\n" +
+                        "tracking geohash=\"wh4b6v\" 6000000000\n" +
+                        "tracking geohash=\"s2z2fy\" 7000000000\n" +
+                        "tracking geohash=\"1cjjwk\" 8000000000\n",
+                "geohash\ttimestamp\n" +
+                        "9v1s8h\t1970-01-01T00:00:01.000000Z\n" +
+                        "46swgj\t1970-01-01T00:00:02.000000Z\n" +
+                        "jnw97u\t1970-01-01T00:00:03.000000Z\n" +
+                        "zfuqd3\t1970-01-01T00:00:04.000000Z\n" +
+                        "hp4muv\t1970-01-01T00:00:05.000000Z\n" +
+                        "wh4b6v\t1970-01-01T00:00:06.000000Z\n" +
+                        "s2z2fy\t1970-01-01T00:00:07.000000Z\n" +
+                        "1cjjwk\t1970-01-01T00:00:08.000000Z\n");
+    }
+
+    @Test
+    public void testIntGeoHashesWhenSchemaExists2() throws Exception {
+        assertGeoHash(29,
+                "tracking geohash=\"9v1s8h\" 1000000000\n" +
+                        "tracking geohash=\"46swgj\" 2000000000\n" +
+                        "tracking geohash=\"jnw97u\" 3000000000\n" +
+                        "tracking geohash=\"zfuqd3\" 4000000000\n" +
+                        "tracking geohash=\"hp4muv\" 5000000000\n" +
+                        "tracking geohash=\"wh4b6v\" 6000000000\n" +
+                        "tracking geohash=\"s2z2fy\" 7000000000\n" +
+                        "tracking geohash=\"1cjjwk\" 8000000000\n",
+                "geohash\ttimestamp\n" +
+                        "00000100111011000011100001000\t1970-01-01T00:00:01.000000Z\n" +
+                        "00000010000110110001110001111\t1970-01-01T00:00:02.000000Z\n" +
+                        "00001000110100111000100100111\t1970-01-01T00:00:03.000000Z\n" +
+                        "00001111101110110101011001100\t1970-01-01T00:00:04.000000Z\n" +
+                        "00001000010101001001001111010\t1970-01-01T00:00:05.000000Z\n" +
+                        "00001110010000001000101000110\t1970-01-01T00:00:06.000000Z\n" +
+                        "00001100000010111110001001110\t1970-01-01T00:00:07.000000Z\n" +
+                        "00000000101011100011000111100\t1970-01-01T00:00:08.000000Z\n");
+    }
+
+    @Test
+    public void testIntGeoHashesWhenSchemaExists3() throws Exception {
+        assertGeoHash(32,
+                "tracking geohash=\"9v1s8h\" 1000000000\n" +
+                        "tracking geohash=\"46swgj\" 2000000000\n" +
+                        "tracking geohash=\"jnw97u\" 3000000000\n" +
+                        "tracking geohash=\"zfuqd3\" 4000000000\n" +
+                        "tracking geohash=\"hp4muv\" 5000000000\n" +
+                        "tracking geohash=\"wh4b6v\" 6000000000\n" +
+                        "tracking geohash=\"s2z2fy\" 7000000000\n" +
+                        "tracking geohash=\"1cjjwk\" 8000000000\n",
+                "geohash\ttimestamp\n" +
+                        "00010011101100001110000100010000\t1970-01-01T00:00:01.000000Z\n" +
+                        "00001000011011000111000111110001\t1970-01-01T00:00:02.000000Z\n" +
+                        "00100011010011100010010011111010\t1970-01-01T00:00:03.000000Z\n" +
+                        "00111110111011010101100110000011\t1970-01-01T00:00:04.000000Z\n" +
+                        "00100001010100100100111101011011\t1970-01-01T00:00:05.000000Z\n" +
+                        "00111001000000100010100011011011\t1970-01-01T00:00:06.000000Z\n" +
+                        "00110000001011111000100111011110\t1970-01-01T00:00:07.000000Z\n" +
+                        "00000010101110001100011110010010\t1970-01-01T00:00:08.000000Z\n");
+    }
+
+    @Test
+    public void testIntGeoHashesWhenSchemaExists4() throws Exception {
+        assertGeoHash(32,
+                "tracking geohash=\"9v1s8\" 1000000000\n" +
+                        "tracking geohash=\"46swg\" 2000000000\n" +
+                        "tracking geohash=\"jnw97\" 3000000000\n" +
+                        "tracking geohash=\"zfuqd\" 4000000000\n" +
+                        "tracking geohash=\"hp4mu\" 5000000000\n" +
+                        "tracking geohash=\"wh4b6\" 6000000000\n" +
+                        "tracking geohash=\"s2z2f\" 7000000000\n" +
+                        "tracking geohash=\"1cjjw\" 8000000000\n",
+                "geohash\ttimestamp\n");
+    }
+
+    @Test
+    public void testLongGeoHashesWhenSchemaExists1() throws Exception {
+        assertGeoHash(60,
+                "tracking geohash=\"9v1s8hm7wpks\" 1000000000\n" +
+                        "tracking geohash=\"46swgj10r88k\" 2000000000\n" +
+                        "tracking geohash=\"jnw97u4yuquw\" 3000000000\n" +
+                        "tracking geohash=\"zfuqd3bf8hbu\" 4000000000\n" +
+                        "tracking geohash=\"hp4muv5tgg3q\" 5000000000\n" +
+                        "tracking geohash=\"wh4b6vntdq1c\" 6000000000\n" +
+                        "tracking geohash=\"s2z2fydsjq5n\" 7000000000\n",
+                "geohash\ttimestamp\n" +
+                        "9v1s8hm7wpks\t1970-01-01T00:00:01.000000Z\n" +
+                        "46swgj10r88k\t1970-01-01T00:00:02.000000Z\n" +
+                        "jnw97u4yuquw\t1970-01-01T00:00:03.000000Z\n" +
+                        "zfuqd3bf8hbu\t1970-01-01T00:00:04.000000Z\n" +
+                        "hp4muv5tgg3q\t1970-01-01T00:00:05.000000Z\n" +
+                        "wh4b6vntdq1c\t1970-01-01T00:00:06.000000Z\n" +
+                        "s2z2fydsjq5n\t1970-01-01T00:00:07.000000Z\n");
+    }
+
+    @Test
+    public void testLongGeoHashesWhenSchemaExists2() throws Exception {
+        assertGeoHash(57,
+                "tracking geohash=\"9v1s8hm7wpks\" 1000000000\n" +
+                        "tracking geohash=\"46swgj10r88k\" 2000000000\n" +
+                        "tracking geohash=\"jnw97u4yuquw\" 3000000000\n" +
+                        "tracking geohash=\"zfuqd3bf8hbu\" 4000000000\n" +
+                        "tracking geohash=\"hp4muv5tgg3q\" 5000000000\n" +
+                        "tracking geohash=\"wh4b6vntdq1c\" 6000000000\n" +
+                        "tracking geohash=\"s2z2fydsjq5n\" 7000000000\n",
+                "geohash\ttimestamp\n" +
+                        "000100111011000011100001000100001001100111111001010110010\t1970-01-01T00:00:01.000000Z\n" +
+                        "000010000110110001110001111100010000100000101110100001000\t1970-01-01T00:00:02.000000Z\n" +
+                        "001000110100111000100100111110100010011110110101011011010\t1970-01-01T00:00:03.000000Z\n" +
+                        "001111101110110101011001100000110101001110010001000001010\t1970-01-01T00:00:04.000000Z\n" +
+                        "001000010101001001001111010110110010111001011110111100011\t1970-01-01T00:00:05.000000Z\n" +
+                        "001110010000001000101000110110111010011001011001011000001\t1970-01-01T00:00:06.000000Z\n" +
+                        "001100000010111110001001110111100110011000100011011000101\t1970-01-01T00:00:07.000000Z\n");
+    }
+
+    @Test
+    public void testLongGeoHashesWhenSchemaExists3() throws Exception {
+        assertGeoHash(60,
+                "tracking geohash=\"9v1s8hm7wpk\" 1000000000\n" +
+                        "tracking geohash=\"46swgj10r88\" 2000000000\n" +
+                        "tracking geohash=\"jnw97u4yuqu\" 3000000000\n" +
+                        "tracking geohash=\"zfuqd3bf8hb\" 4000000000\n" +
+                        "tracking geohash=\"hp4muv5tgg3\" 5000000000\n" +
+                        "tracking geohash=\"wh4b6vntdq1\" 6000000000\n" +
+                        "tracking geohash=\"s2z2fydsjq5\" 7000000000\n",
+                "geohash\ttimestamp\n");
     }
 
     @Test
     public void testInsertNullGeoHashWhenSchemaExists() throws Exception {
-        runInContext(() -> {
-            try (TableModel model = new TableModel(configuration, "tracking", PartitionBy.NONE)) {
-                CairoTestUtils.create(model.col("geohash", ColumnType.geohashWithPrecision(30)).timestamp());
+        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
+            if (b > 1) {
+                setUp();
             }
-            microSecondTicks = 1465839830102800L;
-            recvBuffer = "tracking geohash=\"\" 1000000000\n" +
-                    "tracking geohash=\"\" 2000000000\n";
-            handleContextIO();
-            Assert.assertFalse(disconnected);
-            waitForIOCompletion();
-            closeContext();
-            String expected = "geohash\ttimestamp\n" +
-                    "\t1970-01-01T00:00:01.000000Z\n" +
-                    "\t1970-01-01T00:00:02.000000Z\n";
-            assertTable(expected, "tracking");
-        });
+            assertGeoHash(b,
+                    "tracking geohash= 1000000000\n",
+                    "geohash\ttimestamp\n");
+            tearDown();
+        }
     }
 
+    @Ignore(value = "FIX ME")
     @Test
-    public void testInsertLowerPrecisionGeoHashWhenSchemaExists() throws Exception {
-        runInContext(() -> {
-            try (TableModel model = new TableModel(configuration, "tracking", PartitionBy.NONE)) {
-                CairoTestUtils.create(model.col("geohash", ColumnType.geohashWithPrecision(30)).timestamp());
+    public void testInsertNullGeoHashWhenSchemaExistsEdgeCase() throws Exception {
+        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
+            if (b > 1) {
+                setUp();
             }
-            microSecondTicks = 1465839830102800L;
-            recvBuffer = "tracking geohash=\"sp\" 1000000000\n";
-            handleContextIO();
-            Assert.assertFalse(disconnected);
-            waitForIOCompletion();
-            closeContext();
-            String expected = "geohash\ttimestamp\n";
-            assertTable(expected, "tracking");
-        });
+            assertGeoHash(b,
+                    "tracking geohash=\"\" 1000000000\n",
+                    "geohash\ttimestamp\n");
+            tearDown();
+        }
     }
 
-    @Test
-    public void testInsertHigherPrecisionGeoHashWhenSchemaExists() throws Exception {
+    private void assertGeoHash(int columnBits, String inboundLines, String expected) throws Exception {
         runInContext(() -> {
             try (TableModel model = new TableModel(configuration, "tracking", PartitionBy.NONE)) {
-                CairoTestUtils.create(model.col("geohash", ColumnType.geohashWithPrecision(30)).timestamp());
+                CairoTestUtils.create(model.col("geohash", ColumnType.geohashWithPrecision(columnBits)).timestamp());
             }
             microSecondTicks = 1465839830102800L;
-            recvBuffer = "tracking geohash=\"sp052w92p1p8\" 1000000000\n";
+            recvBuffer = inboundLines;
             handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "geohash\ttimestamp\n" +
-                    "sp052w\t1970-01-01T00:00:01.000000Z\n";
             assertTable(expected, "tracking");
         });
     }

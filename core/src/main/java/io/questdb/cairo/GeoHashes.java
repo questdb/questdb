@@ -63,7 +63,7 @@ public class GeoHashes {
     };
 
     static {
-        for(int bits = 1; bits <= MAX_BITS_LENGTH; bits++) {
+        for (int bits = 1; bits <= MAX_BITS_LENGTH; bits++) {
             GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
         }
     }
@@ -133,12 +133,14 @@ public class GeoHashes {
     }
 
     public static long fromString(CharSequence hash, int start, int parseLen) throws NumericException {
-        if (hash == null ||
-                start < 0 ||
-                start + parseLen == 0 ||
-                start + parseLen > MAX_STRING_LENGTH ||
-                start + parseLen > hash.length()) {
+        if (start < 0 ||
+                parseLen < 0 ||
+                parseLen - start > MAX_STRING_LENGTH ||
+                (hash != null && parseLen - start > hash.length())) {
             throw NumericException.INSTANCE;
+        }
+        if (hash == null || parseLen == 0 || hash.length() == 0) {
+            return NULL;
         }
         long output = 0;
         for (int i = start; i < start + parseLen; ++i) {
@@ -155,13 +157,6 @@ public class GeoHashes {
         return output;
     }
 
-    public static long fromStringNl(CharSequence hash) throws NumericException {
-        if (hash == null || hash.length() == 0) {
-            return NULL;
-        }
-        return fromString(hash, hash.length());
-    }
-
     public static void fromStringToBits(final CharSequenceHashSet prefixes, int columnType, final DirectLongList prefixesBits) {
         prefixesBits.clear();
         final int columnSize = ColumnType.sizeOf(columnType);
@@ -169,7 +164,7 @@ public class GeoHashes {
         for (int i = 0, sz = prefixes.size(); i < sz; i++) {
             try {
                 final CharSequence prefix = prefixes.get(i);
-                final long hash = fromStringNl(prefix);
+                final long hash = fromString(prefix, prefix.length());
                 if (hash == NULL) {
                     continue;
                 }
@@ -198,11 +193,11 @@ public class GeoHashes {
 
     public static int getBitsPrecision(int type) {
         assert ColumnType.tagOf(type) == ColumnType.GEOHASH; // This maybe relaxed in the future
-        return (byte)((type >> BITS_OFFSET) & 0xFF);
+        return (byte) ((type >> BITS_OFFSET) & 0xFF);
     }
 
     public static int setBitsPrecision(int type, int bits) {
-        return (type & ~(0xFF << 8)) | (Byte.toUnsignedInt((byte)bits) << 8);
+        return (type & ~(0xFF << 8)) | (Byte.toUnsignedInt((byte) bits) << 8);
     }
 
     public static int sizeOf(int columnType) {
@@ -229,7 +224,7 @@ public class GeoHashes {
             // which should not happen in production code since reader and writer check table metadata
             assert bits > 0 && bits <= MAX_BITS_LENGTH;
             for (int i = bits - 1; i >= 0; --i) {
-                sink.put(((hash >> i) & 1) == 1? '1' : '0');
+                sink.put(((hash >> i) & 1) == 1 ? '1' : '0');
             }
         }
     }

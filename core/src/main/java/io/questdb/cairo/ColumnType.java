@@ -220,7 +220,7 @@ public final class ColumnType {
             case 8:
                 return GEOLONG;
         }
-        throw new UnsupportedOperationException("Invalid geohash size" + sizeOf(type));
+        throw new UnsupportedOperationException("Invalid geohash size " + sizeOf(type));
     }
 
     public static short tagOf(CharSequence name) {

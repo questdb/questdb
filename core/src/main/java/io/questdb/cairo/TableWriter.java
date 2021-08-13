@@ -122,8 +122,8 @@ public class TableWriter implements Closeable {
     private final TxWriter txFile;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final LongList o3PartitionRemoveCandidates = new LongList();
-    private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<O3MutableAtomicInteger>(O3MutableAtomicInteger::new, 64);
-    private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<O3Basket>(O3Basket::new, 64);
+    private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<>(O3MutableAtomicInteger::new, 64);
+    private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<>(O3Basket::new, 64);
     private final TxnScoreboard txnScoreboard;
     private final StringSink o3Sink = new StringSink();
     private final NativeLPSZ o3NativeLPSZ = new NativeLPSZ();
@@ -4839,6 +4839,43 @@ public class TableWriter implements Closeable {
             }
             putTimestamp(index, l);
         }
+
+        public void putGeoHash(int index,
+                               int columnSizeChars,
+                               int storageSizeBytes,
+                               CharSequence value) throws NumericException {
+            putGeoHash(index, columnSizeChars, storageSizeBytes, value, 0, value.length());
+        }
+
+        public void putGeoHash(int index,
+                               int columnSizeChars,
+                               int storageSizeBytes,
+                               CharSequence value,
+                               int start,
+                               int end) throws NumericException {
+            int len = Math.min(end, columnSizeChars);
+            if (len < columnSizeChars) {
+                throw NumericException.INSTANCE;
+            }
+            long geohash = GeoHashes.fromString(value, start, len);
+            MemoryA primaryColumn = getPrimaryColumn(index);
+            switch (storageSizeBytes) {
+                case 1:
+                    primaryColumn.putByte((byte) geohash);
+                    break;
+                case 2:
+                    primaryColumn.putShort((short) geohash);
+                    break;
+                case 4:
+                    primaryColumn.putInt((int) geohash);
+                    break;
+                default:
+                    primaryColumn.putLong(geohash);
+                    break;
+            }
+            notNull(index);
+        }
+
 
         public void putGeoHash(int index, long value) {
             int type = metadata.getColumnType(index);

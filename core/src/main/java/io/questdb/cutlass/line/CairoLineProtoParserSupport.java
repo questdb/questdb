@@ -26,10 +26,10 @@ package io.questdb.cutlass.line;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableWriter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 
@@ -42,14 +42,20 @@ public class CairoLineProtoParserSupport {
      * cast to column type, #BadCastException is thrown.
      *
      * @param row         table row
-     * @param columnIndex index of column to write value to
      * @param columnType  column type value will be cast to
+     * @param columnTypeToGeoSize if columnType's tag is GeoHash it contains chars as
+     *                            negative val, or bits as positive
+     * @param columnIndex index of column to write value to
      * @param value       value characters
      * @throws BadCastException when value cannot be cast to the give type
      */
-    public static void putValue(TableWriter.Row row, int columnType, int columnIndex, CharSequence value) throws BadCastException {
+    public static void putValue(TableWriter.Row row,
+                                int columnType,
+                                IntIntHashMap columnTypeToGeoSize,
+                                int columnIndex,
+                                CharSequence value) throws BadCastException {
         try {
-            switch (ColumnType.tagOf(columnType)) {
+            switch (ColumnType.storageTag(columnType)) {
                 case ColumnType.LONG:
                     row.putLong(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                     break;
@@ -94,15 +100,17 @@ public class CairoLineProtoParserSupport {
                 case ColumnType.TIMESTAMP:
                     row.putTimestamp(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                     break;
-                case ColumnType.GEOHASH:
-                    if (value.length() == 2) {
-                        row.putGeoHash(columnIndex, GeoHashes.NULL);
-                    } else {
-                        int typeChars = GeoHashes.getBitsPrecision(columnType) / 5;
-                        int valueChars = value.length() - 2;
-                        row.putGeoHash(columnIndex, GeoHashes.fromString(value, 1, Math.min(valueChars, typeChars)));
-                    }
+                case ColumnType.GEOBYTE:
+                    row.putGeoHash(columnIndex, columnTypeToGeoSize.get(columnType), 1, value, 1, value.length() - 2); // unquoted
                     break;
+                case ColumnType.GEOSHORT:
+                    row.putGeoHash(columnIndex, columnTypeToGeoSize.get(columnType), 2, value, 1, value.length() - 2); // unquoted
+                    break;
+                case ColumnType.GEOINT:
+                    row.putGeoHash(columnIndex, columnTypeToGeoSize.get(columnType), 4, value, 1, value.length() - 2); // unquoted
+                    break;
+                case ColumnType.GEOLONG:
+                    row.putGeoHash(columnIndex, columnTypeToGeoSize.get(columnType), 8, value, 1, value.length() - 2); // unquoted
                 default:
                     break;
             }
