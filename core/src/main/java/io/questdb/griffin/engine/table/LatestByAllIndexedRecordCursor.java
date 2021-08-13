@@ -177,7 +177,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
                 final long seq = pubSeq.next();
 
                 if (seq < 0) {
-                    GeoHashNative.latesByAndFilterPrefix(
+                    GeoHashNative.latestByAndFilterPrefix(
                             keyBaseAddress,
                             keysMemorySize,
                             valueBaseAddress,

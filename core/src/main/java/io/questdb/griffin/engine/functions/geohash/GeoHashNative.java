@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.functions.geohash;
 
 public class GeoHashNative {
 
-    public static native void latesByAndFilterPrefix(
+    public static native void latestByAndFilterPrefix(
             long keysMemory,
             long keysMemorySize,
             long valuesMemory,
