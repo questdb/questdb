@@ -30,7 +30,7 @@
 
 extern "C" {
 
-DECLARE_DISPATCHER(simd_iota)
+DECLARE_DISPATCHER(simd_iota);
 
 JNIEXPORT void JNICALL
 Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_iota(
@@ -46,7 +46,7 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_iota(
     simd_iota(array, array_size, init_value);
 }
 
-DECLARE_DISPATCHER(filter_with_prefix)
+DECLARE_DISPATCHER(filter_with_prefix);
 
 JNIEXPORT void JNICALL
 Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latestByAndFilterPrefix

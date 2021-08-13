@@ -124,8 +124,8 @@ DECLARE_DISPATCHER_TYPE(filter_with_prefix,
                         const int64_t *prefixes,
                         int64_t prefixes_count,
                         int64_t *out_filtered_count
-)
+);
 
-DECLARE_DISPATCHER_TYPE(simd_iota, int64_t *array, int64_t array_size, int64_t start)
+DECLARE_DISPATCHER_TYPE(simd_iota, int64_t *array, int64_t array_size, int64_t start);
 
 #endif //QUESTDB_GEOHASH_DISPATCH_H
