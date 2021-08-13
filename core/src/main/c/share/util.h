@@ -29,6 +29,12 @@
 #include <cstdint>
 #include "jni.h"
 
+#if defined(__GNUC__) && (__GNUC__ >= 4)
+#define ATTR_UNUSED __attribute__((unused))
+#else
+#define ATTR_UNUSED
+#endif
+
 #if (defined(__GNUC__) && !defined(__clang__))
 #define ATTRIBUTE_NEVER_INLINE __attribute__((noinline))
 #elif defined(_MSC_VER)
@@ -40,7 +46,7 @@
 #define PREDICT_FALSE(x) (__builtin_expect(x, 0))
 #define PREDICT_TRUE(x) (__builtin_expect(false || (x), true))
 
-#define JAVA_STATIC JNIEnv *e, jclass cl
+#define JAVA_STATIC ATTR_UNUSED JNIEnv *e, ATTR_UNUSED jclass cl
 
 #if __GNUC__
 // Fetch into all levels of the cache hierarchy.

@@ -29,20 +29,17 @@
 #include <atomic>
 #include "util.h"
 
-
-[[maybe_unused]]
+ATTR_UNUSED
 inline static int64_t to_local_row_id(int64_t row_id) {
     return row_id & 0xFFFFFFFFFFFL;
 }
 
-
-[[maybe_unused]]
+ATTR_UNUSED
 inline static int32_t to_partition_index(int64_t row_id) {
     return static_cast<int32_t>(row_id >> 44);
 }
 
-
-[[maybe_unused]]
+ATTR_UNUSED
 inline static int64_t to_row_id(int32_t partition_index, int64_t local_row_id) {
     return (static_cast<int64_t>(partition_index) << 44) + local_row_id;
 }
@@ -64,7 +61,7 @@ struct key_header {
     int32_t block_value_count;
     int64_t key_count;
     int64_t sequence_check;
-    [[maybe_unused]] int8_t padding[27];
+    ATTR_UNUSED int8_t padding[27];
 } __attribute__((packed));
 
 struct key_entry {
@@ -84,7 +81,7 @@ struct fl_record {
     int64_t last_row_id;
     int64_t timestamp_index;
 private:
-    [[maybe_unused]] int8_t padding[8];
+    ATTR_UNUSED int8_t padding[8];
 } __attribute__((packed));
 
 class keys_reader {
@@ -119,15 +116,15 @@ public:
         return proxy_;
     }
 
-    [[maybe_unused]] [[nodiscard]] size_t memory_size() const noexcept { return memory_size_; };
+    [[nodiscard]] ATTR_UNUSED size_t memory_size() const noexcept { return memory_size_; };
 
     [[nodiscard]] size_t key_count() const noexcept { return header_ptr_->key_count; }
 
-    [[maybe_unused]] [[nodiscard]] size_t values_total_count() const noexcept { return header_ptr_->block_value_count; }
+    [[nodiscard]] ATTR_UNUSED size_t values_total_count() const noexcept { return header_ptr_->block_value_count; }
 
-    [[maybe_unused]] [[nodiscard]] size_t value_memory_size() const noexcept { return header_ptr_->value_mem_size; }
+    [[nodiscard]] ATTR_UNUSED size_t value_memory_size() const noexcept { return header_ptr_->value_mem_size; }
 
-    [[maybe_unused]] [[nodiscard]] size_t key_count_in_memory() const noexcept {
+    [[nodiscard]] ATTR_UNUSED size_t key_count_in_memory() const noexcept {
         return (memory_size_ - sizeof(key_header)) / sizeof(int64_t);
     };
 
@@ -229,7 +226,7 @@ int64_t scan_blocks_backward(block<T> &current_block, int64_t value_count, T max
 }
 
 template<typename T>
-[[maybe_unused]] int64_t scan_blocks_forward(block<T> &current_block, int64_t initial_count, T min_value) {
+ATTR_UNUSED int64_t scan_blocks_forward(block<T> &current_block, int64_t initial_count, T min_value) {
     int64_t value_count = initial_count;
     int64_t stored;
     do {
