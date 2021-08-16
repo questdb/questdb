@@ -51,6 +51,9 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        if (args == null || args.size() == 0) {
+            throw SqlException.$(position, "function rnd_symbol expects arguments but has none");
+        }
         final ObjList<String> symbols = new ObjList<>(args.size());
         RndStringListFunctionFactory.copyConstants(args, argPositions, symbols);
 
