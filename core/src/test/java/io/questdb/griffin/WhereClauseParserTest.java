@@ -383,6 +383,46 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testComplexIntervalNeg1() throws Exception {
+        runWhereTest("timestamp in '2015-02-23T10:00:55;-15s'", "[{lo=2015-02-23T10:00:40.000000Z, hi=2015-02-23T10:00:55.999999Z}]");
+    }
+
+    @Test
+    public void testComplexIntervalNeg2() throws Exception {
+        runWhereTest("timestamp in '2015-02-23T10:00:55;-30m'", "[{lo=2015-02-23T09:30:55.000000Z, hi=2015-02-23T10:00:55.999999Z}]");
+    }
+
+    @Test
+    public void testComplexIntervalNeg3() throws Exception {
+        runWhereTest("timestamp in '2015-02-23T10:00:55;-4h'", "[{lo=2015-02-23T06:00:55.000000Z, hi=2015-02-23T10:00:55.999999Z}]");
+    }
+
+    @Test
+    public void testComplexIntervalNeg4() throws Exception {
+        runWhereTest("timestamp in '2015-02-23T10:00:55;-7d'", "[{lo=2015-02-16T10:00:55.000000Z, hi=2015-02-23T10:00:55.999999Z}]");
+    }
+
+    @Test
+    public void testComplexIntervalNegMs1() throws Exception {
+        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;-15s'", "[{lo=2015-02-23T10:00:40.000000Z, hi=2015-02-23T10:00:55.000000Z}]");
+    }
+
+    @Test
+    public void testComplexIntervalNegMs2() throws Exception {
+        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;-30m'", "[{lo=2015-02-23T09:30:55.000000Z, hi=2015-02-23T10:00:55.000000Z}]");
+    }
+
+    @Test
+    public void testComplexIntervalNegMs3() throws Exception {
+        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;-4h'", "[{lo=2015-02-23T06:00:55.000000Z, hi=2015-02-23T10:00:55.000000Z}]");
+    }
+
+    @Test
+    public void testComplexIntervalNegMs4() throws Exception {
+        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;-7d'", "[{lo=2015-02-16T10:00:55.000000Z, hi=2015-02-23T10:00:55.000000Z}]");
+    }
+
+    @Test
     public void testDesTimestampGreaterAndLessOrEqual() throws Exception {
         runWhereTest("timestamp >= '2015-02-23' and timestamp <= '2015-02-24'",
                 "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-24T00:00:00.000000Z}]");
