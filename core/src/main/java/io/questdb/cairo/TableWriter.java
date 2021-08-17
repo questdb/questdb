@@ -83,8 +83,8 @@ public class TableWriter implements Closeable {
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final Path path;
     private final Path other;
-    private final LongList refs = new LongList();
-    private final Row row = new Row();
+    private final LongList rowValueIsNotNull = new LongList();
+    private final RowImpl row = new RowImpl();
     private final int rootLen;
     private final MemoryMR metaMem;
     private final int partitionBy;
@@ -176,6 +176,8 @@ public class TableWriter implements Closeable {
     private final O3ColumnUpdateMethod o3MoveUncommittedRef = this::o3MoveUncommitted0;
     private long lastPartitionTimestamp;
     private boolean o3InError = false;
+    private ObjList<? extends MemoryA> activeColumns;
+    private ObjList<Runnable> activeNullSetters;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot());
@@ -281,20 +283,20 @@ public class TableWriter implements Closeable {
             if (metadata.getTimestampIndex() > -1) {
                 this.designatedTimestampColumnName = metadata.getColumnName(metadata.getTimestampIndex());
             }
-            this.refs.extendAndSet(columnCount, 0);
+            this.rowValueIsNotNull.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount * 2);
             this.logColumns = new ObjList<>(columnCount * 2);
             this.replSpliceColumns = new ObjList<>(columnCount * 2);
             this.o3Columns = new ObjList<>(columnCount * 2);
             this.o3Columns2 = new ObjList<>(columnCount * 2);
-            this.row.activeColumns = columns;
+            this.activeColumns = columns;
             this.symbolMapWriters = new ObjList<>(columnCount);
             this.indexers = new ObjList<>(columnCount);
             this.denseSymbolMapWriters = new ObjList<>(metadata.getSymbolMapCount());
             this.denseSymbolTransientCountHandlers = new ObjList<>(metadata.getSymbolMapCount());
             this.nullSetters = new ObjList<>(columnCount);
             this.o3NullSetters = new ObjList<>(columnCount);
-            this.row.activeNullSetters = nullSetters;
+            this.activeNullSetters = nullSetters;
             this.columnTops = new LongList(columnCount);
             if (partitionBy != PartitionBy.NONE) {
                 timestampFloorMethod = getPartitionFloor(partitionBy);
@@ -1766,93 +1768,8 @@ public class TableWriter implements Closeable {
         }
     }
 
-    void cancelRow() {
-        if ((masterRef & 1) == 0) {
-            return;
-        }
-
-        if (hasO3()) {
-            masterRef--;
-            setO3AppendPosition(getO3RowCount());
-            return;
-        }
-
-        long dirtyMaxTimestamp = txFile.getMaxTimestamp();
-        long dirtyTransientRowCount = txFile.getTransientRowCount();
-        long rollbackToMaxTimestamp = txFile.cancelToMaxTimestamp();
-        long rollbackToTransientRowCount = txFile.cancelToTransientRowCount();
-
-        // dirty timestamp should be 1 because newRow() increments it
-        if (dirtyTransientRowCount == 1) {
-            if (partitionBy != PartitionBy.NONE) {
-                // we have to undo creation of partition
-                closeActivePartition(false);
-                if (removeDirOnCancelRow) {
-                    try {
-                        setStateForTimestamp(path, dirtyMaxTimestamp, false);
-                        int errno;
-                        if ((errno = ff.rmdir(path.$())) != 0) {
-                            throw CairoException.instance(errno).put("Cannot remove directory: ").put(path);
-                        }
-                        removeDirOnCancelRow = false;
-                    } finally {
-                        path.trimTo(rootLen);
-                    }
-                }
-
-                // open old partition
-                if (rollbackToMaxTimestamp > Long.MIN_VALUE) {
-                    try {
-                        openPartition(rollbackToMaxTimestamp);
-                        setAppendPosition(rollbackToTransientRowCount, false);
-                    } catch (Throwable e) {
-                        freeColumns(false);
-                        throw e;
-                    }
-                } else {
-                    rowFunction = openPartitionFunction;
-                }
-
-                // undo counts
-                removeDirOnCancelRow = true;
-                txFile.cancelRow();
-            } else {
-                txFile.cancelRow();
-                // we only have one partition, jump to start on every column
-                for (int i = 0; i < columnCount; i++) {
-                    getPrimaryColumn(i).jumpTo(0);
-                    MemoryMA mem = getSecondaryColumn(i);
-                    if (mem != null) {
-                        mem.jumpTo(0);
-                    }
-                }
-            }
-        } else {
-            txFile.cancelRow();
-            // we are staying within same partition, prepare append positions for row count
-            boolean rowChanged = metadata.getTimestampIndex() >= 0; // adding new row already writes timestamp
-            if (!rowChanged) {
-                // verify if any of the columns have been changed
-                // if not - we don't have to do
-                for (int i = 0; i < columnCount; i++) {
-                    if (refs.getQuick(i) == masterRef) {
-                        rowChanged = true;
-                        break;
-                    }
-                }
-            }
-
-            // is no column has been changed we take easy option and do nothing
-            if (rowChanged) {
-                setAppendPosition(dirtyTransientRowCount - 1, false);
-            }
-        }
-        refs.fill(0, columnCount, --masterRef);
-        txFile.transientRowCount--;
-    }
-
     private void cancelRowAndBump() {
-        cancelRow();
+        rowCancel();
         masterRef++;
     }
 
@@ -1920,7 +1837,7 @@ public class TableWriter implements Closeable {
      * Commits newly added rows of data. This method updates transaction file with pointers to end of appended data.
      * <p>
      * <b>Pending rows</b>
-     * <p>This method will cancel pending rows by calling {@link #cancelRow()}. Data in partially appended row will be lost.</p>
+     * <p>This method will cancel pending rows by calling {@link #rowCancel()}. Data in partially appended row will be lost.</p>
      *
      * @param commitMode commit durability mode.
      * @param commitLag  if > 0 then do a partial commit, leaving the rows within the lag in a new uncommitted transaction
@@ -1935,7 +1852,7 @@ public class TableWriter implements Closeable {
         }
 
         if ((masterRef & 1) != 0) {
-            cancelRow();
+            rowCancel();
         }
 
         if (inTransaction()) {
@@ -1962,7 +1879,7 @@ public class TableWriter implements Closeable {
         }
 
         for (int i = 0; i < columnCount; i++) {
-            refs.setQuick(i, masterRef);
+            rowValueIsNotNull.setQuick(i, masterRef);
         }
 
         masterRef++;
@@ -1989,7 +1906,7 @@ public class TableWriter implements Closeable {
             rowFunction = openPartitionFunction;
             timestampSetter = appendTimestampSetter;
         }
-        row.activeColumns = columns;
+        activeColumns = columns;
     }
 
     private void configureColumn(int type, boolean indexFlag) {
@@ -2040,7 +1957,7 @@ public class TableWriter implements Closeable {
             indexers.extendAndSet((columns.size() - 1) / 2, new SymbolColumnIndexer());
             populateDenseIndexerList();
         }
-        refs.add(0);
+        rowValueIsNotNull.add(0);
     }
 
     private void configureColumnMemory() {
@@ -2102,7 +2019,7 @@ public class TableWriter implements Closeable {
                             ff,
                             o3Sink,
                             o3NativeLPSZ,
-                            refs, // reuse, this is only called from writer close
+                            rowValueIsNotNull, // reuse, this is only called from writer close
                             purgeQueue,
                             purgePubSeq,
                             path,
@@ -2988,8 +2905,8 @@ public class TableWriter implements Closeable {
                 rowFunction = switchPartitionFunction;
                 // transaction log is either not required or pending
                 if (txFile.transactionLogTxn < 0) {
-                    row.activeColumns = columns;
-                    row.activeNullSetters = nullSetters;
+                    activeColumns = columns;
+                    activeNullSetters = nullSetters;
                 } else {
                     // transaction log is still required
                     // we do not need to change active columns, they already should be splice columns
@@ -3354,8 +3271,8 @@ public class TableWriter implements Closeable {
                 mem2.jumpTo(0);
             }
         }
-        row.activeColumns = o3Columns;
-        row.activeNullSetters = o3NullSetters;
+        activeColumns = o3Columns;
+        activeNullSetters = o3NullSetters;
         LOG.debug().$("switched partition to memory").$();
     }
 
@@ -4562,22 +4479,22 @@ public class TableWriter implements Closeable {
 
                     final MemoryLogA<MemoryA> spliceColumn1 = replSpliceColumns.getQuick(primaryIndex);
 
-                    if (spliceColumn1 == row.activeColumns.getQuick(primaryIndex)) {
+                    if (spliceColumn1 == activeColumns.getQuick(primaryIndex)) {
                         System.out.println("oopsie");
                         assert false;
                     }
 
-                    spliceColumn1.of(logMem1, row.activeColumns.getQuick(primaryIndex));
+                    spliceColumn1.of(logMem1, activeColumns.getQuick(primaryIndex));
 
                     final MemoryMA logMem2 = logColumns.getQuick(secondaryIndex);
                     if (logMem2 != null) {
                         logMem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
 
                         final MemoryLogA<MemoryA> spliceColumn2 = replSpliceColumns.getQuick(secondaryIndex);
-                        spliceColumn2.of(logMem2, row.activeColumns.getQuick(secondaryIndex));
+                        spliceColumn2.of(logMem2, activeColumns.getQuick(secondaryIndex));
                     }
                 }
-                row.activeColumns = replSpliceColumns;
+                activeColumns = replSpliceColumns;
                 replO3TimestampMem.of(logColumns.getQuick(getPrimaryColumnIndex(metadata.getTimestampIndex())), o3TimestampMem);
                 o3TimestampMem = replO3TimestampMem;
             } else {
@@ -4769,6 +4686,102 @@ public class TableWriter implements Closeable {
         for (int i = 0; i < expectedMapWriters; i++) {
             denseSymbolMapWriters.getQuick(i).rollback(txFile.readSymbolWriterIndexOffset(i));
         }
+    }
+
+    private void rowAppend() {
+        if ((masterRef & 1) != 0) {
+            for (int i = 0; i < columnCount; i++) {
+                if (rowValueIsNotNull.getQuick(i) < masterRef) {
+                    activeNullSetters.getQuick(i).run();
+                }
+            }
+            masterRef++;
+        }
+    }
+
+    void rowCancel() {
+        if ((masterRef & 1) == 0) {
+            return;
+        }
+
+        if (hasO3()) {
+            masterRef--;
+            setO3AppendPosition(getO3RowCount());
+            return;
+        }
+
+        long dirtyMaxTimestamp = txFile.getMaxTimestamp();
+        long dirtyTransientRowCount = txFile.getTransientRowCount();
+        long rollbackToMaxTimestamp = txFile.cancelToMaxTimestamp();
+        long rollbackToTransientRowCount = txFile.cancelToTransientRowCount();
+
+        // dirty timestamp should be 1 because newRow() increments it
+        if (dirtyTransientRowCount == 1) {
+            if (partitionBy != PartitionBy.NONE) {
+                // we have to undo creation of partition
+                closeActivePartition(false);
+                if (removeDirOnCancelRow) {
+                    try {
+                        setStateForTimestamp(path, dirtyMaxTimestamp, false);
+                        int errno;
+                        if ((errno = ff.rmdir(path.$())) != 0) {
+                            throw CairoException.instance(errno).put("Cannot remove directory: ").put(path);
+                        }
+                        removeDirOnCancelRow = false;
+                    } finally {
+                        path.trimTo(rootLen);
+                    }
+                }
+
+                // open old partition
+                if (rollbackToMaxTimestamp > Long.MIN_VALUE) {
+                    try {
+                        openPartition(rollbackToMaxTimestamp);
+                        setAppendPosition(rollbackToTransientRowCount, false);
+                    } catch (Throwable e) {
+                        freeColumns(false);
+                        throw e;
+                    }
+                } else {
+                    rowFunction = openPartitionFunction;
+                }
+
+                // undo counts
+                removeDirOnCancelRow = true;
+                txFile.cancelRow();
+            } else {
+                txFile.cancelRow();
+                // we only have one partition, jump to start on every column
+                for (int i = 0; i < columnCount; i++) {
+                    getPrimaryColumn(i).jumpTo(0);
+                    MemoryMA mem = getSecondaryColumn(i);
+                    if (mem != null) {
+                        mem.jumpTo(0);
+                    }
+                }
+            }
+        } else {
+            txFile.cancelRow();
+            // we are staying within same partition, prepare append positions for row count
+            boolean rowChanged = metadata.getTimestampIndex() >= 0; // adding new row already writes timestamp
+            if (!rowChanged) {
+                // verify if any of the columns have been changed
+                // if not - we don't have to do
+                for (int i = 0; i < columnCount; i++) {
+                    if (rowValueIsNotNull.getQuick(i) == masterRef) {
+                        rowChanged = true;
+                        break;
+                    }
+                }
+            }
+
+            // is no column has been changed we take easy option and do nothing
+            if (rowChanged) {
+                setAppendPosition(dirtyTransientRowCount - 1, false);
+            }
+        }
+        rowValueIsNotNull.fill(0, columnCount, --masterRef);
+        txFile.transientRowCount--;
     }
 
     private void runFragile(FragileCode fragile, CharSequence columnName, CairoException e) {
@@ -5061,6 +5074,10 @@ public class TableWriter implements Closeable {
         );
     }
 
+    private void setRowValueNotNull(int columnIndex) {
+        rowValueIsNotNull.setQuick(columnIndex, masterRef);
+    }
+
     private void writeRestoreMetaTodo(CharSequence columnName) {
         try {
             writeRestoreMetaTodo();
@@ -5101,6 +5118,61 @@ public class TableWriter implements Closeable {
                 long mergedTimestampsAddr,
                 long valueCount
         );
+    }
+
+    public interface Row {
+
+        void append();
+
+        void cancel();
+
+        void putBin(int columnIndex, long address, long len);
+
+        void putBin(int columnIndex, BinarySequence sequence);
+
+        void putBool(int columnIndex, boolean value);
+
+        void putByte(int columnIndex, byte value);
+
+        void putChar(int columnIndex, char value);
+
+        void putDate(int columnIndex, long value);
+
+        void putDouble(int columnIndex, double value);
+
+        void putFloat(int columnIndex, float value);
+
+        void putGeoHash(int columnIndex, long value);
+
+        void putInt(int columnIndex, int value);
+
+        void putLong(int columnIndex, long value);
+
+        void putLong256(int columnIndex, long l0, long l1, long l2, long l3);
+
+        void putLong256(int columnIndex, Long256 value);
+
+        void putLong256(int columnIndex, CharSequence hexString);
+
+        void putLong256(int columnIndex, @NotNull CharSequence hexString, int start, int end);
+
+        void putShort(int columnIndex, short value);
+
+        void putStr(int columnIndex, CharSequence value);
+
+        void putStr(int columnIndex, char value);
+
+        void putStr(int columnIndex, CharSequence value, int pos, int len);
+
+        void putSym(int columnIndex, CharSequence value);
+
+        void putSym(int columnIndex, char value);
+
+        void putSymIndex(int columnIndex, int symIndex);
+
+        void putTimestamp(int columnIndex, long value);
+
+        void putTimestamp(int columnIndex, CharSequence value);
     }
 
     static class TimestampValueRecord implements Record {
@@ -5181,7 +5253,7 @@ public class TableWriter implements Closeable {
         }
 
         @NotNull
-        private Row newRow0(long timestamp) {
+        private TableWriter.Row newRow0(long timestamp) {
             if (timestamp < txFile.getMaxTimestamp()) {
                 return newRowO3(timestamp);
             }
@@ -5210,67 +5282,68 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public class Row {
-        private ObjList<? extends MemoryA> activeColumns;
-        private ObjList<Runnable> activeNullSetters;
-
+    private class RowImpl implements Row {
+        @Override
         public void append() {
-            if ((masterRef & 1) != 0) {
-                for (int i = 0; i < columnCount; i++) {
-                    if (refs.getQuick(i) < masterRef) {
-                        activeNullSetters.getQuick(i).run();
-                    }
-                }
-                masterRef++;
-            }
+            rowAppend();
         }
 
+        @Override
         public void cancel() {
-            cancelRow();
+            rowCancel();
         }
 
-        public void putBin(int index, long address, long len) {
-            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putBin(address, len));
-            notNull(index);
+        @Override
+        public void putBin(int columnIndex, long address, long len) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putBin(address, len));
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putBin(int index, BinarySequence sequence) {
-            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putBin(sequence));
-            notNull(index);
+        @Override
+        public void putBin(int columnIndex, BinarySequence sequence) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putBin(sequence));
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putBool(int index, boolean value) {
-            getPrimaryColumn(index).putBool(value);
-            notNull(index);
+        @Override
+        public void putBool(int columnIndex, boolean value) {
+            getPrimaryColumn(columnIndex).putBool(value);
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putByte(int index, byte value) {
-            getPrimaryColumn(index).putByte(value);
-            notNull(index);
+        @Override
+        public void putByte(int columnIndex, byte value) {
+            getPrimaryColumn(columnIndex).putByte(value);
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putChar(int index, char value) {
-            getPrimaryColumn(index).putChar(value);
-            notNull(index);
+        @Override
+        public void putChar(int columnIndex, char value) {
+            getPrimaryColumn(columnIndex).putChar(value);
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putDate(int index, long value) {
-            putLong(index, value);
+        @Override
+        public void putDate(int columnIndex, long value) {
+            putLong(columnIndex, value);
         }
 
-        public void putDouble(int index, double value) {
-            getPrimaryColumn(index).putDouble(value);
-            notNull(index);
+        @Override
+        public void putDouble(int columnIndex, double value) {
+            getPrimaryColumn(columnIndex).putDouble(value);
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putFloat(int index, float value) {
-            getPrimaryColumn(index).putFloat(value);
-            notNull(index);
+        @Override
+        public void putFloat(int columnIndex, float value) {
+            getPrimaryColumn(columnIndex).putFloat(value);
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putGeoHash(int index, long value) {
-            int type = metadata.getColumnType(index);
-            final MemoryA primaryColumn = getPrimaryColumn(index);
+        @Override
+        public void putGeoHash(int columnIndex, long value) {
+            int type = metadata.getColumnType(columnIndex);
+            final MemoryA primaryColumn = getPrimaryColumn(columnIndex);
             switch (ColumnType.sizeOf(type)) {
                 case 1:
                     primaryColumn.putByte((byte) value);
@@ -5285,79 +5358,94 @@ public class TableWriter implements Closeable {
                     primaryColumn.putLong(value);
                     break;
             }
-            notNull(index);
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putInt(int index, int value) {
-            getPrimaryColumn(index).putInt(value);
-            notNull(index);
+        @Override
+        public void putInt(int columnIndex, int value) {
+            getPrimaryColumn(columnIndex).putInt(value);
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putLong(int index, long value) {
-            getPrimaryColumn(index).putLong(value);
-            notNull(index);
+        @Override
+        public void putLong(int columnIndex, long value) {
+            getPrimaryColumn(columnIndex).putLong(value);
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putLong256(int index, long l0, long l1, long l2, long l3) {
-            getPrimaryColumn(index).putLong256(l0, l1, l2, l3);
-            notNull(index);
+        @Override
+        public void putLong256(int columnIndex, long l0, long l1, long l2, long l3) {
+            getPrimaryColumn(columnIndex).putLong256(l0, l1, l2, l3);
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putLong256(int index, Long256 value) {
-            getPrimaryColumn(index).putLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3());
-            notNull(index);
+        @Override
+        public void putLong256(int columnIndex, Long256 value) {
+            getPrimaryColumn(columnIndex).putLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3());
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putLong256(int index, CharSequence hexString) {
-            getPrimaryColumn(index).putLong256(hexString);
-            notNull(index);
+        @Override
+        public void putLong256(int columnIndex, CharSequence hexString) {
+            getPrimaryColumn(columnIndex).putLong256(hexString);
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putLong256(int index, @NotNull CharSequence hexString, int start, int end) {
-            getPrimaryColumn(index).putLong256(hexString, start, end);
-            notNull(index);
+        @Override
+        public void putLong256(int columnIndex, @NotNull CharSequence hexString, int start, int end) {
+            getPrimaryColumn(columnIndex).putLong256(hexString, start, end);
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putShort(int index, short value) {
-            getPrimaryColumn(index).putShort(value);
-            notNull(index);
+        @Override
+        public void putShort(int columnIndex, short value) {
+            getPrimaryColumn(columnIndex).putShort(value);
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putStr(int index, CharSequence value) {
-            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value));
-            notNull(index);
+        @Override
+        public void putStr(int columnIndex, CharSequence value) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value));
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putStr(int index, char value) {
-            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value));
-            notNull(index);
+        @Override
+        public void putStr(int columnIndex, char value) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value));
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putStr(int index, CharSequence value, int pos, int len) {
-            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value, pos, len));
-            notNull(index);
+        @Override
+        public void putStr(int columnIndex, CharSequence value, int pos, int len) {
+            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value, pos, len));
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putSym(int index, CharSequence value) {
-            getPrimaryColumn(index).putInt(symbolMapWriters.getQuick(index).put(value));
-            notNull(index);
+        @Override
+        public void putSym(int columnIndex, CharSequence value) {
+            getPrimaryColumn(columnIndex).putInt(symbolMapWriters.getQuick(columnIndex).put(value));
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putSym(int index, char value) {
-            getPrimaryColumn(index).putInt(symbolMapWriters.getQuick(index).put(value));
-            notNull(index);
+        @Override
+        public void putSym(int columnIndex, char value) {
+            getPrimaryColumn(columnIndex).putInt(symbolMapWriters.getQuick(columnIndex).put(value));
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putSymIndex(int index, int symIndex) {
-            getPrimaryColumn(index).putInt(symIndex);
-            notNull(index);
+        @Override
+        public void putSymIndex(int columnIndex, int symIndex) {
+            getPrimaryColumn(columnIndex).putInt(symIndex);
+            setRowValueNotNull(columnIndex);
         }
 
-        public void putTimestamp(int index, long value) {
-            putLong(index, value);
+        @Override
+        public void putTimestamp(int columnIndex, long value) {
+            putLong(columnIndex, value);
         }
 
-        public void putTimestamp(int index, CharSequence value) {
+        @Override
+        public void putTimestamp(int columnIndex, CharSequence value) {
             // try UTC timestamp first (micro)
             long l;
             try {
@@ -5365,7 +5453,7 @@ public class TableWriter implements Closeable {
             } catch (NumericException e) {
                 throw CairoException.instance(0).put("Invalid timestamp: ").put(value);
             }
-            putTimestamp(index, l);
+            putTimestamp(columnIndex, l);
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {
@@ -5374,10 +5462,6 @@ public class TableWriter implements Closeable {
 
         private MemoryA getSecondaryColumn(int columnIndex) {
             return activeColumns.getQuick(getSecondaryColumnIndex(columnIndex));
-        }
-
-        private void notNull(int index) {
-            refs.setQuick(index, masterRef);
         }
     }
 

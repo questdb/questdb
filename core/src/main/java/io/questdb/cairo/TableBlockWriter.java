@@ -95,7 +95,7 @@ public class TableBlockWriter implements Closeable {
 
     public void cancel() {
         completePendingConcurrentTasks(true);
-        writer.cancelRow();
+        writer.rowCancel();
         for (int n = 0; n < nextPartitionBlockWriterIndex; n++) {
             partitionBlockWriters.getQuick(n).cancel();
         }

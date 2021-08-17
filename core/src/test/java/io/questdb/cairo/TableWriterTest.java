@@ -43,7 +43,6 @@ import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -2415,16 +2414,12 @@ public class TableWriterTest extends AbstractCairoTest {
             ts = populateProducts(writer, rnd, ts, N, increment);
             writer.commit();
 
-            long timestampAfterCommit = ts;
-
             populateProducts(writer, rnd, ts, N, increment);
 
             Assert.assertEquals(2 * N, writer.size());
             writer.rollback();
 
             Assert.assertTrue(ff.removeAttempted);
-
-            ts = timestampAfterCommit;
 
             // make sure row rollback works after rollback
             writer.newRow(ts).cancel();
@@ -2470,16 +2465,12 @@ public class TableWriterTest extends AbstractCairoTest {
             ts = populateProducts(writer, rnd, ts, N, increment);
             writer.commit();
 
-            long timestampAfterCommit = ts;
-
             populateProducts(writer, rnd, ts, N, increment);
 
             Assert.assertEquals(2 * N, writer.size());
             writer.rollback();
 
             Assert.assertTrue(ff.removeAttempted);
-
-            ts = timestampAfterCommit;
 
             // make sure row rollback works after rollback
             writer.newRow(ts).cancel();
@@ -3482,8 +3473,6 @@ public class TableWriterTest extends AbstractCairoTest {
             ts = populateProducts(writer, rnd, ts, N / 2, increment);
             writer.commit();
 
-            long timestampAfterCommit = ts;
-
             populateProducts(writer, rnd, ts, N / 2, increment);
 
             Assert.assertEquals(N, writer.size());
@@ -3491,8 +3480,6 @@ public class TableWriterTest extends AbstractCairoTest {
             Assert.assertEquals(N / 2, writer.size());
             writer.rollback();
             Assert.assertEquals(N / 2, writer.size());
-
-            ts = timestampAfterCommit;
 
             // make sure row rollback works after rollback
             writer.newRow(ts).cancel();

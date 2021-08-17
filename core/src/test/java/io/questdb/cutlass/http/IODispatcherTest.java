@@ -3952,7 +3952,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    @Ignore
     public void testJsonQueryWithCompressedResults1() throws Exception {
         Zip.init();
         assertMemoryLeak(() -> {
@@ -4044,7 +4043,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    @Ignore
     public void testJsonQueryWithCompressedResults2() throws Exception {
         Zip.init();
         assertMemoryLeak(() -> {

@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Telemetry;
 import io.questdb.cairo.*;
-import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
@@ -567,7 +566,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         void processMeasurementEvent(WriterJob job) {
-            Row row = null;
+            TableWriter.Row row = null;
             try {
                 TableWriter writer = tableUpdateDetails.getWriter();
                 long bufPos = bufLo;

@@ -224,24 +224,24 @@ public class SqlCompiler implements Closeable {
         int rGetStr = asm.poolInterfaceMethod(Record.class, "getStr", "(I)Ljava/lang/CharSequence;");
         int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
         //
-        int wPutInt = asm.poolMethod(TableWriter.Row.class, "putInt", "(II)V");
-        int wPutLong = asm.poolMethod(TableWriter.Row.class, "putLong", "(IJ)V");
-        int wPutLong256 = asm.poolMethod(TableWriter.Row.class, "putLong256", "(ILio/questdb/std/Long256;)V");
-        int wPutDate = asm.poolMethod(TableWriter.Row.class, "putDate", "(IJ)V");
-        int wPutTimestamp = asm.poolMethod(TableWriter.Row.class, "putTimestamp", "(IJ)V");
+        int wPutInt = asm.poolInterfaceMethod(TableWriter.Row.class, "putInt", "(II)V");
+        int wPutLong = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong", "(IJ)V");
+        int wPutLong256 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256", "(ILio/questdb/std/Long256;)V");
+        int wPutDate = asm.poolInterfaceMethod(TableWriter.Row.class, "putDate", "(IJ)V");
+        int wPutTimestamp = asm.poolInterfaceMethod(TableWriter.Row.class, "putTimestamp", "(IJ)V");
         //
-        int wPutByte = asm.poolMethod(TableWriter.Row.class, "putByte", "(IB)V");
-        int wPutShort = asm.poolMethod(TableWriter.Row.class, "putShort", "(IS)V");
-        int wPutBool = asm.poolMethod(TableWriter.Row.class, "putBool", "(IZ)V");
-        int wPutFloat = asm.poolMethod(TableWriter.Row.class, "putFloat", "(IF)V");
-        int wPutDouble = asm.poolMethod(TableWriter.Row.class, "putDouble", "(ID)V");
-        int wPutSym = asm.poolMethod(TableWriter.Row.class, "putSym", "(ILjava/lang/CharSequence;)V");
-        int wPutSymChar = asm.poolMethod(TableWriter.Row.class, "putSym", "(IC)V");
-        int wPutStr = asm.poolMethod(TableWriter.Row.class, "putStr", "(ILjava/lang/CharSequence;)V");
-        int wPutTimestampStr = asm.poolMethod(TableWriter.Row.class, "putTimestamp", "(ILjava/lang/CharSequence;)V");
-        int wPutStrChar = asm.poolMethod(TableWriter.Row.class, "putStr", "(IC)V");
-        int wPutChar = asm.poolMethod(TableWriter.Row.class, "putChar", "(IC)V");
-        int wPutBin = asm.poolMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
+        int wPutByte = asm.poolInterfaceMethod(TableWriter.Row.class, "putByte", "(IB)V");
+        int wPutShort = asm.poolInterfaceMethod(TableWriter.Row.class, "putShort", "(IS)V");
+        int wPutBool = asm.poolInterfaceMethod(TableWriter.Row.class, "putBool", "(IZ)V");
+        int wPutFloat = asm.poolInterfaceMethod(TableWriter.Row.class, "putFloat", "(IF)V");
+        int wPutDouble = asm.poolInterfaceMethod(TableWriter.Row.class, "putDouble", "(ID)V");
+        int wPutSym = asm.poolInterfaceMethod(TableWriter.Row.class, "putSym", "(ILjava/lang/CharSequence;)V");
+        int wPutSymChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putSym", "(IC)V");
+        int wPutStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(ILjava/lang/CharSequence;)V");
+        int wPutTimestampStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putTimestamp", "(ILjava/lang/CharSequence;)V");
+        int wPutStrChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(IC)V");
+        int wPutChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putChar", "(IC)V");
+        int wPutBin = asm.poolInterfaceMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
         int geohashTruncatePrecision = asm.poolMethod(ColumnType.class, "geohashTruncatePrecision", "(JII)J");
 
         int copyNameIndex = asm.poolUtf8("copy");
@@ -282,342 +282,342 @@ public class SqlCompiler implements Closeable {
             }
             switch (fromColumnTypeTag) {
                 case ColumnType.INT:
-                    asm.invokeInterface(rGetInt, 1);
+                    asm.invokeInterface(rGetInt);
                     switch (toColumnTypeTag) {
                         case ColumnType.LONG:
                             asm.i2l();
-                            asm.invokeVirtual(wPutLong);
+                            asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
                             asm.i2l();
-                            asm.invokeVirtual(wPutDate);
+                            asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
                             asm.i2l();
-                            asm.invokeVirtual(wPutTimestamp);
+                            asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
                             asm.i2s();
-                            asm.invokeVirtual(wPutShort);
+                            asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
                             asm.i2b();
-                            asm.invokeVirtual(wPutByte);
+                            asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.FLOAT:
                             asm.i2f();
-                            asm.invokeVirtual(wPutFloat);
+                            asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
                             asm.i2d();
-                            asm.invokeVirtual(wPutDouble);
+                            asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
-                            asm.invokeVirtual(wPutInt);
+                            asm.invokeInterface(wPutInt, 2);
                             break;
                     }
                     break;
                 case ColumnType.LONG:
-                    asm.invokeInterface(rGetLong, 1);
+                    asm.invokeInterface(rGetLong);
                     switch (toColumnTypeTag) {
                         case ColumnType.INT:
                             asm.l2i();
-                            asm.invokeVirtual(wPutInt);
+                            asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.DATE:
-                            asm.invokeVirtual(wPutDate);
+                            asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            asm.invokeVirtual(wPutTimestamp);
+                            asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
                             asm.l2i();
                             asm.i2s();
-                            asm.invokeVirtual(wPutShort);
+                            asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
                             asm.l2i();
                             asm.i2b();
-                            asm.invokeVirtual(wPutByte);
+                            asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.FLOAT:
                             asm.l2f();
-                            asm.invokeVirtual(wPutFloat);
+                            asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
                             asm.l2d();
-                            asm.invokeVirtual(wPutDouble);
+                            asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
-                            asm.invokeVirtual(wPutLong);
+                            asm.invokeInterface(wPutLong, 3);
                             break;
                     }
                     break;
                 case ColumnType.DATE:
-                    asm.invokeInterface(rGetDate, 1);
+                    asm.invokeInterface(rGetDate);
                     switch (toColumnTypeTag) {
                         case ColumnType.INT:
                             asm.l2i();
-                            asm.invokeVirtual(wPutInt);
+                            asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
-                            asm.invokeVirtual(wPutLong);
+                            asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            asm.invokeVirtual(wPutTimestamp);
+                            asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
                             asm.l2i();
                             asm.i2s();
-                            asm.invokeVirtual(wPutShort);
+                            asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
                             asm.l2i();
                             asm.i2b();
-                            asm.invokeVirtual(wPutByte);
+                            asm.invokeInterface(wPutByte,2);
                             break;
                         case ColumnType.FLOAT:
                             asm.l2f();
-                            asm.invokeVirtual(wPutFloat);
+                            asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
                             asm.l2d();
-                            asm.invokeVirtual(wPutDouble);
+                            asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
-                            asm.invokeVirtual(wPutDate);
+                            asm.invokeInterface(wPutDate, 3);
                             break;
                     }
                     break;
                 case ColumnType.TIMESTAMP:
-                    asm.invokeInterface(rGetTimestamp, 1);
+                    asm.invokeInterface(rGetTimestamp);
                     switch (toColumnTypeTag) {
                         case ColumnType.INT:
                             asm.l2i();
-                            asm.invokeVirtual(wPutInt);
+                            asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
-                            asm.invokeVirtual(wPutLong);
+                            asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.SHORT:
                             asm.l2i();
                             asm.i2s();
-                            asm.invokeVirtual(wPutShort);
+                            asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
                             asm.l2i();
                             asm.i2b();
-                            asm.invokeVirtual(wPutByte);
+                            asm.invokeInterface(wPutByte,2);
                             break;
                         case ColumnType.FLOAT:
                             asm.l2f();
-                            asm.invokeVirtual(wPutFloat);
+                            asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
                             asm.l2d();
-                            asm.invokeVirtual(wPutDouble);
+                            asm.invokeInterface(wPutDouble, 3);
                             break;
                         case ColumnType.DATE:
-                            asm.invokeVirtual(wPutDate);
+                            asm.invokeInterface(wPutDate, 3);
                             break;
                         default:
-                            asm.invokeVirtual(wPutTimestamp);
+                            asm.invokeInterface(wPutTimestamp, 3);
                             break;
                     }
                     break;
                 case ColumnType.BYTE:
-                    asm.invokeInterface(rGetByte, 1);
+                    asm.invokeInterface(rGetByte);
                     switch (toColumnTypeTag) {
                         case ColumnType.INT:
-                            asm.invokeVirtual(wPutInt);
+                            asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
                             asm.i2l();
-                            asm.invokeVirtual(wPutLong);
+                            asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
                             asm.i2l();
-                            asm.invokeVirtual(wPutDate);
+                            asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
                             asm.i2l();
-                            asm.invokeVirtual(wPutTimestamp);
+                            asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
                             asm.i2s();
-                            asm.invokeVirtual(wPutShort);
+                            asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.FLOAT:
                             asm.i2f();
-                            asm.invokeVirtual(wPutFloat);
+                            asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
                             asm.i2d();
-                            asm.invokeVirtual(wPutDouble);
+                            asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
-                            asm.invokeVirtual(wPutByte);
+                            asm.invokeInterface(wPutByte, 2);
                             break;
                     }
                     break;
                 case ColumnType.SHORT:
-                    asm.invokeInterface(rGetShort, 1);
+                    asm.invokeInterface(rGetShort);
                     switch (toColumnTypeTag) {
                         case ColumnType.INT:
-                            asm.invokeVirtual(wPutInt);
+                            asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
                             asm.i2l();
-                            asm.invokeVirtual(wPutLong);
+                            asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
                             asm.i2l();
-                            asm.invokeVirtual(wPutDate);
+                            asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
                             asm.i2l();
-                            asm.invokeVirtual(wPutTimestamp);
+                            asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.BYTE:
                             asm.i2b();
-                            asm.invokeVirtual(wPutByte);
+                            asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.FLOAT:
                             asm.i2f();
-                            asm.invokeVirtual(wPutFloat);
+                            asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
                             asm.i2d();
-                            asm.invokeVirtual(wPutDouble);
+                            asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
-                            asm.invokeVirtual(wPutShort);
+                            asm.invokeInterface(wPutShort, 2);
                             break;
                     }
                     break;
                 case ColumnType.BOOLEAN:
-                    asm.invokeInterface(rGetBool, 1);
-                    asm.invokeVirtual(wPutBool);
+                    asm.invokeInterface(rGetBool);
+                    asm.invokeInterface(wPutBool, 2);
                     break;
                 case ColumnType.FLOAT:
-                    asm.invokeInterface(rGetFloat, 1);
+                    asm.invokeInterface(rGetFloat);
                     switch (toColumnTypeTag) {
                         case ColumnType.INT:
                             asm.f2i();
-                            asm.invokeVirtual(wPutInt);
+                            asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
                             asm.f2l();
-                            asm.invokeVirtual(wPutLong);
+                            asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
                             asm.f2l();
-                            asm.invokeVirtual(wPutDate);
+                            asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
                             asm.f2l();
-                            asm.invokeVirtual(wPutTimestamp);
+                            asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
                             asm.f2i();
                             asm.i2s();
-                            asm.invokeVirtual(wPutShort);
+                            asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
                             asm.f2i();
                             asm.i2b();
-                            asm.invokeVirtual(wPutByte);
+                            asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.DOUBLE:
                             asm.f2d();
-                            asm.invokeVirtual(wPutDouble);
+                            asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
-                            asm.invokeVirtual(wPutFloat);
+                            asm.invokeInterface(wPutFloat, 2);
                             break;
                     }
                     break;
                 case ColumnType.DOUBLE:
-                    asm.invokeInterface(rGetDouble, 1);
+                    asm.invokeInterface(rGetDouble);
                     switch (toColumnTypeTag) {
                         case ColumnType.INT:
                             asm.d2i();
-                            asm.invokeVirtual(wPutInt);
+                            asm.invokeInterface(wPutInt,2);
                             break;
                         case ColumnType.LONG:
                             asm.d2l();
-                            asm.invokeVirtual(wPutLong);
+                            asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
                             asm.d2l();
-                            asm.invokeVirtual(wPutDate);
+                            asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
                             asm.d2l();
-                            asm.invokeVirtual(wPutTimestamp);
+                            asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
                             asm.d2i();
                             asm.i2s();
-                            asm.invokeVirtual(wPutShort);
+                            asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
                             asm.d2i();
                             asm.i2b();
-                            asm.invokeVirtual(wPutByte);
+                            asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.FLOAT:
                             asm.d2f();
-                            asm.invokeVirtual(wPutFloat);
+                            asm.invokeInterface(wPutFloat, 2);
                             break;
                         default:
-                            asm.invokeVirtual(wPutDouble);
+                            asm.invokeInterface(wPutDouble, 3);
                             break;
                     }
                     break;
                 case ColumnType.CHAR:
-                    asm.invokeInterface(rGetChar, 1);
+                    asm.invokeInterface(rGetChar);
                     switch (toColumnTypeTag) {
                         case ColumnType.STRING:
-                            asm.invokeVirtual(wPutStrChar);
+                            asm.invokeInterface(wPutStrChar, 2);
                             break;
                         case ColumnType.SYMBOL:
-                            asm.invokeVirtual(wPutSymChar);
+                            asm.invokeInterface(wPutSymChar, 2);
                             break;
                         default:
-                            asm.invokeVirtual(wPutChar);
+                            asm.invokeInterface(wPutChar, 2);
                             break;
                     }
                     break;
                 case ColumnType.SYMBOL:
-                    asm.invokeInterface(rGetSym, 1);
+                    asm.invokeInterface(rGetSym);
                     if (toColumnTypeTag == ColumnType.STRING) {
-                        asm.invokeVirtual(wPutStr);
+                        asm.invokeInterface(wPutStr, 2);
                     } else {
-                        asm.invokeVirtual(wPutSym);
+                        asm.invokeInterface(wPutSym, 2);
                     }
                     break;
                 case ColumnType.STRING:
-                    asm.invokeInterface(rGetStr, 1);
+                    asm.invokeInterface(rGetStr);
                     switch (toColumnTypeTag) {
                         case ColumnType.SYMBOL:
-                            asm.invokeVirtual(wPutSym);
+                            asm.invokeInterface(wPutSym, 2);
                             break;
                         case ColumnType.TIMESTAMP:
-                            asm.invokeVirtual(wPutTimestampStr);
+                            asm.invokeInterface(wPutTimestampStr, 2);
                             break;
                         default:
-                            asm.invokeVirtual(wPutStr);
+                            asm.invokeInterface(wPutStr, 2);
                             break;
                     }
                     break;
                 case ColumnType.BINARY:
-                    asm.invokeInterface(rGetBin, 1);
-                    asm.invokeVirtual(wPutBin);
+                    asm.invokeInterface(rGetBin);
+                    asm.invokeInterface(wPutBin, 2);
                     break;
                 case ColumnType.LONG256:
-                    asm.invokeInterface(rGetLong256, 1);
-                    asm.invokeVirtual(wPutLong256);
+                    asm.invokeInterface(rGetLong256);
+                    asm.invokeInterface(wPutLong256, 2);
                     break;
                 case ColumnType.GEOHASH:
                     assert toColumnTypeTag == ColumnType.GEOHASH;
@@ -627,25 +627,25 @@ public class SqlCompiler implements Closeable {
                         case 1:
                             // impossible conversion
                             if (sizeTo == 1) {
-                                asm.invokeInterface(rGetGeoByte, 1);
-                                asm.invokeVirtual(wPutByte);
+                                asm.invokeInterface(rGetGeoByte);
+                                asm.invokeInterface(wPutByte, 2);
                             }
                             break;
                         case 2:
                             switch (sizeTo) {
                                 case 1:
-                                    asm.invokeInterface(rGetGeoShort, 1);
+                                    asm.invokeInterface(rGetGeoShort);
                                     asm.i2l();
                                     asm.iconst(fromColumnType);
                                     asm.iconst(toColumnType);
                                     asm.invokeStatic(geohashTruncatePrecision);
                                     asm.l2i();
                                     asm.i2b();
-                                    asm.invokeVirtual(wPutByte);
+                                    asm.invokeInterface(wPutByte, 2);
                                     break;
                                 case 2:
-                                    asm.invokeInterface(rGetGeoShort, 1);
-                                    asm.invokeVirtual(wPutShort);
+                                    asm.invokeInterface(rGetGeoShort);
+                                    asm.invokeInterface(wPutShort, 2);
                                     break;
                                 default:
                                     break; // impossible conversion
@@ -654,28 +654,28 @@ public class SqlCompiler implements Closeable {
                         case 4:
                             switch (sizeTo) {
                                 case 1:
-                                    asm.invokeInterface(rGetGeoInt, 1);
+                                    asm.invokeInterface(rGetGeoInt);
                                     asm.i2l();
                                     asm.iconst(fromColumnType);
                                     asm.iconst(toColumnType);
                                     asm.invokeStatic(geohashTruncatePrecision);
                                     asm.l2i();
                                     asm.i2b();
-                                    asm.invokeVirtual(wPutByte);
+                                    asm.invokeInterface(wPutByte, 2);
                                     break;
                                 case 2:
-                                    asm.invokeInterface(rGetGeoInt, 1);
+                                    asm.invokeInterface(rGetGeoInt);
                                     asm.i2l();
                                     asm.iconst(fromColumnType);
                                     asm.iconst(toColumnType);
                                     asm.invokeStatic(geohashTruncatePrecision);
                                     asm.l2i();
                                     asm.i2s();
-                                    asm.invokeVirtual(wPutShort);
+                                    asm.invokeInterface(wPutShort, 2);
                                     break;
                                 case 4:
-                                    asm.invokeInterface(rGetGeoInt, 1);
-                                    asm.invokeVirtual(wPutInt);
+                                    asm.invokeInterface(rGetGeoInt);
+                                    asm.invokeInterface(wPutInt, 2);
                                     break;
                                 default:
                                     break; // impossible conversion
@@ -684,34 +684,34 @@ public class SqlCompiler implements Closeable {
                         case 8:
                             switch (sizeTo) {
                                 case 1:
-                                    asm.invokeInterface(rGetGeoLong, 1);
+                                    asm.invokeInterface(rGetGeoLong);
                                     asm.iconst(fromColumnType);
                                     asm.iconst(toColumnType);
                                     asm.invokeStatic(geohashTruncatePrecision);
                                     asm.l2i();
                                     asm.i2b();
-                                    asm.invokeVirtual(wPutByte);
+                                    asm.invokeInterface(wPutByte, 2);
                                     break;
                                 case 2:
-                                    asm.invokeInterface(rGetGeoLong, 1);
+                                    asm.invokeInterface(rGetGeoLong);
                                     asm.iconst(fromColumnType);
                                     asm.iconst(toColumnType);
                                     asm.invokeStatic(geohashTruncatePrecision);
                                     asm.l2i();
                                     asm.i2s();
-                                    asm.invokeVirtual(wPutShort);
+                                    asm.invokeInterface(wPutShort, 2);
                                     break;
                                 case 4:
-                                    asm.invokeInterface(rGetGeoLong, 1);
+                                    asm.invokeInterface(rGetGeoLong);
                                     asm.iconst(fromColumnType);
                                     asm.iconst(toColumnType);
                                     asm.invokeStatic(geohashTruncatePrecision);
                                     asm.l2i();
-                                    asm.invokeVirtual(wPutInt);
+                                    asm.invokeInterface(wPutInt, 2);
                                     break;
                                 case 8:
-                                    asm.invokeInterface(rGetGeoLong, 1);
-                                    asm.invokeVirtual(wPutLong);
+                                    asm.invokeInterface(rGetGeoLong);
+                                    asm.invokeInterface(wPutLong, 3);
                                     break;
                                 default:
                                     break; // impossible conversion
@@ -724,17 +724,17 @@ public class SqlCompiler implements Closeable {
                             asm.iconst(GeoHashes.INT_NULL);
                             switch (sizeTo) {
                                 case 1:
-                                    asm.invokeVirtual(wPutByte);
+                                    asm.invokeInterface(wPutByte, 2);
                                     break;
                                 case 2:
-                                    asm.invokeVirtual(wPutShort);
+                                    asm.invokeInterface(wPutShort, 2);
                                     break;
                                 case 4:
-                                    asm.invokeVirtual(wPutInt);
+                                    asm.invokeInterface(wPutInt, 2);
                                     break;
                                 case 8:
                                     asm.i2l();
-                                    asm.invokeVirtual(wPutLong);
+                                    asm.invokeInterface(wPutLong, 3);
                                     break;
                                 default:
                                     break; // impossible conversion
