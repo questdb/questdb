@@ -14,7 +14,7 @@ build: QUESTDB_VERSION?=$(shell $(git) rev-parse --short HEAD)-snapshot
 build:
 	$(packer) build \
 	-var ami_regions=$(AMI_REGIONS) \
-	-var questb_version=$(QUESTDB_VERSION) \
+	-var questdb_version=$(QUESTDB_VERSION) \
 	packer.json
 
 build_release: QUESTDB_VERSION?=$(shell $(git) symbolic-ref -q --short HEAD || git describe --tags --exact-match)
