@@ -49,8 +49,8 @@ public class LineUdpInsertGeoHashTest extends AbstractCairoTest {
     private static final String COL_NAME = "geohash";
 
     @Test
-    public void testByteGeoHashesWhenSchemaExists() throws Exception {
-        assertInsert(5, 1, 9,
+    public void testByteSizedGeoHashes() throws Exception {
+        assertGeoHash(5, 1, 9,
                 "geohash\ttimestamp\n" +
                         "9\t1970-01-01T00:00:01.000000Z\n" +
                         "4\t1970-01-01T00:00:02.000000Z\n" +
@@ -64,32 +64,17 @@ public class LineUdpInsertGeoHashTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testByteGeoHashesWhenSchemaExists2() throws Exception {
-        assertInsert(4, 1, 3,
+    public void testByteSizedGeoHashesTruncating() throws Exception {
+        assertGeoHash(4, 1, 3,
                 "geohash\ttimestamp\n" +
-                        "1001\t1970-01-01T00:00:01.000000Z\n" +
-                        "0100\t1970-01-01T00:00:02.000000Z\n" +
-                        "0001\t1970-01-01T00:00:03.000000Z\n");
+                        "0100\t1970-01-01T00:00:01.000000Z\n" +
+                        "0010\t1970-01-01T00:00:02.000000Z\n" +
+                        "1000\t1970-01-01T00:00:03.000000Z\n");
     }
 
     @Test
-    public void testByteGeoHashesWhenSchemaExists3() throws Exception {
-        assertInsert(6, 1, 9,
-                "geohash\ttimestamp\n" +
-                        "001001\t1970-01-01T00:00:01.000000Z\n" +
-                        "000100\t1970-01-01T00:00:02.000000Z\n" +
-                        "010001\t1970-01-01T00:00:03.000000Z\n" +
-                        "011111\t1970-01-01T00:00:04.000000Z\n" +
-                        "010000\t1970-01-01T00:00:05.000000Z\n" +
-                        "011100\t1970-01-01T00:00:06.000000Z\n" +
-                        "011000\t1970-01-01T00:00:07.000000Z\n" +
-                        "000001\t1970-01-01T00:00:08.000000Z\n" +
-                        "010011\t1970-01-01T00:00:09.000000Z\n");
-    }
-
-    @Test
-    public void testShortGeoHashesWhenSchemaExists1() throws Exception {
-        assertInsert(15, 3, 10,
+    public void testShortSizedGeoHashes() throws Exception {
+        assertGeoHash(15, 3, 10,
                 "geohash\ttimestamp\n" +
                         "9v1\t1970-01-01T00:00:01.000000Z\n" +
                         "46s\t1970-01-01T00:00:02.000000Z\n" +
@@ -104,30 +89,30 @@ public class LineUdpInsertGeoHashTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testShortGeoHashesWhenSchemaExists2() throws Exception {
-        assertInsert(13, 3, 10,
+    public void testShortSizedGeoHashesTruncating() throws Exception {
+        assertGeoHash(13, 3, 10,
                 "geohash\ttimestamp\n" +
-                        "0000100111011\t1970-01-01T00:00:01.000000Z\n" +
-                        "0000010000110\t1970-01-01T00:00:02.000000Z\n" +
-                        "0001000110100\t1970-01-01T00:00:03.000000Z\n" +
-                        "0001111101110\t1970-01-01T00:00:04.000000Z\n" +
-                        "0001000010101\t1970-01-01T00:00:05.000000Z\n" +
-                        "0001110010000\t1970-01-01T00:00:06.000000Z\n" +
-                        "0001100000010\t1970-01-01T00:00:07.000000Z\n" +
-                        "0000000101011\t1970-01-01T00:00:08.000000Z\n" +
-                        "0001001110011\t1970-01-01T00:00:09.000000Z\n" +
-                        "0000011100001\t1970-01-01T00:00:10.000000Z\n");
+                        "0100111011000\t1970-01-01T00:00:01.000000Z\n" +
+                        "0010000110110\t1970-01-01T00:00:02.000000Z\n" +
+                        "1000110100111\t1970-01-01T00:00:03.000000Z\n" +
+                        "1111101110110\t1970-01-01T00:00:04.000000Z\n" +
+                        "1000010101001\t1970-01-01T00:00:05.000000Z\n" +
+                        "1110010000001\t1970-01-01T00:00:06.000000Z\n" +
+                        "1100000010111\t1970-01-01T00:00:07.000000Z\n" +
+                        "0000101011100\t1970-01-01T00:00:08.000000Z\n" +
+                        "1001110011110\t1970-01-01T00:00:09.000000Z\n" +
+                        "0011100001011\t1970-01-01T00:00:10.000000Z\n");
     }
 
     @Test
-    public void testShortGeoHashesWhenSchemaExists3() throws Exception {
-        assertInsert(15, 2, 10,
+    public void testShortSizedGeoHashesNotEnoughPrecision() throws Exception {
+        assertGeoHash(15, 2, 10,
                 "geohash\ttimestamp\n");
     }
 
     @Test
-    public void testIntGeoHashesWhenSchemaExists1() throws Exception {
-        assertInsert(30, 6, 8,
+    public void testIntSizedGeoHashes() throws Exception {
+        assertGeoHash(30, 6, 8,
                 "geohash\ttimestamp\n" +
                         "9v1s8h\t1970-01-01T00:00:01.000000Z\n" +
                         "46swgj\t1970-01-01T00:00:02.000000Z\n" +
@@ -140,42 +125,28 @@ public class LineUdpInsertGeoHashTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntGeoHashesWhenSchemaExists2() throws Exception {
-        assertInsert(29, 6, 8,
+    public void testIntSizedGeoHashesTruncating() throws Exception {
+        assertGeoHash(29, 6, 8,
                 "geohash\ttimestamp\n" +
-                        "00000100111011000011100001000\t1970-01-01T00:00:01.000000Z\n" +
-                        "00000010000110110001110001111\t1970-01-01T00:00:02.000000Z\n" +
-                        "00001000110100111000100100111\t1970-01-01T00:00:03.000000Z\n" +
-                        "00001111101110110101011001100\t1970-01-01T00:00:04.000000Z\n" +
-                        "00001000010101001001001111010\t1970-01-01T00:00:05.000000Z\n" +
-                        "00001110010000001000101000110\t1970-01-01T00:00:06.000000Z\n" +
-                        "00001100000010111110001001110\t1970-01-01T00:00:07.000000Z\n" +
-                        "00000000101011100011000111100\t1970-01-01T00:00:08.000000Z\n");
+                        "01001110110000111000010001000\t1970-01-01T00:00:01.000000Z\n" +
+                        "00100001101100011100011111000\t1970-01-01T00:00:02.000000Z\n" +
+                        "10001101001110001001001111101\t1970-01-01T00:00:03.000000Z\n" +
+                        "11111011101101010110011000001\t1970-01-01T00:00:04.000000Z\n" +
+                        "10000101010010010011110101101\t1970-01-01T00:00:05.000000Z\n" +
+                        "11100100000010001010001101101\t1970-01-01T00:00:06.000000Z\n" +
+                        "11000000101111100010011101111\t1970-01-01T00:00:07.000000Z\n" +
+                        "00001010111000110001111001001\t1970-01-01T00:00:08.000000Z\n");
     }
 
     @Test
-    public void testIntGeoHashesWhenSchemaExists3() throws Exception {
-        assertInsert(32, 6, 8,
-                "geohash\ttimestamp\n" +
-                        "00010011101100001110000100010000\t1970-01-01T00:00:01.000000Z\n" +
-                        "00001000011011000111000111110001\t1970-01-01T00:00:02.000000Z\n" +
-                        "00100011010011100010010011111010\t1970-01-01T00:00:03.000000Z\n" +
-                        "00111110111011010101100110000011\t1970-01-01T00:00:04.000000Z\n" +
-                        "00100001010100100100111101011011\t1970-01-01T00:00:05.000000Z\n" +
-                        "00111001000000100010100011011011\t1970-01-01T00:00:06.000000Z\n" +
-                        "00110000001011111000100111011110\t1970-01-01T00:00:07.000000Z\n" +
-                        "00000010101110001100011110010010\t1970-01-01T00:00:08.000000Z\n");
-    }
-
-    @Test
-    public void testIntGeoHashesWhenSchemaExists4() throws Exception {
-        assertInsert(32, 5, 8,
+    public void testIntSizedGeoHashesNotEnoughPrecision() throws Exception {
+        assertGeoHash(32, 5, 8,
                 "geohash\ttimestamp\n");
     }
 
     @Test
-    public void testLongGeoHashesWhenSchemaExists1() throws Exception {
-        assertInsert(60, 12, 7,
+    public void testLongSizedGeoHashes() throws Exception {
+        assertGeoHash(60, 12, 7,
                 "geohash\ttimestamp\n" +
                         "9v1s8hm7wpks\t1970-01-01T00:00:01.000000Z\n" +
                         "46swgj10r88k\t1970-01-01T00:00:02.000000Z\n" +
@@ -187,46 +158,85 @@ public class LineUdpInsertGeoHashTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLongGeoHashesWhenSchemaExists2() throws Exception {
-        assertInsert(57, 12, 7,
+    public void testLongSizedGeoHashesTruncating() throws Exception {
+        assertGeoHash(57, 12, 7,
                 "geohash\ttimestamp\n" +
-                        "000100111011000011100001000100001001100111111001010110010\t1970-01-01T00:00:01.000000Z\n" +
-                        "000010000110110001110001111100010000100000101110100001000\t1970-01-01T00:00:02.000000Z\n" +
-                        "001000110100111000100100111110100010011110110101011011010\t1970-01-01T00:00:03.000000Z\n" +
-                        "001111101110110101011001100000110101001110010001000001010\t1970-01-01T00:00:04.000000Z\n" +
-                        "001000010101001001001111010110110010111001011110111100011\t1970-01-01T00:00:05.000000Z\n" +
-                        "001110010000001000101000110110111010011001011001011000001\t1970-01-01T00:00:06.000000Z\n" +
-                        "001100000010111110001001110111100110011000100011011000101\t1970-01-01T00:00:07.000000Z\n");
+                        "010011101100001110000100010000100110011111100101011001011\t1970-01-01T00:00:01.000000Z\n" +
+                        "001000011011000111000111110001000010000010111010000100010\t1970-01-01T00:00:02.000000Z\n" +
+                        "100011010011100010010011111010001001111011010101101101011\t1970-01-01T00:00:03.000000Z\n" +
+                        "111110111011010101100110000011010100111001000100000101011\t1970-01-01T00:00:04.000000Z\n" +
+                        "100001010100100100111101011011001011100101111011110001110\t1970-01-01T00:00:05.000000Z\n" +
+                        "111001000000100010100011011011101001100101100101100000101\t1970-01-01T00:00:06.000000Z\n" +
+                        "110000001011111000100111011110011001100010001101100010110\t1970-01-01T00:00:07.000000Z\n");
     }
 
     @Test
-    public void testLongGeoHashesWhenSchemaExists3() throws Exception {
-        assertInsert(60, 11, 7,
+    public void testLongSizedGeoHashesNotEnoughPrecision() throws Exception {
+        assertGeoHash(60, 11, 7,
                 "geohash\ttimestamp\n");
     }
 
     @Test
-    public void testNullGeoHashWhenSchemaExists() throws Exception {
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
-            if (b > 1) {
-                setUp();
-            }
-            final int bits = b;
-            TestUtils.assertMemoryLeak(() -> {
-                try (CairoEngine engine = new CairoEngine(configuration)) {
-                    try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
-                        createTable(engine, bits);
-                        receiver.start();
-                        sendGeoHashLine("");
-                        assertReader("geohash\ttimestamp\n");
-                    }
+    public void testInsertNullByteGeoHash() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
+                    createTable(engine, 1);
+                    receiver.start();
+                    sendGeoHashLine("");
+                    assertReader("geohash\ttimestamp\n" +
+                            "\t1970-01-01T00:00:01.000000Z\n");
                 }
-            });
-            tearDown();
-        }
+            }
+        });
     }
 
-    private static void assertInsert(int columnBits, int lineGeoSizeChars, int numLines, String expected) throws Exception {
+    @Test
+    public void testInsertNullShortGeoHash() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
+                    createTable(engine, 15);
+                    receiver.start();
+                    sendGeoHashLine("");
+                    assertReader("geohash\ttimestamp\n" +
+                            "\t1970-01-01T00:00:01.000000Z\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInsertNullIntGeoHash() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
+                    createTable(engine, 30);
+                    receiver.start();
+                    sendGeoHashLine("");
+                    assertReader("geohash\ttimestamp\n" +
+                            "\t1970-01-01T00:00:01.000000Z\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInsertNullLongGeoHash() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
+                    createTable(engine, 30);
+                    receiver.start();
+                    sendGeoHashLine("");
+                    assertReader("geohash\ttimestamp\n" +
+                            "\t1970-01-01T00:00:01.000000Z\n");
+                }
+            }
+        });
+    }
+
+    private static void assertGeoHash(int columnBits, int lineGeoSizeChars, int numLines, String expected) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {

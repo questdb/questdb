@@ -179,53 +179,86 @@ public class GeoHashesTest {
     }
 
     @Test(expected = NumericException.class)
-    public void testFromStringNegativeStartWillFail() throws NumericException {
-        GeoHashes.fromString("", -1, 0);
+    public void testFromStringNegativeStart() throws NumericException {
+        GeoHashes.fromString("", -1, 0, 0);
     }
 
     @Test(expected = NumericException.class)
-    public void testFromStringNegativeParseLenWillFail() throws NumericException {
-        GeoHashes.fromString("", 0, -1);
+    public void testFromStringNegativeParseLen() throws NumericException {
+        GeoHashes.fromString("", 0, -1, 0);
     }
 
     @Test(expected = NumericException.class)
-    public void testFromStringOverMaxStringLengthWillFail() throws NumericException {
-        GeoHashes.fromString("123456789abcde", 1, GeoHashes.MAX_STRING_LENGTH + 2);
+    public void testFromStringInvalidBitsPrecision1() throws NumericException {
+        GeoHashes.fromString("123", 0, 3, -1);
     }
 
     @Test(expected = NumericException.class)
-    public void testFromStringThatIsShorterThanRequiredLenWillFail() throws NumericException {
-        GeoHashes.fromString("123", 1, 7);
+    public void testFromStringInvalidBitsPrecision2() throws NumericException {
+        GeoHashes.fromString("123", 0, 3, GeoHashes.MAX_BITS_LENGTH + 1);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromStringNotEnoughChars() throws NumericException {
+        GeoHashes.fromString("123", 0, 4, 15);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromStringNotEnoughBits() throws NumericException {
+        GeoHashes.fromString("123", 0, 3, 16);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromStringOverMaxCharsLength() throws NumericException {
+        GeoHashes.fromString("123456789abcde", 1, GeoHashes.MAX_STRING_LENGTH + 2, 0);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromStringShorterThanRequiredLength() throws NumericException {
+        GeoHashes.fromString("123", 1, 7, 0);
     }
 
     @Test
-    public void testFromStringYieldsNullDueToNullString() throws NumericException {
-        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromString(null, 1, 1));
+    public void testFromNullYieldsNull() throws NumericException {
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromString(null, 1, 1, 0));
     }
 
     @Test
-    public void testFromStringYieldsNullDueToZeroRequiredLen2() throws NumericException {
-        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromString("''", 1, 0));
-    }
-
-    @Test
-    public void testFromStringYieldsNullDueToEmptyString() throws NumericException {
-        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromString("", 1, 1));
+    public void testFromStringYieldsNullDueToZeroRequiredLen() throws NumericException {
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromString("''", 1, 0, 0));
     }
 
     @Test
     public void testFromStringJustOneChar() throws NumericException {
-        Assert.assertEquals(24, GeoHashes.fromString("ast", 1, 1));
+        Assert.assertEquals(24, GeoHashes.fromString("ast", 1, 1, 0));
     }
 
     @Test
-    public void testFromStringIgnoreQuotes() throws NumericException {
-        Assert.assertEquals(27760644473312309L, GeoHashes.fromString("'sp052w92p1p'", 1, 11));
+    public void testFromStringIgnoreQuotes1() throws NumericException {
+        Assert.assertEquals(27760644473312309L, GeoHashes.fromString("'sp052w92p1p'", 1, 11, 0));
     }
 
     @Test
-    public void testFromStringIgnoreQuotesTruncate() throws NumericException {
-        Assert.assertEquals(807941, GeoHashes.fromString("'sp052w92p1p'", 1, 4));
+    public void testFromStringIgnoreQuotes2() throws NumericException {
+        Assert.assertEquals(27760644473312309L, GeoHashes.fromString("'sp052w92p1p'", 1, 11, 0));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromStringIBadChar() throws NumericException {
+        Assert.assertEquals(27760644473312309L, GeoHashes.fromString("'sp05@w92p1p'", 1, 11, 0));
+    }
+
+    @Test
+    public void testFromStringIgnoreQuotesTruncateChars() throws NumericException {
+        Assert.assertEquals(807941, GeoHashes.fromString("'sp052w92p1p'", 1, 4, 0));
+        StringSink sink = Misc.getThreadLocalBuilder();
+        GeoHashes.toString(807941, 4, sink);
+        Assert.assertEquals("sp05", sink.toString());
+    }
+
+    @Test
+    public void testFromStringIgnoreQuotesTruncateBits() throws NumericException {
+        Assert.assertEquals(807941, GeoHashes.fromString("'sp052w92p1p'", 1, 11, 20));
         StringSink sink = Misc.getThreadLocalBuilder();
         GeoHashes.toString(807941, 4, sink);
         Assert.assertEquals("sp05", sink.toString());

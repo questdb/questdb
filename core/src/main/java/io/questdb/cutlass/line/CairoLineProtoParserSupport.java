@@ -26,6 +26,7 @@ package io.questdb.cutlass.line;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableWriter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -41,21 +42,22 @@ public class CairoLineProtoParserSupport {
      * column type and written to column, identified by columnIndex. If value cannot be
      * cast to column type, #BadCastException is thrown.
      *
-     * @param row         table row
-     * @param columnType  column type value will be cast to
-     * @param columnTypeToGeoSize if columnType's tag is GeoHash it contains chars as
-     *                            negative val, or bits as positive
-     * @param columnIndex index of column to write value to
-     * @param value       value characters
+     * @param row            table row
+     * @param columnType     column type value will be cast to
+     * @param columnTypeMeta if columnType's tag is GeoHash it contains bits precision (low short)
+     *                       and tag size (high short negative)
+     * @param columnIndex    index of column to write value to
+     * @param value          value characters
      * @throws BadCastException when value cannot be cast to the give type
      */
     public static void putValue(TableWriter.Row row,
                                 int columnType,
-                                IntIntHashMap columnTypeToGeoSize,
+                                IntIntHashMap columnTypeMeta,
                                 int columnIndex,
                                 CharSequence value) throws BadCastException {
         try {
-            switch (ColumnType.storageTag(columnType)) {
+            final int storageTag = ColumnType.storageTag(columnType);
+            switch (storageTag) {
                 case ColumnType.LONG:
                     row.putLong(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                     break;
@@ -100,17 +102,21 @@ public class CairoLineProtoParserSupport {
                 case ColumnType.TIMESTAMP:
                     row.putTimestamp(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                     break;
-                case ColumnType.GEOBYTE:
-                    row.putGeoHash(columnIndex, columnTypeToGeoSize.get(columnType), 1, value, 1, value.length() - 2); // unquoted
-                    break;
                 case ColumnType.GEOSHORT:
-                    row.putGeoHash(columnIndex, columnTypeToGeoSize.get(columnType), 2, value, 1, value.length() - 2); // unquoted
-                    break;
                 case ColumnType.GEOINT:
-                    row.putGeoHash(columnIndex, columnTypeToGeoSize.get(columnType), 4, value, 1, value.length() - 2); // unquoted
-                    break;
                 case ColumnType.GEOLONG:
-                    row.putGeoHash(columnIndex, columnTypeToGeoSize.get(columnType), 8, value, 1, value.length() - 2); // unquoted
+                case ColumnType.GEOBYTE:
+                    row.putGeoHash(
+                            columnIndex,
+                            storageTag,
+                            GeoHashes.fromString(
+                                    value,
+                                    1,
+                                    value.length() - 2, // skip quotes
+                                    columnTypeMeta.get(columnIndex)
+                            )
+                    );
+                    break;
                 default:
                     break;
             }

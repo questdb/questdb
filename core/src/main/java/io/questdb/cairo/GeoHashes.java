@@ -129,18 +129,21 @@ public class GeoHashes {
     }
 
     public static long fromString(CharSequence hash, int parseLen) throws NumericException {
-        return fromString(hash, 0, parseLen);
+        if (hash == null || hash.length() == 0 || parseLen == 0) {
+            return GeoHashes.NULL;
+        }
+        return fromString(hash, 0, parseLen, 0);
     }
 
-    public static long fromString(CharSequence hash, int start, int parseLen) throws NumericException {
-        if (start < 0 ||
-                parseLen < 0 ||
-                parseLen - start > MAX_STRING_LENGTH ||
-                (hash != null && parseLen - start > hash.length())) {
+    public static long fromString(CharSequence hash, int start, int parseLen, int bitsPrecision) throws NumericException {
+        if (start < 0 || parseLen < 0 || parseLen > MAX_STRING_LENGTH || (hash != null && hash.length() != 0 && start + parseLen > hash.length())) {
             throw NumericException.INSTANCE;
         }
-        if (hash == null || parseLen == 0 || hash.length() == 0) {
+        if (hash == null || parseLen == 0) {
             return NULL;
+        }
+        if (bitsPrecision != 0 && (bitsPrecision < 1 || bitsPrecision > MAX_BITS_LENGTH || parseLen * 5 < bitsPrecision)) {
+            throw NumericException.INSTANCE;
         }
         long output = 0;
         for (int i = start; i < start + parseLen; ++i) {
@@ -154,7 +157,7 @@ public class GeoHashes {
             }
             throw NumericException.INSTANCE;
         }
-        return output;
+        return bitsPrecision == 0 ? output : output >>> (parseLen * 5 - bitsPrecision);
     }
 
     public static void fromStringToBits(final CharSequenceHashSet prefixes, int columnType, final DirectLongList prefixesBits) {
@@ -164,7 +167,10 @@ public class GeoHashes {
         for (int i = 0, sz = prefixes.size(); i < sz; i++) {
             try {
                 final CharSequence prefix = prefixes.get(i);
-                final long hash = fromString(prefix, prefix.length());
+                if (prefix == null) {
+                    continue;
+                }
+                final long hash = fromString(prefix, 0, prefix.length(), 0);
                 if (hash == NULL) {
                     continue;
                 }
@@ -175,7 +181,7 @@ public class GeoHashes {
                 mask |= 1L << (columnSize * 8 - 1); // set the most significant bit to ignore null from prefix matching
                 // if the prefix is more precise than hashes,
                 // exclude it from matching
-                if(bits > columnBits) {
+                if (bits > columnBits) {
                     norm = 0L;
                     mask = -1L;
                 }
@@ -227,14 +233,6 @@ public class GeoHashes {
                 sink.put(((hash >> i) & 1) == 1 ? '1' : '0');
             }
         }
-    }
-
-    public static long toHash(long hashz) {
-        return hashz & 0x0fffffffffffffffL;
-    }
-
-    public static long toHashWithSize(long hash, int length) {
-        return (((long) length) << 60L) + hash;
     }
 
     public static void toString(long hash, int chars, CharSink sink) {

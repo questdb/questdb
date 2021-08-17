@@ -31,9 +31,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 import io.questdb.cairo.*;
+import io.questdb.std.*;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -52,12 +52,6 @@ import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.FloatingDirectCharSink;
@@ -542,8 +536,8 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         runInContext(() -> {
             try (
                     @SuppressWarnings("resource")
-            TableModel model = new TableModel(configuration, "t_ilp21",
-                    PartitionBy.NONE).col("event", ColumnType.SHORT).col("id", ColumnType.LONG256).col("ts", ColumnType.TIMESTAMP).col("float1", ColumnType.FLOAT).col("int1", ColumnType.INT)
+                    TableModel model = new TableModel(configuration, "t_ilp21",
+                            PartitionBy.NONE).col("event", ColumnType.SHORT).col("id", ColumnType.LONG256).col("ts", ColumnType.TIMESTAMP).col("float1", ColumnType.FLOAT).col("int1", ColumnType.INT)
                             .col("date1", ColumnType.DATE).col("byte1", ColumnType.BYTE).timestamp()) {
                 CairoTestUtils.create(model);
             }
@@ -566,8 +560,8 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         runInContext(() -> {
             try (
                     @SuppressWarnings("resource")
-            TableModel model = new TableModel(configuration, "t_ilp21",
-                    PartitionBy.NONE).col("l", ColumnType.LONG)) {
+                    TableModel model = new TableModel(configuration, "t_ilp21",
+                            PartitionBy.NONE).col("l", ColumnType.LONG)) {
                 CairoTestUtils.create(model);
             }
             microSecondTicks = 1465839830102800L;
@@ -1008,7 +1002,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         nWriterThreads = 3;
         int nTables = 12;
         int nIterations = 20_000;
-        double[] loadFactors = { 10, 10, 10, 20, 20, 20, 20, 20, 20, 30, 30, 60 };
+        double[] loadFactors = {10, 10, 10, 20, 20, 20, 20, 20, 20, 30, 30, 60};
         testThreading(nTables, nIterations, loadFactors);
 
         int maxLoad = Integer.MIN_VALUE;
@@ -1171,7 +1165,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testByteGeoHashesWhenSchemaExists() throws Exception {
+    public void testByteSizedGeoHashes() throws Exception {
         assertGeoHash(5,
                 "tracking geohash=\"9\" 1000000000\n" +
                         "tracking geohash=\"4\" 2000000000\n" +
@@ -1187,36 +1181,19 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testByteGeoHashesWhenSchemaExists2() throws Exception {
+    public void testByteSizedGeoHashesTruncating() throws Exception {
         assertGeoHash(4,
                 "tracking geohash=\"9\" 1000000000\n" +
                         "tracking geohash=\"4\" 2000000000\n" +
                         "tracking geohash=\"j\" 3000000000\n",
                 "geohash\ttimestamp\n" +
-                        "1001\t1970-01-01T00:00:01.000000Z\n" +
-                        "0100\t1970-01-01T00:00:02.000000Z\n" +
-                        "0001\t1970-01-01T00:00:03.000000Z\n");
-    }
-
-
-    @Test
-    public void testByteGeoHashesWhenSchemaExists3() throws Exception {
-        assertGeoHash(6,
-                "tracking geohash=\"9\" 1000000000\n" +
-                        "tracking geohash=\"4\" 2000000000\n" +
-                        "tracking geohash=\"j\" 3000000000\n" +
-                        "tracking geohash=\"z\" 4000000000\n" +
-                        "tracking geohash=\"h\" 5000000000\n",
-                "geohash\ttimestamp\n" +
-                        "001001\t1970-01-01T00:00:01.000000Z\n" +
-                        "000100\t1970-01-01T00:00:02.000000Z\n" +
-                        "010001\t1970-01-01T00:00:03.000000Z\n" +
-                        "011111\t1970-01-01T00:00:04.000000Z\n" +
-                        "010000\t1970-01-01T00:00:05.000000Z\n");
+                        "0100\t1970-01-01T00:00:01.000000Z\n" +
+                        "0010\t1970-01-01T00:00:02.000000Z\n" +
+                        "1000\t1970-01-01T00:00:03.000000Z\n");
     }
 
     @Test
-    public void testShortGeoHashesWhenSchemaExists1() throws Exception {
+    public void testShortSizedGeoHashes() throws Exception {
         assertGeoHash(15,
                 "tracking geohash=\"9v1\" 1000000000\n" +
                         "tracking geohash=\"46s\" 2000000000\n" +
@@ -1236,7 +1213,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testShortGeoHashesWhenSchemaExists2() throws Exception {
+    public void testShortSizedGeoHashesTruncating() throws Exception {
         assertGeoHash(13,
                 "tracking geohash=\"9v1\" 1000000000\n" +
                         "tracking geohash=\"46s\" 2000000000\n" +
@@ -1249,20 +1226,20 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                         "tracking geohash=\"mmt\" 9000000000\n" +
                         "tracking geohash=\"71f\" 10000000000\n",
                 "geohash\ttimestamp\n" +
-                        "0000100111011\t1970-01-01T00:00:01.000000Z\n" +
-                        "0000010000110\t1970-01-01T00:00:02.000000Z\n" +
-                        "0001000110100\t1970-01-01T00:00:03.000000Z\n" +
-                        "0001111101110\t1970-01-01T00:00:04.000000Z\n" +
-                        "0001000010101\t1970-01-01T00:00:05.000000Z\n" +
-                        "0001110010000\t1970-01-01T00:00:06.000000Z\n" +
-                        "0001100000010\t1970-01-01T00:00:07.000000Z\n" +
-                        "0000000101011\t1970-01-01T00:00:08.000000Z\n" +
-                        "0001001110011\t1970-01-01T00:00:09.000000Z\n" +
-                        "0000011100001\t1970-01-01T00:00:10.000000Z\n");
+                        "0100111011000\t1970-01-01T00:00:01.000000Z\n" +
+                        "0010000110110\t1970-01-01T00:00:02.000000Z\n" +
+                        "1000110100111\t1970-01-01T00:00:03.000000Z\n" +
+                        "1111101110110\t1970-01-01T00:00:04.000000Z\n" +
+                        "1000010101001\t1970-01-01T00:00:05.000000Z\n" +
+                        "1110010000001\t1970-01-01T00:00:06.000000Z\n" +
+                        "1100000010111\t1970-01-01T00:00:07.000000Z\n" +
+                        "0000101011100\t1970-01-01T00:00:08.000000Z\n" +
+                        "1001110011110\t1970-01-01T00:00:09.000000Z\n" +
+                        "0011100001011\t1970-01-01T00:00:10.000000Z\n");
     }
 
     @Test
-    public void testShortGeoHashesWhenSchemaExists3() throws Exception {
+    public void testShortSizedGeoHashesNotEnoughPrecision() throws Exception {
         assertGeoHash(15,
                 "tracking geohash=\"9v\" 1000000000\n" +
                         "tracking geohash=\"46\" 2000000000\n" +
@@ -1278,7 +1255,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntGeoHashesWhenSchemaExists1() throws Exception {
+    public void testIntSizedGeoHashes() throws Exception {
         assertGeoHash(30,
                 "tracking geohash=\"9v1s8h\" 1000000000\n" +
                         "tracking geohash=\"46swgj\" 2000000000\n" +
@@ -1300,7 +1277,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntGeoHashesWhenSchemaExists2() throws Exception {
+    public void testIntSizedGeoHashesTruncating() throws Exception {
         assertGeoHash(29,
                 "tracking geohash=\"9v1s8h\" 1000000000\n" +
                         "tracking geohash=\"46swgj\" 2000000000\n" +
@@ -1311,40 +1288,18 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                         "tracking geohash=\"s2z2fy\" 7000000000\n" +
                         "tracking geohash=\"1cjjwk\" 8000000000\n",
                 "geohash\ttimestamp\n" +
-                        "00000100111011000011100001000\t1970-01-01T00:00:01.000000Z\n" +
-                        "00000010000110110001110001111\t1970-01-01T00:00:02.000000Z\n" +
-                        "00001000110100111000100100111\t1970-01-01T00:00:03.000000Z\n" +
-                        "00001111101110110101011001100\t1970-01-01T00:00:04.000000Z\n" +
-                        "00001000010101001001001111010\t1970-01-01T00:00:05.000000Z\n" +
-                        "00001110010000001000101000110\t1970-01-01T00:00:06.000000Z\n" +
-                        "00001100000010111110001001110\t1970-01-01T00:00:07.000000Z\n" +
-                        "00000000101011100011000111100\t1970-01-01T00:00:08.000000Z\n");
+                        "01001110110000111000010001000\t1970-01-01T00:00:01.000000Z\n" +
+                        "00100001101100011100011111000\t1970-01-01T00:00:02.000000Z\n" +
+                        "10001101001110001001001111101\t1970-01-01T00:00:03.000000Z\n" +
+                        "11111011101101010110011000001\t1970-01-01T00:00:04.000000Z\n" +
+                        "10000101010010010011110101101\t1970-01-01T00:00:05.000000Z\n" +
+                        "11100100000010001010001101101\t1970-01-01T00:00:06.000000Z\n" +
+                        "11000000101111100010011101111\t1970-01-01T00:00:07.000000Z\n" +
+                        "00001010111000110001111001001\t1970-01-01T00:00:08.000000Z\n");
     }
 
     @Test
-    public void testIntGeoHashesWhenSchemaExists3() throws Exception {
-        assertGeoHash(32,
-                "tracking geohash=\"9v1s8h\" 1000000000\n" +
-                        "tracking geohash=\"46swgj\" 2000000000\n" +
-                        "tracking geohash=\"jnw97u\" 3000000000\n" +
-                        "tracking geohash=\"zfuqd3\" 4000000000\n" +
-                        "tracking geohash=\"hp4muv\" 5000000000\n" +
-                        "tracking geohash=\"wh4b6v\" 6000000000\n" +
-                        "tracking geohash=\"s2z2fy\" 7000000000\n" +
-                        "tracking geohash=\"1cjjwk\" 8000000000\n",
-                "geohash\ttimestamp\n" +
-                        "00010011101100001110000100010000\t1970-01-01T00:00:01.000000Z\n" +
-                        "00001000011011000111000111110001\t1970-01-01T00:00:02.000000Z\n" +
-                        "00100011010011100010010011111010\t1970-01-01T00:00:03.000000Z\n" +
-                        "00111110111011010101100110000011\t1970-01-01T00:00:04.000000Z\n" +
-                        "00100001010100100100111101011011\t1970-01-01T00:00:05.000000Z\n" +
-                        "00111001000000100010100011011011\t1970-01-01T00:00:06.000000Z\n" +
-                        "00110000001011111000100111011110\t1970-01-01T00:00:07.000000Z\n" +
-                        "00000010101110001100011110010010\t1970-01-01T00:00:08.000000Z\n");
-    }
-
-    @Test
-    public void testIntGeoHashesWhenSchemaExists4() throws Exception {
+    public void testIntSizedGeoHashesNotEnoughPrecision() throws Exception {
         assertGeoHash(32,
                 "tracking geohash=\"9v1s8\" 1000000000\n" +
                         "tracking geohash=\"46swg\" 2000000000\n" +
@@ -1358,7 +1313,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLongGeoHashesWhenSchemaExists1() throws Exception {
+    public void testLongSizedGeoHashes() throws Exception {
         assertGeoHash(60,
                 "tracking geohash=\"9v1s8hm7wpks\" 1000000000\n" +
                         "tracking geohash=\"46swgj10r88k\" 2000000000\n" +
@@ -1378,7 +1333,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLongGeoHashesWhenSchemaExists2() throws Exception {
+    public void testLongSizedGeoHashesTruncating() throws Exception {
         assertGeoHash(57,
                 "tracking geohash=\"9v1s8hm7wpks\" 1000000000\n" +
                         "tracking geohash=\"46swgj10r88k\" 2000000000\n" +
@@ -1388,17 +1343,17 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                         "tracking geohash=\"wh4b6vntdq1c\" 6000000000\n" +
                         "tracking geohash=\"s2z2fydsjq5n\" 7000000000\n",
                 "geohash\ttimestamp\n" +
-                        "000100111011000011100001000100001001100111111001010110010\t1970-01-01T00:00:01.000000Z\n" +
-                        "000010000110110001110001111100010000100000101110100001000\t1970-01-01T00:00:02.000000Z\n" +
-                        "001000110100111000100100111110100010011110110101011011010\t1970-01-01T00:00:03.000000Z\n" +
-                        "001111101110110101011001100000110101001110010001000001010\t1970-01-01T00:00:04.000000Z\n" +
-                        "001000010101001001001111010110110010111001011110111100011\t1970-01-01T00:00:05.000000Z\n" +
-                        "001110010000001000101000110110111010011001011001011000001\t1970-01-01T00:00:06.000000Z\n" +
-                        "001100000010111110001001110111100110011000100011011000101\t1970-01-01T00:00:07.000000Z\n");
+                        "010011101100001110000100010000100110011111100101011001011\t1970-01-01T00:00:01.000000Z\n" +
+                        "001000011011000111000111110001000010000010111010000100010\t1970-01-01T00:00:02.000000Z\n" +
+                        "100011010011100010010011111010001001111011010101101101011\t1970-01-01T00:00:03.000000Z\n" +
+                        "111110111011010101100110000011010100111001000100000101011\t1970-01-01T00:00:04.000000Z\n" +
+                        "100001010100100100111101011011001011100101111011110001110\t1970-01-01T00:00:05.000000Z\n" +
+                        "111001000000100010100011011011101001100101100101100000101\t1970-01-01T00:00:06.000000Z\n" +
+                        "110000001011111000100111011110011001100010001101100010110\t1970-01-01T00:00:07.000000Z\n");
     }
 
     @Test
-    public void testLongGeoHashesWhenSchemaExists3() throws Exception {
+    public void testLongSizedGeoHashesNotEnoughPrecision() throws Exception {
         assertGeoHash(60,
                 "tracking geohash=\"9v1s8hm7wpk\" 1000000000\n" +
                         "tracking geohash=\"46swgj10r88\" 2000000000\n" +
@@ -1411,7 +1366,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInsertNullGeoHashWhenSchemaExists() throws Exception {
+    public void testInsertMissingGeoHashHasNoEffect() throws Exception {
         for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
             if (b > 1) {
                 setUp();
@@ -1423,18 +1378,36 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         }
     }
 
-    @Ignore(value = "FIX ME")
     @Test
-    public void testInsertNullGeoHashWhenSchemaExistsEdgeCase() throws Exception {
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
-            if (b > 1) {
-                setUp();
-            }
-            assertGeoHash(b,
-                    "tracking geohash=\"\" 1000000000\n",
-                    "geohash\ttimestamp\n");
-            tearDown();
-        }
+    public void testInsertNullByteGeoHash() throws Exception {
+        assertGeoHash(1,
+                "tracking geohash=\"\" 1000000000\n",
+                "geohash\ttimestamp\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n");
+    }
+
+    @Test
+    public void testInsertNullShortGeoHash() throws Exception {
+        assertGeoHash(15,
+                "tracking geohash=\"\" 1000000000\n",
+                "geohash\ttimestamp\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n");
+    }
+
+    @Test
+    public void testInsertNullIntGeoHash() throws Exception {
+        assertGeoHash(30,
+                "tracking geohash=\"\" 1000000000\n",
+                "geohash\ttimestamp\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n");
+    }
+
+    @Test
+    public void testInsertNullLongGeoHash() throws Exception {
+        assertGeoHash(60,
+                "tracking geohash=\"\" 1000000000\n",
+                "geohash\ttimestamp\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n");
     }
 
     private void assertGeoHash(int columnBits, String inboundLines, String expected) throws Exception {
@@ -1442,10 +1415,8 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             try (TableModel model = new TableModel(configuration, "tracking", PartitionBy.NONE)) {
                 CairoTestUtils.create(model.col("geohash", ColumnType.geohashWithPrecision(columnBits)).timestamp());
             }
-            microSecondTicks = 1465839830102800L;
             recvBuffer = inboundLines;
             handleContextIO();
-            Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
             assertTable(expected, "tracking");
@@ -1545,7 +1516,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         });
 
         WorkerPool netIoWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
-            private final int[] affinityByThread = { -1 };
+            private final int[] affinityByThread = {-1};
 
             @Override
             public boolean haltOnError() {

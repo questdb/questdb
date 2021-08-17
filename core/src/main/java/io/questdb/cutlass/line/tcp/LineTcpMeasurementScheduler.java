@@ -527,17 +527,43 @@ class LineTcpMeasurementScheduler implements Closeable {
                     }
                     case NewLineProtoParser.ENTITY_TYPE_STRING:
                     case NewLineProtoParser.ENTITY_TYPE_LONG256: {
-                        Unsafe.getUnsafe().putByte(bufPos, entity.getType());
-                        bufPos += Byte.BYTES;
-                        int l = entity.getValue().length();
-                        Unsafe.getUnsafe().putInt(bufPos, l);
-                        bufPos += Integer.BYTES;
-                        long hi = bufPos + 2L * l;
-                        floatingCharSink.of(bufPos, hi);
-                        if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
-                            throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
+                        final int colTypeMeta = localDetails.getColumnTypeMeta(colIndex);
+                        if (colTypeMeta == -1) {
+                            Unsafe.getUnsafe().putByte(bufPos, entity.getType());
+                            bufPos += Byte.BYTES;
+                            int l = entity.getValue().length();
+                            Unsafe.getUnsafe().putInt(bufPos, l);
+                            bufPos += Integer.BYTES;
+                            long hi = bufPos + 2L * l;
+                            floatingCharSink.of(bufPos, hi);
+                            if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
+                                throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
+                            }
+                            bufPos = hi;
+                        } else {
+                            try {
+                                long geohash = GeoHashes.fromString(
+                                        entity.getValue(),
+                                        0,
+                                        entity.getValue().length(),
+                                        Numbers.decodeLowShort(colTypeMeta));
+                                Unsafe.getUnsafe().putByte(bufPos, (byte) Numbers.decodeHighShort(colTypeMeta));
+                                bufPos += Byte.BYTES;
+                                Unsafe.getUnsafe().putLong(bufPos, geohash);
+                                bufPos += Long.BYTES;
+                            } catch (NumericException e) {
+                                throw CairoException.instance(0)
+                                        .put("invalid GEOHASH value [column=")
+                                        .put(colIndex)
+                                        .put(", required=")
+                                        .put(ColumnType.nameOf(colTypeMeta))
+                                        .put(", offending=")
+                                        .put(entity.getValue().toString())
+                                        .put(", table=")
+                                        .put(entity.getName())
+                                        .put("]");
+                            }
                         }
-                        bufPos = hi;
                         break;
                     }
                     case NewLineProtoParser.ENTITY_TYPE_BOOLEAN: {
@@ -735,32 +761,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                             final int colType = writer.getMetadata().getColumnType(colIndex);
                             if (ColumnType.isString(colType)) {
                                 row.putStr(colIndex, job.floatingCharSink);
-                            } else if (ColumnType.isGeoHash(colType)) {
-                                int geoChars = GeoHashes.getBitsPrecision(colType) / 5; // truncate excess bits
-                                if (geoChars == 0) {
-                                    geoChars++;
-                                }
-                                try {
-                                    switch (ColumnType.storageTag(colType)) {
-                                        case ColumnType.GEOBYTE:
-                                            row.putGeoHash(colIndex, geoChars, 1, job.floatingCharSink);
-                                            break;
-                                        case ColumnType.GEOSHORT:
-                                            row.putGeoHash(colIndex, geoChars, 2, job.floatingCharSink);
-                                            break;
-                                        case ColumnType.GEOINT:
-                                            row.putGeoHash(colIndex, geoChars, 4, job.floatingCharSink);
-                                            break;
-                                        default:
-                                            row.putGeoHash(colIndex, geoChars, 8, job.floatingCharSink);
-                                    }
-                                } catch (NumericException err) {
-                                    throw CairoException.instance(0)
-                                            .put("incorrect GEOHASH Value [columnIndex=").put(colIndex)
-                                            .put(", columnType=").put(ColumnType.nameOf(colType))
-                                            .put(", offender=").put(job.floatingCharSink.toString())
-                                            .put(']');
-                                }
                             } else {
                                 throw CairoException.instance(0)
                                         .put("cast error for line protocol string [columnIndex=").put(colIndex)
@@ -777,6 +777,16 @@ class LineTcpMeasurementScheduler implements Closeable {
                             job.floatingCharSink.asCharSequence(bufPos, hi);
                             row.putLong256(colIndex, job.floatingCharSink);
                             bufPos = hi;
+                            break;
+                        }
+
+                        case ColumnType.GEOSHORT:
+                        case ColumnType.GEOINT:
+                        case ColumnType.GEOLONG:
+                        case ColumnType.GEOBYTE: {
+                            long geohash = Unsafe.getUnsafe().getLong(bufPos);
+                            bufPos += Long.BYTES;
+                            row.putGeoHash(colIndex, entityType, geohash);
                             break;
                         }
 
@@ -923,6 +933,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         private class ThreadLocalDetails implements Closeable {
             private final Path path = new Path();
             private final ObjIntHashMap<CharSequence> columnIndexByName = new ObjIntHashMap<>();
+            private final IntIntHashMap colTypeMetaByColIndex = new IntIntHashMap(); // used to deal with geohashes
             private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
             private final ObjList<SymbolCache> unusedSymbolCaches;
 
@@ -964,6 +975,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     }
                 }
                 symbolCacheByColumnIndex.clear();
+                colTypeMetaByColIndex.clear();
             }
 
             int getColumnIndex(CharSequence colName) {
@@ -974,6 +986,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                 return getColumnIndex0(colName);
             }
 
+            int getColumnTypeMeta(int colIndex) {
+                return colTypeMetaByColIndex.get(colIndex);
+            }
+
             private int getColumnIndex0(CharSequence colName) {
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                     TableReaderMetadata metadata = reader.getMetadata();
@@ -981,10 +997,21 @@ class LineTcpMeasurementScheduler implements Closeable {
                     if (colIndex < 0) {
                         return -1;
                     }
-                    // re-cache all column names once
+                    // re-cache all column names/types once
                     columnIndexByName.clear();
+                    colTypeMetaByColIndex.clear();
                     for (int n = 0, sz = metadata.getColumnCount(); n < sz; n++) {
                         columnIndexByName.put(metadata.getColumnName(n), n);
+                        int colType = metadata.getColumnType(n);
+                        if (!ColumnType.isGeoHash(colType)) {
+                            colTypeMetaByColIndex.put(n, -1);
+                        } else {
+                            colTypeMetaByColIndex.put(
+                                    n,
+                                    Numbers.encodeLowHighShorts(
+                                            (short) GeoHashes.getBitsPrecision(colType),
+                                            (short) ColumnType.storageTag(colType)));
+                        }
                     }
                     return colIndex;
                 }

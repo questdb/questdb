@@ -58,7 +58,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final CairoConfiguration configuration;
     private final LongList columnNameType = new LongList();
     private final LongList columnIndexAndType = new LongList();
-    private final IntIntHashMap columnTypeToGeoCharSize = new IntIntHashMap();
+    private final IntIntHashMap columnIndexToGeoBitsSize = new IntIntHashMap();
     private final LongList columnValues = new LongList();
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final MicrosecondClock clock;
@@ -190,7 +190,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 CairoLineProtoParserSupport.putValue(
                         row,
                         (int) columnNameType.getQuick(i * 2 + 1),
-                        columnTypeToGeoCharSize,
+                        columnIndexToGeoBitsSize,
                         i,
                         cache.get(columnValues.getQuick(i))
                 );
@@ -214,7 +214,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 CairoLineProtoParserSupport.putValue(
                         row,
                         Numbers.decodeHighInt(value),
-                        columnTypeToGeoCharSize,
+                        columnIndexToGeoBitsSize,
                         Numbers.decodeLowInt(value),
                         cache.get(columnValues.getQuick(i))
                 );
@@ -240,7 +240,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private void clearState() {
         columnNameType.clear();
         columnIndexAndType.clear();
-        columnTypeToGeoCharSize.clear();
+        columnIndexToGeoBitsSize.clear();
         columnValues.clear();
     }
 
@@ -312,6 +312,9 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         columnIndex = metadata.getColumnIndexQuiet(token);
         if (columnIndex > -1) {
             columnType = metadata.getColumnType(columnIndex);
+            if (ColumnType.isGeoHash(columnType)) {
+                columnIndexToGeoBitsSize.put(columnIndex, GeoHashes.getBitsPrecision(columnType));
+            }
         } else {
             prepareNewColumn(token);
         }
@@ -368,17 +371,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                     valid = columnTypeTag == ColumnType.BOOLEAN;
                     break;
                 case ColumnType.STRING:
-                    valid = columnTypeTag == ColumnType.STRING;
-                    if (columnTypeTag == ColumnType.GEOHASH) {
-                        int geoChars = GeoHashes.getBitsPrecision(columnType) / 5; // truncates excess bits for char size
-                        if (geoChars == 0) {
-                            geoChars++;
-                        }
-                        if (geoChars <= (value.length() - 2) || value.length() == 2) {
-                            valid = true;
-                            columnTypeToGeoCharSize.put(columnType, geoChars);
-                        }
-                    }
+                    valid = columnTypeTag == ColumnType.STRING || columnTypeTag == ColumnType.GEOHASH;
                     break;
                 case ColumnType.DOUBLE:
                     valid = columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT;
@@ -402,7 +395,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                         .$(", valueType=").$(ColumnType.nameOf(valueType))
                         .$(']').$();
                 switchModeToSkipLine();
-
             }
         } else {
             CharSequence colNameAsChars = cache.get(columnName);

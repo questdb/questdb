@@ -4840,43 +4840,6 @@ public class TableWriter implements Closeable {
             putTimestamp(index, l);
         }
 
-        public void putGeoHash(int index,
-                               int columnSizeChars,
-                               int storageSizeBytes,
-                               CharSequence value) throws NumericException {
-            putGeoHash(index, columnSizeChars, storageSizeBytes, value, 0, value.length());
-        }
-
-        public void putGeoHash(int index,
-                               int columnSizeChars,
-                               int storageSizeBytes,
-                               CharSequence value,
-                               int start,
-                               int end) throws NumericException {
-            int len = Math.min(end, columnSizeChars);
-            if (len < columnSizeChars) {
-                throw NumericException.INSTANCE;
-            }
-            long geohash = GeoHashes.fromString(value, start, len);
-            MemoryA primaryColumn = getPrimaryColumn(index);
-            switch (storageSizeBytes) {
-                case 1:
-                    primaryColumn.putByte((byte) geohash);
-                    break;
-                case 2:
-                    primaryColumn.putShort((short) geohash);
-                    break;
-                case 4:
-                    primaryColumn.putInt((int) geohash);
-                    break;
-                default:
-                    primaryColumn.putLong(geohash);
-                    break;
-            }
-            notNull(index);
-        }
-
-
         public void putGeoHash(int index, long value) {
             int type = metadata.getColumnType(index);
             final MemoryA primaryColumn = getPrimaryColumn(index);
@@ -4893,6 +4856,27 @@ public class TableWriter implements Closeable {
                 default:
                     primaryColumn.putLong(value);
                     break;
+            }
+            notNull(index);
+        }
+
+        public void putGeoHash(int index, int storageTag, long value) {
+            final MemoryA primaryColumn = getPrimaryColumn(index);
+            switch (storageTag) {
+                case ColumnType.GEOBYTE:
+                    primaryColumn.putByte((byte) value);
+                    break;
+                case ColumnType.GEOSHORT:
+                    primaryColumn.putShort((short) value);
+                    break;
+                case ColumnType.GEOINT:
+                    primaryColumn.putInt((int) value);
+                    break;
+                case ColumnType.GEOLONG:
+                    primaryColumn.putLong(value);
+                    break;
+                default:
+                    throw new IllegalArgumentException();
             }
             notNull(index);
         }

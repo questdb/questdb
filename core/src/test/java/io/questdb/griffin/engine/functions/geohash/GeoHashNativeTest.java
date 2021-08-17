@@ -80,15 +80,6 @@ public class GeoHashNativeTest {
     }
 
     @Test
-    public void testToHash() throws NumericException {
-        final long gh = GeoHashes.fromCoordinates(lat, lon, 8 * 5);
-        final long ghz = GeoHashes.toHashWithSize(gh, 8);
-        Assert.assertEquals(gh, GeoHashes.toHash(ghz));
-        Assert.assertEquals(0, GeoHashes.hashSize(gh));
-        Assert.assertEquals(8, GeoHashes.hashSize(ghz));
-    }
-
-    @Test
     public void testBitmask() {
         for (int i = 0; i < 64; i++) {
             final long bm = GeoHashes.bitmask(1, i);
