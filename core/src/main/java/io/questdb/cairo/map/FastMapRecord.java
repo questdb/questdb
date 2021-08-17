@@ -185,12 +185,6 @@ final class FastMapRecord implements MapRecord {
     }
 
     @Override
-    public long getGeoHash(int columnIndex) {
-        // TODO: geohash store type per column or other way to get size of the geohash
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void getLong256(int columnIndex, CharSink sink) {
         long address = addressOfColumn(columnIndex);
         final long a = Unsafe.getUnsafe().getLong(address);
@@ -255,6 +249,26 @@ final class FastMapRecord implements MapRecord {
     @Override
     public CharSequence getSymB(int col) {
         return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(col)).valueBOf(getInt(col));
+    }
+
+    @Override
+    public byte getGeoHashByte(int col) {
+        return getByte(col);
+    }
+
+    @Override
+    public short getGeoHashShort(int col) {
+        return getShort(col);
+    }
+
+    @Override
+    public int getGeoHashInt(int col) {
+        return getInt(col);
+    }
+
+    @Override
+    public long getGeoHashLong(int col) {
+        return getLong(col);
     }
 
     @Override

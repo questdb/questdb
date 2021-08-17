@@ -115,7 +115,7 @@ public final class TestUtils {
                 String columnName = metadataExpected.getColumnName(i);
                 try {
                     int columnType = metadataExpected.getColumnType(i);
-                    int tagType = ColumnType.sizeTag(columnType);
+                    int tagType = ColumnType.storageTag(columnType);
                     switch (tagType) {
                         case ColumnType.DATE:
                             Assert.assertEquals(r.getDate(i), l.getDate(i));
@@ -132,6 +132,9 @@ public final class TestUtils {
                         case ColumnType.INT:
                             Assert.assertEquals(r.getInt(i), l.getInt(i));
                             break;
+                        case ColumnType.GEOINT:
+                            Assert.assertEquals(r.getGeoHashInt(i), l.getGeoHashInt(i));
+                            break;
                         case ColumnType.STRING:
                             TestUtils.assertEquals(r.getStr(i), l.getStr(i));
                             break;
@@ -144,8 +147,17 @@ public final class TestUtils {
                         case ColumnType.CHAR:
                             Assert.assertEquals(r.getChar(i), l.getChar(i));
                             break;
+                        case ColumnType.GEOSHORT:
+                            Assert.assertEquals(r.getGeoHashShort(i), l.getGeoHashShort(i));
+                            break;
                         case ColumnType.LONG:
                             Assert.assertEquals(r.getLong(i), l.getLong(i));
+                            break;
+                        case ColumnType.GEOLONG:
+                            Assert.assertEquals(r.getGeoHashLong(i), l.getGeoHashLong(i));
+                            break;
+                        case ColumnType.GEOBYTE:
+                            Assert.assertEquals(r.getGeoHashByte(i), l.getGeoHashByte(i));
                             break;
                         case ColumnType.BYTE:
                             Assert.assertEquals(r.getByte(i), l.getByte(i));

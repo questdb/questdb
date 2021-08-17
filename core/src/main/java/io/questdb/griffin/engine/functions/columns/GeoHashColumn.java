@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GeoHashFunction;
 
@@ -41,6 +43,88 @@ public class GeoHashColumn {
                 return new GeoHashColumnByte(columnIndex, columnType);
             default:
                 throw SqlException.position(0).put("unsupported column type ").put(ColumnType.nameOf(columnType));
+        }
+    }
+
+    private static class GeoHashColumnByte extends GeoHashNotSupportedFunction {
+        private final int columnIndex;
+
+        public GeoHashColumnByte(int columnIndex, int columnType) {
+            super(columnType);
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public byte getGeoHashByte(Record rec) {
+            return rec.getGeoHashByte(columnIndex);
+        }
+    }
+
+    private static class GeoHashColumnShort extends GeoHashNotSupportedFunction {
+        private final int columnIndex;
+
+        public GeoHashColumnShort(int columnIndex, int columnType) {
+            super(columnType);
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public short getGeoHashShort(Record rec) {
+            return rec.getGeoHashShort(columnIndex);
+        }
+    }
+
+    private static class GeoHashColumnInt extends GeoHashNotSupportedFunction {
+        private final int columnIndex;
+
+        public GeoHashColumnInt(int columnIndex, int columnType) {
+            super(columnType);
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int getGeoHashInt(Record rec) {
+            return rec.getGeoHashInt(columnIndex);
+        }
+    }
+
+    private static class GeoHashColumnLong extends GeoHashNotSupportedFunction {
+        private final int columnIndex;
+
+        public GeoHashColumnLong(int columnIndex, int columnType) {
+            super(columnType);
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public long getGeoHashLong(Record rec) {
+            return rec.getGeoHashLong(columnIndex);
+        }
+    }
+
+    private static class GeoHashNotSupportedFunction extends GeoHashFunction implements ScalarFunction {
+        public GeoHashNotSupportedFunction(int columnType) {
+            super(columnType);
+        }
+
+        @Override
+        public byte getGeoHashByte(Record rec) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public short getGeoHashShort(Record rec) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getGeoHashInt(Record rec) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getGeoHashLong(Record rec) {
+            throw new UnsupportedOperationException();
         }
     }
 }

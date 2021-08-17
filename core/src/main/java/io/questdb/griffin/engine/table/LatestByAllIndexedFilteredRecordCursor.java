@@ -39,13 +39,13 @@ class LatestByAllIndexedFilteredRecordCursor extends LatestByAllIndexedRecordCur
     public LatestByAllIndexedFilteredRecordCursor(
             int columnIndex,
             int hashColumnIndex,
+            int hashColumnType,
             @NotNull DirectLongList rows,
-            @NotNull DirectLongList hashes,
             @NotNull Function filter,
             @NotNull IntList columnIndexes,
             @NotNull DirectLongList prefixes
     ) {
-        super(columnIndex, hashColumnIndex, rows, hashes, columnIndexes, prefixes);
+        super(columnIndex, hashColumnIndex, hashColumnType, rows, columnIndexes, prefixes);
         this.filter = filter;
     }
 

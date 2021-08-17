@@ -67,7 +67,7 @@ inline void run_vec_bulk(T *dest,
     constexpr int64_t iteration_increment = sizeof(T);
     if (unaligned % iteration_increment == 0) {
 
-        const auto head_iteration_count = unaligned > 0 ? (alignment - unaligned) / iteration_increment : 0;
+        const int64_t head_iteration_count = unaligned > 0 ? (alignment - unaligned) / iteration_increment : 0;
         constexpr int64_t increment = TVec::size();
         const int64_t bulk_stop = count - increment + 1;
 

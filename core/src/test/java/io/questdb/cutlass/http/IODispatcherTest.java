@@ -3459,7 +3459,7 @@ public class IODispatcherTest {
                                 "select\n" +
                                 "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(1c)) geo1,\n" +
                                 "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(3c)) geo2,\n" +
-                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(7c)) geo4,\n" +
+                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(6c)) geo4,\n" +
                                 "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(12c)) geo8," +
                                 "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(1b)) geo01\n" +
                                 "from long_sequence(3)\n" +
@@ -3468,17 +3468,17 @@ public class IODispatcherTest {
                         String request = "SELECT+*+FROM+y";
                         new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                                 "GET /query?query=" + request + " HTTP/1.1\r\n",
-                                "0169\r\n" +
+                                "0166\r\n" +
                                         "{\"query\":\"SELECT * FROM y\",\"columns\":[" +
                                         "{\"name\":\"geo1\",\"type\":\"GEOHASH(1c)\"}," +
                                         "{\"name\":\"geo2\",\"type\":\"GEOHASH(3c)\"}," +
-                                        "{\"name\":\"geo4\",\"type\":\"GEOHASH(7c)\"}," +
+                                        "{\"name\":\"geo4\",\"type\":\"GEOHASH(6c)\"}," +
                                         "{\"name\":\"geo8\",\"type\":\"GEOHASH(12c)\"}," +
                                         "{\"name\":\"geo01\",\"type\":\"GEOHASH(1b)\"}" +
                                         "],\"dataset\":[" +
-                                        "[null,null,\"questdb\",\"u10m99dd3pbj\",\"1\"]," +
-                                        "[\"u\",\"u10\",\"questdb\",null,\"1\"]," +
-                                        "[\"q\",\"u10\",\"questdb\",\"questdb12345\",\"1\"]" +
+                                        "[null,null,\"questd\",\"u10m99dd3pbj\",\"1\"]," +
+                                        "[\"u\",\"u10\",\"questd\",null,\"1\"]," +
+                                        "[\"q\",\"u10\",\"questd\",\"questdb12345\",\"1\"]" +
                                         "],\"count\":3}\r\n" +
                                         "00\r\n"+
                                         "\r\n"

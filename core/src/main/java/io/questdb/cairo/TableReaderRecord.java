@@ -221,6 +221,34 @@ public class TableReaderRecord implements Record {
         return reader.getSymbolMapReader(col).valueBOf(reader.getColumn(absoluteColumnIndex).getInt(offset));
     }
 
+    @Override
+    public byte getGeoHashByte(int col) {
+        final long offset = getAdjustedRecordIndex(col) * Byte.BYTES;
+        final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
+        return offset < 0 ? GeoHashes.BYTE_NULL : reader.getColumn(absoluteColumnIndex).getByte(offset);
+    }
+
+    @Override
+    public short getGeoHashShort(int col) {
+        final long offset = getAdjustedRecordIndex(col) * Short.BYTES;
+        final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
+        return offset < 0 ? GeoHashes.SHORT_NULL : reader.getColumn(absoluteColumnIndex).getShort(offset);
+    }
+
+    @Override
+    public int getGeoHashInt(int col) {
+        final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
+        final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
+        return offset < 0 ? GeoHashes.INT_NULL : reader.getColumn(absoluteColumnIndex).getInt(offset);
+    }
+
+    @Override
+    public long getGeoHashLong(int col) {
+        final long offset = getAdjustedRecordIndex(col) * Long.BYTES;
+        final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
+        return offset < 0 ? GeoHashes.NULL : reader.getColumn(absoluteColumnIndex).getLong(offset);
+    }
+
     public long getRecordIndex() {
         return recordIndex;
     }

@@ -156,8 +156,23 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public long getGeoHash(Record rec) {
-        return getBase().getGeoHash(rec);
+    public byte getGeoHashByte(Record rec) {
+        return getBase().getGeoHashByte(rec);
+    }
+
+    @Override
+    public short getGeoHashShort(Record rec) {
+        return getBase().getGeoHashShort(rec);
+    }
+
+    @Override
+    public int getGeoHashInt(Record rec) {
+        return getBase().getGeoHashInt(rec);
+    }
+
+    @Override
+    public long getGeoHashLong(Record rec) {
+        return getBase().getGeoHashLong(rec);
     }
 
     @Override

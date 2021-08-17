@@ -70,23 +70,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
             this.bits = bits;
         }
 
-        @Override
-        public byte getByte(Record rec) {
-            return (byte) getLong(rec);
-        }
-
-        @Override
-        public short getShort(Record rec) {
-            return (short) getLong(rec);
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            return (int) getLong(rec);
-        }
-
-        @Override
-        public long getLong(Record rec) {
+        private long getLongRnd() {
             double x = rnd.nextDouble() * 180.0 - 90.0;
             double y = rnd.nextDouble() * 360.0 - 180.0;
             try {
@@ -95,6 +79,26 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
                 // Should never happen
                 return GeoHashes.NULL;
             }
+        }
+
+        @Override
+        public byte getGeoHashByte(Record rec) {
+            return (byte) getLongRnd();
+        }
+
+        @Override
+        public short getGeoHashShort(Record rec) {
+            return (short) getLongRnd();
+        }
+
+        @Override
+        public int getGeoHashInt(Record rec) {
+            return (int) getLongRnd();
+        }
+
+        @Override
+        public long getGeoHashLong(Record rec) {
+            return getLongRnd();
         }
 
         @Override

@@ -54,6 +54,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -1141,8 +1142,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         Record record = new Record() {
             @Override
-            public long getGeoHash(int col) {
-                return getLong(col);
+            public int getGeoHashInt(int col) {
+                return (int) getLong(col);
             }
 
             @Override
@@ -1153,7 +1154,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
         Function function = parseFunction("cast('sp052w92' as geohash(5c))", metadata, functionParser);
         Assert.assertEquals(ColumnType.geohashWithPrecision(25), function.getType());
-        Assert.assertEquals(25854114, function.getGeoHash(record));
+        Assert.assertEquals(25854114, function.getGeoHashInt(record));
     }
 
     @Test
@@ -1288,6 +1289,94 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                 "io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunction",
                 ColumnType.LONG256
         );
+    }
+
+    @Test
+    public void testConstGeohashFuctionConvertedByte() throws SqlException {
+        int type = ColumnType.geohashWithPrecision(5);
+        assertGeoConstFunctionTypeAndValue(
+                "geohash_func()",
+                dummyGeoHashFunctionFactory(type, 1, 2, 3, 4),
+                "io.questdb.griffin.engine.functions.constants.GeoHashConstant",
+                type,
+                1
+        );
+    }
+
+    @Test
+    public void testConstGeohashFuctionConvertedShort() throws SqlException {
+        int type = ColumnType.geohashWithPrecision(10);
+        assertGeoConstFunctionTypeAndValue(
+                "geohash_func()",
+                dummyGeoHashFunctionFactory(type, 1, 2, 3, 4),
+                "io.questdb.griffin.engine.functions.constants.GeoHashConstant",
+                type,
+                2
+        );
+    }
+
+    @Test
+    public void testConstGeohashFuctionConvertedInt() throws SqlException {
+        int type = ColumnType.geohashWithPrecision(22);
+        assertGeoConstFunctionTypeAndValue(
+                "geohash_func()",
+                dummyGeoHashFunctionFactory(type, 1, 2, 3, 4),
+                "io.questdb.griffin.engine.functions.constants.GeoHashConstant",
+                type,
+                3
+        );
+    }
+
+    @Test
+    public void testConstGeohashFuctionConvertedLong() throws SqlException {
+        int type = ColumnType.geohashWithPrecision(43);
+        assertGeoConstFunctionTypeAndValue(
+                "geohash_func()",
+                dummyGeoHashFunctionFactory(type, 1, 2, 3, 4),
+                "io.questdb.griffin.engine.functions.constants.GeoHashConstant",
+                type,
+                4
+        );
+    }
+
+    @NotNull
+    private FunctionFactory dummyGeoHashFunctionFactory(final int type, int val1, int val2, int val3, int val4) {
+        return new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "geohash_func()";
+            }
+
+            @Override
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+                return new GeoHashFunction(type) {
+                    @Override
+                    public byte getGeoHashByte(Record rec) {
+                        return (byte) val1;
+                    }
+
+                    @Override
+                    public short getGeoHashShort(Record rec) {
+                        return (short) val2;
+                    }
+
+                    @Override
+                    public int getGeoHashInt(Record rec) {
+                        return val3;
+                    }
+
+                    @Override
+                    public long getGeoHashLong(Record rec) {
+                        return val4;
+                    }
+
+                    @Override
+                    public boolean isConstant() {
+                        return true;
+                    }
+                };
+            }
+        };
     }
 
     @Test
@@ -1431,6 +1520,31 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                 if (expected != actual) {
                     Assert.fail("type mismatch [expected=" + ColumnType.nameOf(expected) + ", actual=" + ColumnType.nameOf(actual) + ", i=" + i + "]");
                 }
+            }
+        }
+    }
+
+    private void assertGeoConstFunctionTypeAndValue(
+            String expr,
+            FunctionFactory factory,
+            CharSequence expectedFunctionClass,
+            int expectedType,
+            int expectedValue
+    ) throws SqlException {
+        bindVariableService.clear();
+        functions.add(factory);
+        try (Function f = parseFunction(expr, null, createFunctionParser())) {
+            TestUtils.assertContains(f.getClass().getCanonicalName(), expectedFunctionClass);
+            Assert.assertEquals(expectedType, f.getType());
+            switch (ColumnType.sizeOf(expectedType)) {
+                case 1:
+                    Assert.assertEquals(expectedValue, f.getGeoHashByte(null));
+                case 2:
+                    Assert.assertEquals(expectedValue, f.getGeoHashShort(null));
+                case 4:
+                    Assert.assertEquals(expectedValue, f.getGeoHashInt(null));
+                case 8:
+                    Assert.assertEquals(expectedValue, f.getGeoHashLong(null));
             }
         }
     }

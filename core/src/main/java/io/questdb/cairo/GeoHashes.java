@@ -24,11 +24,16 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
 public class GeoHashes {
 
+    public static final byte BYTE_NULL = -1;
+    public static final short SHORT_NULL = -1;
+    public static final int INT_NULL = -1;
     public static final long NULL = -1L;
     public static final int MAX_BITS_LENGTH = 60;
     public static final int MAX_STRING_LENGTH = 12;
@@ -149,10 +154,11 @@ public class GeoHashes {
         return fromString(hash, hash.length());
     }
 
-    public static void fromStringToBits(final CharSequenceHashSet prefixes, int lo, int hi, final DirectLongList prefixesBits) {
+    public static void fromStringToBits(final CharSequenceHashSet prefixes, int columnType, final DirectLongList prefixesBits) {
         prefixesBits.clear();
-        assert hi <= prefixes.size();
-        for (int i = lo; i < hi; i++) {
+        final int columnSize = ColumnType.sizeOf(columnType);
+        final int columnBits = GeoHashes.getBitsPrecision(columnType);
+        for (int i = 0, sz = prefixes.size(); i < sz; i++) {
             try {
                 final CharSequence prefix = prefixes.get(i);
                 final long hash = fromStringNl(prefix);
@@ -160,10 +166,16 @@ public class GeoHashes {
                     continue;
                 }
                 final int bits = 5 * prefix.length();
-                final int shift = 8 * 5 - bits;
-                final long norm = hash << shift;
+                final int shift = columnBits - bits;
+                long norm = hash << shift;
                 long mask = bitmask(bits, shift);
-                mask |= 1L << 63; // set the most significant bit to ignore null from prefix matching
+                mask |= 1L << (columnSize * 8 - 1); // set the most significant bit to ignore null from prefix matching
+                // if the prefix is more precise than hashes,
+                // exclude it from matching
+                if(bits > columnBits) {
+                    norm = 0L;
+                    mask = -1L;
+                }
                 prefixesBits.add(norm);
                 prefixesBits.add(mask);
             } catch (NumericException e) {
@@ -188,7 +200,7 @@ public class GeoHashes {
     public static int sizeOf(int columnType) {
         assert ColumnType.tagOf(columnType) == ColumnType.GEOHASH;
         int bits = getBitsPrecision(columnType);
-        if (bits <= MAX_BITS_LENGTH) {
+        if (bits <= MAX_BITS_LENGTH && bits > 0) {
             return 1 << GEO_TYPE_SIZE_POW2[bits];
         }
         return -1; // Corrupt metadata
@@ -230,6 +242,19 @@ public class GeoHashes {
             for (int i = chars - 1; i >= 0; --i) {
                 sink.put(base32[(int) ((hash >> i * 5) & 0x1F)]);
             }
+        }
+    }
+
+    public static long getGeoLong(int type, Function func, Record rec) {
+        switch (ColumnType.sizeOf(type)) {
+            case Byte.BYTES:
+                return func.getGeoHashByte(rec);
+            case Short.BYTES:
+                return func.getGeoHashShort(rec);
+            case Integer.BYTES:
+                return func.getGeoHashInt(rec);
+            default:
+                return func.getGeoHashLong(rec);
         }
     }
 }

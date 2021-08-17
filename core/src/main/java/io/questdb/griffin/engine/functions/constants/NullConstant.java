@@ -190,7 +190,22 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
-    public long getGeoHash(Record rec) {
+    public byte getGeoHashByte(Record rec) {
+        return GeoHashes.BYTE_NULL;
+    }
+
+    @Override
+    public short getGeoHashShort(Record rec) {
+        return GeoHashes.SHORT_NULL;
+    }
+
+    @Override
+    public int getGeoHashInt(Record rec) {
+        return GeoHashes.INT_NULL;
+    }
+
+    @Override
+    public long getGeoHashLong(Record rec) {
         return GeoHashes.NULL;
     }
 

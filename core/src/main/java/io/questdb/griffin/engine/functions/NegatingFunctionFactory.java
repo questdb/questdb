@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -61,7 +62,11 @@ public class NegatingFunctionFactory implements FunctionFactory {
         if (function instanceof NegatableBooleanFunction) {
             NegatableBooleanFunction negateableFunction = (NegatableBooleanFunction) function;
             negateableFunction.setNegated();
+            return negateableFunction;
         }
-        return function;
+        if (function instanceof BooleanConstant) {
+            return BooleanConstant.of(!function.getBool(null));
+        }
+        throw SqlException.$(position, "negating operation is not supported for result of function ").put(delegate.getSignature());
     }
 }
