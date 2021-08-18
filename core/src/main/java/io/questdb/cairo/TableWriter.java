@@ -66,6 +66,11 @@ public class TableWriter implements Closeable {
     public static final int O3_BLOCK_O3 = 1;
     public static final int O3_BLOCK_DATA = 2;
     public static final int O3_BLOCK_MERGE = 3;
+    private static final int ROW_ACTION_OPEN_PARTITION = 0;
+    private static final int ROW_ACTION_NO_PARTITION = 1;
+    private static final int ROW_ACTION_NO_TIMESTAMP = 2;
+    private static final int ROW_ACTION_O3 = 3;
+    private static final int ROW_ACTION_SWITCH_PARTITION = 4;
     private static final int MEM_PAGE_SIZE = 16 * Numbers.SIZE_1MB;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     private static final CharSequenceHashSet IGNORED_FILES = new CharSequenceHashSet();
@@ -88,11 +93,6 @@ public class TableWriter implements Closeable {
     private final int rootLen;
     private final MemoryMR metaMem;
     private final int partitionBy;
-    private final RowFunction switchPartitionFunction = new SwitchPartitionRowFunction();
-    private final RowFunction openPartitionFunction = new OpenPartitionRowFunction();
-    private final RowFunction noPartitionFunction = new NoPartitionFunction();
-    private final RowFunction noTimestampFunction = new NoTimestampFunction();
-    private final RowFunction o3RowFunction = new O3PartitionFunction();
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final LongList columnTops;
     private final FilesFacade ff;
@@ -154,7 +154,6 @@ public class TableWriter implements Closeable {
     private LongConsumer timestampSetter;
     private LongConsumer replTimestampSetter;
     private int columnCount;
-    private RowFunction rowFunction = openPartitionFunction;
     private boolean avoidIndexOnCommit = false;
     private long partitionTimestampHi;
     private long masterRef = 0;
@@ -178,6 +177,7 @@ public class TableWriter implements Closeable {
     private boolean o3InError = false;
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
+    private int rowActon = ROW_ACTION_OPEN_PARTITION;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot());
@@ -812,7 +812,53 @@ public class TableWriter implements Closeable {
     }
 
     public Row newRow(long timestamp) {
-        return rowFunction.newRow(timestamp);
+        switch (rowActon) {
+            case ROW_ACTION_OPEN_PARTITION:
+                if (timestamp < Timestamps.O3_MIN_TS) {
+                    throw CairoException.instance(0).put("timestamp before 1970-01-01 is not allowed");
+                }
+
+                if (txFile.getMaxTimestamp() == Long.MIN_VALUE) {
+                    txFile.setMinTimestamp(timestamp);
+                    openFirstPartition(timestamp);
+                }
+                // fall thru
+
+                rowActon = ROW_ACTION_SWITCH_PARTITION;
+
+            default: // switch partition
+                bumpMasterRef();
+                if (timestamp > partitionTimestampHi || timestamp < txFile.getMaxTimestamp()) {
+                    if (timestamp < txFile.getMaxTimestamp()) {
+                        return newRowO3(timestamp);
+                    }
+
+                    if (timestamp > partitionTimestampHi && partitionBy != PartitionBy.NONE) {
+                        switchPartition(timestamp);
+                    }
+                }
+                updateMaxTimestamp(timestamp);
+                txFile.append();
+                return row;
+            case ROW_ACTION_NO_PARTITION:
+                bumpMasterRef();
+                if (timestamp < 0) {
+                    throw CairoException.instance(ff.errno()).put("Cannot insert rows before 1970-01-01. Table=").put(path);
+                } else if (timestamp >= txFile.getMaxTimestamp()) {
+                    updateMaxTimestamp(timestamp);
+                    txFile.append();
+                    return row;
+                }
+                throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
+            case ROW_ACTION_NO_TIMESTAMP:
+                bumpMasterRef();
+                txFile.append();
+                return row;
+            case ROW_ACTION_O3:
+                bumpMasterRef();
+                o3TimestampSetter(timestamp);
+                return row;
+        }
     }
 
     public Row newRow() {
@@ -1369,7 +1415,7 @@ public class TableWriter implements Closeable {
                 }
             }
             removePartitionDirectories();
-            rowFunction = openPartitionFunction;
+            rowActon = ROW_ACTION_OPEN_PARTITION;
         }
 
         txFile.resetTimestamp();
@@ -1893,17 +1939,17 @@ public class TableWriter implements Closeable {
             openFirstPartition(this.txFile.getMaxTimestamp());
             if (partitionBy == PartitionBy.NONE) {
                 if (metadata.getTimestampIndex() < 0) {
-                    rowFunction = noTimestampFunction;
+                    rowActon = ROW_ACTION_NO_TIMESTAMP;
                 } else {
-                    rowFunction = noPartitionFunction;
+                    rowActon = ROW_ACTION_NO_PARTITION;
                     timestampSetter = appendTimestampSetter;
                 }
             } else {
-                rowFunction = switchPartitionFunction;
+                rowActon = ROW_ACTION_OPEN_PARTITION;
                 timestampSetter = appendTimestampSetter;
             }
         } else {
-            rowFunction = openPartitionFunction;
+            rowActon = ROW_ACTION_OPEN_PARTITION;
             timestampSetter = appendTimestampSetter;
         }
         activeColumns = columns;
@@ -2456,6 +2502,20 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private Row newRowO3(long timestamp) {
+        LOG.info().$("switched to o3 [table=").utf8(tableName).$(']').$();
+        txFile.beginPartitionSizeUpdate();
+        o3OpenColumns();
+        o3InError = false;
+        o3MasterRef = masterRef;
+        rowActon = ROW_ACTION_O3;
+        if (txFile.transactionLogTxn < 0 && txFile.transactionLogTxn != Long.MIN_VALUE) {
+            replEnableTransactionLog0(-txFile.transactionLogTxn - 1);
+        }
+        o3TimestampSetter(timestamp);
+        return row;
+    }
+
     private long o3CalculatedMoveUncommittedSize(long transientRowsAdded, long committedTransientRowCount) {
         // We want to move as much as possible of uncommitted rows to O3 dedicated memory from column files
         // but not all the column file data is mapped and mapping is relatively expensive.
@@ -2902,7 +2962,7 @@ public class TableWriter implements Closeable {
             avoidIndexOnCommit = o3ErrorCount.get() == 0;
             if (o3LagRowCount == 0) {
                 this.o3MasterRef = -1;
-                rowFunction = switchPartitionFunction;
+                rowActon = ROW_ACTION_SWITCH_PARTITION;
                 // transaction log is either not required or pending
                 if (txFile.transactionLogTxn < 0) {
                     activeColumns = columns;
@@ -4688,7 +4748,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void rowAppend() {
+    private void rowAppend(ObjList<Runnable> activeNullSetters) {
         if ((masterRef & 1) != 0) {
             for (int i = 0; i < columnCount; i++) {
                 if (rowValueIsNotNull.getQuick(i) < masterRef) {
@@ -4743,7 +4803,7 @@ public class TableWriter implements Closeable {
                         throw e;
                     }
                 } else {
-                    rowFunction = openPartitionFunction;
+                    rowActon = ROW_ACTION_OPEN_PARTITION;
                 }
 
                 // undo counts
@@ -4813,6 +4873,10 @@ public class TableWriter implements Closeable {
         for (int i = 0; i < columnCount; i++) {
             o3SetAppendOffset(i, metadata.getColumnType(i), position);
         }
+    }
+
+    private void setRowValueNotNull(int columnIndex) {
+        rowValueIsNotNull.setQuick(columnIndex, masterRef);
     }
 
     /**
@@ -5074,10 +5138,6 @@ public class TableWriter implements Closeable {
         );
     }
 
-    private void setRowValueNotNull(int columnIndex) {
-        rowValueIsNotNull.setQuick(columnIndex, masterRef);
-    }
-
     private void writeRestoreMetaTodo(CharSequence columnName) {
         try {
             writeRestoreMetaTodo();
@@ -5188,104 +5248,10 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private class OpenPartitionRowFunction implements RowFunction {
-        @Override
-        public Row newRow(long timestamp) {
-            if (txFile.getMaxTimestamp() != Long.MIN_VALUE) {
-                return (rowFunction = switchPartitionFunction).newRow(timestamp);
-            }
-            return getRowSlow(timestamp);
-        }
-
-        private Row getRowSlow(long timestamp) {
-            if (timestamp >= Timestamps.O3_MIN_TS) {
-                txFile.setMinTimestamp(timestamp);
-                openFirstPartition(timestamp);
-                return (rowFunction = switchPartitionFunction).newRow(timestamp);
-            }
-            throw CairoException.instance(0).put("timestamp before 1970-01-01 is not allowed");
-        }
-    }
-
-    private class NoPartitionFunction implements RowFunction {
-        @Override
-        public Row newRow(long timestamp) {
-            bumpMasterRef();
-            txFile.append();
-            if (timestamp < 0) {
-                throw CairoException.instance(ff.errno()).put("Cannot insert rows before 1970-01-01. Table=").put(path);
-            } else if (timestamp >= txFile.getMaxTimestamp()) {
-                updateMaxTimestamp(timestamp);
-                return row;
-            }
-            throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
-        }
-    }
-
-    private class NoTimestampFunction implements RowFunction {
-        @Override
-        public Row newRow(long timestamp) {
-            bumpMasterRef();
-            txFile.append();
-            return row;
-        }
-    }
-
-    private class O3PartitionFunction implements RowFunction {
-        @Override
-        public Row newRow(long timestamp) {
-            bumpMasterRef();
-            o3TimestampSetter(timestamp);
-            return row;
-        }
-    }
-
-    private class SwitchPartitionRowFunction implements RowFunction {
-        @Override
-        public Row newRow(long timestamp) {
-            bumpMasterRef();
-            if (timestamp > partitionTimestampHi || timestamp < txFile.getMaxTimestamp()) {
-                return newRow0(timestamp);
-            }
-            updateMaxTimestamp(timestamp);
-            txFile.append();
-            return row;
-        }
-
-        @NotNull
-        private TableWriter.Row newRow0(long timestamp) {
-            if (timestamp < txFile.getMaxTimestamp()) {
-                return newRowO3(timestamp);
-            }
-
-            if (timestamp > partitionTimestampHi && partitionBy != PartitionBy.NONE) {
-                switchPartition(timestamp);
-            }
-
-            updateMaxTimestamp(timestamp);
-            txFile.append();
-            return row;
-        }
-
-        private Row newRowO3(long timestamp) {
-            LOG.info().$("switched to o3 [table=").utf8(tableName).$(']').$();
-            txFile.beginPartitionSizeUpdate();
-            o3OpenColumns();
-            o3InError = false;
-            o3MasterRef = masterRef;
-            rowFunction = o3RowFunction;
-            if (txFile.transactionLogTxn < 0 && txFile.transactionLogTxn != Long.MIN_VALUE) {
-                replEnableTransactionLog0(-txFile.transactionLogTxn - 1);
-            }
-            o3TimestampSetter(timestamp);
-            return row;
-        }
-    }
-
     private class RowImpl implements Row {
         @Override
         public void append() {
-            rowAppend();
+            rowAppend(activeNullSetters);
         }
 
         @Override
