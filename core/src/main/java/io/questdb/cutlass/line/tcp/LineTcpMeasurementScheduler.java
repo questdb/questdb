@@ -780,7 +780,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             break;
                         }
 
-                        case ColumnType.GEOSHORT:
+                        case ColumnType.GEOSHORT: // these are storage tags produced by the reader threads
                         case ColumnType.GEOINT:
                         case ColumnType.GEOLONG:
                         case ColumnType.GEOBYTE: {

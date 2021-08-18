@@ -132,21 +132,33 @@ public class GeoHashes {
         if (hash == null || hash.length() == 0 || parseLen == 0) {
             return GeoHashes.NULL;
         }
-        return fromString(hash, 0, parseLen, 0);
+        return fromString0(hash, 0, parseLen);
     }
 
-    public static long fromString(CharSequence hash, int start, int parseLen, int bitsPrecision) throws NumericException {
+    public static long fromString(CharSequence hash, int start, int parseLen) throws NumericException {
         if (start < 0 || parseLen < 0 || parseLen > MAX_STRING_LENGTH || (hash != null && hash.length() != 0 && start + parseLen > hash.length())) {
             throw NumericException.INSTANCE;
         }
         if (hash == null || parseLen == 0) {
             return NULL;
         }
+        return fromString0(hash, start, start + parseLen);
+    }
+
+    public static long fromString(CharSequence hash, int start, int parseLen, int bitsPrecision) throws NumericException {
+        long output = fromString(hash, start, parseLen);
+        if (output == NULL) {
+            return output;
+        }
         if (bitsPrecision != 0 && (bitsPrecision < 1 || bitsPrecision > MAX_BITS_LENGTH || parseLen * 5 < bitsPrecision)) {
             throw NumericException.INSTANCE;
         }
+        return bitsPrecision == 0 ? output : output >>> (parseLen * 5 - bitsPrecision);
+    }
+
+    private static long fromString0(CharSequence hash, int start, int end) throws NumericException {
         long output = 0;
-        for (int i = start; i < start + parseLen; ++i) {
+        for (int i = start; i < end; ++i) {
             char c = hash.charAt(i);
             if (c > MIN_CHAR && c < MAX_CHAR) {
                 byte idx = base32Indexes[(int) c - 48];
@@ -157,7 +169,7 @@ public class GeoHashes {
             }
             throw NumericException.INSTANCE;
         }
-        return bitsPrecision == 0 ? output : output >>> (parseLen * 5 - bitsPrecision);
+        return output;
     }
 
     public static void fromStringToBits(final CharSequenceHashSet prefixes, int columnType, final DirectLongList prefixesBits) {
@@ -170,7 +182,7 @@ public class GeoHashes {
                 if (prefix == null) {
                     continue;
                 }
-                final long hash = fromString(prefix, 0, prefix.length(), 0);
+                final long hash = fromString(prefix, prefix.length());
                 if (hash == NULL) {
                     continue;
                 }
