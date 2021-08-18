@@ -42,7 +42,6 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class SampleByTest extends AbstractGriffinTest {
@@ -2098,6 +2097,90 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGeohashInterpolated() throws Exception {
+        assertFailure(
+                "select k, first(b) from x sample by 3h fill(linear)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_geohash(30) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                10,
+                "Unsupported interpolation type: GEOHASH(6c)"
+        );
+    }
+
+    @Test
+    public void testGeohashFillPrev() throws Exception {
+        assertQuery(
+                "s\tk\tfirst\tfirst1\tfirst2\tfirst3\n" +
+                        "TJW\t1970-01-03T00:00:00.000000Z\t010\tc93\tfu3r7c\t5ewm40wx\n" +
+                        "PSWH\t1970-01-03T00:00:00.000000Z\t\t\t\t\n" +
+                        "TJW\t1970-01-03T00:30:00.000000Z\t010\tc93\tfu3r7c\t5ewm40wx\n" +
+                        "PSWH\t1970-01-03T00:30:00.000000Z\t\t\t\t\n" +
+                        "TJW\t1970-01-03T01:00:00.000000Z\t010\tc93\tfu3r7c\t5ewm40wx\n" +
+                        "PSWH\t1970-01-03T01:00:00.000000Z\t110\ttk5\txn8nmw\t0n2gm6r7\n",
+                "select s, k, " +
+                        "first(g1), " +
+                        "first(g2), " +
+                        "first(g4), " +
+                        "first(g8) " +
+                        "from x sample by 30m fill(PREV)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_geohash(3) g1," +
+                        " rnd_geohash(15) g2," +
+                        " rnd_geohash(30) g4," +
+                        " rnd_geohash(40) g8," +
+                        " rnd_symbol(2,3,4,0) s, " +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(2)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
+    public void testGeohashFillNull() throws Exception {
+        assertQuery(
+                "s\tk\tfirst\tfirst1\tfirst2\tfirst3\n" +
+                        "TJW\t1970-01-03T00:00:00.000000Z\t010\tc93\tfu3r7c\t5ewm40wx\n" +
+                        "PSWH\t1970-01-03T00:00:00.000000Z\t\t\t\t\n" +
+                        "TJW\t1970-01-03T00:30:00.000000Z\t\t\t\t\n" +
+                        "PSWH\t1970-01-03T00:30:00.000000Z\t\t\t\t\n" +
+                        "TJW\t1970-01-03T01:00:00.000000Z\t\t\t\t\n" +
+                        "PSWH\t1970-01-03T01:00:00.000000Z\t110\ttk5\txn8nmw\t0n2gm6r7\n",
+                "select s, k, " +
+                        "first(g1), " +
+                        "first(g2), " +
+                        "first(g4), " +
+                        "first(g8) " +
+                        "from x sample by 30m fill(NULL)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_geohash(3) g1," +
+                        " rnd_geohash(15) g2," +
+                        " rnd_geohash(30) g4," +
+                        " rnd_geohash(40) g8," +
+                        " rnd_symbol(2,3,4,0) s, " +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(2)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
     public void testSampleBadFunctionInterpolated() throws Exception {
         assertFailure(
                 "select b, sumx(a, 'ac') k from x sample by 3h fill(linear)",
@@ -3471,7 +3554,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 10,
-                "Unsupported type"
+                "Unsupported interpolation type"
         );
     }
 

@@ -39,7 +39,6 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -1658,6 +1657,12 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRndSymbolEmptyArgs() throws Exception {
+        assertFailure(7, "function rnd_symbol expects arguments but has none",
+                "select rnd_symbol() from long_sequence(1)");
+    }
+
+    @Test
     public void testCompileSet() throws Exception {
         String query = "SET x = y";
         assertMemoryLeak(() -> Assert.assertEquals(SET, compiler.compile(query, sqlExecutionContext).getType()));
@@ -1715,8 +1720,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         });
     }
 
-    // TODO: I would expect an implicit cast char to string to geohash
-    @Ignore(value = "inconvertible types: CHAR -> GEOHASH(1c) [from='s', to=geohash]")
     @Test
     public void testCreateAsSelectGeoHashByteSizedStorage1() throws Exception {
         assertMemoryLeak(() -> {
@@ -1725,17 +1728,16 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     "select geohash from geohash",
                     "create table geohash (geohash geohash(1c))",
                     null,
-                    "insert into geohash values('s')",
-                    "geohash\n" +
-                            "s\n",
                     true,
                     true,
                     true
             );
+            executeInsert("insert into geohash values('s')");
+            assertSql("geohash", "geohash\n" +
+                    "s\n");
         });
     }
 
-    @Ignore(value = "Da funk, the 's' is a valid geohash of the correct size and it is not inserted")
     @Test
     public void testCreateAsSelectGeoHashByteSizedStorage2() throws Exception {
         assertMemoryLeak(() -> {
@@ -1744,17 +1746,16 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     "select geohash from geohash",
                     "create table geohash (geohash geohash(1c))",
                     null,
-                    "insert into geohash values(cast('s' as string))",
-                    "geohash\n" +
-                            "s\n",
                     true,
                     true,
                     true
             );
+            executeInsert("insert into geohash values(cast('s' as string))");
+            assertSql("geohash", "geohash\n" +
+                    "s\n");
         });
     }
 
-    @Ignore(value = "Da funk, the 's' is a valid geohash of the correct size and it is not inserted")
     @Test
     public void testCreateAsSelectGeoHashByteSizedStorage3() throws Exception {
         assertMemoryLeak(() -> {
@@ -1763,13 +1764,13 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     "select geohash from geohash",
                     "create table geohash (geohash geohash(1c))",
                     null,
-                    "insert into geohash values(cast('s' as geohash(1c)))",
-                    "geohash\n" +
-                            "s\n",
                     true,
                     true,
                     true
             );
+            executeInsert("insert into geohash values(cast('s' as geohash(1c)))");
+            assertSql("geohash", "geohash\n" +
+                    "s\n");
         });
     }
 
