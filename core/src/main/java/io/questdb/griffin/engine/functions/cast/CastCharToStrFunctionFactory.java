@@ -48,6 +48,10 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function func = args.getQuick(0);
+        return newInstance(func);
+    }
+
+    public Function newInstance(Function func) {
         if (func.isConstant()) {
             final char value = func.getChar(null);
             if (value == 0) {
@@ -57,7 +61,7 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
             sink.put(value);
             return new StrConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        return new Func(func);
     }
 
     private static class Func extends StrFunction implements UnaryFunction {
