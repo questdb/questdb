@@ -29,7 +29,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class SqlKeywordsTest {
-
     @Test
     public void testIsCharsGeoHashConstantValid() {
         Assert.assertTrue(SqlKeywords.isCharsGeoHashConstant("#0"));
