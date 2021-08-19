@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.IntIntHashMap;
@@ -108,6 +109,8 @@ public class CairoLineProtoParserSupport {
                     row.putTimestamp(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                     break;
                 case ColumnType.CHAR:
+                    row.putChar(columnIndex, value.length() == 2 ? (char) 0 : value.charAt(1)); // ignoring quotes
+                    break;
                 case ColumnType.BINARY:
                     // not supported
                     break;

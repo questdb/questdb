@@ -371,7 +371,9 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                     valid = columnTypeTag == ColumnType.BOOLEAN;
                     break;
                 case ColumnType.STRING:
-                    valid = columnTypeTag == ColumnType.STRING || columnTypeTag == ColumnType.GEOHASH;
+                    valid = columnTypeTag == ColumnType.STRING ||
+                            columnTypeTag == ColumnType.CHAR ||
+                            columnTypeTag == ColumnType.GEOHASH;
                     break;
                 case ColumnType.DOUBLE:
                     valid = columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT;
