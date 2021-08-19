@@ -65,7 +65,7 @@ public final class OperatorExpression {
         add(new OperatorExpression("within", 7, true, SET, false));
     }};
 
-    static final LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression> opMap = new LowerCaseAsciiCharSequenceObjHashMap<>() {{
+    static final LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression> opMap = new LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression>() {{
         for (int i = 0, k = operators.size(); i < k; i++) {
             OperatorExpression op = operators.getQuick(i);
             put(op.token, op);
