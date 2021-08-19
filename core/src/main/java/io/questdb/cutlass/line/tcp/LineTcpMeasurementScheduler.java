@@ -547,6 +547,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                                         0,
                                         entity.getValue().length(),
                                         Numbers.decodeLowShort(colTypeMeta));
+                                // as far as entity type goes, rather than store something like
+                                // NewLineProtoParser.ENTITY_TYPE_GEOHASH we simply store the storageTag
+                                // so that the writer thread can directly switch over it
                                 Unsafe.getUnsafe().putByte(bufPos, (byte) Numbers.decodeHighShort(colTypeMeta));
                                 bufPos += Byte.BYTES;
                                 Unsafe.getUnsafe().putLong(bufPos, geohash);
@@ -649,6 +652,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                     }
 
                     switch (entityType) {
+                        //    public static final int N_ENTITY_TYPES = ENTITY_TYPE_CACHED_TAG + 1;
+                        //    private static final byte ENTITY_TYPE_NONE = (byte) 0xff;
                         case NewLineProtoParser.ENTITY_TYPE_TAG: {
                             int len = Unsafe.getUnsafe().getInt(bufPos);
                             bufPos += Integer.BYTES;
@@ -781,8 +786,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                         }
 
                         case ColumnType.GEOSHORT: // these are storage tags produced by the reader threads
-                        case ColumnType.GEOINT:
-                        case ColumnType.GEOLONG:
+                        case ColumnType.GEOINT:   // rather than emit a specific NewLineProtoParser.ENTITY_TYPE_GEOHASH
+                        case ColumnType.GEOLONG:  // and then switch over the storageTag, we simply emit the later.
                         case ColumnType.GEOBYTE: {
                             long geohash = Unsafe.getUnsafe().getLong(bufPos);
                             bufPos += Long.BYTES;
