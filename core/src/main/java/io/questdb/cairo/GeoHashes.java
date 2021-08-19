@@ -132,7 +132,7 @@ public class GeoHashes {
         if (hash == null || hash.length() == 0 || parseLen == 0) {
             return GeoHashes.NULL;
         }
-        if (parseLen < 0 || parseLen > hash.length() || parseLen > MAX_STRING_LENGTH) {
+        if (parseLen <  0 || parseLen > hash.length() || parseLen > MAX_STRING_LENGTH) {
             throw NumericException.INSTANCE;
         }
         return fromString0(hash, 0, parseLen);

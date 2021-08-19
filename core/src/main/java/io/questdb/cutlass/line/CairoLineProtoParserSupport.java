@@ -85,7 +85,12 @@ public class CairoLineProtoParserSupport {
                 case ColumnType.BYTE:
                     long v = Numbers.parseLong(value, 0, value.length() - 1);
                     if (v < Byte.MIN_VALUE || v > Byte.MAX_VALUE) {
-                        throw CairoException.instance(0).put("line protocol integer is out of byte bounds [columnIndex=").put(columnIndex).put(", v=").put(v).put(']');
+                        throw CairoException.instance(0)
+                                .put("line protocol integer is out of byte bounds [columnIndex=")
+                                .put(columnIndex)
+                                .put(", v=")
+                                .put(v)
+                                .put(']');
                     }
                     row.putByte(columnIndex, (byte) v);
                     break;
@@ -102,10 +107,12 @@ public class CairoLineProtoParserSupport {
                 case ColumnType.TIMESTAMP:
                     row.putTimestamp(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                     break;
-                case ColumnType.GEOSHORT:
-                case ColumnType.GEOINT:
-                case ColumnType.GEOLONG:
-                case ColumnType.GEOBYTE:
+                case ColumnType.CHAR:
+                case ColumnType.BINARY:
+                    // not supported
+                    break;
+                default:
+                    // then it is a geohash
                     row.putGeoHash(
                             columnIndex,
                             storageTag,
@@ -116,9 +123,6 @@ public class CairoLineProtoParserSupport {
                                     columnTypeMeta.get(columnIndex)
                             )
                     );
-                    break;
-                default:
-                    break;
             }
         } catch (NumericException e) {
             LOG.info().$("cast error [value=").$(value).$(", toType=").$(ColumnType.nameOf(columnType)).$(']').$();
