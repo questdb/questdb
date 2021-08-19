@@ -319,6 +319,19 @@ class ExpressionParser {
                         }
                         break;
 
+                    case '#':
+                        if (SqlKeywords.isCharsGeoHashConstant(tok)) { // e.g. #sp052w92p1p8
+                            thisBranch = BRANCH_CONSTANT;
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, position));
+                            break;
+                        } else if (SqlKeywords.isBitsGeoHashConstant(tok)) { // e.g. ##01110001...
+                            thisBranch = BRANCH_CONSTANT;
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, position));
+                            break;
+                        }
+                        processDefaultBranch = true;
+                        break;
+
                     case '(':
                         if (prevBranch == BRANCH_RIGHT_BRACE) {
                             throw SqlException.$(position, "not a method call");

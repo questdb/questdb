@@ -354,6 +354,12 @@ public class GeoHashesTest {
         });
     }
 
+    @Test
+    public void testIsValidChar() {
+        Assert.assertTrue('@' < 'z' + 1);
+        Assert.assertFalse(GeoHashes.isValidChar('@'));
+    }
+
     private void testUnsafeFromStringTruncatingNl(CharSequence token, BiFunction<Long, Long, Void> code) {
         final int len = token.length();
         final long lo = Unsafe.malloc(len);

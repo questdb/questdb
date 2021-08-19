@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -459,14 +460,38 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             return Constants.getTypeConstant(columnType);
         }
 
-        // geohash?
+        // geohash kingdom
+
+        // geohash type constant
+
         if (startsWithGeoHashKeyword(tok)) {
             int bits = SqlParser.parseGeoHashSize(position, 7, tok);
             return GeoHashTypeConstant.getInstanceByPrecision(bits);
         }
 
+        if (len > 1 && tok.charAt(0) == '#') {
+            // geohash from chars constant
+            try {
+                return GeoHashConstant.newInstance(
+                        GeoHashes.fromString(tok, 1, len - 1),
+                        ColumnType.geohashWithPrecision(5 * (len - 1))); // minus leading '#'
+            } catch (NumericException e) {
+            }
+
+            if (len > 2 && tok.charAt(1) == '#') {
+                // geohash from binary constant
+                try {
+                    return GeoHashConstant.newInstance(
+                            GeoHashes.fromBitString(tok, 2),
+                            ColumnType.geohashWithPrecision(len - 2)); // minus leading '##'
+                } catch (NumericException e) {
+                }
+            }
+        }
+
         throw SqlException.position(position).put("invalid constant: ").put(tok);
     }
+
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
         return new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
