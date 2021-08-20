@@ -637,10 +637,12 @@ public final class IntervalUtils {
             parseInterval(seq, lo, p, operation, out);
             long low = getEncodedPeriodLo(out, index);
             long hi = getEncodedPeriodHi(out, index);
-            if(period < 0) {
+            long adjusted_hi = Timestamps.addPeriod(hi, type, period);
+            if(adjusted_hi < low) {
+                hi = low;
                 low = Timestamps.addPeriod(low, type, period);
             } else {
-                hi = Timestamps.addPeriod(hi, type, period);
+                hi = adjusted_hi;
             }
             replaceHiLoInterval(low, hi, operation, out);
             return;
@@ -650,7 +652,7 @@ public final class IntervalUtils {
         try {
             long low = TimestampFormatUtils.tryParse(seq, lo, p);
             long hi = Timestamps.addPeriod(low, type, period);
-            if(period < 0) {
+            if(hi < low) {
                 addHiLoInterval(hi, low, operation, out);
             } else {
                 addHiLoInterval(low, hi, operation, out);

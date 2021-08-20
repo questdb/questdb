@@ -109,7 +109,7 @@ public class EqTimestampStrFunctionFactoryTest extends AbstractFunctionFactoryTe
         callAndAssert(signature, parseUTCTimestamp(t1), "2020-12-31T23:59:59.000000Z;1s", true);
         callAndAssert(signature, parseUTCTimestamp(t1), "2020-12-31T23:59:59.000000Z;-1s", true);
         callAndAssert(signature, parseUTCTimestamp(t1), "2019;1y", true);
-        callAndAssert(signature, parseUTCTimestamp(t1), "2020;-1s", true);
+        callAndAssert(signature, parseUTCTimestamp(t1), "2020;-1s", false);
     }
 
     private void testTimestampAsStringWithPeriodAndCount(String signature) throws NumericException, SqlException {
@@ -122,7 +122,7 @@ public class EqTimestampStrFunctionFactoryTest extends AbstractFunctionFactoryTe
         callAndAssert(signature, parseUTCTimestamp(t1), "2020-12-31T23:59:59.000000Z;30m;2d;5", true);
         callAndAssert(signature, parseUTCTimestamp(t1), "2020-12-31T23:29:59.000000Z;30m;2d;5", true);
         callAndAssert(signature, parseUTCTimestamp(t1), "2020-12-31T23:59:59.000001Z;30m;2d;5", false);
-        callAndAssert(signature, parseUTCTimestamp(t1), "2020-12-23;-1s;2d;5", true);
+        callAndAssert(signature, parseUTCTimestamp(t1), "2020-12-23;-1s;2d;5", false);
         callAndAssert(signature, parseUTCTimestamp(t2), "2020-12-23;-1s;2d;5", true);
         callAndAssert(signature, parseUTCTimestamp(t1), "2020-12-24T00:00:00.000000Z;-1s;2d;5", true);
     }

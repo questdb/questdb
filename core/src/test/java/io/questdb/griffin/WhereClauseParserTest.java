@@ -384,22 +384,22 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testComplexIntervalNeg1() throws Exception {
-        runWhereTest("timestamp in '2015-02-23T10:00:55;-15s'", "[{lo=2015-02-23T10:00:40.000000Z, hi=2015-02-23T10:00:55.999999Z}]");
+        runWhereTest("timestamp in '2015-02-23T10:00:55;-15s'", "[{lo=2015-02-23T10:00:40.000000Z, hi=2015-02-23T10:00:55.000000Z}]");
     }
 
     @Test
     public void testComplexIntervalNeg2() throws Exception {
-        runWhereTest("timestamp in '2015-02-23T10:00:55;-30m'", "[{lo=2015-02-23T09:30:55.000000Z, hi=2015-02-23T10:00:55.999999Z}]");
+        runWhereTest("timestamp in '2015-02-23T10:00:55;-30m'", "[{lo=2015-02-23T09:30:55.000000Z, hi=2015-02-23T10:00:55.000000Z}]");
     }
 
     @Test
     public void testComplexIntervalNeg3() throws Exception {
-        runWhereTest("timestamp in '2015-02-23T10:00:55;-4h'", "[{lo=2015-02-23T06:00:55.000000Z, hi=2015-02-23T10:00:55.999999Z}]");
+        runWhereTest("timestamp in '2015-02-23T10:00:55;-4h'", "[{lo=2015-02-23T06:00:55.000000Z, hi=2015-02-23T10:00:55.000000Z}]");
     }
 
     @Test
     public void testComplexIntervalNeg4() throws Exception {
-        runWhereTest("timestamp in '2015-02-23T10:00:55;-7d'", "[{lo=2015-02-16T10:00:55.000000Z, hi=2015-02-23T10:00:55.999999Z}]");
+        runWhereTest("timestamp in '2015-02-23T10:00:55;-7d'", "[{lo=2015-02-16T10:00:55.000000Z, hi=2015-02-23T10:00:55.000000Z}]");
     }
 
     @Test
