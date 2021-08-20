@@ -556,7 +556,8 @@ open module io.questdb {
 
             // metadata functions
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,
-
+            // geohash functions
+            io.questdb.griffin.engine.functions.geohash.GeoHashFromCoordinatesFunctionFactory,
             // bit operations
             BitwiseAndLongFunctionFactory,
             BitwiseOrLongFunctionFactory,
