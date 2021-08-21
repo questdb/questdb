@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -57,14 +58,15 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
     }
 
     public Function newInstance(int argPosition, int geoType, Function value) throws SqlException {
+        assert value.getType() == ColumnType.STRING || value.getType() == ColumnType.CHAR;
         if (value.isConstant()) {
             try {
                 int bitsPrecision = GeoHashes.getBitsPrecision(geoType);
                 assert bitsPrecision > 0 && bitsPrecision < MAX_BITS_LENGTH + 1;
-                return GeoHashConstant.newInstance(
-                        getGeoHashImpl(value.getStr(null), argPosition, bitsPrecision),
-                        geoType
-                );
+                    return GeoHashConstant.newInstance(
+                            getGeoHashImpl(value.getStr(null), argPosition, bitsPrecision),
+                            geoType
+                    );
             } catch (NumericException e) {
                 // throw SqlException if string literal is invalid geohash
                 // runtime parsing errors will result in NULL geohash

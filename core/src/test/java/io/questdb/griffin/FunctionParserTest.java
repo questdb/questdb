@@ -59,6 +59,15 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class FunctionParserTest extends BaseFunctionFactoryTest {
+    @Test
+    public void overloadFromNullToString() {
+        Assert.assertNotEquals(ColumnType.NO_OVERLOAD, ColumnType.overloadDistance(ColumnType.NULL, ColumnType.STRING));
+    }
+
+    @Test
+    public void overloadFromStringToNull() {
+        Assert.assertEquals(ColumnType.NO_OVERLOAD, ColumnType.overloadDistance(ColumnType.STRING, ColumnType.NULL));
+    }
 
     @Test
     public void overloadFromCharToDoubleDoesNotExist() {
@@ -87,9 +96,9 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void overloadBetweenNullAndAnyTypeIsZero() {
-        for (short type = ColumnType.BOOLEAN; type <= ColumnType.MAX; type++) {
+        for (short type = ColumnType.BOOLEAN; type < ColumnType.NULL; type++) {
             Assert.assertEquals(0, ColumnType.overloadDistance(ColumnType.NULL, type));
-            Assert.assertEquals(0, ColumnType.overloadDistance(type, ColumnType.NULL));
+            Assert.assertEquals(ColumnType.NO_OVERLOAD, ColumnType.overloadDistance(type, ColumnType.NULL));
         }
     }
 
@@ -1348,7 +1357,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+            public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
                 return new GeoHashFunction(type) {
                     @Override
                     public byte getGeoHashByte(Record rec) {

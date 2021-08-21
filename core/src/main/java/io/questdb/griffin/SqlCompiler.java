@@ -32,7 +32,6 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
-import io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowSearchPathCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStringsCursorFactory;
@@ -61,7 +60,6 @@ public class SqlCompiler implements Closeable {
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
     private static final CastStrToGeoHashFunctionFactory GEO_HASH_FUNCTION_FACTORY = new CastStrToGeoHashFunctionFactory();
-    private static final CastCharToStrFunctionFactory CHAR_TO_STR_FUNCTION_FACTORY = new CastCharToStrFunctionFactory();
     protected final GenericLexer lexer;
     protected final Path path = new Path();
     protected final CairoEngine engine;
@@ -241,6 +239,7 @@ public class SqlCompiler implements Closeable {
         int wPutSymChar = asm.poolMethod(TableWriter.Row.class, "putSym", "(IC)V");
         int wPutStr = asm.poolMethod(TableWriter.Row.class, "putStr", "(ILjava/lang/CharSequence;)V");
         int wPutTimestampStr = asm.poolMethod(TableWriter.Row.class, "putTimestamp", "(ILjava/lang/CharSequence;)V");
+        int wPutGeoHashStr = asm.poolMethod(TableWriter.Row.class, "putGeoHashStr", "(ILjava/lang/CharSequence;)V");
         int wPutStrChar = asm.poolMethod(TableWriter.Row.class, "putStr", "(IC)V");
         int wPutChar = asm.poolMethod(TableWriter.Row.class, "putChar", "(IC)V");
         int wPutBin = asm.poolMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
@@ -578,13 +577,18 @@ public class SqlCompiler implements Closeable {
                     }
                     break;
                 case ColumnType.CHAR:
-                    asm.invokeInterface(rGetChar, 1);
                     switch (toColumnTypeTag) {
                         case ColumnType.STRING:
+                            asm.invokeInterface(rGetChar, 1);
                             asm.invokeVirtual(wPutStrChar);
                             break;
                         case ColumnType.SYMBOL:
+                            asm.invokeInterface(rGetChar, 1);
                             asm.invokeVirtual(wPutSymChar);
+                            break;
+                        case ColumnType.GEOHASH:
+                            asm.invokeInterface(rGetStr, 1);
+                            asm.invokeVirtual(wPutGeoHashStr);
                             break;
                         default:
                             asm.invokeVirtual(wPutChar);
@@ -607,6 +611,9 @@ public class SqlCompiler implements Closeable {
                             break;
                         case ColumnType.TIMESTAMP:
                             asm.invokeVirtual(wPutTimestampStr);
+                            break;
+                        case ColumnType.GEOHASH:
+                            asm.invokeVirtual(wPutGeoHashStr);
                             break;
                         default:
                             asm.invokeVirtual(wPutStr);
@@ -2454,8 +2461,6 @@ public class SqlCompiler implements Closeable {
                         }
                         break;
                     case ColumnType.CHAR:
-                        function = CHAR_TO_STR_FUNCTION_FACTORY.newInstance(function);
-                        // fall through to STRING
                     case ColumnType.STRING:
                         function = GEO_HASH_FUNCTION_FACTORY.newInstance(functionPosition, columnType, function);
                         break;

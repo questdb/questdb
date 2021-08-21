@@ -585,10 +585,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                             Double.isNaN(arg.getDouble(null)) &&
                             (sigArgTypeTag == ColumnType.LONG || sigArgTypeTag == ColumnType.INT);
 
-                    // Implicit cast from CHAR to STRING
-                    overloadPossible |= argTypeTag == ColumnType.CHAR &&
-                            sigArgTypeTag == ColumnType.STRING;
-
                     // Implicit cast from STRING to TIMESTAMP
                     overloadPossible |= argTypeTag == ColumnType.STRING &&
                             sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();

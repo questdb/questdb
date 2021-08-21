@@ -1775,6 +1775,58 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateAsSelectGeoHashByteSizedStorage4() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "geohash\n",
+                "select geohash from geohash",
+                "create table geohash (geohash geohash(1c))",
+                null,
+                "insert into geohash " +
+                        "select cast(rnd_str('q','u','e','o','l') as char) from long_sequence(10)",
+                "geohash\n" +
+                        "q\n" +
+                        "\n" +
+                        "\n" +
+                        "u\n" +
+                        "u\n" +
+                        "\n" +
+                        "e\n" +
+                        "u\n" +
+                        "u\n" +
+                        "\n",
+                true,
+                true,
+                true
+        ));
+    }
+
+    @Test
+    public void testCreateAsSelectGeoHashByteSizedStorage5() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "geohash\n",
+                "select geohash from geohash",
+                "create table geohash (geohash geohash(1c))",
+                null,
+                "insert into geohash " +
+                        "select rnd_str('q','u','e','o','l') from long_sequence(10)",
+                "geohash\n" +
+                        "q\n" +
+                        "\n" +
+                        "\n" +
+                        "u\n" +
+                        "u\n" +
+                        "\n" +
+                        "e\n" +
+                        "u\n" +
+                        "u\n" +
+                        "\n",
+                true,
+                true,
+                true
+        ));
+    }
+
+    @Test
     public void testCreateAsSelect() throws SqlException {
         String expectedData = "a1\ta\tb\tc\td\te\tf\tf1\tg\th\ti\tj\tj1\tk\tl\tm\n" +
                 "1569490116\tNaN\tfalse\t\tNaN\t0.7611\t428\t-1593\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +

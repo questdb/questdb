@@ -94,7 +94,7 @@ public final class ColumnType {
             /* 7  DATE     */, {TIMESTAMP, LONG}
             /* 8  TIMESTAMP*/, {LONG}
             /* 9  FLOAT    */, {DOUBLE}
-            /* 10  DOUBLE  */, {}
+            /* 10 DOUBLE   */, {}
             /* 11 STRING   */, {} // STRING can be cast to TIMESTAMP, but it's handled in a special way
             /* 12 SYMBOL   */, {STRING}
     };
@@ -173,9 +173,14 @@ public final class ColumnType {
 
     static {
         overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE];
-        for (short i = UNDEFINED; i < MAX; i++) {
-            for (short j = BOOLEAN; j < MAX; j++) {
-                if (i < overloadPriority.length) {
+        for (short i = UNDEFINED; i < OVERLOAD_MATRIX_SIZE; i++) {
+            for (short j = 0; j < OVERLOAD_MATRIX_SIZE; j++) {
+                if (i == NULL) {
+                    // NULL can be accepted for any argument type in functoin signature
+                    // Opposite is not true, if function signature expects O type
+                    // no other type but NULL is compatible
+                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = 0;
+                } else if (i < overloadPriority.length) {
                     int index = indexOf(overloadPriority[i], j);
                     overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = index >= 0 ? index + 1 : NO_OVERLOAD;
                 } else {

@@ -4860,6 +4860,36 @@ public class TableWriter implements Closeable {
             notNull(index);
         }
 
+        public void putGeoHashStr(int index, CharSequence value) {
+            int type = metadata.getColumnType(index);
+            int typeBits = GeoHashes.getBitsPrecision(type);
+            int parseChars = (typeBits - 1) / 5 + 1;
+            long val;
+            try {
+                long lvalue = GeoHashes.fromString(value, parseChars);
+                val = lvalue >>> (parseChars * 5 - typeBits);
+            } catch (NumericException e) {
+                val = GeoHashes.NULL;
+            }
+
+            final MemoryA primaryColumn = getPrimaryColumn(index);
+            switch (GeoHashes.pow2SizeOf(type)) {
+                case 0:
+                    primaryColumn.putByte((byte)val);
+                    break;
+                case 1:
+                    primaryColumn.putShort((short) val);
+                    break;
+                case 2:
+                    primaryColumn.putInt((int) val);
+                    break;
+                default:
+                    primaryColumn.putLong(val);
+                    break;
+            }
+            notNull(index);
+        }
+
         private MemoryA getPrimaryColumn(int columnIndex) {
             return activeColumns.getQuick(getPrimaryColumnIndex(columnIndex));
         }
