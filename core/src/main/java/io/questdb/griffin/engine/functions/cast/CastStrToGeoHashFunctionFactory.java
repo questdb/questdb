@@ -63,10 +63,10 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
             try {
                 int bitsPrecision = GeoHashes.getBitsPrecision(geoType);
                 assert bitsPrecision > 0 && bitsPrecision < MAX_BITS_LENGTH + 1;
-                    return GeoHashConstant.newInstance(
-                            getGeoHashImpl(value.getStr(null), argPosition, bitsPrecision),
-                            geoType
-                    );
+                return GeoHashConstant.newInstance(
+                        getGeoHashImpl(value.getStr(null), argPosition, bitsPrecision),
+                        geoType
+                );
             } catch (NumericException e) {
                 // throw SqlException if string literal is invalid geohash
                 // runtime parsing errors will result in NULL geohash
