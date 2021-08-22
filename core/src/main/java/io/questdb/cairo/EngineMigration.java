@@ -357,7 +357,7 @@ public class EngineMigration {
             long tempMem8b = migrationContext.getTempMemory(8);
 
             MemoryARW txFileUpdate = migrationContext.getTempVirtualMem();
-//            txFileUpdate.jumpTo(0);
+            txFileUpdate.jumpTo(0);
 
             try {
                 int symbolsCount = txMem.getInt(TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT);

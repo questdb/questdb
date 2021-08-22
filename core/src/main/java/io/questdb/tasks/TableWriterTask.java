@@ -40,6 +40,7 @@ public class TableWriterTask implements Closeable {
     private long appendPtr;
     private long appendLim;
     private long instance;
+    private long sequence;
     private long ip;
 
     public TableWriterTask(long size) {
@@ -65,7 +66,9 @@ public class TableWriterTask implements Closeable {
             long txMem,
             long txMemSize,
             long metaMem,
-            long metaMemSize
+            long metaMemSize,
+            long slaveIP,
+            long sequence
     ) {
         long tskSize = this.dataSize;
         if (tskSize < txMemSize + metaMemSize + 16) {
@@ -79,6 +82,8 @@ public class TableWriterTask implements Closeable {
         this.type = TSK_SLAVE_SYNC;
         this.tableId = tableId;
         this.tableName = tableName;
+        this.ip = slaveIP;
+        this.sequence = sequence;
     }
 
     public long getAppendOffset() {
@@ -107,6 +112,10 @@ public class TableWriterTask implements Closeable {
 
     public void setIp(long ip) {
         this.ip = ip;
+    }
+
+    public long getSequence() {
+        return sequence;
     }
 
     public long getTableId() {

@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryFCRImpl;
-import io.questdb.cairo.vm.MemoryLogAImpl;
 import io.questdb.cairo.vm.ReplMemoryLogCAImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
@@ -50,6 +49,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -80,7 +80,7 @@ public class TableWriter implements Closeable {
     private final static RemoveFileLambda REMOVE_OR_EXCEPTION = TableWriter::removeOrException;
     final ObjList<MemoryMAR> columns;
     private final ObjList<MemoryMA> logColumns;
-    private final ObjList<MemoryLogA<MemoryA>> replSpliceColumns;
+    //    private final ObjList<MemoryLogA<MemoryA>> replSpliceColumns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
     private final ObjList<WriterTransientSymbolCountChangeHandler> denseSymbolTransientCountHandlers;
@@ -89,7 +89,8 @@ public class TableWriter implements Closeable {
     private final Path path;
     private final Path other;
     private final LongList rowValueIsNotNull = new LongList();
-    private final RowImpl row = new RowImpl();
+    private final Row regularRow = new RowImpl();
+    private final Row transactionLogRow = new TransactionLogRowImpl();
     private final int rootLen;
     private final MemoryMR metaMem;
     private final int partitionBy;
@@ -145,10 +146,14 @@ public class TableWriter implements Closeable {
     private final MemoryFR slaveMetaMem = new MemoryFCRImpl();
     private final SCSequence commandSubSeq;
     private final LongIntHashMap replPartitionHash = new LongIntHashMap();
+    private final MemoryMATL replO3TimestampMem = new ReplMemoryLogCAImpl();
+    // Latest command sequence per command source.
+    // Publisher source is identified by a long value
+    private final LongLongHashMap cmdSequences = new LongLongHashMap();
+    private Row row = regularRow;
     private long todoTxn;
-    private MemoryCA o3TimestampMem;
+    private MemoryMAT o3TimestampMem;
     private final O3ColumnUpdateMethod o3MoveLagRef = this::o3MoveLag0;
-    private ReplMemoryLogCAImpl replO3TimestampMem = new ReplMemoryLogCAImpl();
     private MemoryARW o3TimestampMemCpy;
     private long lockFd = -1;
     private LongConsumer timestampSetter;
@@ -286,7 +291,6 @@ public class TableWriter implements Closeable {
             this.rowValueIsNotNull.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount * 2);
             this.logColumns = new ObjList<>(columnCount * 2);
-            this.replSpliceColumns = new ObjList<>(columnCount * 2);
             this.o3Columns = new ObjList<>(columnCount * 2);
             this.o3Columns2 = new ObjList<>(columnCount * 2);
             this.activeColumns = columns;
@@ -812,8 +816,10 @@ public class TableWriter implements Closeable {
     }
 
     public Row newRow(long timestamp) {
+
         switch (rowActon) {
             case ROW_ACTION_OPEN_PARTITION:
+
                 if (timestamp < Timestamps.O3_MIN_TS) {
                     throw CairoException.instance(0).put("timestamp before 1970-01-01 is not allowed");
                 }
@@ -838,27 +844,30 @@ public class TableWriter implements Closeable {
                     }
                 }
                 updateMaxTimestamp(timestamp);
-                txFile.append();
-                return row;
+                break;
             case ROW_ACTION_NO_PARTITION:
-                bumpMasterRef();
-                if (timestamp < 0) {
-                    throw CairoException.instance(ff.errno()).put("Cannot insert rows before 1970-01-01. Table=").put(path);
-                } else if (timestamp >= txFile.getMaxTimestamp()) {
-                    updateMaxTimestamp(timestamp);
-                    txFile.append();
-                    return row;
+
+                if (timestamp < Timestamps.O3_MIN_TS) {
+                    throw CairoException.instance(0).put("timestamp before 1970-01-01 is not allowed");
                 }
-                throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
+
+                if (timestamp < txFile.getMaxTimestamp()) {
+                    throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
+                }
+
+                bumpMasterRef();
+                updateMaxTimestamp(timestamp);
+                break;
             case ROW_ACTION_NO_TIMESTAMP:
                 bumpMasterRef();
-                txFile.append();
-                return row;
+                break;
             case ROW_ACTION_O3:
                 bumpMasterRef();
                 o3TimestampSetter(timestamp);
                 return row;
         }
+        txFile.append();
+        return row;
     }
 
     public Row newRow() {
@@ -1278,6 +1287,25 @@ public class TableWriter implements Closeable {
         return model;
     }
 
+    public void replPublishSyncEvent(TableWriterTask cmd, long cursor, Sequence sequence) {
+        final long dst = cmd.getInstance();
+        final long dstIP = cmd.getIp();
+        final long tableId = cmd.getTableId();
+        LOG.info()
+                .$("received replication SYNC cmd [tableName=").$(tableName)
+                .$(", tableId=").$(tableId)
+                .$(", src=").$(dst)
+                .$(", srcIP=").$ip(dstIP)
+                .I$();
+
+        final TableSyncModel syncModel = replHandleSyncCmd(cmd);
+        // release command queue slot not to hold both queues
+        sequence.done(cursor);
+        if (syncModel != null) {
+            replPublishSyncEvent0(syncModel, tableId, dst, dstIP);
+        }
+    }
+
     public void rollback() {
         checkDistressed();
         if (o3InError || inTransaction()) {
@@ -1421,6 +1449,10 @@ public class TableWriter implements Closeable {
         txFile.resetTimestamp();
         txFile.truncate();
 
+        // todo: check and clear O3 memory
+        row = regularRow;
+
+        // todo: implement switching off the transaction log
         try {
             clearTodoLog();
         } catch (CairoException err) {
@@ -1966,8 +1998,6 @@ public class TableWriter implements Closeable {
 
         final MemoryMAR logPrimary = Vm.getMARInstance();
         final MemoryMAR logSecondary;
-        final MemoryLogA<MemoryA> splicePrimary = new MemoryLogAImpl();
-        final MemoryLogA<MemoryA> spliceSecondary;
 
         switch (ColumnType.tagOf(type)) {
             case ColumnType.BINARY:
@@ -1976,14 +2006,12 @@ public class TableWriter implements Closeable {
                 oooSecondary = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE);
                 oooSecondary2 = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE);
                 logSecondary = Vm.getMARInstance();
-                spliceSecondary = new MemoryLogAImpl();
                 break;
             default:
                 secondary = null;
                 oooSecondary = null;
                 oooSecondary2 = null;
                 logSecondary = null;
-                spliceSecondary = null;
                 break;
         }
         columns.add(primary);
@@ -1996,8 +2024,6 @@ public class TableWriter implements Closeable {
         configureNullSetters(o3NullSetters, type, oooPrimary, oooSecondary);
         logColumns.add(logPrimary);
         logColumns.add(logSecondary);
-        replSpliceColumns.add(splicePrimary);
-        replSpliceColumns.add(spliceSecondary);
 
         if (indexFlag) {
             indexers.extendAndSet((columns.size() - 1) / 2, new SymbolColumnIndexer());
@@ -2044,7 +2070,7 @@ public class TableWriter implements Closeable {
             nullSetters.setQuick(index, NOOP);
             o3NullSetters.setQuick(index, NOOP);
             timestampSetter = getPrimaryColumn(index)::putLong;
-            replTimestampSetter = replSpliceColumns.getQuick(getPrimaryColumnIndex(index))::putLong;
+            replTimestampSetter = value -> transactionLogRow.putLong(index, value);
         }
     }
 
@@ -2300,7 +2326,6 @@ public class TableWriter implements Closeable {
         Misc.freeObjListAndKeepObjects(o3Columns);
         Misc.freeObjListAndKeepObjects(o3Columns2);
         Misc.freeObjListAndKeepObjects(logColumns);
-        Misc.freeObjListAndKeepObjects(replSpliceColumns);
     }
 
     private void freeIndexers() {
@@ -2964,23 +2989,8 @@ public class TableWriter implements Closeable {
                 this.o3MasterRef = -1;
                 rowActon = ROW_ACTION_SWITCH_PARTITION;
                 // transaction log is either not required or pending
-                if (txFile.transactionLogTxn < 0) {
-                    activeColumns = columns;
-                    activeNullSetters = nullSetters;
-                } else {
-                    // transaction log is still required
-                    // we do not need to change active columns, they already should be splice columns
-                    for (int i = 0; i < columnCount; i++) {
-                        final MemoryLogA<MemoryA> mem1 = replSpliceColumns.getQuick(i * 2);
-                        mem1.of(logColumns.getQuick(i * 2), columns.getQuick(i * 2));
-
-                        final MemoryLogA<MemoryA> mem2 = replSpliceColumns.getQuick(i * 2 + 1);
-                        if (mem2 != null) {
-                            mem2.of(logColumns.getQuick(i * 2 + 1), columns.getQuick(i * 2 + 1));
-                        }
-                    }
-                    timestampSetter = replTimestampSetter;
-                }
+                activeColumns = columns;
+                activeNullSetters = nullSetters;
                 LOG.debug().$("lag segment is empty").$();
             } else {
                 // adjust O3 master ref so that virtual row count becomes equal to value of "o3LagRowCount"
@@ -3967,20 +3977,7 @@ public class TableWriter implements Closeable {
             if (cmd.getTableId() == getMetadata().getId()) {
                 switch (cmd.getType()) {
                     case TableWriterTask.TSK_SLAVE_SYNC:
-                        final long dst = cmd.getInstance();
-                        final long dstIP = cmd.getIp();
-                        final long tableId = cmd.getTableId();
-                        LOG.info()
-                                .$("received replication SYNC cmd [tableName=").$(tableName)
-                                .$(", tableId=").$(tableId)
-                                .$(", src=").$(dst)
-                                .$(", srcIP=").$ip(dstIP)
-                                .I$();
-
-                        final TableSyncModel syncModel = replHandleSyncCmd(cmd);
-                        // release command queue slot not to hold both queues
-                        commandSubSeq.done(cursor);
-                        replPublishSyncEvent(syncModel, tableId, dst, dstIP);
+                        replPublishSyncEvent(cmd, cursor, commandSubSeq);
                         break;
                     default:
                         commandSubSeq.done(cursor);
@@ -4536,27 +4533,16 @@ public class TableWriter implements Closeable {
                     final int secondaryIndex = getSecondaryColumnIndex(i);
                     final MemoryMA logMem1 = logColumns.getQuick(primaryIndex);
                     logMem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
-
-                    final MemoryLogA<MemoryA> spliceColumn1 = replSpliceColumns.getQuick(primaryIndex);
-
-                    if (spliceColumn1 == activeColumns.getQuick(primaryIndex)) {
-                        System.out.println("oopsie");
-                        assert false;
-                    }
-
-                    spliceColumn1.of(logMem1, activeColumns.getQuick(primaryIndex));
-
                     final MemoryMA logMem2 = logColumns.getQuick(secondaryIndex);
                     if (logMem2 != null) {
                         logMem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
-
-                        final MemoryLogA<MemoryA> spliceColumn2 = replSpliceColumns.getQuick(secondaryIndex);
-                        spliceColumn2.of(logMem2, activeColumns.getQuick(secondaryIndex));
                     }
                 }
-                activeColumns = replSpliceColumns;
+                // todo: this memory must propagate jump
                 replO3TimestampMem.of(logColumns.getQuick(getPrimaryColumnIndex(metadata.getTimestampIndex())), o3TimestampMem);
                 o3TimestampMem = replO3TimestampMem;
+                timestampSetter = replTimestampSetter;
+                row = transactionLogRow;
             } else {
                 throw CairoException.instance(ff.errno()).put("Could not create directory: ").put(path);
             }
@@ -4572,7 +4558,14 @@ public class TableWriter implements Closeable {
                 .I$();
     }
 
-    TableSyncModel replHandleSyncCmd(TableWriterTask cmd) {
+    @Nullable TableSyncModel replHandleSyncCmd(TableWriterTask cmd) {
+        final long instance = cmd.getInstance();
+        final long sequence = cmd.getSequence();
+        final int index = cmdSequences.keyIndex(instance);
+        if (index < 0 && sequence <= cmdSequences.valueAt(index)) {
+            return null;
+        }
+        cmdSequences.putAt(index, instance, sequence);
         final long txMemSize = Unsafe.getUnsafe().getLong(cmd.getData());
         return replCreateTableSyncModel(
                 cmd.getData() + 8,
@@ -4663,7 +4656,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    void replPublishSyncEvent(TableSyncModel model, long tableId, long dst, long dstIP) {
+    void replPublishSyncEvent0(TableSyncModel model, long tableId, long dst, long dstIP) {
         final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
         if (pubCursor > -1) {
             final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
@@ -5428,6 +5421,250 @@ public class TableWriter implements Closeable {
 
         private MemoryA getSecondaryColumn(int columnIndex) {
             return activeColumns.getQuick(getSecondaryColumnIndex(columnIndex));
+        }
+    }
+
+    private class TransactionLogRowImpl implements Row {
+        @Override
+        public void append() {
+            rowAppend(activeNullSetters);
+        }
+
+        @Override
+        public void cancel() {
+            rowCancel();
+        }
+
+        @Override
+        public void putBin(int columnIndex, long address, long len) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            final int s = p + 1;
+            putBin(address, len, p, s, activeColumns);
+            putBin(address, len, p, s, logColumns);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putBin(int columnIndex, BinarySequence sequence) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            final int s = p + 1;
+            putBin(sequence, p, s, activeColumns);
+            putBin(sequence, p, s, logColumns);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putBool(int columnIndex, boolean value) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            activeColumns.getQuick(p).putBool(value);
+            logColumns.getQuick(p).putBool(value);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putByte(int columnIndex, byte value) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            activeColumns.getQuick(p).putByte(value);
+            logColumns.getQuick(p).putByte(value);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putChar(int columnIndex, char value) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            activeColumns.getQuick(p).putChar(value);
+            logColumns.getQuick(p).putChar(value);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putDate(int columnIndex, long value) {
+            putLong(columnIndex, value);
+        }
+
+        @Override
+        public void putDouble(int columnIndex, double value) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            activeColumns.getQuick(p).putDouble(value);
+            logColumns.getQuick(p).putDouble(value);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putFloat(int columnIndex, float value) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            activeColumns.getQuick(p).putFloat(value);
+            logColumns.getQuick(p).putFloat(value);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putGeoHash(int columnIndex, long value) {
+            int type = metadata.getColumnType(columnIndex);
+            final MemoryA primaryColumn = getPrimaryColumn(columnIndex);
+            switch (ColumnType.sizeOf(type)) {
+                case 1:
+                    primaryColumn.putByte((byte) value);
+                    break;
+                case 2:
+                    primaryColumn.putShort((short) value);
+                    break;
+                case 4:
+                    primaryColumn.putInt((int) value);
+                    break;
+                default:
+                    primaryColumn.putLong(value);
+                    break;
+            }
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putInt(int columnIndex, int value) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            activeColumns.getQuick(p).putInt(value);
+            logColumns.getQuick(p).putInt(value);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putLong(int columnIndex, long value) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            activeColumns.getQuick(p).putLong(value);
+            logColumns.getQuick(p).putLong(value);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putLong256(int columnIndex, long l0, long l1, long l2, long l3) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            activeColumns.getQuick(p).putLong256(l0, l1, l2, l3);
+            logColumns.getQuick(p).putLong256(l0, l1, l2, l3);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putLong256(int columnIndex, Long256 value) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            activeColumns.getQuick(p).putLong256(
+                    value.getLong0(),
+                    value.getLong1(),
+                    value.getLong2(),
+                    value.getLong3()
+            );
+            logColumns.getQuick(p).putLong256(
+                    value.getLong0(),
+                    value.getLong1(),
+                    value.getLong2(),
+                    value.getLong3()
+            );
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putLong256(int columnIndex, CharSequence hexString) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            activeColumns.getQuick(p).putLong256(hexString);
+            logColumns.getQuick(p).putLong256(hexString);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putLong256(int columnIndex, @NotNull CharSequence hexString, int start, int end) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            activeColumns.getQuick(p).putLong256(hexString, start, end);
+            logColumns.getQuick(p).putLong256(hexString, start, end);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putShort(int columnIndex, short value) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            activeColumns.getQuick(p).putShort(value);
+            logColumns.getQuick(p).putShort(value);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putStr(int columnIndex, CharSequence value) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            final int s = p + 1;
+            activeColumns.getQuick(s).putLong(activeColumns.getQuick(p).putStr(value));
+            logColumns.getQuick(s).putLong(logColumns.getQuick(p).putStr(value));
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putStr(int columnIndex, char value) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            final int s = p + 1;
+            activeColumns.getQuick(s).putLong(activeColumns.getQuick(p).putStr(value));
+            logColumns.getQuick(s).putLong(logColumns.getQuick(p).putStr(value));
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putStr(int columnIndex, CharSequence value, int pos, int len) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            final int s = p + 1;
+            activeColumns.getQuick(s).putLong(activeColumns.getQuick(p).putStr(value, pos, len));
+            logColumns.getQuick(s).putLong(logColumns.getQuick(p).putStr(value, pos, len));
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putSym(int columnIndex, CharSequence value) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            final int key = symbolMapWriters.getQuick(columnIndex).put(value);
+            activeColumns.getQuick(p).putInt(key);
+            logColumns.getQuick(p).putInt(key);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putSym(int columnIndex, char value) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            final int key = symbolMapWriters.getQuick(columnIndex).put(value);
+            activeColumns.getQuick(p).putInt(key);
+            logColumns.getQuick(p).putInt(key);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putSymIndex(int columnIndex, int symIndex) {
+            final int p = getPrimaryColumnIndex(columnIndex);
+            activeColumns.getQuick(p).putInt(symIndex);
+            logColumns.getQuick(p).putInt(symIndex);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putTimestamp(int columnIndex, long value) {
+            putLong(columnIndex, value);
+        }
+
+        @Override
+        public void putTimestamp(int columnIndex, CharSequence value) {
+            // try UTC timestamp first (micro)
+            long l;
+            try {
+                l = value != null ? IntervalUtils.parseFloorPartialDate(value) : Numbers.LONG_NaN;
+            } catch (NumericException e) {
+                throw CairoException.instance(0).put("Invalid timestamp: ").put(value);
+            }
+            putTimestamp(columnIndex, l);
+        }
+
+        private MemoryA getPrimaryColumn(int columnIndex) {
+            return activeColumns.getQuick(getPrimaryColumnIndex(columnIndex));
+        }
+
+        private void putBin(BinarySequence sequence, int p, int s, ObjList<? extends MemoryA> activeColumns) {
+            activeColumns.getQuick(s).putLong(activeColumns.getQuick(p).putBin(sequence));
+        }
+
+        private void putBin(long address, long len, int p, int s, ObjList<? extends MemoryA> activeColumns) {
+            activeColumns.getQuick(s).putLong(activeColumns.getQuick(p).putBin(address, len));
         }
     }
 

@@ -22,37 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm;
+package io.questdb.cairo.vm.api;
 
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryLogA;
-import io.questdb.cairo.vm.api.MemoryMA;
-import io.questdb.std.Misc;
+import java.io.Closeable;
 
-public class MemoryLogAImpl implements MemoryLogA<MemoryA> {
-    private MemoryMA log;
-    private MemoryA main;
+public interface MemoryMAT extends Closeable {
 
     @Override
-    public void close() {
-        log = Misc.free(log);
-        assert main != this;
-        main = Misc.free(main);
-    }
+    void close();
 
-    @Override
-    public void of(MemoryMA log, MemoryA main) {
-        this.log = log;
-        this.main = main;
-    }
+    long getAddress();
 
-    @Override
-    public MemoryMA getLogMemory() {
-        return log;
-    }
+    long getAppendOffset();
 
-    @Override
-    public MemoryA getMainMemory() {
-        return main;
-    }
+    void jumpTo(long offset);
+
+    void putLong128(long a, long b);
 }

@@ -1369,7 +1369,7 @@ nodejs code:
                         batchInsert.executeBatch();
                         Assert.fail();
                     } catch (SQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "Cannot insert rows before 1970-01-01. Table=");
+                        TestUtils.assertContains(e.getMessage(), "timestamp before 1970-01-01 is not allowed");
                         connection.rollback();
                     }
 

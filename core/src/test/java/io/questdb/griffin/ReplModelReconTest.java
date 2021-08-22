@@ -35,6 +35,7 @@ import io.questdb.mp.FanOut;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
+import io.questdb.network.Net;
 import io.questdb.std.Rnd;
 import io.questdb.tasks.TableWriterTask;
 import io.questdb.test.tools.TestUtils;
@@ -45,7 +46,6 @@ import org.junit.Test;
 import java.io.Closeable;
 
 public class ReplModelReconTest extends AbstractGriffinTest {
-
 
     private static final Log LOG = LogFactory.getLog(ReplModelReconTest.class);
 
@@ -259,7 +259,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testO3TriggerTransactionLog() throws Exception {
         assertMemoryLeak(() -> {
 
@@ -322,16 +321,14 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                 masterId = w1.getMetadata().getId();
             }
 
-
             try (
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test");
                     SimpleLocalClient client = new SimpleLocalClient(engine)
             ) {
-                sendAndAssertSync(masterId, w2, client);
+                sendAndAssertSync(masterId, w2, client, Net.parseIPv4("192.168.1.11"), 0);
                 // send a couple of sync requests to check that master does not freak out
-                sendAndAssertSync(masterId, w2, client);
+                sendAndAssertSync(masterId, w2, client, Net.parseIPv4("192.168.1.10"), 1);
             }
-
 
             // O3 chunk (chunk2)
             compiler.compile(
@@ -391,49 +388,18 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             // if we copy new chunk, which was outside of transaction log and transaction log itself into 'y'
             // we would expect to end up with the same 'x' and 'y'
 
-//            compiler.compile("insert into y select * from chunk1", sqlExecutionContext);
-//            compiler.compile("insert into y select * from transaction_log('x')", sqlExecutionContext);
-
-            sink.clear();
-            TestUtils.printSql(
-                    compiler,
-                    sqlExecutionContext,
-//                    "select m from chunk2 union all select m from chunk3",
-                    "select m from transaction_log('x')",
-                    sink
-            );
-
-            System.out.println(sink);
+            compiler.compile("insert into y select * from chunk1", sqlExecutionContext);
+            compiler.compile("insert into y select * from transaction_log('x')", sqlExecutionContext);
 
             // tables should be the same
             TestUtils.assertSqlCursors(
                     compiler,
                     sqlExecutionContext,
-                    "select m from chunk2 union all select m from chunk3",
-                    "select m from transaction_log('x')",
+                    "x",
+                    "y",
                     LOG
             );
         });
-    }
-
-    private void sendAndAssertSync(long masterId, TableWriter w2, SimpleLocalClient client) {
-        client.publishSyncCmd(
-                "x",
-                masterId,
-                w2
-        );
-
-        engine.tick();
-
-        sink.clear();
-        TableSyncModel model = client.consumeSyncModel();
-        Assert.assertNotNull(model);
-        sink.put(model);
-
-        TestUtils.assertEquals(
-                "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":13600,\"rowCount\":10000,\"nameTxn\":-1,\"dataTxn\":2}]}",
-                sink
-        );
     }
 
     @Test
@@ -565,11 +531,14 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                         client.publishSyncCmd(
                                 w1.getTableName(),
                                 w1.getMetadata().getId(),
-                                w2
+                                w2,
+                                Net.parseIPv4("192.168.1.14"),
+                                0
                         )
                 );
 
                 w1.tick();
+                engine.tick();
 
                 final TableSyncModel model = client.consumeSyncModel();
 
@@ -608,7 +577,9 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                         client.publishSyncCmd(
                                 "x",
                                 masterId,
-                                w2
+                                w2,
+                                Net.parseIPv4("192.168.1.12"),
+                                0
                         )
                 );
 
@@ -1000,6 +971,34 @@ public class ReplModelReconTest extends AbstractGriffinTest {
         );
     }
 
+    private void sendAndAssertSync(
+            long masterId,
+            TableWriter w2,
+            SimpleLocalClient client,
+            long slaveIP,
+            long sequence
+    ) {
+        client.publishSyncCmd(
+                "x",
+                masterId,
+                w2,
+                slaveIP,
+                sequence
+        );
+
+        engine.tick();
+
+        sink.clear();
+        TableSyncModel model = client.consumeSyncModel();
+        Assert.assertNotNull(model);
+        sink.put(model);
+
+        TestUtils.assertEquals(
+                "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":13600,\"rowCount\":10000,\"nameTxn\":-1,\"dataTxn\":2}]}",
+                sink
+        );
+    }
+
     private static class SimpleLocalClient implements Closeable {
         private final Sequence cmdPubSeq;
         private final RingQueue<TableWriterTask> cmdQueue;
@@ -1039,7 +1038,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             return null;
         }
 
-        public boolean publishSyncCmd(String tableName, long tableId, TableWriter slave) {
+        public boolean publishSyncCmd(String tableName, long tableId, TableWriter slave, long slaveIP, long sequence) {
             long cursor = cmdPubSeq.next();
             if (cursor > -1) {
                 TableWriterTask task = cmdQueue.get(cursor);
@@ -1053,7 +1052,9 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                         txMem,
                         TableUtils.getTxMemorySize(txMem),
                         slave.getRawMetaMemory(),
-                        slave.getRawMetaMemorySize()
+                        slave.getRawMetaMemorySize(),
+                        slaveIP,
+                        sequence
                 );
 
                 cmdPubSeq.done(cursor);

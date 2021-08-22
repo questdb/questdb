@@ -416,23 +416,8 @@ public class CairoEngine implements Closeable, WriterSource {
             TableWriterTask cmd = tableWriterCmdQueue.get(cursor);
             switch (cmd.getType()) {
                 case TableWriterTask.TSK_SLAVE_SYNC:
-
-                    final long dst = cmd.getInstance();
-                    final long dstIP = cmd.getIp();
-                    final long tableId = cmd.getTableId();
-
-                    LOG.info()
-                            .$("received replication SYNC cmd [tableName=").$(cmd.getTableName())
-                            .$(", tableId=").$(cmd.getTableId())
-                            .$(", src=").$(cmd.getInstance())
-                            .$(", srcIP=").$ip(cmd.getIp())
-                            .I$();
-
                     try (TableWriter writer = writerPool.get(cmd.getTableName(), "slave sync")) {
-                        final TableSyncModel syncModel = writer.replHandleSyncCmd(cmd);
-                        // release command queue slot not to hold both queues
-                        tableWriterCmdSubSeq.done(cursor);
-                        writer.replPublishSyncEvent(syncModel, tableId, dst, dstIP);
+                        writer.replPublishSyncEvent(cmd, cursor, tableWriterCmdSubSeq);
                     } catch (EntryUnavailableException e) {
                         // ignore command, writer is busy
                         // it will tick on its way back to pool or earlier
@@ -452,7 +437,7 @@ public class CairoEngine implements Closeable, WriterSource {
                                     .I$();
                         }
                     }
-
+                    break;
             }
         }
     }

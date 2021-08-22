@@ -22,12 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.vm.api;
 
-/**
- *
- */
-@FunctionalInterface
-interface RowFunction {
-    TableWriter.Row newRow(long timestamp);
+public interface MemoryMATL extends MemoryMAT {
+    void of(MemoryA log, MemoryMAT main);
 }

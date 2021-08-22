@@ -24,14 +24,12 @@
 
 package io.questdb.cairo.vm;
 
-import io.questdb.cairo.vm.api.MemoryCA;
-import io.questdb.cairo.vm.api.MemoryLogA;
-import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.*;
 import io.questdb.std.Misc;
 
-public class ReplMemoryLogCAImpl implements MemoryLogA<MemoryCA>, MemoryCA {
-    private MemoryMA log;
-    private MemoryCA main;
+public class ReplMemoryLogCAImpl implements MemoryMATL {
+    private MemoryA log;
+    private MemoryMAT main;
 
     @Override
     public void close() {
@@ -45,16 +43,17 @@ public class ReplMemoryLogCAImpl implements MemoryLogA<MemoryCA>, MemoryCA {
     }
 
     @Override
-    public MemoryMA getLogMemory() {
-        return log;
+    public long getAppendOffset() {
+        return main.getAppendOffset();
     }
 
     @Override
-    public MemoryCA getMainMemory() {
-        return main;
+    public void jumpTo(long offset) {
+        main.jumpTo(offset);
     }
 
-    public void of(MemoryMA log, MemoryCA main) {
+    @Override
+    public void of(MemoryA log, MemoryMAT main) {
         this.log = log;
         this.main = main;
     }
@@ -63,7 +62,7 @@ public class ReplMemoryLogCAImpl implements MemoryLogA<MemoryCA>, MemoryCA {
     public void putLong128(long timestamp, long row) {
         // O3 timestamp memory stores timestamp and row
         // transaction log does not need row numbers
-        getLogMemory().putLong(timestamp);
-        getMainMemory().putLong128(timestamp, row);
+        log.putLong(timestamp);
+        main.putLong128(timestamp, row);
     }
 }
