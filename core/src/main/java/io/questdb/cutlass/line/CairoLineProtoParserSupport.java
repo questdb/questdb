@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.IntIntHashMap;
@@ -57,8 +56,7 @@ public class CairoLineProtoParserSupport {
                                 int columnIndex,
                                 CharSequence value) throws BadCastException {
         try {
-            final int storageTag = ColumnType.storageTag(columnType);
-            switch (storageTag) {
+            switch (ColumnType.storageTag(columnType)) {
                 case ColumnType.LONG:
                     row.putLong(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                     break;
@@ -109,23 +107,31 @@ public class CairoLineProtoParserSupport {
                     row.putTimestamp(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                     break;
                 case ColumnType.CHAR:
-                    row.putChar(columnIndex, value.length() == 2 ? (char) 0 : value.charAt(1)); // ignoring quotes
+                    row.putChar(columnIndex, value.length() == 2 ? (char) 0 : value.charAt(1)); // skip quotes
                     break;
-                case ColumnType.BINARY:
-                    // not supported
+                case ColumnType.GEOBYTE:
+                    row.putGeoHashByte(columnIndex,
+                            (byte) GeoHashes.fromString( // skip quotes
+                                    value, 1, value.length() - 2, columnTypeMeta.get(columnIndex)));
+                    break;
+                case ColumnType.GEOSHORT:
+                    row.putGeoHashShort(columnIndex,
+                            (short) GeoHashes.fromString( // skip quotes
+                                    value, 1, value.length() - 2, columnTypeMeta.get(columnIndex)));
+                    break;
+                case ColumnType.GEOINT:
+                    row.putGeoHashInt(columnIndex,
+                            (int) GeoHashes.fromString( // skip quotes
+                                    value, 1, value.length() - 2, columnTypeMeta.get(columnIndex)));
+                    break;
+                case ColumnType.GEOLONG:
+                    row.putGeoHashLong(columnIndex,
+                            GeoHashes.fromString( // skip quotes
+                                    value, 1, value.length() - 2, columnTypeMeta.get(columnIndex)));
                     break;
                 default:
-                    // then it is a geohash
-                    row.putGeoHash(
-                            columnIndex,
-                            storageTag,
-                            GeoHashes.fromString(
-                                    value,
-                                    1,
-                                    value.length() - 2, // skip quotes
-                                    columnTypeMeta.get(columnIndex)
-                            )
-                    );
+                    // unsupported types are ignored
+                    break;
             }
         } catch (NumericException e) {
             LOG.info().$("cast error [value=").$(value).$(", toType=").$(ColumnType.nameOf(columnType)).$(']').$();

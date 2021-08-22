@@ -1193,6 +1193,35 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testByteSizedGeoHashesTableHasGeoHashMessageDoesNot() throws Exception {
+        assertGeoHash(4,
+                "tracking carrots=\"9\" 1000000000\n" +
+                        "tracking carrots=\"4\" 2000000000\n" +
+                        "tracking carrots=\"j\" 3000000000\n",
+                "geohash\ttimestamp\tcarrots\n" +
+                        "\t1970-01-01T00:00:01.000000Z\t9\n" +
+                        "\t1970-01-01T00:00:02.000000Z\t4\n" +
+                        "\t1970-01-01T00:00:03.000000Z\tj\n",
+                "carrots");
+    }
+
+    @Test
+    public void testByteSizedGeoHashesSeeminglyGoodLookingStringWhichIsTooLongToBeAGeoHash() throws Exception {
+        assertGeoHash(4,
+                "tracking geohash=\"9v1s8hm7wpkssv1h\" 1000000000\n",
+                "geohash\ttimestamp\n");
+    }
+
+    @Test
+    public void testByteSizedWrongCharGeoHashes() throws Exception {
+        assertGeoHash(4,
+                "tracking geohash=\"9@tralala\" 1000000000\n" +
+                        "tracking geohash=\"4-12\" 2000000000\n" +
+                        "tracking geohash=\"jurl\" 3000000000\n",
+                "geohash\ttimestamp\n");
+    }
+
+    @Test
     public void testShortSizedGeoHashes() throws Exception {
         assertGeoHash(15,
                 "tracking geohash=\"9v1\" 1000000000\n" +
@@ -1210,6 +1239,34 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                         "hp4\t1970-01-01T00:00:05.000000Z\n" +
                         "wh4\t1970-01-01T00:00:06.000000Z\n" +
                         "s2z\t1970-01-01T00:00:07.000000Z\n");
+    }
+
+    @Test
+    public void testShortSizedGeoHashesTableHasGeoHashMessageDoesNot() throws Exception {
+        assertGeoHash(15,
+                "tracking onions=\"9v1\" 1000000000\n" +
+                        "tracking onions=\"46s\" 2000000000\n" +
+                        "tracking onions=\"jnw\" 3000000000\n" +
+                        "tracking geohash=\"zfu\" 4000000000\n" +
+                        "tracking geohash=\"hp4\" 5000000000\n" +
+                        "tracking onions=\"wh4\" 6000000000\n" +
+                        "tracking mint=\"s2z\" 7000000000\n",
+                "geohash\ttimestamp\tonions\tmint\n" +
+                        "\t1970-01-01T00:00:01.000000Z\t9v1\t\n" +
+                        "\t1970-01-01T00:00:02.000000Z\t46s\t\n" +
+                        "\t1970-01-01T00:00:03.000000Z\tjnw\t\n" +
+                        "zfu\t1970-01-01T00:00:04.000000Z\t\t\n" +
+                        "hp4\t1970-01-01T00:00:05.000000Z\t\t\n" +
+                        "\t1970-01-01T00:00:06.000000Z\twh4\t\n" +
+                        "\t1970-01-01T00:00:07.000000Z\t\ts2z\n",
+                "onions", "mint");
+    }
+
+    @Test
+    public void testShortSizedGeoHashesSeeminglyGoodLookingStringWhichIsTooLongToBeAGeoHash() throws Exception {
+        assertGeoHash(15,
+                "tracking geohash=\"9v1s8hm7wpkssv1h\" 1000000000\n",
+                "geohash\ttimestamp\n");
     }
 
     @Test
@@ -1255,6 +1312,15 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShortSizedWrongGeoHashes() throws Exception {
+        assertGeoHash(13,
+                "tracking geohash=\"9v1@\" 1000000000\n" +
+                        "tracking geohash=\"@46s\" 2000000000\n" +
+                        "tracking geohash=\"jLnw\" 3000000000\n",
+                "geohash\ttimestamp\n");
+    }
+
+    @Test
     public void testIntSizedGeoHashes() throws Exception {
         assertGeoHash(30,
                 "tracking geohash=\"9v1s8h\" 1000000000\n" +
@@ -1274,6 +1340,34 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                         "wh4b6v\t1970-01-01T00:00:06.000000Z\n" +
                         "s2z2fy\t1970-01-01T00:00:07.000000Z\n" +
                         "1cjjwk\t1970-01-01T00:00:08.000000Z\n");
+    }
+
+    @Test
+    public void testIntSizedGeoHashesTableHasGeoHashMessageDoesNot() throws Exception {
+        assertGeoHash(15,
+                "tracking onions=\"9v1\" 1000000000\n" +
+                        "tracking onions=\"46s\" 2000000000\n" +
+                        "tracking onions=\"jnw\" 3000000000\n" +
+                        "tracking geohash=\"zfu\" 4000000000\n" +
+                        "tracking geohash=\"hp4\" 5000000000\n" +
+                        "tracking onions=\"wh4\" 6000000000\n" +
+                        "tracking mint=\"s2z\" 7000000000\n",
+                "geohash\ttimestamp\tonions\tmint\n" +
+                        "\t1970-01-01T00:00:01.000000Z\t9v1\t\n" +
+                        "\t1970-01-01T00:00:02.000000Z\t46s\t\n" +
+                        "\t1970-01-01T00:00:03.000000Z\tjnw\t\n" +
+                        "zfu\t1970-01-01T00:00:04.000000Z\t\t\n" +
+                        "hp4\t1970-01-01T00:00:05.000000Z\t\t\n" +
+                        "\t1970-01-01T00:00:06.000000Z\twh4\t\n" +
+                        "\t1970-01-01T00:00:07.000000Z\t\ts2z\n",
+                "onions", "mint");
+    }
+
+    @Test
+    public void testIntSizedGeoHashesSeeminglyGoodLookingStringWhichIsTooLongToBeAGeoHash() throws Exception {
+        assertGeoHash(30,
+                "tracking geohash=\"9v1s8hm7wpkssv1h\" 1000000000\n",
+                "geohash\ttimestamp\n");
     }
 
     @Test
@@ -1313,6 +1407,16 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntSizedWrongGeoHashes() throws Exception {
+        assertGeoHash(29,
+                "tracking geohash=\"9v@1s8h\" 1000000000\n" +
+                        "tracking geohash=\"46swLgj\" 2000000000\n" +
+                        "tracking geohash=\"j+nw97u\" 3000000000\n" +
+                        "tracking geohash=\"zf-uqd3\" 4000000000\n",
+                "geohash\ttimestamp\n");
+    }
+
+    @Test
     public void testLongSizedGeoHashes() throws Exception {
         assertGeoHash(60,
                 "tracking geohash=\"9v1s8hm7wpks\" 1000000000\n" +
@@ -1330,6 +1434,14 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                         "hp4muv5tgg3q\t1970-01-01T00:00:05.000000Z\n" +
                         "wh4b6vntdq1c\t1970-01-01T00:00:06.000000Z\n" +
                         "s2z2fydsjq5n\t1970-01-01T00:00:07.000000Z\n");
+    }
+
+
+    @Test
+    public void testLongSizedGeoHashesSeeminglyGoodLookingStringWhichIsTooLongToBeAGeoHash() throws Exception {
+        assertGeoHash(60,
+                "tracking geohash=\"9v1s8hm7wpkssv1h\" 1000000000\n",
+                "geohash\ttimestamp\n");
     }
 
     @Test
@@ -1366,6 +1478,27 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLongSizedGeoHashesTableHasGeoHashMessageDoesNot() throws Exception {
+        assertGeoHash(57,
+                "tracking geohash=\"9v1s8hm7wpks\" 1000000000\n" +
+                        "tracking herbs=\"46swgj10r88k\" 2000000000\n" +
+                        "tracking herbs=\"jnw97u4yuquw\" 3000000000\n" +
+                        "tracking herbs=\"zfuqd3bf8hbu\" 4000000000\n" +
+                        "tracking herbs=\"hp4muv5tgg3q\" 5000000000\n" +
+                        "tracking pepper=\"wh4b6vntdq1c\" 6000000000\n" +
+                        "tracking geohash=\"s2z2fydsjq5n\" 7000000000\n",
+                "geohash\ttimestamp\therbs\tpepper\n" +
+                        "010011101100001110000100010000100110011111100101011001011\t1970-01-01T00:00:01.000000Z\t\t\n" +
+                        "\t1970-01-01T00:00:02.000000Z\t46swgj10r88k\t\n" +
+                        "\t1970-01-01T00:00:03.000000Z\tjnw97u4yuquw\t\n" +
+                        "\t1970-01-01T00:00:04.000000Z\tzfuqd3bf8hbu\t\n" +
+                        "\t1970-01-01T00:00:05.000000Z\thp4muv5tgg3q\t\n" +
+                        "\t1970-01-01T00:00:06.000000Z\t\twh4b6vntdq1c\n" +
+                        "110000001011111000100111011110011001100010001101100010110\t1970-01-01T00:00:07.000000Z\t\t\n",
+                "herbs", "pepper");
+    }
+
+    @Test
     public void testInsertMissingGeoHashHasNoEffect() throws Exception {
         for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
             if (b > 1) {
@@ -1376,6 +1509,15 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "geohash\ttimestamp\n");
             tearDown();
         }
+    }
+
+    @Test
+    public void testLongSizedWrongGeoHashes() throws Exception {
+        assertGeoHash(57,
+                "tracking geohash=\"@9v1s8hm@7wp\" 1000000000\n" +
+                        "tracking geohash=\"46swgj1Lr88k\" 2000000000\n" +
+                        "tracking geohash=\"jnw97u--uquw\" 3000000000\n",
+                "geohash\ttimestamp\n");
     }
 
     @Test
@@ -1410,7 +1552,16 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                         "\t1970-01-01T00:00:01.000000Z\n");
     }
 
-    private void assertGeoHash(int columnBits, String inboundLines, String expected) throws Exception {
+    private void assertGeoHash(int columnBits,
+                               String inboundLines,
+                               String expected) throws Exception {
+        assertGeoHash(columnBits, inboundLines, expected, null);
+    }
+
+    private void assertGeoHash(int columnBits,
+                               String inboundLines,
+                               String expected,
+                               String ...expectedExtraStringColumns) throws Exception {
         runInContext(() -> {
             try (TableModel model = new TableModel(configuration, "tracking", PartitionBy.NONE)) {
                 CairoTestUtils.create(model.col("geohash", ColumnType.geohashWithPrecision(columnBits)).timestamp());
@@ -1420,6 +1571,15 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             waitForIOCompletion();
             closeContext();
             assertTable(expected, "tracking");
+            if (expectedExtraStringColumns != null) {
+                try (TableReader reader = new TableReader(configuration, "tracking")) {
+                    TableReaderMetadata meta = reader.getMetadata();
+                    Assert.assertEquals(2 + expectedExtraStringColumns.length, meta.getColumnCount());
+                    for (String colName : expectedExtraStringColumns) {
+                        Assert.assertEquals(ColumnType.STRING, meta.getColumnType(colName));
+                    }
+                }
+            }
         });
     }
 

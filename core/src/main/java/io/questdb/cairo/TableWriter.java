@@ -1443,7 +1443,7 @@ public class TableWriter implements Closeable {
             long fileSize = ff.length(path);
             if (fileSize < partitionSize * typeSize) {
                 throw CairoException.instance(0).put("Column file row count does not match timestamp file row count. " +
-                        "Partition files inconsistent [file=")
+                                "Partition files inconsistent [file=")
                         .put(path)
                         .put(",expectedSize=")
                         .put(partitionSize * typeSize)
@@ -1468,7 +1468,7 @@ public class TableWriter implements Closeable {
             long fileSize = ff.length(path);
             if (fileSize < partitionSize << ColumnType.pow2SizeOf(columnType)) {
                 throw CairoException.instance(0).put("Column file row count does not match timestamp file row count. " +
-                        "Partition files inconsistent [file=")
+                                "Partition files inconsistent [file=")
                         .put(path)
                         .put(",expectedSize=")
                         .put(partitionSize << ColumnType.pow2SizeOf(columnType))
@@ -3209,7 +3209,7 @@ public class TableWriter implements Closeable {
                     int errno;
                     if ((errno = ff.rmdir(other)) == 0) {
                         LOG.info().$(
-                                "purged [path=").$(other)
+                                        "purged [path=").$(other)
                                 .$(", readerTxn=").$(readerTxn)
                                 .$(", readerTxnCount=").$(readerTxnCount)
                                 .$(']').$();
@@ -4845,7 +4845,7 @@ public class TableWriter implements Closeable {
             final MemoryA primaryColumn = getPrimaryColumn(index);
             switch (ColumnType.sizeOf(type)) {
                 case 1:
-                    primaryColumn.putByte((byte)value);
+                    primaryColumn.putByte((byte) value);
                     break;
                 case 2:
                     primaryColumn.putShort((short) value);
@@ -4860,24 +4860,23 @@ public class TableWriter implements Closeable {
             notNull(index);
         }
 
-        public void putGeoHash(int index, int storageTag, long value) {
-            final MemoryA primaryColumn = getPrimaryColumn(index);
-            switch (storageTag) {
-                case ColumnType.GEOBYTE:
-                    primaryColumn.putByte((byte) value);
-                    break;
-                case ColumnType.GEOSHORT:
-                    primaryColumn.putShort((short) value);
-                    break;
-                case ColumnType.GEOINT:
-                    primaryColumn.putInt((int) value);
-                    break;
-                case ColumnType.GEOLONG:
-                    primaryColumn.putLong(value);
-                    break;
-                default:
-                    throw new IllegalArgumentException();
-            }
+        public void putGeoHashByte(int index, byte value) {
+            getPrimaryColumn(index).putByte(value);
+            notNull(index);
+        }
+
+        public void putGeoHashShort(int index, short value) {
+            getPrimaryColumn(index).putShort(value);
+            notNull(index);
+        }
+
+        public void putGeoHashInt(int index, int value) {
+            getPrimaryColumn(index).putInt(value);
+            notNull(index);
+        }
+
+        public void putGeoHashLong(int index, long value) {
+            getPrimaryColumn(index).putLong(value);
             notNull(index);
         }
 

@@ -56,6 +56,7 @@ import static io.questdb.network.IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATIO
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
+    private static final int NOT_A_GEOHASH = -1;
     private static final int REBALANCE_EVENT_ID = -1; // A rebalance event is used to rebalance load across different threads
     private static final int INCOMPLETE_EVENT_ID = -2; // An incomplete event is used when the queue producer has grabbed an event but is
     // not able to populate it for some reason, the event needs to be committed to the
@@ -484,8 +485,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     Unsafe.getUnsafe().putInt(bufPos, colIndex);
                     bufPos += Integer.BYTES;
                 }
-                byte entityType = entity.getType();
-                switch (entityType) {
+                switch (entity.getType()) {
                     case NewLineProtoParser.ENTITY_TYPE_TAG: {
                         long tmpBufPos = bufPos;
                         int l = entity.getValue().length();
@@ -528,7 +528,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     case NewLineProtoParser.ENTITY_TYPE_STRING:
                     case NewLineProtoParser.ENTITY_TYPE_LONG256: {
                         final int colTypeMeta = localDetails.getColumnTypeMeta(colIndex);
-                        if (colTypeMeta == -1) {
+                        if (colTypeMeta == NOT_A_GEOHASH) {
                             Unsafe.getUnsafe().putByte(bufPos, entity.getType());
                             bufPos += Byte.BYTES;
                             int l = entity.getValue().length();
@@ -543,17 +543,33 @@ class LineTcpMeasurementScheduler implements Closeable {
                         } else {
                             try {
                                 long geohash = GeoHashes.fromString(
-                                        entity.getValue(),
-                                        0,
-                                        entity.getValue().length(),
-                                        Numbers.decodeLowShort(colTypeMeta));
-                                // as far as entity type goes, rather than store something like
-                                // NewLineProtoParser.ENTITY_TYPE_GEOHASH we simply store the storageTag
-                                // so that the writer thread can directly switch over it
-                                Unsafe.getUnsafe().putByte(bufPos, (byte) Numbers.decodeHighShort(colTypeMeta));
-                                bufPos += Byte.BYTES;
-                                Unsafe.getUnsafe().putLong(bufPos, geohash);
-                                bufPos += Long.BYTES;
+                                        entity.getValue(), 0, entity.getValue().length(), Numbers.decodeLowShort(colTypeMeta));
+                                switch (Numbers.decodeHighShort(colTypeMeta)) {
+                                    default:
+                                        Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOLONG);
+                                        bufPos += Byte.BYTES;
+                                        Unsafe.getUnsafe().putLong(bufPos, geohash);
+                                        bufPos += Long.BYTES;
+                                        break;
+                                    case ColumnType.GEOINT:
+                                        Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOINT);
+                                        bufPos += Byte.BYTES;
+                                        Unsafe.getUnsafe().putInt(bufPos, (int) geohash);
+                                        bufPos += Integer.BYTES;
+                                        break;
+                                    case ColumnType.GEOSHORT:
+                                        Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOSHORT);
+                                        bufPos += Byte.BYTES;
+                                        Unsafe.getUnsafe().putShort(bufPos, (short) geohash);
+                                        bufPos += Short.BYTES;
+                                        break;
+                                    case ColumnType.GEOBYTE:
+                                        Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOBYTE);
+                                        bufPos += Byte.BYTES;
+                                        Unsafe.getUnsafe().putByte(bufPos, (byte) geohash);
+                                        bufPos += Byte.BYTES;
+                                        break;
+                                }
                             } catch (NumericException e) {
                                 throw CairoException.instance(0)
                                         .put("invalid GEOHASH value [column=")
@@ -652,8 +668,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                     }
 
                     switch (entityType) {
-                        //    public static final int N_ENTITY_TYPES = ENTITY_TYPE_CACHED_TAG + 1;
-                        //    private static final byte ENTITY_TYPE_NONE = (byte) 0xff;
                         case NewLineProtoParser.ENTITY_TYPE_TAG: {
                             int len = Unsafe.getUnsafe().getInt(bufPos);
                             bufPos += Integer.BYTES;
@@ -785,13 +799,31 @@ class LineTcpMeasurementScheduler implements Closeable {
                             break;
                         }
 
-                        case ColumnType.GEOSHORT: // these are storage tags produced by the reader threads
-                        case ColumnType.GEOINT:   // rather than emit a specific NewLineProtoParser.ENTITY_TYPE_GEOHASH
-                        case ColumnType.GEOLONG:  // and then switch over the storageTag, we simply emit the later.
-                        case ColumnType.GEOBYTE: {
+                        case NewLineProtoParser.ENTITY_TYPE_GEOLONG: {
                             long geohash = Unsafe.getUnsafe().getLong(bufPos);
                             bufPos += Long.BYTES;
-                            row.putGeoHash(colIndex, entityType, geohash);
+                            row.putGeoHashLong(colIndex, geohash);
+                            break;
+                        }
+
+                        case NewLineProtoParser.ENTITY_TYPE_GEOINT: {
+                            int geohash = Unsafe.getUnsafe().getInt(bufPos);
+                            bufPos += Integer.BYTES;
+                            row.putGeoHashInt(colIndex, geohash);
+                            break;
+                        }
+
+                        case NewLineProtoParser.ENTITY_TYPE_GEOSHORT: {
+                            short geohash = Unsafe.getUnsafe().getShort(bufPos);
+                            bufPos += Short.BYTES;
+                            row.putGeoHashShort(colIndex, geohash);
+                            break;
+                        }
+
+                        case NewLineProtoParser.ENTITY_TYPE_GEOBYTE: {
+                            byte geohash = Unsafe.getUnsafe().getByte(bufPos);
+                            bufPos += Byte.BYTES;
+                            row.putGeoHashByte(colIndex, geohash);
                             break;
                         }
 
@@ -1009,7 +1041,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         columnIndexByName.put(metadata.getColumnName(n), n);
                         int colType = metadata.getColumnType(n);
                         if (!ColumnType.isGeoHash(colType)) {
-                            colTypeMetaByColIndex.put(n, -1);
+                            colTypeMetaByColIndex.put(n, NOT_A_GEOHASH);
                         } else {
                             colTypeMetaByColIndex.put(
                                     n,
@@ -1446,5 +1478,9 @@ class LineTcpMeasurementScheduler implements Closeable {
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_STRING] = ColumnType.STRING;
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_BOOLEAN] = ColumnType.BOOLEAN;
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_LONG256] = ColumnType.LONG256;
+        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOBYTE] = ColumnType.geohashWithPrecision(8);
+        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOSHORT] = ColumnType.geohashWithPrecision(16);
+        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOINT] = ColumnType.geohashWithPrecision(32);
+        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOLONG] = ColumnType.geohashWithPrecision(60);
     }
 }

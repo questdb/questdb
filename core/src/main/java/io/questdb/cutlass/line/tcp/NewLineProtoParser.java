@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -41,7 +42,11 @@ public class NewLineProtoParser implements Closeable {
     public static final byte ENTITY_TYPE_BOOLEAN = 4;
     public static final byte ENTITY_TYPE_LONG256 = 5;
     public static final byte ENTITY_TYPE_CACHED_TAG = 6;
-    public static final int N_ENTITY_TYPES = ENTITY_TYPE_CACHED_TAG + 1;
+    public static final byte ENTITY_TYPE_GEOBYTE = 7;
+    public static final byte ENTITY_TYPE_GEOSHORT = 8;
+    public static final byte ENTITY_TYPE_GEOINT = 9;
+    public static final byte ENTITY_TYPE_GEOLONG = 10;
+    public static final int N_ENTITY_TYPES = ENTITY_TYPE_GEOLONG + 1;
     private static final byte ENTITY_TYPE_NONE = (byte) 0xff;
     private final DirectByteCharSequence measurementName = new DirectByteCharSequence();
     private final DirectByteCharSequence charSeq = new DirectByteCharSequence();
@@ -158,10 +163,10 @@ public class NewLineProtoParser implements Closeable {
 
             if (appendByte) {
                 if (nEscapedChars > 0) {
-                        Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
-                    }
-                    bufAt++;
-                    previousByte = b;
+                    Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
+                }
+                bufAt++;
+                previousByte = b;
             }
         }
         return ParseResult.BUFFER_UNDERFLOW;

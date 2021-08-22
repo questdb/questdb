@@ -177,6 +177,62 @@ public class LineUdpInsertGeoHashTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertByteGeoHashWrongChars() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
+                    createTable(engine, 1);
+                    receiver.start();
+                    sendGeoHashLine("@");
+                    assertReader("geohash\ttimestamp\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInsertShortGeoHashWrongChars() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
+                    createTable(engine, 9);
+                    receiver.start();
+                    sendGeoHashLine("sp-");
+                    assertReader("geohash\ttimestamp\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInsertIntGeoHashWrongChars() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
+                    createTable(engine, 31);
+                    receiver.start();
+                    sendGeoHashLine("sp018*");
+                    assertReader("geohash\ttimestamp\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInsertLongGeoHashWrongChars() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
+                    createTable(engine, 58);
+                    receiver.start();
+                    sendGeoHashLine("sp018sp0!18*");
+                    assertReader("geohash\ttimestamp\n");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testInsertNullByteGeoHash() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
