@@ -2719,6 +2719,34 @@ public class JoinTest extends AbstractGriffinTest {
         }));
     }
 
+    @Test
+    public void testJoinOfTablesWithReservedWordsColNames() throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " x as i, " +
+                        " x*2 as \"in\", " +
+                        " x*3 as \"from\" " +
+                        " from long_sequence(3)" +
+                        ")",
+                sqlExecutionContext
+        );
+
+        assertSql("select \"in\", \"from\" from x",
+                "in\tfrom\n" +
+                "2\t3\n" +
+                "4\t6\n" +
+                "6\t9\n");
+
+        assertSql("select x.\"in\", x.\"from\", x1.\"in\", x1.\"from\" " +
+                "from x " +
+                "join x as x1 on x.i = x1.i",
+                "in\tfrom\tin1\tfrom1\n" +
+                "2\t3\t2\t3\n" +
+                "4\t6\t4\t6\n" +
+                "6\t9\t6\t9\n");
+    }
+
     private void testJoinWithGeohash() throws Exception {
         testFullFat(() -> assertMemoryLeak(() -> {
             final String query = "with x1 as (select distinct * from x)," +

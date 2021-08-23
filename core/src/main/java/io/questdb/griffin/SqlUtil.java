@@ -78,7 +78,17 @@ public class SqlUtil {
             int indexOfDot,
             LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap
     ) {
-        final boolean disallowed = disallowedAliases.contains(base);
+        return createColumnAlias(store, base, indexOfDot, aliasToColumnMap, false);
+    }
+
+    static CharSequence createColumnAlias(
+            CharacterStore store,
+            CharSequence base,
+            int indexOfDot,
+            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
+            boolean cleanColumnNames
+    ) {
+        final boolean disallowed = cleanColumnNames && disallowedAliases.contains(base);
 
         // short and sweet version
         if (indexOfDot == -1 && !disallowed && aliasToColumnMap.excludes(base)) {
