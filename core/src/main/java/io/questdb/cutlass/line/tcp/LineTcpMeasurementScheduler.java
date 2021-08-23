@@ -541,46 +541,40 @@ class LineTcpMeasurementScheduler implements Closeable {
                             }
                             bufPos = hi;
                         } else {
+                            long geohash;
                             try {
-                                long geohash = GeoHashes.fromString(
+                                geohash = GeoHashes.fromString(
                                         entity.getValue(), 0, entity.getValue().length(), Numbers.decodeLowShort(colTypeMeta));
-                                switch (Numbers.decodeHighShort(colTypeMeta)) {
-                                    default:
-                                        Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOLONG);
-                                        bufPos += Byte.BYTES;
-                                        Unsafe.getUnsafe().putLong(bufPos, geohash);
-                                        bufPos += Long.BYTES;
-                                        break;
-                                    case ColumnType.GEOINT:
-                                        Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOINT);
-                                        bufPos += Byte.BYTES;
-                                        Unsafe.getUnsafe().putInt(bufPos, (int) geohash);
-                                        bufPos += Integer.BYTES;
-                                        break;
-                                    case ColumnType.GEOSHORT:
-                                        Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOSHORT);
-                                        bufPos += Byte.BYTES;
-                                        Unsafe.getUnsafe().putShort(bufPos, (short) geohash);
-                                        bufPos += Short.BYTES;
-                                        break;
-                                    case ColumnType.GEOBYTE:
-                                        Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOBYTE);
-                                        bufPos += Byte.BYTES;
-                                        Unsafe.getUnsafe().putByte(bufPos, (byte) geohash);
-                                        bufPos += Byte.BYTES;
-                                        break;
-                                }
+
                             } catch (NumericException e) {
-                                throw CairoException.instance(0)
-                                        .put("invalid GEOHASH value [column=")
-                                        .put(colIndex)
-                                        .put(", required=")
-                                        .put(ColumnType.nameOf(colTypeMeta))
-                                        .put(", offending=")
-                                        .put(entity.getValue().toString())
-                                        .put(", table=")
-                                        .put(entity.getName())
-                                        .put("]");
+                                // not a geohash, insert null instead
+                                geohash = GeoHashes.NULL;
+                            }
+                            switch (Numbers.decodeHighShort(colTypeMeta)) {
+                                default:
+                                    Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOLONG);
+                                    bufPos += Byte.BYTES;
+                                    Unsafe.getUnsafe().putLong(bufPos, geohash);
+                                    bufPos += Long.BYTES;
+                                    break;
+                                case ColumnType.GEOINT:
+                                    Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOINT);
+                                    bufPos += Byte.BYTES;
+                                    Unsafe.getUnsafe().putInt(bufPos, (int) geohash);
+                                    bufPos += Integer.BYTES;
+                                    break;
+                                case ColumnType.GEOSHORT:
+                                    Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOSHORT);
+                                    bufPos += Byte.BYTES;
+                                    Unsafe.getUnsafe().putShort(bufPos, (short) geohash);
+                                    bufPos += Short.BYTES;
+                                    break;
+                                case ColumnType.GEOBYTE:
+                                    Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOBYTE);
+                                    bufPos += Byte.BYTES;
+                                    Unsafe.getUnsafe().putByte(bufPos, (byte) geohash);
+                                    bufPos += Byte.BYTES;
+                                    break;
                             }
                         }
                         break;

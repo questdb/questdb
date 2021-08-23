@@ -29,6 +29,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class LineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
+
     @Test
     public void testByteSizedGeoHashes() throws Exception {
         assertGeoHash(5,
@@ -74,7 +75,8 @@ public class LineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
     public void testByteSizedGeoHashesSeeminglyGoodLookingStringWhichIsTooLongToBeAGeoHash() throws Exception {
         assertGeoHash(4,
                 "tracking geohash=\"9v1s8hm7wpkssv1h\" 1000000000\n",
-                "geohash\ttimestamp\n");
+                "geohash\ttimestamp\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n");
     }
 
     @Test
@@ -82,8 +84,14 @@ public class LineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
         assertGeoHash(4,
                 "tracking geohash=\"9@tralala\" 1000000000\n" +
                         "tracking geohash=\"4-12\" 2000000000\n" +
+                        "tracking john=\"4-12\",activity=\"lion taming\" 2000000000\n" +
                         "tracking geohash=\"jurl\" 3000000000\n",
-                "geohash\ttimestamp\n");
+                "geohash\ttimestamp\tjohn\tactivity\n" +
+                        "\t1970-01-01T00:00:01.000000Z\t\t\n" +
+                        "\t1970-01-01T00:00:02.000000Z\t\t\n" +
+                        "\t1970-01-01T00:00:02.000000Z\t4-12\tlion taming\n" +
+                        "\t1970-01-01T00:00:03.000000Z\t\t\n",
+                "john", "activity");
     }
 
     @Test
@@ -131,7 +139,8 @@ public class LineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
     public void testShortSizedGeoHashesSeeminglyGoodLookingStringWhichIsTooLongToBeAGeoHash() throws Exception {
         assertGeoHash(15,
                 "tracking geohash=\"9v1s8hm7wpkssv1h\" 1000000000\n",
-                "geohash\ttimestamp\n");
+                "geohash\ttimestamp\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n");
     }
 
     @Test
@@ -167,22 +176,36 @@ public class LineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
                         "tracking geohash=\"46\" 2000000000\n" +
                         "tracking geohash=\"jn\" 3000000000\n" +
                         "tracking geohash=\"zf\" 4000000000\n" +
-                        "tracking geohash=\"hp\" 5000000000\n" +
+                        "tracking geohash=\"hp\",name=\"questdb\" 5000000000\n" +
                         "tracking geohash=\"wh\" 6000000000\n" +
-                        "tracking geohash=\"s2\" 7000000000\n" +
+                        "tracking geohash=\"s2\",name=\"neptune\" 7000000000\n" +
                         "tracking geohash=\"1c\" 8000000000\n" +
                         "tracking geohash=\"mm\" 9000000000\n" +
-                        "tracking geohash=\"71\" 10000000000\n",
-                "geohash\ttimestamp\n");
+                        "tracking name=\"timeseries\",geohash=\"71\" 10000000000\n",
+                "geohash\ttimestamp\tname\n" +
+                        "\t1970-01-01T00:00:01.000000Z\t\n" +
+                        "\t1970-01-01T00:00:02.000000Z\t\n" +
+                        "\t1970-01-01T00:00:03.000000Z\t\n" +
+                        "\t1970-01-01T00:00:04.000000Z\t\n" +
+                        "\t1970-01-01T00:00:05.000000Z\tquestdb\n" +
+                        "\t1970-01-01T00:00:06.000000Z\t\n" +
+                        "\t1970-01-01T00:00:07.000000Z\tneptune\n" +
+                        "\t1970-01-01T00:00:08.000000Z\t\n" +
+                        "\t1970-01-01T00:00:09.000000Z\t\n" +
+                        "\t1970-01-01T00:00:10.000000Z\ttimeseries\n",
+                "name");
     }
 
     @Test
-    public void testShortSizedWrongGeoHashes() throws Exception {
+    public void testShortSizedWrongCharGeoHashes() throws Exception {
         assertGeoHash(13,
                 "tracking geohash=\"9v1@\" 1000000000\n" +
                         "tracking geohash=\"@46s\" 2000000000\n" +
                         "tracking geohash=\"jLnw\" 3000000000\n",
-                "geohash\ttimestamp\n");
+                "geohash\ttimestamp\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n" +
+                        "\t1970-01-01T00:00:02.000000Z\n" +
+                        "\t1970-01-01T00:00:03.000000Z\n");
     }
 
     @Test
@@ -213,26 +236,27 @@ public class LineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
                 "tracking onions=\"9v1\" 1000000000\n" +
                         "tracking onions=\"46s\" 2000000000\n" +
                         "tracking onions=\"jnw\" 3000000000\n" +
-                        "tracking geohash=\"zfu\" 4000000000\n" +
+                        "tracking geohash=\"zfu\",name=\"zfu\" 4000000000\n" +
                         "tracking geohash=\"hp4\" 5000000000\n" +
                         "tracking onions=\"wh4\" 6000000000\n" +
                         "tracking mint=\"s2z\" 7000000000\n",
-                "geohash\ttimestamp\tonions\tmint\n" +
-                        "\t1970-01-01T00:00:01.000000Z\t9v1\t\n" +
-                        "\t1970-01-01T00:00:02.000000Z\t46s\t\n" +
-                        "\t1970-01-01T00:00:03.000000Z\tjnw\t\n" +
-                        "zfu\t1970-01-01T00:00:04.000000Z\t\t\n" +
-                        "hp4\t1970-01-01T00:00:05.000000Z\t\t\n" +
-                        "\t1970-01-01T00:00:06.000000Z\twh4\t\n" +
-                        "\t1970-01-01T00:00:07.000000Z\t\ts2z\n",
-                "onions", "mint");
+                "geohash\ttimestamp\tonions\tname\tmint\n" +
+                        "\t1970-01-01T00:00:01.000000Z\t9v1\t\t\n" +
+                        "\t1970-01-01T00:00:02.000000Z\t46s\t\t\n" +
+                        "\t1970-01-01T00:00:03.000000Z\tjnw\t\t\n" +
+                        "zfu\t1970-01-01T00:00:04.000000Z\t\tzfu\t\n" +
+                        "hp4\t1970-01-01T00:00:05.000000Z\t\t\t\n" +
+                        "\t1970-01-01T00:00:06.000000Z\twh4\t\t\n" +
+                        "\t1970-01-01T00:00:07.000000Z\t\t\ts2z\n",
+                "onions", "mint", "name");
     }
 
     @Test
     public void testIntSizedGeoHashesSeeminglyGoodLookingStringWhichIsTooLongToBeAGeoHash() throws Exception {
         assertGeoHash(30,
                 "tracking geohash=\"9v1s8hm7wpkssv1h\" 1000000000\n",
-                "geohash\ttimestamp\n");
+                "geohash\ttimestamp\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n");
     }
 
     @Test
@@ -264,21 +288,34 @@ public class LineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
                         "tracking geohash=\"46swg\" 2000000000\n" +
                         "tracking geohash=\"jnw97\" 3000000000\n" +
                         "tracking geohash=\"zfuqd\" 4000000000\n" +
-                        "tracking geohash=\"hp4mu\" 5000000000\n" +
+                        "tracking name=\"hp4mu\" 5000000000\n" +
                         "tracking geohash=\"wh4b6\" 6000000000\n" +
                         "tracking geohash=\"s2z2f\" 7000000000\n" +
-                        "tracking geohash=\"1cjjw\" 8000000000\n",
-                "geohash\ttimestamp\n");
+                        "tracking geohash=\"1cjjw\",name=\"\" 8000000000\n",
+                "geohash\ttimestamp\tname\n" +
+                        "\t1970-01-01T00:00:01.000000Z\t\n" +
+                        "\t1970-01-01T00:00:02.000000Z\t\n" +
+                        "\t1970-01-01T00:00:03.000000Z\t\n" +
+                        "\t1970-01-01T00:00:04.000000Z\t\n" +
+                        "\t1970-01-01T00:00:05.000000Z\thp4mu\n" +
+                        "\t1970-01-01T00:00:06.000000Z\t\n" +
+                        "\t1970-01-01T00:00:07.000000Z\t\n" +
+                        "\t1970-01-01T00:00:08.000000Z\t\n");
     }
 
     @Test
-    public void testIntSizedWrongGeoHashes() throws Exception {
+    public void testIntSizedWrongCharGeoHashes() throws Exception {
         assertGeoHash(29,
                 "tracking geohash=\"9v@1s8h\" 1000000000\n" +
                         "tracking geohash=\"46swLgj\" 2000000000\n" +
                         "tracking geohash=\"j+nw97u\" 3000000000\n" +
-                        "tracking geohash=\"zf-uqd3\" 4000000000\n",
-                "geohash\ttimestamp\n");
+                        "tracking geohash=\"zf-uqd3\",composer=\"Mozart\" 4000000000\n",
+                "geohash\ttimestamp\tcomposer\n" +
+                        "\t1970-01-01T00:00:01.000000Z\t\n" +
+                        "\t1970-01-01T00:00:02.000000Z\t\n" +
+                        "\t1970-01-01T00:00:03.000000Z\t\n" +
+                        "\t1970-01-01T00:00:04.000000Z\tMozart\n",
+                "composer");
     }
 
     @Test
@@ -302,10 +339,25 @@ public class LineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testLongSizedWrongCharGeoHashes() throws Exception {
+        assertGeoHash(60,
+                "tracking geohash=\"9v1s8hm7wpks\" 1000000000\n" +
+                        "tracking geohash=\"46swgj10r88k\" 2000000000\n" +
+                        "tracking geohash=\"hp4m@v5tgg3q\" 5000000000\n" +
+                        "tracking geohash=\"wh4b6vnt-q1c\" 6000000000\n",
+                "geohash\ttimestamp\n" +
+                        "9v1s8hm7wpks\t1970-01-01T00:00:01.000000Z\n" +
+                        "46swgj10r88k\t1970-01-01T00:00:02.000000Z\n" +
+                        "\t1970-01-01T00:00:05.000000Z\n" +
+                        "\t1970-01-01T00:00:06.000000Z\n");
+    }
+
+    @Test
     public void testLongSizedGeoHashesSeeminglyGoodLookingStringWhichIsTooLongToBeAGeoHash() throws Exception {
         assertGeoHash(60,
-                "tracking geohash=\"9v1s8hm7wpkssv1h\" 1000000000\n",
-                "geohash\ttimestamp\n");
+                "tracking geohash=\"9v1s8hm7wpkssv1h\",item=\"book\" 1000000000\n",
+                "geohash\ttimestamp\titem\n" +
+                        "\t1970-01-01T00:00:01.000000Z\tbook\n");
     }
 
     @Test
@@ -338,7 +390,14 @@ public class LineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
                         "tracking geohash=\"hp4muv5tgg3\" 5000000000\n" +
                         "tracking geohash=\"wh4b6vntdq1\" 6000000000\n" +
                         "tracking geohash=\"s2z2fydsjq5\" 7000000000\n",
-                "geohash\ttimestamp\n");
+                "geohash\ttimestamp\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n" +
+                        "\t1970-01-01T00:00:02.000000Z\n" +
+                        "\t1970-01-01T00:00:03.000000Z\n" +
+                        "\t1970-01-01T00:00:04.000000Z\n" +
+                        "\t1970-01-01T00:00:05.000000Z\n" +
+                        "\t1970-01-01T00:00:06.000000Z\n" +
+                        "\t1970-01-01T00:00:07.000000Z\n");
     }
 
     @Test
@@ -381,7 +440,10 @@ public class LineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
                 "tracking geohash=\"@9v1s8hm@7wp\" 1000000000\n" +
                         "tracking geohash=\"46swgj1Lr88k\" 2000000000\n" +
                         "tracking geohash=\"jnw97u--uquw\" 3000000000\n",
-                "geohash\ttimestamp\n");
+                "geohash\ttimestamp\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n" +
+                        "\t1970-01-01T00:00:02.000000Z\n" +
+                        "\t1970-01-01T00:00:03.000000Z\n");
     }
 
     @Test
