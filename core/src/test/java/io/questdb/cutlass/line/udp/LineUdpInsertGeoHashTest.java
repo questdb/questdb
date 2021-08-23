@@ -35,6 +35,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.locks.LockSupport;
@@ -70,6 +71,44 @@ public class LineUdpInsertGeoHashTest extends AbstractCairoTest {
                         "0100\t1970-01-01T00:00:01.000000Z\n" +
                         "0010\t1970-01-01T00:00:02.000000Z\n" +
                         "1000\t1970-01-01T00:00:03.000000Z\n");
+    }
+
+    @Test
+    public void testByteSizedGeoHashesTableHasGeoHashMessageDoesNot() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
+                    createTable(engine, 4);
+                    receiver.start();
+                    try (LineProtoSender sender = createLineProtoSender()) {
+                        sender.metric(TABLE_NAME).field("carrots", "9").$(1000000000L);
+                        sender.metric(TABLE_NAME).field("carrots", "4").$(2000000000L);
+                        sender.metric(TABLE_NAME).field("carrots", "j").$(3000000000L);
+                        sender.flush();
+                    }
+                    assertReader("geohash\ttimestamp\tcarrots\n" +
+                                    "\t1970-01-01T00:00:01.000000Z\t9\n" +
+                                    "\t1970-01-01T00:00:02.000000Z\t4\n" +
+                                    "\t1970-01-01T00:00:03.000000Z\tj\n",
+                            "carrots");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testByteSizedGeoHashesSeeminglyGoodLookingStringWhichIsTooLongToBeAGeoHash() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
+                    createTable(engine, 4);
+                    receiver.start();
+                    sendGeoHashLine("9v1s8hm7wpkssv1h");
+                    assertReader("geohash\ttimestamp\n" +
+                                    "\t1970-01-01T00:00:01.000000Z\n");
+                }
+            }
+        });
     }
 
     @Test
@@ -331,9 +370,16 @@ public class LineUdpInsertGeoHashTest extends AbstractCairoTest {
         }
     }
 
+    private static void sendGeoHashLine(String geohash, String extraColName, String extraColValue) {
+        try (LineProtoSender sender = createLineProtoSender()) {
+            sender.metric(TABLE_NAME).field(COL_NAME, geohash).field(extraColName, extraColValue).$(1_000_000_000);
+            sender.flush();
+        }
+    }
+
     private static void sendGeoHashLines(int numLines, int charsPrecision) {
         Supplier<String> rnd = randomGeoHashGenerator(charsPrecision);
-        try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 256 * 1024, 1)) {
+        try (LineProtoSender sender = createLineProtoSender()) {
             for (int i = 0; i < numLines; i++) {
                 sender.metric(TABLE_NAME).field(COL_NAME, rnd.get()).$((long) ((i + 1) * 1e9));
             }
@@ -341,7 +387,15 @@ public class LineUdpInsertGeoHashTest extends AbstractCairoTest {
         }
     }
 
+    private static LineProtoSender createLineProtoSender() {
+        return new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 256 * 1024, 1);
+    }
+
     private static void assertReader(String expected) {
+        assertReader(expected, null);
+    }
+
+    private static void assertReader(String expected, String... expectedExtraStringColumns) {
         int numLines = expected.split("[\n]").length - 1;
         try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), TABLE_NAME)) {
             for (int attempts = 28_02_78; attempts > 0; attempts--) {
@@ -352,6 +406,13 @@ public class LineUdpInsertGeoHashTest extends AbstractCairoTest {
                 reader.reload();
             }
             TestUtils.assertReader(expected, reader, sink);
+            if (expectedExtraStringColumns != null) {
+                TableReaderMetadata meta = reader.getMetadata();
+                Assert.assertEquals(2 + expectedExtraStringColumns.length, meta.getColumnCount());
+                for (String colName : expectedExtraStringColumns) {
+                    Assert.assertEquals(ColumnType.STRING, meta.getColumnType(colName));
+                }
+            }
         }
     }
 

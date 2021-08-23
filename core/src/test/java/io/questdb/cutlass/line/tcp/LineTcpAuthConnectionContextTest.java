@@ -25,23 +25,18 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.network.*;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.Signature;
 import java.util.Base64;
 import java.util.Random;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
 
@@ -51,14 +46,19 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
     private final static String AUTH_KEY_ID2 = "testUser2";
     private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("lwJi3TSb4G6UcHxFJmPhOTWa4BLwJOOiK76wT6Uk7pI");
     private final Random rand = new Random(0);
-    private final AtomicInteger netMsgBufferSize = new AtomicInteger(1024);
     private byte[] sentBytes;
     private int maxSendBytes = 1024;
 
-    @Override
     @Before
+    @Override
     public void before() {
-        final NetworkFacade nf = new LineTcpNetworkFacade() {
+        nWriterThreads = 2;
+        microSecondTicks = -1;
+        recvBuffer = null;
+        disconnected = true;
+        netMsgBufferSize.set(1024);
+        maxSendBytes = 1024;
+        lineTcpConfiguration = createReceiverConfiguration(true, new LineTcpNetworkFacade() {
             @Override
             public int send(long fd, long buffer, int bufferLen) {
                 Assert.assertEquals(FD, fd);
@@ -72,52 +72,12 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
 
                 int nSent = Math.min(bufferLen, maxSendBytes);
                 sentBytes = new byte[nSent];
-
                 for (int n = 0; n < nSent; n++) {
                     sentBytes[n] = Unsafe.getUnsafe().getByte(buffer + n);
                 }
-
                 return nSent;
             }
-        };
-        nWriterThreads = 2;
-        microSecondTicks = -1;
-        lineTcpConfiguration = new DefaultLineTcpReceiverConfiguration() {
-            @Override
-            public int getNetMsgBufferSize() {
-                return netMsgBufferSize.get();
-            }
-
-            @Override
-            public int getMaxMeasurementSize() {
-                return 128;
-            }
-
-            @Override
-            public NetworkFacade getNetworkFacade() {
-                return nf;
-            }
-
-            @Override
-            public MicrosecondClock getMicrosecondClock() {
-                return new MicrosecondClockImpl() {
-                    @Override
-                    public long getTicks() {
-                        if (microSecondTicks >= 0) {
-                            return microSecondTicks;
-                        }
-                        return super.getTicks();
-                    }
-                };
-            }
-
-            @Override
-            public String getAuthDbPath() {
-                URL u = getClass().getResource("authDb.txt");
-                assert u != null;
-                return u.getFile();
-            }
-        };
+        });
     }
 
     @Test
@@ -337,7 +297,14 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
     public void testGoodAuthenticationP1363() throws Exception {
         runInAuthContext(() -> {
             try {
-                boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, false, false, true, null);
+                boolean authSequenceCompleted = authenticate(
+                        AUTH_KEY_ID1,
+                        AUTH_PRIVATE_KEY1,
+                        false,
+                        false,
+                        false,
+                        true,
+                        null);
                 Assert.assertTrue(authSequenceCompleted);
             } catch (RuntimeException ex) {
                 // Expected that Java 8 does not have SHA256withECDSAinP1363
@@ -419,12 +386,23 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     private boolean authenticate(String authKeyId, PrivateKey authPrivateKey) {
-        return authenticate(authKeyId, authPrivateKey, false, false, false, false, null);
+        return authenticate(
+                authKeyId,
+                authPrivateKey,
+                false,
+                false,
+                false,
+                false,
+                null);
     }
 
-    private boolean authenticate(
-            String authKeyId, PrivateKey authPrivateKey, boolean fragmentKeyId, boolean fragmentChallenge, boolean fragmentSignature, boolean useP1363Encoding, byte[] junkSignature
-    ) {
+    private boolean authenticate(String authKeyId,
+                                 PrivateKey authPrivateKey,
+                                 boolean fragmentKeyId,
+                                 boolean fragmentChallenge,
+                                 boolean fragmentSignature,
+                                 boolean useP1363Encoding,
+                                 byte[] junkSignature) {
         send(authKeyId + "\n", fragmentKeyId);
         byte[] challengeBytes = readChallenge(fragmentChallenge);
         if (null == challengeBytes) {
@@ -433,7 +411,8 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
         try {
             byte[] rawSignature;
             if (null == junkSignature) {
-                Signature sig = useP1363Encoding ? Signature.getInstance(AuthDb.SIGNATURE_TYPE_P1363) : Signature.getInstance(AuthDb.SIGNATURE_TYPE_DER);
+                Signature sig = useP1363Encoding ?
+                        Signature.getInstance(AuthDb.SIGNATURE_TYPE_P1363) : Signature.getInstance(AuthDb.SIGNATURE_TYPE_DER);
                 sig.initSign(authPrivateKey);
                 sig.update(challengeBytes, 0, challengeBytes.length - 1);
                 rawSignature = sig.sign();
@@ -446,7 +425,6 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
         } catch (Exception ex) {
             throw new RuntimeException(ex);
         }
-
         return true;
     }
 

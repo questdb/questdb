@@ -42,10 +42,6 @@ import io.questdb.std.str.LPSZ;
 
 public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
-    private int[] rebalanceLoadByThread;
-    private int rebalanceNLoadCheckCycles = 0;
-    private int rebalanceNRebalances = 0;
-
     @Test
     public void testAddFieldColumn() throws Exception {
         runInContext(() -> {
@@ -771,15 +767,6 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
-    public void testMultiplTablesWithSingleWriterThread() throws Exception {
-        nWriterThreads = 1;
-        int nTables = 3;
-        int nIterations = 20_000;
-        testThreading(nTables, nIterations, null);
-        Assert.assertEquals(0, rebalanceNRebalances);
-    }
-
-    @Test
     public void testMultipleMeasurements1() throws Exception {
         runInContext(() -> {
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
@@ -912,29 +899,6 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected, "weather");
         });
-    }
-
-    @Test
-    public void testThreadsWithUnbalancedLoad() throws Exception {
-        nWriterThreads = 3;
-        int nTables = 12;
-        int nIterations = 20_000;
-        double[] loadFactors = {10, 10, 10, 20, 20, 20, 20, 20, 20, 30, 30, 60};
-        testThreading(nTables, nIterations, loadFactors);
-
-        int maxLoad = Integer.MIN_VALUE;
-        int minLoad = Integer.MAX_VALUE;
-        for (int load : rebalanceLoadByThread) {
-            if (maxLoad < load) {
-                maxLoad = load;
-            }
-            if (minLoad > load) {
-                minLoad = load;
-            }
-        }
-        double loadRatio = (double) maxLoad / (double) minLoad;
-        LOG.info().$("testThreadsWithUnbalancedLoad final load ratio is ").$(loadRatio).$();
-        Assert.assertTrue(loadRatio < 1.05);
     }
 
     @Test
@@ -1136,6 +1100,42 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         });
     }
 
+    private int[] rebalanceLoadByThread;
+    private int rebalanceNLoadCheckCycles = 0;
+    private int rebalanceNRebalances = 0;
+
+    @Test
+    public void testMultiplTablesWithSingleWriterThread() throws Exception {
+        nWriterThreads = 1;
+        int nTables = 3;
+        int nIterations = 20_000;
+        testThreading(nTables, nIterations, null);
+        Assert.assertEquals(0, rebalanceNRebalances);
+    }
+
+    @Test
+    public void testThreadsWithUnbalancedLoad() throws Exception {
+        nWriterThreads = 3;
+        int nTables = 12;
+        int nIterations = 20_000;
+        double[] loadFactors = {10, 10, 10, 20, 20, 20, 20, 20, 20, 30, 30, 60};
+        testThreading(nTables, nIterations, loadFactors);
+
+        int maxLoad = Integer.MIN_VALUE;
+        int minLoad = Integer.MAX_VALUE;
+        for (int load : rebalanceLoadByThread) {
+            if (maxLoad < load) {
+                maxLoad = load;
+            }
+            if (minLoad > load) {
+                minLoad = load;
+            }
+        }
+        double loadRatio = (double) maxLoad / (double) minLoad;
+        LOG.info().$("testThreadsWithUnbalancedLoad final load ratio is ").$(loadRatio).$();
+        Assert.assertTrue(loadRatio < 1.05);
+    }
+
     private void testThreading(int nTables, int nIterations, double[] lf) throws Exception {
         if (null == lf) {
             lf = new double[nTables];
@@ -1190,8 +1190,18 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             rebalanceNRebalances = scheduler.getNRebalances();
             rebalanceLoadByThread = scheduler.getLoadByThread();
             closeContext();
-            LOG.info().$("Completed ").$(nTotalUpdates).$(" measurements with ").$(nTables).$(" measurement types processed by ").$(nWriterThreads).$(" threads. ")
-                    .$(rebalanceNLoadCheckCycles).$(" load checks lead to ").$(rebalanceNRebalances).$(" load rebalancing operations").$();
+            LOG.info().$("Completed ")
+                    .$(nTotalUpdates)
+                    .$(" measurements with ")
+                    .$(nTables)
+                    .$(" measurement types processed by ")
+                    .$(nWriterThreads)
+                    .$(" threads. ")
+                    .$(rebalanceNLoadCheckCycles)
+                    .$(" load checks lead to ")
+                    .$(rebalanceNRebalances)
+                    .$(" load rebalancing operations")
+                    .$();
             for (int nTable = 0; nTable < nTables; nTable++) {
                 assertTableCount("weather" + nTable, countByTable[nTable], maxTimestampByTable[nTable] - timestampIncrementInNanos);
             }

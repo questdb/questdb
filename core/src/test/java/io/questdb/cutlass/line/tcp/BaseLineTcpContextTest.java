@@ -41,8 +41,10 @@ import io.questdb.std.str.FloatingDirectCharSink;
 import org.junit.Assert;
 import org.junit.Before;
 
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 
@@ -58,6 +60,17 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected WorkerPool workerPool;
     protected int nWriterThreads;
     protected long microSecondTicks;
+    protected final AtomicInteger netMsgBufferSize = new AtomicInteger();
+
+    @Before
+    public void before() {
+        nWriterThreads = 2;
+        microSecondTicks = -1;
+        recvBuffer = null;
+        disconnected = true;
+        netMsgBufferSize.set(512);
+        lineTcpConfiguration = createNoAuthReceiverConfiguration(new LineTcpNetworkFacade());
+    }
 
     class LineTcpNetworkFacade extends NetworkFacadeImpl {
         @Override
@@ -77,15 +90,15 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
     }
 
-    @Before
-    public void before() {
-        final NetworkFacade nf = new LineTcpNetworkFacade();
-        nWriterThreads = 2;
-        microSecondTicks = -1;
-        lineTcpConfiguration = new DefaultLineTcpReceiverConfiguration() {
+    protected LineTcpReceiverConfiguration createNoAuthReceiverConfiguration(NetworkFacade nf) {
+        return createReceiverConfiguration(false, nf);
+    }
+
+    protected LineTcpReceiverConfiguration createReceiverConfiguration(final boolean withAuth, final NetworkFacade nf) {
+        return new DefaultLineTcpReceiverConfiguration() {
             @Override
             public int getNetMsgBufferSize() {
-                return 512;
+                return netMsgBufferSize.get();
             }
 
             @Override
@@ -114,6 +127,16 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                         return super.getTicks();
                     }
                 };
+            }
+
+            @Override
+            public String getAuthDbPath() {
+                if (withAuth) {
+                    URL u = getClass().getResource("authDb.txt");
+                    assert u != null;
+                    return u.getFile();
+                }
+                return super.getAuthDbPath();
             }
         };
     }
@@ -281,11 +304,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     }
 
     protected void waitForIOCompletion() {
-        int maxIterations = 256;
         recvBuffer = null;
         // Guard against slow writers on disconnect
+        int maxIterations = 2000;
         while (maxIterations-- > 0) {
-            if (!handleContextIO()) {
+            if (false == handleContextIO()) {
                 break;
             }
             LockSupport.parkNanos(1_000_000);
