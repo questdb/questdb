@@ -159,7 +159,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                         break;
                     default:
                         Misc.freeObjList(groupByScalarFunctions);
-                        throw SqlException.$(groupByFunctionPositions.getQuick(i), "Unsupported type: ").put(ColumnType.nameOf(function.getType()));
+                        throw SqlException.$(groupByFunctionPositions.getQuick(i), "Unsupported interpolation type: ").put(ColumnType.nameOf(function.getType()));
                 }
             } else {
                 groupByTwoPointFunctions.add(function);
