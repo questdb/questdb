@@ -27,10 +27,10 @@ package io.questdb.cutlass.line.udp;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoSender;
+import io.questdb.griffin.engine.functions.rnd.RndGeoHashFunctionFactory;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Misc;
-import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -163,15 +163,9 @@ abstract class LineUdpInsertGeoHashTest extends AbstractCairoTest {
     private static Supplier<String> randomGeoHashGenerator(int chars) {
         final Rnd rnd = new Rnd();
         return () -> {
-            double lat = rnd.nextDouble() * 180.0 - 90.0;
-            double lng = rnd.nextDouble() * 360.0 - 180.0;
-            try {
-                StringSink sink = Misc.getThreadLocalBuilder();
-                GeoHashes.toString(GeoHashes.fromCoordinates(lat, lng, chars * 5), chars, sink);
-                return sink.toString();
-            } catch (NumericException e) {
-                throw new IllegalStateException("should never happen");
-            }
+            StringSink sink = Misc.getThreadLocalBuilder();
+            GeoHashes.toString(RndGeoHashFunctionFactory.nextGeoHash(rnd, chars * 5), chars, sink);
+            return sink.toString();
         };
     }
 }
