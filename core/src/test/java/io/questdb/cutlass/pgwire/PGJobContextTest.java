@@ -3877,33 +3877,48 @@ nodejs code:
 
             try (
                     final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, binary)
+                    final Connection connection = getConnection(false, binary);
+                    final PreparedStatement insert = connection.prepareStatement(
+                            "insert into xyz values (" +
+                                    "cast(? as geohash(1b))," +
+                                    "cast(? as geohash(2b))," +
+                                    "cast(? as geohash(3b))," +
+                                    "cast(? as geohash(1c))," +
+                                    "cast(? as geohash(2c))," +
+                                    "cast(? as geohash(4c))," +
+                                    "cast(? as geohash(8c)))"
+                    )
             ) {
-                final Rnd rnd = new Rnd();
                 connection.setAutoCommit(false);
                 for (int i = 0; i < 100; i++) {
-                    TestUtils.insert(compiler, sqlExecutionContext,
-                            "insert into xyz values ('0', '01', '010', 'x', 'xy', 'xyzw', 'xyzwzyxq')");
+                    insert.setString(1, "0");
+                    insert.setString(2, "10");
+                    insert.setString(3, "010");
+                    insert.setString(4, "x");
+                    insert.setString(5, "xy");
+                    insert.setString(6, "xyzw");
+                    insert.setString(7, "xyzwzvxq");
+                    insert.execute();
+                    Assert.assertEquals(1, insert.getUpdateCount());
                 }
                 connection.commit();
 
-                rnd.reset();
                 try (RecordCursorFactory factory = compiler.compile("xyz", sqlExecutionContext).getRecordCursorFactory()) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         final Record record = cursor.getRecord();
                         int count = 0;
                         while (cursor.hasNext()) {
-                              //TODO: bits geohash lliteral
+                            //TODO: bits geohash lliteral
 //                            Assert.assertEquals((byte)GeoHashes.fromBitString("0"), record.getGeoHashByte(0));
 //                            Assert.assertEquals((byte)GeoHashes.fromBitString("01"), record.getGeoHashByte(1));
 //                            Assert.assertEquals((byte)GeoHashes.fromBitString("010"), record.getGeoHashByte(2));
                             Assert.assertEquals(GeoHashes.fromString("x" ,1), record.getGeoHashByte(3));
                             Assert.assertEquals(GeoHashes.fromString("xy" ,2), record.getGeoHashShort(4));
                             Assert.assertEquals(GeoHashes.fromString("xyzw" ,4), record.getGeoHashInt(5));
-                            Assert.assertEquals(GeoHashes.fromString("xyzwzyxq" ,8), record.getGeoHashLong(6));
-                            sink.clear();
+                            Assert.assertEquals(GeoHashes.fromString("xyzwzvxq" ,8), record.getGeoHashLong(6));
                             count++;
                         }
+
                         Assert.assertEquals(100, count);
                     }
                 }
