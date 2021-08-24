@@ -75,8 +75,8 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
 
         private long getLongValue(Record rec) {
             try {
-                double lat = this.lat.getDouble(rec);
                 double lon = this.lon.getDouble(rec);
+                double lat = this.lat.getDouble(rec);
                 return GeoHashes.fromCoordinates(lat, lon, this.bits);
             } catch (NumericException e) {
                 return GeoHashes.NULL;
