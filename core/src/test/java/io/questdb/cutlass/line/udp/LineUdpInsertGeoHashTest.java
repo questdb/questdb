@@ -119,22 +119,34 @@ abstract class LineUdpInsertGeoHashTest extends AbstractCairoTest {
 
     protected static void assertReader(String expected, String... expectedExtraStringColumns) {
         int numLines = expected.split("[\n]").length - 1;
-        try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), tableName)) {
-            for (int attempts = 28_02_78; attempts > 0; attempts--) {
-                if (reader.size() >= numLines) {
-                    break;
+        CairoException pendingRecoveryErr = null;
+        for (int i = 0, n = 2; i < n; i++) {
+            // aggressively demand a TableReader up to 2x
+            try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), tableName)) {
+                for (int attempts = 28_02_78; attempts > 0; attempts--) {
+                    if (reader.size() >= numLines) {
+                        break;
+                    }
+                    LockSupport.parkNanos(1);
+                    reader.reload();
                 }
-                LockSupport.parkNanos(1);
-                reader.reload();
-            }
-            TestUtils.assertReader(expected, reader, sink);
-            if (expectedExtraStringColumns != null) {
-                TableReaderMetadata meta = reader.getMetadata();
-                Assert.assertEquals(2 + expectedExtraStringColumns.length, meta.getColumnCount());
-                for (String colName : expectedExtraStringColumns) {
-                    Assert.assertEquals(ColumnType.STRING, meta.getColumnType(colName));
+                TestUtils.assertReader(expected, reader, sink);
+                if (expectedExtraStringColumns != null) {
+                    TableReaderMetadata meta = reader.getMetadata();
+                    Assert.assertEquals(2 + expectedExtraStringColumns.length, meta.getColumnCount());
+                    for (String colName : expectedExtraStringColumns) {
+                        Assert.assertEquals(ColumnType.STRING, meta.getColumnType(colName));
+                    }
                 }
+                pendingRecoveryErr = null;
+                break;
+            } catch (CairoException err) {
+                pendingRecoveryErr = err;
+                continue;
             }
+        }
+        if (pendingRecoveryErr != null) {
+            throw pendingRecoveryErr;
         }
     }
 
