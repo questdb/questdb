@@ -551,4 +551,20 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                             "questdb\t1234567\n");
         });
     }
+
+    @Test
+    public void testMakeGeoHashFromCoords() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql("select make_geohash(lon,lat,40) as h8c\n" +
+                            "from ( select \n" +
+                            "(rnd_double()*180.0 - 90.0) as lat,\n" +
+                            "(rnd_double()*360.0 - 180.0) as lon\n" +
+                            "from long_sequence(3))",
+                            "h8c\n" +
+                                    "jr1nj0dv\n" +
+                                    "29tdrk0h\n" +
+                                    "9su67p3e\n");
+        });
+    }
+
 }
