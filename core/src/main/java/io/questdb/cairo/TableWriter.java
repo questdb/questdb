@@ -1442,8 +1442,9 @@ public class TableWriter implements Closeable {
             int typeSize = 4;
             long fileSize = ff.length(path);
             if (fileSize < partitionSize * typeSize) {
-                throw CairoException.instance(0).put("Column file row count does not match timestamp file row count. " +
-                                "Partition files inconsistent [file=")
+                throw CairoException.instance(0)
+                        .put("Column file row count does not match timestamp file row count. ")
+                        .put("Partition files inconsistent [file=")
                         .put(path)
                         .put(",expectedSize=")
                         .put(partitionSize * typeSize)
@@ -1467,8 +1468,9 @@ public class TableWriter implements Closeable {
         if (ff.exists(path)) {
             long fileSize = ff.length(path);
             if (fileSize < partitionSize << ColumnType.pow2SizeOf(columnType)) {
-                throw CairoException.instance(0).put("Column file row count does not match timestamp file row count. " +
-                                "Partition files inconsistent [file=")
+                throw CairoException.instance(0)
+                        .put("Column file row count does not match timestamp file row count. ")
+                        .put("Partition files inconsistent [file=")
                         .put(path)
                         .put(",expectedSize=")
                         .put(partitionSize << ColumnType.pow2SizeOf(columnType))
@@ -3208,8 +3210,8 @@ public class TableWriter implements Closeable {
                     other.slash$();
                     int errno;
                     if ((errno = ff.rmdir(other)) == 0) {
-                        LOG.info().$(
-                                        "purged [path=").$(other)
+                        LOG.info()
+                                .$("purged [path=").$(other)
                                 .$(", readerTxn=").$(readerTxn)
                                 .$(", readerTxnCount=").$(readerTxnCount)
                                 .$(']').$();

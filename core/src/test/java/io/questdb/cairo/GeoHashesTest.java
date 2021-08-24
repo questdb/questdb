@@ -31,7 +31,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class GeoHashesTest {
-
     @Test
     public void testBitsPrecision() {
         Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(ColumnType.GEOHASH));
