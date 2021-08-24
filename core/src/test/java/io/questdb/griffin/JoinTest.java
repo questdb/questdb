@@ -2745,6 +2745,14 @@ public class JoinTest extends AbstractGriffinTest {
                 "2\t3\t2\t3\n" +
                 "4\t6\t4\t6\n" +
                 "6\t9\t6\t9\n");
+
+        assertSql("select *, x.\"in\" + x1.\"from\" " +
+                        "from x " +
+                        "join x as x1 on x.i = x1.i",
+                "i\tin\tfrom\ti1\tin1\tfrom1\tcolumn\n" +
+                        "1\t2\t3\t1\t2\t3\t5\n" +
+                        "2\t4\t6\t2\t4\t6\t10\n" +
+                        "3\t6\t9\t3\t6\t9\t15\n");
     }
 
     private void testJoinWithGeohash() throws Exception {
