@@ -1,0 +1,74 @@
+version: "3.7"
+services: 
+  core: 
+    image: questdb/questdb
+    ports:
+      - 9000:9000
+      - 9009:9009
+      - 8812:8812 
+  ui: 
+    depends_on: 
+      - core
+    build: 
+      context: ./ui
+      dockerfile: ./Dockerfile
+    volumes: 
+      - type: bind
+        source: ./ui/src
+        target: /usr/src/src
+      - type: bind
+        source: ./ui/.eslintrc.js
+        target: /usr/src/.eslintrc.js
+      - type: bind
+        source: ./ui/assets
+        target: /usr/src/assets
+      - type: bind
+        source: ./ui/types
+        target: /usr/src/types
+      - type: bind
+        source: ./ui/utils
+        target: /usr/src/utils
+      - type: bind
+        source: ./ui/babel.config.js
+        target: /usr/src/babel.config.js
+      - type: bind
+        source: ./ui/package.json
+        target: /usr/src/package.json
+      - type: bind
+        source: ./ui/package-lock.json
+        target: /usr/src/package-lock.json
+      - type: bind
+        source: ./ui/prettier.config.js
+        target: /usr/src/prettier.config.js
+      - type: bind
+        source: ./ui/stylelint.config.js
+        target: /usr/src/stylelint.config.js
+      - type: bind
+        source: ./ui/tsconfig.json
+        target: /usr/src/tsconfig.json
+      - type: bind
+        source: ./ui/webpack.config.js
+        target: /usr/src/webpack.config.js
+      - type: bind
+        source: ./ui/agnostic_components/virtual-scroll/package.json
+        target: /usr/src/node_modules/@questdb/virtual-scroll/package.json
+      - type: bind
+        source: ./ui/agnostic_components/virtual-scroll/dist
+        target: /usr/src/node_modules/@questdb/virtual-scroll/dist
+      - type: volume
+        source: questdb-ui
+        target: /usr/src/dist
+    entrypoint: /bin/sh -c "while sleep 1000; do :; done"
+    network_mode: host
+    # entrypoint: yarn start
+  # deploy-ui: 
+  #   build: 
+  #     context: ./ui
+  #     dockerfile: ./Dockerfile.deploy
+  #   volumes: 
+  #     - type: bind
+  #       source: questdb-ui
+  #       target: /usr/src
+  #   entrypoint: /bin/sh -c ''
+volumes: 
+  questdb-ui:
