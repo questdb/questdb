@@ -147,7 +147,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
     }
 
-    private static WorkerPool createWorkerPool(final int workerCount) {
+    private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError) {
         return new WorkerPool(new WorkerPoolConfiguration() {
             private final int[] affinityByThread;
 
@@ -163,7 +163,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
             @Override
             public boolean haltOnError() {
-                return false;
+                return haltOnError;
             }
 
             {
@@ -179,9 +179,9 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         scheduler = new LineTcpMeasurementScheduler(
                 lineTcpConfiguration,
                 engine,
-                createWorkerPool(1),
+                createWorkerPool(1, true),
                 null,
-                workerPool = createWorkerPool(nWriterThreads)) {
+                workerPool = createWorkerPool(nWriterThreads, false)) {
 
             @Override
             boolean tryButCouldNotCommit(NetworkIOJob netIoJob, NewLineProtoParser protoParser, FloatingDirectCharSink charSink) {
@@ -290,15 +290,15 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         switch (context.handleIO(NO_NETWORK_IO_JOB)) {
             case NEEDS_READ:
                 context.getDispatcher().registerChannel(context, IOOperation.READ);
-                return false;
+                break;
             case NEEDS_WRITE:
                 context.getDispatcher().registerChannel(context, IOOperation.WRITE);
-                return false;
+                break;
             case QUEUE_FULL:
                 return true;
             case NEEDS_DISCONNECT:
                 context.getDispatcher().disconnect(context, IODispatcher.DISCONNECT_REASON_PROTOCOL_VIOLATION);
-                return false;
+                break;
         }
         return false;
     }

@@ -25,21 +25,18 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
-import io.questdb.std.Rnd;
 import org.junit.Test;
 
 public class LineTcpInsertByteGeoHashTest extends LineTcpInsertGeoHashTest {
     @Test
     public void testInsertMissingGeoHashHasNoEffect() throws Exception {
-        Rnd rand = new Rnd();
         for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
             if (b > 1) {
                 setUp();
-                rand.reset();
             }
-            // TODO: this is broken, needs to yield lots of omelettes IMMO
+            // NewLineProtoParser.putValue does not accept zero len entity values
             assertGeoHash(b,
-                    String.format("tracking geohash=,omelette=\"%s\" 1000000000\n", rand.nextLong()),
+                    "tracking geohash=,here=\"no\" 1000000000\n",
                     "geohash\ttimestamp\n");
             tearDown();
         }
