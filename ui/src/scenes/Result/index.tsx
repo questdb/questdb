@@ -29,6 +29,7 @@ import { Download2 } from "@styled-icons/remix-line/Download2"
 import { Grid } from "@styled-icons/remix-line/Grid"
 import { PieChart } from "@styled-icons/remix-line/PieChart"
 import { Refresh } from "@styled-icons/remix-line/Refresh"
+import "@questdb/virtual-scroll"
 
 import {
   PaneContent,
@@ -46,6 +47,13 @@ import { selectors } from "store"
 import { color } from "utils"
 import * as QuestDB from "utils/questdb"
 
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      "virtual-scroll": any
+    }
+  }
+} 
 const Menu = styled(PaneMenu)`
   justify-content: space-between;
 `
@@ -181,6 +189,7 @@ const Result = () => {
       </Menu>
 
       <Content>
+        <virtual-scroll>tessst</virtual-scroll>
         <div id="grid">
           <div className="qg-header-row" />
           <div className="qg-viewport">
