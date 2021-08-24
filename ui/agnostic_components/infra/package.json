@@ -1,0 +1,12 @@
+{
+	"version": "1.0.0",
+	"scripts": {
+		"infra:up": "docker-compose -f docker-compose-dev.yml up",
+		"infra:down": "docker-compose -f docker-compose-dev.yml down",
+		"infra-prod:up": "docker-compose up",
+		"infra-prod:down": "docker-compose down"
+	},
+	"description": "an infra project for multirepo",
+	"name": "infra",
+	"main": "index.js"
+}

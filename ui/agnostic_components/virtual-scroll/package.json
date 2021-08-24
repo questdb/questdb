@@ -1,0 +1,83 @@
+{
+    "scripts": {
+      "lint:eslint": "eslint --ext .js,.html . --ignore-path .gitignore",
+      "format:eslint": "eslint --ext .js,.html . --fix --ignore-path .gitignore",
+      "lint:prettier": "prettier \"**/*.js\" --check --ignore-path .gitignore",
+      "format:prettier": "prettier \"**/*.js\" --write --ignore-path .gitignore",
+      "lint": "npm run lint:eslint && npm run lint:prettier",
+      "format": "npm run format:eslint && npm run format:prettier",
+      "test": "karma start",
+      "test:coverage": "karma start --coverage",
+      "test:watch": "karma start --auto-watch=true --single-run=false",
+      "test:update-snapshots": "karma start --update-snapshots",
+      "test:prune-snapshots": "karma start --prune-snapshots",
+      "test:compatibility": "karma start --compatibility all --coverage",
+      "test:compatibility:watch": "karma start --compatibility all --auto-watch=true --single-run=false",
+      "test:bs": "karma start karma.bs.config.js --compatibility all --coverage",
+      "test:report": "es-dev-server --app-index index.html --root-dir coverage -h 0.0.0.0 -p 8000 --file-extensions .ts --babel --node-resolve",
+      "site:build": "npm run storybook:build",
+      "storybook": "start-storybook -p 9001",
+      "storybook:build": "build-storybook -o _site -s storybook-static",
+      "build": "rimraf dist/* && rollup -c rollup.config.js",
+      "start": "es-dev-server --node-resolve --file-extensions .ts --babel --watch -h 0.0.0.0",
+      "start:build": "npm run build && es-dev-server --root-dir dist --app-index index.html --open --compatibility none",
+      "start:compatibility": "es-dev-server --app-index index.html --compatibility all --node-resolve --file-extensions .ts --babel --watch -h 0.0.0.0",
+      "debug": "google-chrome --no-sandbox --remote-debugging-port=9222 --headless --host=0.0.0.0:8000"
+    },
+    "devDependencies": {
+      "eslint": "^6.1.0",
+      "@open-wc/eslint-config": "^2.0.0",
+      "prettier": "^2.0.4",
+      "@open-wc/prettier-config": "^0.1.10",
+      "husky": "^1.0.0",
+      "lint-staged": "^8.0.0",
+      "@open-wc/testing-karma": "^3.0.0",
+      "@open-wc/testing-karma-bs": "^1.0.0",
+      "deepmerge": "3.2.0",
+      "@open-wc/testing": "^2.0.0",
+      "@open-wc/demoing-storybook": "^2.0.0",
+      "@open-wc/building-rollup": "^1.0.0",
+      "rimraf": "^2.6.3",
+      "rollup": "^2.3.4",
+      "@babel/plugin-proposal-class-properties": "7.5.5",
+      "@babel/plugin-proposal-decorators": "7.4.4",
+      "@babel/preset-typescript": "7.3.3",
+      "@rollup/plugin-node-resolve": "7.1.3",
+      "es-dev-server": "^1.5.0", 
+      "@rollup/plugin-typescript": "8.2.5",
+      "typescript": "4.3.5"
+    },
+    "eslintConfig": {
+      "extends": [
+        "@open-wc/eslint-config",
+        "eslint-config-prettier"
+      ]
+    },
+    "prettier": "@open-wc/prettier-config",
+    "husky": {
+      "hooks": {
+        "pre-commit": "lint-staged"
+      }
+    },
+    "lint-staged": {
+      "*.js": [
+        "eslint --fix",
+        "prettier --write",
+        "git add"
+      ]
+    },
+    "name": "@questdb/virtual-scroll",
+    "version": "0.0.1",
+    "description": "Webcomponent virtualScroll following open-wc recommendations",
+    "author": "",
+    "license": "MIT",
+    "main": "dist/nomodule-virtual-scroll.js",
+    "publishConfig": {
+      "access": "public"
+    },
+    "files": [
+      "dist/virtual-scroll.*",
+      "dist/polyfills"
+    ]
+  }
+  

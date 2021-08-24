@@ -1,0 +1,55 @@
+import { Story, Preview, Meta, Props, html } from '@open-wc/demoing-storybook';
+
+import '../virtual-scroll.ts';
+
+<Meta 
+  title="virtualScroll"
+  parameters={{
+    component: "virtual-scroll",
+    options: { selectedPanel: "storybookjs/knobs/panel" }
+  }}
+/>
+
+# VirtualScroll
+
+A component for...
+
+## Features:
+
+- a
+- b
+- ...
+
+## How to use
+
+### Installation
+
+```bash
+yarn add virtual-scroll
+```
+
+```js
+import 'virtual-scroll/virtual-scroll.ts';
+```
+
+<Preview withToolbar>
+  <Story name="Simple">
+    {html`
+      <virtual-scroll></virtual-scroll>
+    `}
+  </Story>
+</Preview>
+
+## API
+
+<Props of="virtual-scroll" />
+
+## Variations
+
+###### Custom Title
+
+<Story name="Custom Title">
+  {html`
+    <virtual-scroll .title=${'Hello World'}></virtual-scroll>
+  `}
+</Story>

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      background: #fafafa;
+    }
+  </style>
+</head>
+<body>
+  <div id="demo"></div>
+
+  <script type="module">
+    import { html, render } from 'lit-html';
+    import '../virtual-scroll.js';
+
+    const title = 'Hello owc World!';
+    render(
+      html`
+        <virtual-scroll>
+          some more light-dom
+        </virtual-scroll>
+      `,
+      document.querySelector('#demo')
+    );
+  </script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "chrome",
+            "name": "Launch chrome",
+            "request": "launch",
+            "webRoot": "${workspaceFolder}",
+            "url": "http://localhost",
+            "sourceMaps": true
+        },
+        {
+            "type": "chrome",
+            "name": "Launch karma",
+            "request": "launch",
+            "pathMapping": {
+                "/base": "${workspaceFolder}"
+            },
+            "url": "http://localhost:9876/debug.html",
+            "sourceMaps": true,
+            "sourceMapPathOverrides": {
+                "/*": "/*?[sm]"
+            }
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Mocha All",
+            "program": "${workspaceFolder}/node_modules/mocha/bin/_mocha",
+            "args": [
+                "--timeout",
+                "999999",
+                "--colors",
+                "${workspaceFolder}"
+            ],
+            "console": "integratedTerminal",
+            "internalConsoleOptions": "neverOpen"
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Mocha Current File",
+            "program": "${workspaceFolder}/node_modules/mocha/bin/_mocha",
+            "args": [
+                "--no-timeouts",
+                "--colors",
+                "${file}",
+                "--require",
+                "ts-node/register"
+            ],
+            "console": "integratedTerminal",
+            "sourceMaps": true,
+            "internalConsoleOptions": "neverOpen"
+        }
+    ],
+    "compounds": []
+}

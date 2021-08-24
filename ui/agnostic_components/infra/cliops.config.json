@@ -1,0 +1,38 @@
+{
+  "services": {
+    "infra": {
+      "image": "cliops/infra@1.0.0",
+      "name": "infra",
+      "cliopsVar": {
+        "name": "infra",
+        "types": [
+          "infra",
+          "microservice"
+        ],
+        "type": "infra",
+        "endpoint": "your-endpoint"
+      },
+      "types": [
+        "infra",
+        "microservice"
+      ],
+      "type": "infra",
+      "endpoint": "your-endpoint"
+    },
+    "virtual-scroll": {
+      "image": "cliops/agnostic_component@1.0.0",
+      "name": "virtual-scroll",
+      "cliopsVar": {
+        "name": "virtual-scroll",
+        "types": [
+          "webcomponent"
+        ],
+        "scope": "questdb"
+      },
+      "types": [
+        "webcomponent"
+      ],
+      "scope": "questdb"
+    }
+  }
+}

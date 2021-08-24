@@ -1,0 +1,60 @@
+version: "3.7"
+services:
+  web-compo: 
+    image: ${REPOSITORY_HOST}cliops/agnostic_component:1.0.0
+    build: 
+        context: .
+        dockerfile: ./Dockerfile
+    container_name: $TAG_NAME-build
+    environment: 
+      - TAG_NAME=$TAG_NAME
+    volumes: 
+      - type: bind
+        source: ./.vscode
+        target: /usr/src/.vscode
+      - type: bind
+        source: ./$TAG_NAME.ts
+        target: /usr/src/components/$TAG_NAME/$TAG_NAME.ts
+      - type: bind
+        source: ./index.ts
+        target: /usr/src/components/$TAG_NAME/index.ts
+      - type: bind
+        source: ./src
+        target: /usr/src/components/$TAG_NAME/src
+      - type: bind
+        source: ./index.html
+        target: /usr/src/index.html
+      - type: bind
+        source: ./stories
+        target: /usr/src/components/$TAG_NAME/stories
+      - type: bind
+        source: ./demo
+        target: /usr/src/components/$TAG_NAME/demo
+      - type: bind
+        source: ./test
+        target: /usr/src/components/$TAG_NAME/test
+      - type: bind
+        source: ./dist
+        target: /usr/src/dist
+      - type: volume
+        source: questdb-virtualScroll
+        target: /usr/src/dist2vol
+      - type: bind
+        source: ./.npmrcremote
+        target: /usr/src/.npmrc
+      - type: bind
+        source: ./package.json
+        target: /usr/src/package.json
+    entrypoint: /bin/sh -c "while sleep 1000; do :; done"
+    ports:
+      - "8001:8000"
+      - "9877:9876"
+      - "9223:9222"
+#     networks: 
+#       - npm-registry
+# networks: 
+#   npm-registry:
+#     external: true
+volumes: 
+  questdb-virtualScroll:
+    name: questdb-virtualScroll

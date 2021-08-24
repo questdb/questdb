@@ -1,0 +1,7 @@
+version: '3.7'
+services: 
+networks: 
+    traefik:
+        external: true
+    npm-registry: 
+        external: true
