@@ -65,16 +65,16 @@ public class LineUdpInsertIntGeoHashTest extends LineUdpInsertGeoHashTest {
                     createTable(engine, 28);
                     receiver.start();
                     try (LineProtoSender sender = createLineProtoSender()) {
-                        sender.metric(tableName).field("carrots", "9").$(1000000000L);
-                        sender.metric(tableName).field("carrots", "4").$(2000000000L);
-                        sender.metric(tableName).field("carrots", "j").$(3000000000L);
+                        sender.metric(tableName).field("location", "9").$(1000000000L);
+                        sender.metric(tableName).field("location", "4").$(2000000000L);
+                        sender.metric(tableName).field("location", "j").field("in", "yes").$(3000000000L);
                         sender.flush();
                     }
-                    assertReader("geohash\ttimestamp\tcarrots\n" +
-                                    "\t1970-01-01T00:00:01.000000Z\t9\n" +
-                                    "\t1970-01-01T00:00:02.000000Z\t4\n" +
-                                    "\t1970-01-01T00:00:03.000000Z\tj\n",
-                            "carrots");
+                    assertReader("geohash\ttimestamp\tlocation\tin\n" +
+                                    "\t1970-01-01T00:00:01.000000Z\t9\t\n" +
+                                    "\t1970-01-01T00:00:02.000000Z\t4\t\n" +
+                                    "\t1970-01-01T00:00:03.000000Z\tj\tyes\n",
+                            "location", "in");
                 }
             }
         });

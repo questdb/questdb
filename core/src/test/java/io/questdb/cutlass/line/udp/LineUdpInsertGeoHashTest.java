@@ -120,8 +120,8 @@ abstract class LineUdpInsertGeoHashTest extends AbstractCairoTest {
     protected static void assertReader(String expected, String... expectedExtraStringColumns) {
         int numLines = expected.split("[\n]").length - 1;
         CairoException pendingRecoveryErr = null;
-        for (int i = 0, n = 2; i < n; i++) {
-            // aggressively demand a TableReader up to 2x
+        for (int i = 0, n = 5; i < n; i++) {
+            // aggressively demand a TableReader up to 5x
             try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), tableName)) {
                 for (int attempts = 28_02_78; attempts > 0; attempts--) {
                     if (reader.size() >= numLines) {
@@ -142,6 +142,7 @@ abstract class LineUdpInsertGeoHashTest extends AbstractCairoTest {
                 break;
             } catch (CairoException err) {
                 pendingRecoveryErr = err;
+                LockSupport.parkNanos(200);
                 continue;
             }
         }
