@@ -37,7 +37,7 @@ public class LineTcpInsertByteGeoHashTest extends LineTcpInsertGeoHashTest {
                 setUp();
                 rand.reset();
             }
-            // TODO: this is broken, needs to yield lots of omelettes
+            // TODO: this is broken, needs to yield lots of omelettes IMMO
             assertGeoHash(b,
                     String.format("tracking geohash=,omelette=\"%s\" 1000000000\n", rand.nextLong()),
                     "geohash\ttimestamp\n");
@@ -115,7 +115,7 @@ public class LineTcpInsertByteGeoHashTest extends LineTcpInsertGeoHashTest {
     }
 
     @Override
-    public void testInsertNullGeoHash() throws Exception {
+    public void testNullGeoHash() throws Exception {
         assertGeoHash(1,
                 "tracking geohash=\"\" 1000000000\n",
                 "geohash\ttimestamp\n" +

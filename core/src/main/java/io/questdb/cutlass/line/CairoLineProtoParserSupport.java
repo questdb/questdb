@@ -133,8 +133,12 @@ public class CairoLineProtoParserSupport {
                     break;
             }
         } catch (NumericException e) {
-            LOG.info().$("cast error [value=").$(value).$(", toType=").$(ColumnType.nameOf(columnType)).$(']').$();
-            throw BadCastException.INSTANCE;
+            LOG.info()
+                    .$("cast error [value=")
+                    .$(value).$(", toType=")
+                    .$(ColumnType.nameOf(columnType))
+                    .$(']')
+                    .$();
         }
     }
 

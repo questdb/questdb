@@ -51,7 +51,7 @@ abstract class LineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
     public abstract void testWrongCharGeoHashes() throws Exception;
 
     @Test
-    public abstract void testInsertNullGeoHash() throws Exception;
+    public abstract void testNullGeoHash() throws Exception;
 
     protected void assertGeoHash(int columnBits, String inboundLines, String expected) throws Exception {
         assertGeoHash(columnBits, inboundLines, expected, null);

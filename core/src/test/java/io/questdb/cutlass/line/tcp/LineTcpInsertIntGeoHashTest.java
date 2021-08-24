@@ -138,7 +138,7 @@ public class LineTcpInsertIntGeoHashTest extends LineTcpInsertGeoHashTest {
     }
 
     @Override
-    public void testInsertNullGeoHash() throws Exception {
+    public void testNullGeoHash() throws Exception {
         assertGeoHash(30,
                 "tracking geohash=\"\" 1000000000\n",
                 "geohash\ttimestamp\n" +
