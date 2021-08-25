@@ -205,7 +205,7 @@ stages:
         displayName: 'Stop ARM Agent'
         pool:
           vmImage: "ubuntu-latest"
-
+        
         steps:
           - checkout: none
           - bash: echo ${AZURE_DEVOPS_CLI_PAT} | az devops login
@@ -215,12 +215,12 @@ stages:
 
           - bash: az devops configure --defaults organization=$(System.TeamFoundationCollectionUri) project=$(System.TeamProject) --use-git-aliases true
             displayName: 'Set default Azure DevOps organization and project'
-
+          
           - bash: |
               sudo apt-get update
               sudo apt-get install -y awscli jq
             displayName: 'Install dependecies'
-
+          
           - bash: |
               count=$(az pipelines runs list --pipeline-ids 1 --status inProgress --detect true --project questdb | jq length)
               echo "Running builds: ${count}"
