@@ -7,8 +7,8 @@ services:
   #     - 9009:9009
   #     - 8812:8812 
   ui: 
-    depends_on: 
-      - core
+    # depends_on: 
+    #   - core
     build: 
       context: ./ui
       dockerfile: ./Dockerfile
