@@ -21,3 +21,15 @@ Run the command:
 ```
 npm run build
 ```
+
+## Connect agnostic-components
+__First step:__ </br>
+inside of each agnostic components run 
+```sh
+docker-compose up
+```
+__second step :__ </br>
+inside of ui, run 
+```sh
+docker-compose up
+````

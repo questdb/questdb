@@ -58,9 +58,9 @@ services:
       - type: volume
         source: questdb-ui
         target: /usr/src/dist
-    entrypoint: /bin/sh -c "while sleep 1000; do :; done"
+    # entrypoint: /bin/sh -c "while sleep 1000; do :; done"
     network_mode: host
-    # entrypoint: yarn start
+    entrypoint: yarn start
   # deploy-ui: 
   #   build: 
   #     context: ./ui
