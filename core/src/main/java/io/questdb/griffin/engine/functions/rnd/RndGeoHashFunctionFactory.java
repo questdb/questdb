@@ -44,16 +44,29 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position,
-                                ObjList<Function> args,
-                                IntList argPositions,
-                                CairoConfiguration configuration,
-                                SqlExecutionContext sqlExecutionContext) throws SqlException {
-        int bits = args.getQuick(0).getInt(null);
-        if (bits < 1 || bits > GeoHashes.MAX_BITS_LENGTH) {
-            throw SqlException.$(argPositions.getQuick(0), "precision must be in [1..60] range");
+    public Function newInstance(
+            int position, ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final Function bitsArg = args.get(0);
+        if (bitsArg.isConstant() || bitsArg.isRuntimeConstant()) {
+            int bits = bitsArg.getInt(null);
+            if (bits < 1 || bits > GeoHashes.MAX_BITS_LENGTH) {
+                throw SqlException.$(argPositions.getQuick(0), "precision must be in [1..60] range");
+            }
+            return new RndConstFunction(bits);
+        } else {
+            return new RndFunction(bitsArg);
         }
-        return new RndFunction(bits);
+    }
+    private static int getBits(Function bitsArg, Record rec) {
+        int bits = bitsArg.getInt(rec);
+        if (bits < 1 || bits > GeoHashes.MAX_BITS_LENGTH) {
+            return GeoHashes.MAX_BITS_LENGTH;
+        }
+        return bits;
     }
 
     public static long nextGeoHash(Rnd rnd, int bits) {
@@ -67,14 +80,24 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class RndFunction extends GeoHashFunction implements Function {
+    private static class RndConstFunction extends GeoHashFunction implements Function {
 
         private final int bits;
         private Rnd rnd;
 
-        public RndFunction(int bits) {
+        public RndConstFunction(int bits) {
             super(ColumnType.geohashWithPrecision(bits));
             this.bits = bits;
+        }
+
+        @Override
+        public boolean isConstant() {
+            return false;
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            return true;
         }
 
         @Override
@@ -95,6 +118,42 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public long getGeoHashLong(Record rec) {
             return nextGeoHash(rnd, bits);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
+        }
+    }
+
+    private static class RndFunction extends GeoHashFunction implements Function {
+
+        private final Function bits;
+        private Rnd rnd;
+
+        public RndFunction(Function bits) {
+            super(GeoHashes.MAX_BITS_LENGTH); // max valid precision
+            this.bits = bits;
+        }
+
+        @Override
+        public byte getGeoHashByte(Record rec) {
+            return (byte) nextGeoHash(rnd, getBits(bits, rec));
+        }
+
+        @Override
+        public short getGeoHashShort(Record rec) {
+            return (short) nextGeoHash(rnd, getBits(bits, rec));
+        }
+
+        @Override
+        public int getGeoHashInt(Record rec) {
+            return (int) nextGeoHash(rnd, getBits(bits, rec));
+        }
+
+        @Override
+        public long getGeoHashLong(Record rec) {
+            return nextGeoHash(rnd, getBits(bits, rec));
         }
 
         @Override

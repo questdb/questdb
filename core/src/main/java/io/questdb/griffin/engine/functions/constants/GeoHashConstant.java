@@ -57,4 +57,14 @@ public class GeoHashConstant extends GeoHashFunction implements ConstantFunction
     public long getGeoHashLong(Record rec) {
         return hash;
     }
+
+    @Override
+    public boolean isConstant() {
+        return true;
+    }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
 }

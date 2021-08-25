@@ -77,47 +77,63 @@ public class GeoHashFromCoordinatesFunctionFactoryTest extends AbstractFunctionF
     }
 
     @Test
-    public void testOutOfRangeLon1() throws SqlException {
-        assertQuery(
-                "make_geohash\n\n",
-                "select make_geohash(-195.0, 51.50722, 40)",
-                null,
-                true,
-                true
-        );
+    public void testOutOfRangeLon1() {
+        try {
+            assertQuery(
+                    "make_geohash\n\n",
+                    "select make_geohash(-195.0, 51.50722, 40)",
+                    null,
+                    true,
+                    true
+            );
+        } catch (SqlException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "longitude must be in [-180.0..180.0] range");
+        }
     }
 
     @Test
-    public void testOutOfRangeLon2() throws SqlException {
-        assertQuery(
-                "make_geohash\n\n",
-                "select make_geohash(195.0, 51.50722, 40)",
-                null,
-                true,
-                true
-        );
+    public void testOutOfRangeLon2() {
+        try {
+            assertQuery(
+                    "make_geohash\n\n",
+                    "select make_geohash(195.0, 51.50722, 40)",
+                    null,
+                    true,
+                    true
+            );
+        } catch (SqlException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "longitude must be in [-180.0..180.0] range");
+        }
     }
 
     @Test
-    public void testOutOfRangeLat1() throws SqlException {
-        assertQuery(
-                "make_geohash\n\n",
-                "select make_geohash(-0.1275, 91.50722, 40)",
-                null,
-                true,
-                true
-        );
+    public void testOutOfRangeLat1() {
+        try {
+            assertQuery(
+                    "make_geohash\n\n",
+                    "select make_geohash(-0.1275, 91.50722, 40)",
+                    null,
+                    true,
+                    true
+            );
+        } catch (SqlException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "latitude must be in [-90.0..90.0] range");
+        }
     }
 
     @Test
-    public void testOutOfRangeLat2() throws SqlException {
-        assertQuery(
-                "make_geohash\n\n",
-                "select make_geohash(-0.1275, -91.50722, 40)",
-                null,
-                true,
-                true
-        );
+    public void testOutOfRangeLat2() {
+        try {
+            assertQuery(
+                    "make_geohash\n\n",
+                    "select make_geohash(-0.1275, -91.50722, 40)",
+                    null,
+                    true,
+                    true
+            );
+        } catch (SqlException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "latitude must be in [-90.0..90.0] range");
+        }
     }
 
     @Test
