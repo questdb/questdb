@@ -10,27 +10,27 @@ variables:
   ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).zip"
   DIFF_CONVER_THRESHOLD_PCT: 50
 
-stages:
-  - stage: StartBuildAgent
-    displayName: "Start Building Agent"
-    condition: always()
-    jobs:
-      - job: StartArmAgent
-        displayName: 'Start ARM Agent'
-        pool:
-          vmImage: "ubuntu-latest"
-        steps:
-          - checkout: none
-          - bash: |
-              sudo apt-get update
-              sudo apt-get install awscli
-              aws autoscaling set-desired-capacity --auto-scaling-group-name ondemand-pipeline-dev --desired-capacity 1
-            env:
-              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-              AWS_DEFAULT_REGION: eu-west-1
-            name: start_agent
-            displayName: 'Start ARM build agent'
+#stages:
+#  - stage: StartBuildAgent
+#    displayName: "Start Building Agent"
+#    condition: always()
+#    jobs:
+#      - job: StartArmAgent
+#        displayName: 'Start ARM Agent'
+#        pool:
+#          vmImage: "ubuntu-latest"
+#        steps:
+#          - checkout: none
+#          - bash: |
+#              sudo apt-get update
+#              sudo apt-get install awscli
+#              aws autoscaling set-desired-capacity --auto-scaling-group-name ondemand-pipeline-dev --desired-capacity 1
+#            env:
+#              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+#              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+#              AWS_DEFAULT_REGION: eu-west-1
+#            name: start_agent
+#            displayName: 'Start ARM build agent'
 
   - stage: RunTestsBranches
     displayName: "Running tests"
@@ -197,42 +197,42 @@ stages:
               pathToPublish: $(ARCHIVED_LOGS)
               artifactName: MavenFailedTestsLogs
 
-  - stage: StopBuildAgent
-    displayName: "Stop Building Agent"
-    condition: always()
-    jobs:
-      - job: StopArmAgent
-        displayName: 'Stop ARM Agent'
-        pool:
-          vmImage: "ubuntu-latest"
-        
-        steps:
-          - checkout: none
-          - bash: echo ${AZURE_DEVOPS_CLI_PAT} | az devops login
-            env:
-              AZURE_DEVOPS_CLI_PAT: $(System.AccessToken)
-            displayName: 'Login Azure DevOps Extension'
-
-          - bash: az devops configure --defaults organization=$(System.TeamFoundationCollectionUri) project=$(System.TeamProject) --use-git-aliases true
-            displayName: 'Set default Azure DevOps organization and project'
-          
-          - bash: |
-              sudo apt-get update
-              sudo apt-get install -y awscli jq
-            displayName: 'Install dependecies'
-          
-          - bash: |
-              count=$(az pipelines runs list --pipeline-ids 1 --status inProgress --detect true --project questdb | jq length)
-              echo "Running builds: ${count}"
-              if [ $count -gt 1 ]; then
-                echo "Skipping another build is running in background.."
-              else
-                echo "Stopping the build agent!"
-                aws autoscaling set-desired-capacity --auto-scaling-group-name ondemand-pipeline-dev --desired-capacity 0
-              fi
-            env:
-              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-              AWS_DEFAULT_REGION: eu-west-1
-            name: check_if_stop_agent
-            displayName: 'Check/stop build agent'
+#  - stage: StopBuildAgent
+#    displayName: "Stop Building Agent"
+#    condition: always()
+#    jobs:
+#      - job: StopArmAgent
+#        displayName: 'Stop ARM Agent'
+#        pool:
+#          vmImage: "ubuntu-latest"
+#
+#        steps:
+#          - checkout: none
+#          - bash: echo ${AZURE_DEVOPS_CLI_PAT} | az devops login
+#            env:
+#              AZURE_DEVOPS_CLI_PAT: $(System.AccessToken)
+#            displayName: 'Login Azure DevOps Extension'
+#
+#          - bash: az devops configure --defaults organization=$(System.TeamFoundationCollectionUri) project=$(System.TeamProject) --use-git-aliases true
+#            displayName: 'Set default Azure DevOps organization and project'
+#
+#          - bash: |
+#              sudo apt-get update
+#              sudo apt-get install -y awscli jq
+#            displayName: 'Install dependecies'
+#
+#          - bash: |
+#              count=$(az pipelines runs list --pipeline-ids 1 --status inProgress --detect true --project questdb | jq length)
+#              echo "Running builds: ${count}"
+#              if [ $count -gt 1 ]; then
+#                echo "Skipping another build is running in background.."
+#              else
+#                echo "Stopping the build agent!"
+#                aws autoscaling set-desired-capacity --auto-scaling-group-name ondemand-pipeline-dev --desired-capacity 0
+#              fi
+#            env:
+#              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+#              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+#              AWS_DEFAULT_REGION: eu-west-1
+#            name: check_if_stop_agent
+#            displayName: 'Check/stop build agent'

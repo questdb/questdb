@@ -545,7 +545,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                             try {
                                 geohash = GeoHashes.fromString(
                                         entity.getValue(), 0, entity.getValue().length(), Numbers.decodeLowShort(colTypeMeta));
-
                             } catch (NumericException e) {
                                 // not a geohash, insert null instead
                                 geohash = GeoHashes.NULL;
