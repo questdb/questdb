@@ -1,11 +1,11 @@
 version: "3.7"
 services: 
-  core: 
-    image: questdb/questdb
-    ports:
-      - 9000:9000
-      - 9009:9009
-      - 8812:8812 
+  # core: 
+  #   image: questdb/questdb
+  #   ports:
+  #     - 9000:9000
+  #     - 9009:9009
+  #     - 8812:8812 
   ui: 
     depends_on: 
       - core
@@ -60,7 +60,7 @@ services:
         target: /usr/src/dist
     # entrypoint: /bin/sh -c "while sleep 1000; do :; done"
     network_mode: host
-    entrypoint: yarn start
+    entrypoint: npm run build
   # deploy-ui: 
   #   build: 
   #     context: ./ui
