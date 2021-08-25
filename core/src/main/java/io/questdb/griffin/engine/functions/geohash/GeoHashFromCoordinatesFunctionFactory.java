@@ -33,6 +33,8 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GeoHashFunction;
+import io.questdb.griffin.engine.functions.constants.GeoHashConstant;
+import io.questdb.griffin.engine.functions.rnd.RndGeoHashFunctionFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -51,22 +53,49 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        int bits = args.getQuick(2).getInt(null);
+
+        final Function bitsArg = args.get(2);
+        int bits = bitsArg.getInt(null);
         if (bits < 1 || bits > GeoHashes.MAX_BITS_LENGTH) {
             throw SqlException.$(argPositions.getQuick(2), "precision must be in [1..60] range");
         }
-        return new FromCoordinatesFunction(args.get(0), args.get(1), bits);
+
+        int type = ColumnType.geohashWithPrecision(bits);
+
+        final Function lonArg = args.get(0);
+        final Function latArg = args.get(1);
+
+        final boolean isLonConst = lonArg.isConstant() || lonArg.isRuntimeConstant();
+        final boolean isLatConst = latArg.isConstant() || latArg.isRuntimeConstant();
+
+        if (isLonConst && isLatConst) {
+
+            double lon = lonArg.getDouble(null);
+            if (lon < -180.0 || lon > 180.0) {
+                throw SqlException.$(argPositions.getQuick(0), "longitude must be in [-180.0..180.0] range");
+            }
+
+            double lat = latArg.getDouble(null);
+            if (lat < -90.0 || lat > 90.0) {
+                throw SqlException.$(argPositions.getQuick(1), "latitude must be in [-90.0..90.0] range");
+            }
+
+            try {
+                return GeoHashConstant.newInstance(GeoHashes.fromCoordinates(lat, lon, bits), type);
+            } catch (NumericException e) {
+                return GeoHashConstant.newInstance(GeoHashes.NULL, type);
+            }
+        } else {
+            return new FromCoordinatesFixedBitsFunction(lonArg, latArg, bits);
+        }
     }
 
-    private static class FromCoordinatesFunction extends GeoHashFunction implements Function {
+    private static class FromCoordinatesFixedBitsFunction extends GeoHashFunction implements Function {
         private final Function lon;
         private final Function lat;
         private final int bits;
 
-        public FromCoordinatesFunction(Function lon, Function lat, int bits) {
-            // Because of this, I cannot postpone the value fetching from the argument.
-            // And bits should always be literal value.
-            // So the case with bits from a column was discarded.
+        public FromCoordinatesFixedBitsFunction(Function lon, Function lat, int bits) {
             super(ColumnType.geohashWithPrecision(bits));
             this.lon = lon;
             this.lat = lat;
@@ -77,7 +106,7 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
             try {
                 double lon = this.lon.getDouble(rec);
                 double lat = this.lat.getDouble(rec);
-                return GeoHashes.fromCoordinates(lat, lon, this.bits);
+                return GeoHashes.fromCoordinates(lat, lon, bits);
             } catch (NumericException e) {
                 return GeoHashes.NULL;
             }
