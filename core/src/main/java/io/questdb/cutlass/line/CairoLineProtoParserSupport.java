@@ -148,6 +148,9 @@ public class CairoLineProtoParserSupport {
 
     public static int getValueType(CharSequence token) {
         int len = token.length();
+        if (len == 0) {
+            return ColumnType.UNDEFINED;
+        }
         switch (token.charAt(len - 1)) {
             case 'i':
                 if (token.charAt(1) == 'x') {

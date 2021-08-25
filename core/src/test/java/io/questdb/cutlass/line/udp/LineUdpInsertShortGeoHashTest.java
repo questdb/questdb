@@ -74,7 +74,8 @@ public class LineUdpInsertShortGeoHashTest extends LineUdpInsertGeoHashTest {
                         sender.metric(tableName).field("carrots", "j").$(3000000000L);
                         sender.flush();
                     }
-                    assertReader("geohash\ttimestamp\tcarrots\n" +
+                    assertReader(tableName,
+                            "geohash\ttimestamp\tcarrots\n" +
                                     "\t1970-01-01T00:00:01.000000Z\t9\n" +
                                     "\t1970-01-01T00:00:02.000000Z\t4\n" +
                                     "\t1970-01-01T00:00:03.000000Z\tj\n",
@@ -92,8 +93,9 @@ public class LineUdpInsertShortGeoHashTest extends LineUdpInsertGeoHashTest {
                     createTable(engine, 14);
                     receiver.start();
                     sendGeoHashLine("9v1s8hm7wpkssv1h");
-                    assertReader("geohash\ttimestamp\n" +
-                            "\t1970-01-01T00:00:01.000000Z\n");
+                    assertReader(tableName,
+                            "geohash\ttimestamp\n" +
+                                    "\t1970-01-01T00:00:01.000000Z\n");
                 }
             }
         });
@@ -123,8 +125,9 @@ public class LineUdpInsertShortGeoHashTest extends LineUdpInsertGeoHashTest {
                     createTable(engine, 9);
                     receiver.start();
                     sendGeoHashLine("sp-");
-                    assertReader("geohash\ttimestamp\n" +
-                            "\t1970-01-01T00:00:01.000000Z\n");
+                    assertReader(tableName,
+                            "geohash\ttimestamp\n" +
+                                    "\t1970-01-01T00:00:01.000000Z\n");
                 }
             }
         });
@@ -138,8 +141,9 @@ public class LineUdpInsertShortGeoHashTest extends LineUdpInsertGeoHashTest {
                     createTable(engine, 15);
                     receiver.start();
                     sendGeoHashLine("");
-                    assertReader("geohash\ttimestamp\n" +
-                            "\t1970-01-01T00:00:01.000000Z\n");
+                    assertReader(tableName,
+                            "geohash\ttimestamp\n" +
+                                    "\t1970-01-01T00:00:01.000000Z\n");
                 }
             }
         });
