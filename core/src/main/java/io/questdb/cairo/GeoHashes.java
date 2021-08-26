@@ -79,6 +79,34 @@ public class GeoHashes {
         return idx >= 0 && idx < base32Indexes.length && base32Indexes[idx] != -1;
     }
 
+    public static boolean isValidChars(CharSequence tok, int start) {
+        if (start < 0 || start > tok.length()) {
+            throw new IndexOutOfBoundsException();
+        }
+        int idx;
+        for (int i = start, n = tok.length(), excessIdx = base32Indexes.length; i < n; i++) {
+            idx = tok.charAt(i) - 48;
+            if (idx < 0 || idx >= excessIdx || base32Indexes[idx] == -1) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static boolean isValidBits(CharSequence tok, int start) {
+        if (start < 0 || start > tok.length()) {
+            throw new IndexOutOfBoundsException();
+        }
+        int idx;
+        for (int i = start, n = tok.length(); i < n; i++) {
+            idx = tok.charAt(i) - 48;
+            if (idx < 0 || idx > 1) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static long bitmask(int count, int shift) {
         // e.g. 3, 4 -> 1110000
         return ((1L << count) - 1) << shift;

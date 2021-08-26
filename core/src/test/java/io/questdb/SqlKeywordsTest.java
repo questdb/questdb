@@ -39,10 +39,34 @@ public class SqlKeywordsTest {
 
     @Test
     public void testIsCharsGeoHashConstantNotValid() {
+        Assert.assertFalse(SqlKeywords.isCharsGeoHashConstant("#"));
         Assert.assertFalse(SqlKeywords.isCharsGeoHashConstant("0"));
+        Assert.assertFalse(SqlKeywords.isCharsGeoHashConstant(""));
         Assert.assertFalse(SqlKeywords.isCharsGeoHashConstant("##1"));
-        Assert.assertFalse(SqlKeywords.isCharsGeoHashConstant("#sp@"));
+        Assert.assertFalse(SqlKeywords.isCharsGeoHashConstant("#sp@sp"));
         Assert.assertFalse(SqlKeywords.isCharsGeoHashConstant("#sp052w92p1p88"));
+    }
+
+    @Test
+    public void testIsCharsGeoHashConstantIgnorePrefixValid() {
+        Assert.assertTrue(SqlKeywords.isCharsGeoHashConstantIgnorePrefix("0"));
+        Assert.assertTrue(SqlKeywords.isCharsGeoHashConstantIgnorePrefix("1"));
+        Assert.assertTrue(SqlKeywords.isCharsGeoHashConstantIgnorePrefix("sp"));
+        Assert.assertTrue(SqlKeywords.isCharsGeoHashConstantIgnorePrefix("sp052w92p1p8"));
+        Assert.assertTrue(SqlKeywords.isCharsGeoHashConstantIgnorePrefix("#0"));
+        Assert.assertTrue(SqlKeywords.isCharsGeoHashConstantIgnorePrefix("#1"));
+        Assert.assertTrue(SqlKeywords.isCharsGeoHashConstantIgnorePrefix("#sp"));
+        Assert.assertTrue(SqlKeywords.isCharsGeoHashConstantIgnorePrefix("#sp052w92p1p8"));
+    }
+
+    @Test
+    public void testIsCharsGeoHashConstantIgnorePrefixNotValid() {
+        Assert.assertFalse(SqlKeywords.isCharsGeoHashConstantIgnorePrefix(""));
+        Assert.assertFalse(SqlKeywords.isCharsGeoHashConstantIgnorePrefix("@"));
+        Assert.assertFalse(SqlKeywords.isCharsGeoHashConstantIgnorePrefix("@sp"));
+        Assert.assertFalse(SqlKeywords.isCharsGeoHashConstantIgnorePrefix("sp01233252w92p1p8"));
+        Assert.assertFalse(SqlKeywords.isCharsGeoHashConstantIgnorePrefix("sp012i332"));
+        Assert.assertFalse(SqlKeywords.isCharsGeoHashConstantIgnorePrefix("##sp"));
     }
 
     @Test
@@ -59,5 +83,26 @@ public class SqlKeywordsTest {
         Assert.assertFalse(SqlKeywords.isBitsGeoHashConstant("##"));
         Assert.assertFalse(SqlKeywords.isBitsGeoHashConstant("##12"));
         Assert.assertFalse(SqlKeywords.isBitsGeoHashConstant("##0111111111100000000001111111111000000000011111111110000000000"));
+    }
+
+    @Test
+    public void testIsBitsGeoHashConstantIgnorePrefixValid() {
+        Assert.assertTrue(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("##0"));
+        Assert.assertTrue(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("##1"));
+        Assert.assertTrue(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("##111111111100000000001111111111000000000011111111110000000000"));
+    }
+
+    @Test
+    public void testIsBitsGeoHashConstantIgnorePrefixNotValid() {
+        Assert.assertFalse(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("001210"));
+        Assert.assertFalse(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("#0"));
+        Assert.assertFalse(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("##"));
+        Assert.assertFalse(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("##0;"));
+        Assert.assertFalse(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("##12"));
+        Assert.assertFalse(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("**1100"));
+        Assert.assertFalse(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("*#11"));
+        Assert.assertFalse(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("#*10"));
+        Assert.assertFalse(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("##0111111111100000000001111111111000000000011111111110000000000"));
+        Assert.assertFalse(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("0111111111100000000001111111111000000000011111111110000000000"));
     }
 }

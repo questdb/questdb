@@ -27,12 +27,20 @@ package io.questdb.cairo;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.function.BiFunction;
 
 
 public class GeoHashesTest {
+
+    private Rnd rnd;
+
+    @Before
+    public void setUp() {
+        rnd = new Rnd();
+    }
 
     @Test
     public void testBitsPrecision() {
@@ -356,8 +364,121 @@ public class GeoHashesTest {
 
     @Test
     public void testIsValidChar() {
-        Assert.assertTrue('@' < 'z' + 1);
-        Assert.assertFalse(GeoHashes.isValidChar('@'));
+        IntHashSet base32Chars = new IntHashSet(base32.length);
+        for (char ch : base32) {
+            base32Chars.add(ch);
+            Assert.assertTrue(GeoHashes.isValidChar(ch));
+        }
+        for (int i = 0; i < 15000; i++) {
+            char ch = (char) rnd.nextPositiveInt();
+            Assert.assertEquals(base32Chars.contains(ch), GeoHashes.isValidChar(ch));
+        }
+    }
+
+    @Test
+    public void testIsValidChars1() {
+        StringSink sink = Misc.getThreadLocalBuilder();
+        for (int len = 1; len <= 12; len++) {
+            sink.clear();
+            randomGeoHashChars(rnd, sink, len);
+            Assert.assertTrue(GeoHashes.isValidChars(sink, 0));
+        }
+    }
+
+    @Test
+    public void testIsValidChars2() {
+        StringSink sink = Misc.getThreadLocalBuilder();
+        for (int len = 1; len <= 12; len++) {
+            sink.clear();
+            sink.put('@');
+            randomGeoHashChars(rnd, sink, len);
+            Assert.assertTrue(GeoHashes.isValidChars(sink, 1));
+        }
+    }
+
+    @Test
+    public void testIsValidCharsWhenIsNot() {
+        StringSink sink = Misc.getThreadLocalBuilder();
+        for (int len = 1; len <= 12; len++) {
+            sink.clear();
+            randomGeoHashChars(rnd, sink, len);
+            sink.put('@');
+            Assert.assertFalse(GeoHashes.isValidChars(sink, 0));
+        }
+    }
+
+    @Test(expected = IndexOutOfBoundsException.class)
+    public void testIsValidCharsOutOfBounds1() {
+        GeoHashes.isValidChars(null, -1);
+    }
+
+    @Test(expected = IndexOutOfBoundsException.class)
+    public void testIsValidCharsOutOfBounds2() {
+        GeoHashes.isValidChars("", 1);
+    }
+
+    @Test
+    public void testIsValidBits1() {
+        StringSink sink = Misc.getThreadLocalBuilder();
+        for (int len = 1; len <= 60; len++) {
+            sink.clear();
+            randomGeoHashBits(rnd, sink, len);
+            Assert.assertTrue(GeoHashes.isValidBits(sink, 0));
+        }
+    }
+
+    @Test
+    public void testIsValidBits2() {
+        StringSink sink = Misc.getThreadLocalBuilder();
+        for (int len = 1; len <= 60; len++) {
+            sink.clear();
+            sink.put("##");
+            randomGeoHashBits(rnd, sink, len);
+            Assert.assertTrue(GeoHashes.isValidBits(sink, 2));
+        }
+    }
+
+    @Test
+    public void testIsValidBitsWhenIsNot() {
+        StringSink sink = Misc.getThreadLocalBuilder();
+        for (int len = 1; len <= 60; len++) {
+            sink.clear();
+            randomGeoHashBits(rnd, sink, len);
+            sink.put('@');
+            Assert.assertFalse(GeoHashes.isValidBits(sink, 0));
+        }
+    }
+
+    @Test(expected = IndexOutOfBoundsException.class)
+    public void testIsValidBitsOutOfBounds1() {
+        GeoHashes.isValidBits(null, -1);
+    }
+
+    @Test(expected = IndexOutOfBoundsException.class)
+    public void testIsValidBitsOutOfBounds2() {
+        GeoHashes.isValidBits("", 1);
+    }
+
+    private static final char[] base32 = {
+            '0', '1', '2', '3', '4', '5', '6', '7',
+            '8', '9', 'b', 'c', 'd', 'e', 'f', 'g',
+            'h', 'j', 'k', 'm', 'n', 'p', 'q', 'r',
+            's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+            'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J',
+            'K', 'M', 'N', 'P', 'Q', 'R', 'S', 'T',
+            'U', 'V', 'W', 'X', 'Y', 'Z'
+    };
+
+    private static void randomGeoHashChars(Rnd rnd, StringSink sink, int len) {
+        for (int i = 0; i < len; i++) {
+            sink.put(base32[rnd.nextPositiveInt() % base32.length]);
+        }
+    }
+
+    private static void randomGeoHashBits(Rnd rnd, StringSink sink, int len) {
+        for (int i = 0; i < len; i++) {
+            sink.put(rnd.nextBoolean() ? '1' : '0');
+        }
     }
 
     private void testUnsafeFromStringTruncatingNl(CharSequence token, BiFunction<Long, Long, Void> code) {
