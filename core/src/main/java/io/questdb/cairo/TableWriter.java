@@ -4643,7 +4643,14 @@ public class TableWriter implements Closeable {
                 updateMaxTimestamp(timestamp);
                 return row;
             }
-            throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
+            throw CairoException.instance(ff.errno())
+                    .put("Cannot insert rows out of order. Table=[")
+                    .put(path)
+                    .put("], timestamp=[")
+                    .put(timestamp)
+                    .put("], txFileMaxTimestamp=[")
+                    .put(txFile.getMaxTimestamp())
+                    .put(']');
         }
     }
 
