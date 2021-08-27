@@ -2118,10 +2118,84 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery("time\tuuid\thash\n" +
-                                        "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
-                                        "2021-05-11T00:00:00.083000Z\tYYY\tz3\n",
+                        assertQuery("",
                                 "select * from pos latest by uuid where hash within('f9', 'z3', 'vepe7h')",
+                                "time",
+                                true,
+                                true,
+                                true
+                        );
+                    } catch (SqlException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash value expected");
+                    }
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashWithinOr() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    try {
+                        assertQuery("",
+                                "select * from pos latest by uuid where hash within('f9') or hash within('z3')",
+                                "time",
+                                true,
+                                true,
+                                true
+                        );
+                    } catch (SqlException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "Multiple 'within' expressions not supported");
+                    }
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashWithinColumnWrongType() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    try {
+                        assertQuery("",
+                                "select * from pos latest by uuid where uuid within('f9', 'z3')",
+                                "time",
+                                true,
+                                true,
+                                true
+                        );
+                    } catch (SqlException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash column type expected");
+                    }
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashWithinColumnNotLiteral() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    try {
+                        assertQuery("",
+                                "select * from pos latest by uuid where 'hash' within('f9', 'z3')",
+                                "time",
+                                true,
+                                true,
+                                true
+                        );
+                    } catch (SqlException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "unexpected token:");
+                    }
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashWithinNullArg() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    try {
+                        assertQuery("",
+                                "select * from pos latest by uuid where hash within('f9', 'z3', null)",
                                 "time",
                                 true,
                                 true,

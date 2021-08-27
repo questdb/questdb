@@ -1123,7 +1123,7 @@ final class WhereClauseParser implements Mutable {
         if (isWithinKeyword(node.token)) {
 
             if (prefixes.size() > 0) {
-                throw SqlException.$(node.position, "Using more than one 'within' operator per query is not allowed");
+                throw SqlException.$(node.position, "Multiple 'within' expressions not supported");
             }
 
             if (node.paramCount < 2) {
