@@ -46,8 +46,6 @@ import org.jetbrains.annotations.NotNull;
 
 class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     private final int columnIndex;
-    private final int hashColumnIndex;
-    private final int hashColumnType;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     protected long indexShift = 0;
     protected long aIndex;
@@ -57,16 +55,12 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
 
     public LatestByAllIndexedRecordCursor(
             int columnIndex,
-            int hashColumnIndex,
-            int hashColumnType,
             @NotNull DirectLongList rows,
             @NotNull IntList columnIndexes,
             @NotNull DirectLongList prefixes
     ) {
         super(rows, columnIndexes);
         this.columnIndex = columnIndex;
-        this.hashColumnIndex = hashColumnIndex;
-        this.hashColumnType = hashColumnType;
         this.prefixes = prefixes;
     }
 
@@ -120,9 +114,18 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
             LatestByArguments.setRowsSize(argsAddress, 0);
         }
 
-        final long prefixesAddress = prefixes.getAddress();
-        final long prefixesCount = prefixes.size();
+        int hashColumnIndex = -1;
+        int hashColumnType = ColumnType.UNDEFINED;
 
+        long prefixesAddress = 0;
+        long prefixesCount = 0;
+
+        if(this.prefixes.size() > 2) {
+            hashColumnIndex = (int) prefixes.get(0);
+            hashColumnType = (int) prefixes.get(1);
+            prefixesAddress = prefixes.getAddress() + 2 * Long.BYTES;
+            prefixesCount = prefixes.size() - 2;
+        }
 
         DataFrame frame;
         // frame metadata is based on TableReader, which is "full" metadata

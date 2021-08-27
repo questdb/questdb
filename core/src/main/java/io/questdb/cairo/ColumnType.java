@@ -189,7 +189,6 @@ public final class ColumnType {
     }
 
     public static int geohashWithPrecision(int bits) {
-        assert bits > 0;
         return (GEOHASH & ~(0xFF << 8)) | (bits << 8);
     }
 
