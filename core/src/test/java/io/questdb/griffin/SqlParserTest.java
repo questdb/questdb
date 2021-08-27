@@ -5177,8 +5177,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectFromSelectWildcardAndExpr() throws SqlException {
         assertQuery(
-                "select-virtual column1 + x column from (select-virtual [x, x + y column1] x, y, x1, z, x + y column1 from (select-choose [tab1.x x, tab1.y y] tab1.x x, tab1.y y, tab2.x x1, tab2.z z from (select [x, y] from tab1 join select [x] from tab2 on tab2.x = tab1.x)))",
-                "select column1 + x from (select *, tab1.x + y from tab1 join tab2 on (x))",
+                "select-virtual column + x column from (select-virtual [x, x + y column] x, y, x1, z, x + y column from (select-choose [tab1.x x, tab1.y y] tab1.x x, tab1.y y, tab2.x x1, tab2.z z from (select [x, y] from tab1 join select [x] from tab2 on tab2.x = tab1.x)))",
+                "select column + x from (select *, tab1.x + y from tab1 join tab2 on (x))",
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
         );
@@ -5376,7 +5376,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectWildcardAndExpr() throws SqlException {
         assertQuery(
-                "select-virtual x, y, x1, z, x + y column1 from (select-choose [tab1.x x, tab1.y y, tab2.x x1, tab2.z z] tab1.x x, tab1.y y, tab2.x x1, tab2.z z from (select [x, y] from tab1 join select [x, z] from tab2 on tab2.x = tab1.x))",
+                "select-virtual x, y, x1, z, x + y column from (select-choose [tab1.x x, tab1.y y, tab2.x x1, tab2.z z] tab1.x x, tab1.y y, tab2.x x1, tab2.z z from (select [x, y] from tab1 join select [x, z] from tab2 on tab2.x = tab1.x))",
                 "select *, tab1.x + y from tab1 join tab2 on (x)",
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
