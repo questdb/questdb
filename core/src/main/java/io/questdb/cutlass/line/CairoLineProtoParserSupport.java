@@ -109,21 +109,25 @@ public class CairoLineProtoParserSupport {
                     row.putChar(columnIndex, value.length() == 2 ? (char) 0 : value.charAt(1)); // skip quotes
                     break;
                 case ColumnType.GEOBYTE:
+                    // TODO: optimise this less checks
                     row.putGeoHashByte(columnIndex,
                             (byte) GeoHashes.fromString( // skip quotes
                                     value, 1, value.length() - 2, columnTypeMeta));
                     break;
                 case ColumnType.GEOSHORT:
+                    // TODO: optimise this less checks
                     row.putGeoHashShort(columnIndex,
                             (short) GeoHashes.fromString( // skip quotes
                                     value, 1, value.length() - 2, columnTypeMeta));
                     break;
                 case ColumnType.GEOINT:
+                    // TODO: optimise this less checks
                     row.putGeoHashInt(columnIndex,
                             (int) GeoHashes.fromString( // skip quotes
                                     value, 1, value.length() - 2, columnTypeMeta));
                     break;
                 case ColumnType.GEOLONG:
+                    // TODO: optimise this less checks
                     row.putGeoHashLong(columnIndex,
                             GeoHashes.fromString( // skip quotes
                                     value, 1, value.length() - 2, columnTypeMeta));

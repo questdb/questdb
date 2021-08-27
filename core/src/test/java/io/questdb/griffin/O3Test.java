@@ -260,6 +260,7 @@ public class O3Test extends AbstractO3Test {
         executeVanilla(O3Test::testColumnTopMidMergeBlankColumn0);
     }
 
+    // TODO: broken
     @Test
     public void testColumnTopMidMergeBlankGeohash() throws Exception {
         executeVanilla(O3Test::testColumnTopMidMergeBlankColumnGeohash0);

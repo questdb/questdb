@@ -533,16 +533,16 @@ public class ReaderPoolTest extends AbstractCairoTest {
         Rnd dataRnd = new Rnd();
         StringSink sink = new StringSink();
 
-        final String[] columnNames = new String[readerCount];
+        final String[] tableNames = new String[readerCount];
         final String[] expectedRowsPerReader = new String[readerCount];
 
         for (int i = 0; i < readerCount; i++) {
-            columnNames[i] = "x" + i;
-            try (TableModel model = new TableModel(configuration, columnNames[i], PartitionBy.NONE).col("ts", ColumnType.DATE)) {
+            tableNames[i] = "x" + i;
+            try (TableModel model = new TableModel(configuration, tableNames[i], PartitionBy.NONE).col("ts", ColumnType.DATE)) {
                 CairoTestUtils.create(model);
             }
 
-            try (TableWriter w = new TableWriter(configuration, columnNames[i])) {
+            try (TableWriter w = new TableWriter(configuration, tableNames[i])) {
                 for (int k = 0; k < 10; k++) {
                     TableWriter.Row r = w.newRow();
                     r.putDate(0, dataRnd.nextLong());
@@ -552,7 +552,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             }
 
             sink.clear();
-            try (TableReader r = new TableReader(configuration, columnNames[i])) {
+            try (TableReader r = new TableReader(configuration, tableNames[i])) {
                 printer.print(r.getCursor(), r.getMetadata(), true, sink);
             }
             expectedRowsPerReader[i] = sink.toString();
@@ -574,7 +574,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
                     String colName;
                     for (int i = 0; i < iterations; i++) {
-                        colName = columnNames[rnd.nextPositiveInt() % readerCount];
+                        colName = tableNames[rnd.nextPositiveInt() % readerCount];
                         while (true) {
                             boolean lockAcquired = false;
                             try {
@@ -603,12 +603,12 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     workerTimes.add(System.currentTimeMillis());
                     for (int i = 0; i < iterations; i++) {
                         int index = rnd.nextPositiveInt() % readerCount;
-                        String colName = columnNames[index];
+                        String colName = tableNames[index];
                         String expected = expectedRowsPerReader[index];
                         try (TableReader r = pool.get(colName)) {
                             sink.clear();
                             TestUtils.assertReader(expected, r, sink);
-                            if (barrier.getNumberWaiting() > 0 && colName.equals(columnNames[readerCount - 1])) {
+                            if (barrier.getNumberWaiting() > 0 && colName.equals(tableNames[readerCount - 1])) {
                                 barrier.await();
                             }
                             LockSupport.parkNanos(10L);

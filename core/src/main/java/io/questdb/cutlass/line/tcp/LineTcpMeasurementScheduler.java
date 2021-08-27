@@ -536,6 +536,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             bufPos += Integer.BYTES;
                             long hi = bufPos + 2L * l;
                             floatingCharSink.of(bufPos, hi);
+                            // TODO: why does it parse here like this and geohash fromString uses len
                             if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
                                 throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
                             }
@@ -543,6 +544,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         } else {
                             long geohash;
                             try {
+                                // TODO: optimise
                                 geohash = GeoHashes.fromString(
                                         entity.getValue(), 0, entity.getValue().length(), Numbers.decodeLowShort(colTypeMeta));
                             } catch (NumericException e) {
