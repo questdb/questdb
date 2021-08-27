@@ -470,28 +470,39 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
 
         if (len > 1 && tok.charAt(0) == '#') {
+
             // geohash from chars constant
 
-            // optional '/bits' (max 3 chars 0..60)
-            boolean hasBits = false;
-            int bits = 0;
-            int bitsLen = 0;
-            for (int i = len - 1, n = len - 4; i > n; i--, bitsLen++) {
-                int ch = tok.charAt(i) - 48;
+            // optional '/dd' (max 3 chars 0..60)
+            final int lastCh = tok.charAt(len - 1) - 48;
+            int ch = lastCh;
+            int bits = ch; // optimistic d
+            int bitsLen = 1;
+            for (int i = len - 2, n = len - 4; i > n; i--, bitsLen++) {
+                ch = tok.charAt(i) - 48;
                 if (ch >= 0 && ch <= 9) {
                     bits += ch * (bitsLen * 10);
-                }
-                if (ch == -1) { // '/'
-                    hasBits = true;
+                } else {
                     break;
                 }
             }
-            if (hasBits) {
-                if (bits > GeoHashes.MAX_BITS_LENGTH) {
+            if (ch == -1) { // '/' - 48
+                if (bits < 1 || bits > GeoHashes.MAX_BITS_LENGTH) {
                     throw SqlException.position(position).put("invalid GEOHASH constant: ").put(tok);
                 }
                 bitsLen++; // slash
             } else {
+                if (bits != lastCh) {
+                    // no bits but geohash ends with numeric digits
+                    // or, bits but too many digits
+                    int slash = len - bitsLen - 1;
+                    for (; slash >= 1 && tok.charAt(slash) != '/'; slash--) {
+                        // no-op
+                    }
+                    if (slash > 1) {
+                        throw SqlException.position(position).put("invalid GEOHASH constant: ").put(tok);
+                    }
+                }
                 bits = 5 * (len - 1);
                 bitsLen = 0;
             }
@@ -503,14 +514,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             } catch (NumericException e) {
             }
 
-            if (len > 2 && tok.charAt(1) == '#') {
-                // geohash from binary constant
-                try {
-                    return GeoHashConstant.newInstance(
-                            GeoHashes.fromBitString(tok, 2),
-                            ColumnType.geohashWithPrecision(len - 2)); // minus leading '##'
-                } catch (NumericException e) {
-                }
+            // geohash from binary constant
+
+            try {
+                return GeoHashConstant.newInstance(
+                        GeoHashes.fromBitString(tok, 2),
+                        ColumnType.geohashWithPrecision(len - 2)); // minus leading '##'
+            } catch (NumericException e) {
             }
         }
 
