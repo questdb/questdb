@@ -320,12 +320,38 @@ class ExpressionParser {
                         break;
 
                     case '#':
-                        if (SqlKeywords.isCharsGeoHashConstant(tok) ||
-                                SqlKeywords.isBitsGeoHashConstant(tok)) { // e.g. #sp052w92p1p8 ##01110001
+                        if (SqlKeywords.isCharsGeoHashConstant(tok)) { // e.g. #sp052w92p1p8[/bits]
+                            thisBranch = BRANCH_CONSTANT;
+                            CharSequence geohashTok = GenericLexer.immutableOf(tok);
+                            // optional / bits
+                            CharSequence slash = SqlUtil.fetchNext(lexer);
+                            if (slash == null || slash.charAt(0) != '/') {
+                                lexer.unparse();
+                                opStack.push(expressionNodePool.next().of(
+                                        ExpressionNode.CONSTANT,
+                                        geohashTok,
+                                        Integer.MIN_VALUE,
+                                        position));
+                                break;
+                            }
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok == null || !Chars.isOnlyDecimals(tok)) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "missing bits size for GEOHASH constant");
+                            }
+                            opStack.push(expressionNodePool.next().of(
+                                    ExpressionNode.CONSTANT,
+                                    lexer.immutablePairOf(geohashTok, '/', tok),
+                                    Integer.MIN_VALUE,
+                                    position));
+                            break;
+                        }
+
+                        if (SqlKeywords.isBitsGeoHashConstant(tok)) { // e.g. ##01110001
                             thisBranch = BRANCH_CONSTANT;
                             opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, position));
                             break;
                         }
+
                         processDefaultBranch = true;
                         break;
 

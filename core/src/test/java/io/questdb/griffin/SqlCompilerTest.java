@@ -1898,6 +1898,40 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateAsSelectGeoHashCharsLiteralWithBits1() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery(
+                    "geohash\n",
+                    "select geohash from geohash",
+                    "create table geohash (geohash geohash(8c))",
+                    null,
+                    true,
+                    true,
+                    true
+            );
+            executeInsert("insert into geohash values(#sp052w92p1p8/40)");
+            assertSql("geohash", "geohash\n" +
+                    "sp052w92\n");
+        });
+    }
+
+    @Test
+    public void testCreateAsSelectGeoHashCharsLiteralWithWrongBits() throws Exception {
+//        assertFailure(20, "missing bits size for GEOHASH constant",
+//                "select #sp052w92p1p8/");
+//        assertFailure(22, "missing bits size for GEOHASH constant",
+//                "select #sp052w92p1p8/ R");
+//        assertFailure(21, "missing bits size for GEOHASH constant",
+//                "select #sp052w92p1p8/-1");
+//        assertFailure(7, "invalid constant: #sp052w92p1p8/011",
+//                "select #sp052w92p1p8/ 011");
+
+        assertFailure(7, "invalid constant: #sp052w92p1p8/011",
+                "select #sp052w92p1p8/ 61");
+
+    }
+
+    @Test
     public void testCreateAsSelectGeoHashCharsLiteralTruncating() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery(

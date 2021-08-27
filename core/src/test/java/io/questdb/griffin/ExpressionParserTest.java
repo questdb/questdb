@@ -471,6 +471,15 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGeoHashConstant() throws SqlException {
+        x("#sp052w92p1p8/7", " #sp052w92p1p8\r\n  / 7\n 6c\n" +
+                "-- this is a comment, as you can see" +
+                "\n\n\r-- my tralala");
+        x("#sp052w92p1p8/7", "#sp052w92p1p8 / 7");
+        x("#sp052w92p1p8", "#sp052w92p1p8");
+    }
+
+    @Test
     public void testCastLambda() throws SqlException {
         x("(select-choose a, b, c from (x))1+longcast", "cast((select a,b,c from x)+1 as long)");
     }

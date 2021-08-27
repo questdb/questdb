@@ -87,6 +87,9 @@ public class SqlKeywordsTest {
 
     @Test
     public void testIsBitsGeoHashConstantIgnorePrefixValid() {
+        Assert.assertTrue(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("0"));
+        Assert.assertTrue(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("1"));
+        Assert.assertTrue(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("111111111100000000001111111111000000000011111111110000000000"));
         Assert.assertTrue(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("##0"));
         Assert.assertTrue(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("##1"));
         Assert.assertTrue(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("##111111111100000000001111111111000000000011111111110000000000"));
@@ -95,8 +98,10 @@ public class SqlKeywordsTest {
     @Test
     public void testIsBitsGeoHashConstantIgnorePrefixNotValid() {
         Assert.assertFalse(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("001210"));
-        Assert.assertFalse(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("#0"));
+        Assert.assertFalse(SqlKeywords.isBitsGeoHashConstantIgnorePrefix(""));
+        Assert.assertFalse(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("#"));
         Assert.assertFalse(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("##"));
+        Assert.assertFalse(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("#0"));
         Assert.assertFalse(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("##0;"));
         Assert.assertFalse(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("##12"));
         Assert.assertFalse(SqlKeywords.isBitsGeoHashConstantIgnorePrefix("**1100"));

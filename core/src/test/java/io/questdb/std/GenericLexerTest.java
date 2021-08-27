@@ -284,67 +284,89 @@ public class GenericLexerTest {
 
     @Test
     public void testImmutablePairOf1() {
-        GenericLexer ts = new GenericLexer(64);
-        ts.of("orange");
-        CharSequence cs = ts.next();
-        ts.immutablePairOf(GenericLexer.immutableOf(cs), cs);
-        Assert.assertEquals("orange", ts.getContent());
-        Assert.assertNull(ts.getUnparsed());
-        Assert.assertEquals(6, ts.getPosition());
-        Assert.assertEquals(6, ts.getTokenHi());
+        GenericLexer lex = new GenericLexer(64);
+        lex.of("orange");
+        CharSequence cs = lex.next();
+        lex.immutablePairOf(GenericLexer.immutableOf(cs), cs);
+        Assert.assertEquals("orange", lex.getContent());
+        Assert.assertNull(lex.getUnparsed());
+        Assert.assertEquals(6, lex.getPosition());
+        Assert.assertEquals(6, lex.getTokenHi());
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testImmutablePairOf2() {
-        GenericLexer ts = new GenericLexer(64);
-        ts.of("orange");
-        CharSequence cs = ts.next();
-        ts.immutablePairOf(cs, cs);
+        GenericLexer lex = new GenericLexer(64);
+        lex.of("orange");
+        CharSequence cs = lex.next();
+        lex.immutablePairOf(cs, cs);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testImmutablePairOf3() {
-        GenericLexer ts = new GenericLexer(64);
-        ts.immutablePairOf("", "");
+        GenericLexer lex = new GenericLexer(64);
+        lex.immutablePairOf("", "");
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testImmutablePairOf4() {
-        GenericLexer ts = new GenericLexer(64);
-        ts.of("geohash 31b");
-        ts.immutablePairOf(GenericLexer.immutableOf(ts.next()), ts.next());
+        GenericLexer lex = new GenericLexer(64);
+        lex.of("geohash 31b");
+        lex.immutablePairOf(GenericLexer.immutableOf(lex.next()), lex.next());
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testImmutablePairOf5() {
-        GenericLexer ts = new GenericLexer(64);
-        ts.of("geohash 31b");
-        CharSequence tok0 = GenericLexer.immutableOf(ts.next());
-        ts.next();
-        CharSequence pair = ts.immutablePairOf(tok0, ts.next());
+        GenericLexer lex = new GenericLexer(64);
+        lex.of("geohash 31b");
+        CharSequence tok0 = GenericLexer.immutableOf(lex.next());
+        lex.next();
+        CharSequence pair = lex.immutablePairOf(tok0, lex.next());
         pair.subSequence(0, 2);
     }
 
     @Test(expected = IndexOutOfBoundsException.class)
     public void testImmutablePairOf6() {
-        GenericLexer ts = new GenericLexer(64);
-        ts.of("geohash 31b");
-        CharSequence tok0 = GenericLexer.immutableOf(ts.next());
-        ts.next();
-        GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair) ts.immutablePairOf(tok0, ts.next());
+        GenericLexer lex = new GenericLexer(64);
+        lex.of("geohash 31b");
+        CharSequence tok0 = GenericLexer.immutableOf(lex.next());
+        lex.next();
+        GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair)
+                lex.immutablePairOf(tok0, lex.next());
         pair.charAt(17_000);
     }
 
     @Test
     public void testImmutablePairOf7() {
-        GenericLexer ts = new GenericLexer(64);
+        GenericLexer lex = new GenericLexer(64);
         String culprit = "geohash 31b";
-        ts.of(culprit);
-        CharSequence tok0 = GenericLexer.immutableOf(ts.next());
-        ts.next();
-        CharSequence tok1 = ts.next();
-        GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair) ts.immutablePairOf(tok0, tok1);
+        lex.of(culprit);
+        CharSequence geohashTok = GenericLexer.immutableOf(lex.next());
+        lex.next();
+        CharSequence sizeTok = lex.next();
+        GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair)
+                lex.immutablePairOf(geohashTok, sizeTok);
         Assert.assertEquals(culprit.length() - 1, pair.length());
+        StringSink sink = Misc.getThreadLocalBuilder();
+        for (int i = 0; i < pair.length(); i++) {
+            sink.put(pair.charAt(i));
+        }
+        pair.clear();
+        Assert.assertEquals(pair.toString(), sink.toString());
+    }
+
+    @Test
+    public void testImmutablePairOf8() {
+        GenericLexer lex = new GenericLexer(64);
+        lex.defineSymbol("/");
+        String culprit = "#sp052w92p1p8/7";
+        lex.of(culprit);
+        CharSequence geohashTok = GenericLexer.immutableOf(lex.next());
+        lex.next();
+        CharSequence bitsTok = lex.next();
+        GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair)
+                lex.immutablePairOf(geohashTok, '/', bitsTok);
+        Assert.assertEquals(culprit, pair.toString());
         StringSink sink = Misc.getThreadLocalBuilder();
         for (int i = 0; i < pair.length(); i++) {
             sink.put(pair.charAt(i));

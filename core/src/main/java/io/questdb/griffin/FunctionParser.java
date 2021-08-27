@@ -471,10 +471,35 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
         if (len > 1 && tok.charAt(0) == '#') {
             // geohash from chars constant
+
+            // optional '/bits' (max 3 chars 0..60)
+            boolean hasBits = false;
+            int bits = 0;
+            int bitsLen = 0;
+            for (int i = len - 1, n = len - 4; i > n; i--, bitsLen++) {
+                int ch = tok.charAt(i) - 48;
+                if (ch >= 0 && ch <= 9) {
+                    bits += ch * (bitsLen * 10);
+                }
+                if (ch == -1) { // '/'
+                    hasBits = true;
+                    break;
+                }
+            }
+            if (hasBits) {
+                if (bits > GeoHashes.MAX_BITS_LENGTH) {
+                    throw SqlException.position(position).put("invalid GEOHASH constant: ").put(tok);
+                }
+                bitsLen++; // slash
+            } else {
+                bits = 5 * (len - 1);
+                bitsLen = 0;
+            }
+
             try {
                 return GeoHashConstant.newInstance(
-                        GeoHashes.fromString(tok, 1, len - 1),
-                        ColumnType.geohashWithPrecision(5 * (len - 1))); // minus leading '#'
+                        GeoHashes.fromString(tok, 1, len - bitsLen - 1, bits),
+                        ColumnType.geohashWithPrecision(bits)); // minus leading '#' and leading bits if present
             } catch (NumericException e) {
             }
 

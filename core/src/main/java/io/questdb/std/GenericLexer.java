@@ -59,12 +59,17 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     }
 
     public CharSequence immutablePairOf(CharSequence value0, CharSequence value1) {
+        return immutablePairOf(value0, FloatingSequencePair.NO_SEPARATOR, value1);
+    }
+
+    public CharSequence immutablePairOf(CharSequence value0, char separator, CharSequence value1) {
         if (!(value0 instanceof FloatingSequence && value1 instanceof InternalFloatingSequence)) {
             throw new UnsupportedOperationException("only pairs of floating sequences are allowed");
         }
         FloatingSequencePair seqPair = csPairPool.next();
         seqPair.cs0 = (FloatingSequence) value0;
         seqPair.cs1 = (FloatingSequence) immutableOf(value1);
+        seqPair.sep = separator;
         return seqPair;
     }
 
@@ -409,20 +414,28 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         }
     }
 
-    public class FloatingSequencePair extends AbstractCharSequence implements Mutable {
+    public static class FloatingSequencePair extends AbstractCharSequence implements Mutable {
+        public static final char NO_SEPARATOR = (char) 0;
 
         FloatingSequence cs0;
         FloatingSequence cs1;
+        char sep = NO_SEPARATOR;
 
         @Override
         public int length() {
-            return cs0.length() + cs1.length();
+            return cs0.length() + cs1.length() + (sep != NO_SEPARATOR ? 1 : 0);
         }
 
         @Override
         public char charAt(int index) {
             if (index >= 0 && index < length()) {
-                return index < cs0.length() ? cs0.charAt(index) : cs1.charAt(index - cs0.length());
+                final int cs0Len = cs0.length();
+                if (index < cs0Len) {
+                    return cs0.charAt(index);
+                } else if (index == cs0Len && sep != NO_SEPARATOR) {
+                    return sep;
+                }
+                return cs1.charAt(index - cs0Len - (sep != NO_SEPARATOR ? 1 : 0));
             }
             throw new IndexOutOfBoundsException();
         }
@@ -437,6 +450,9 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         public String toString() {
             final CharSink b = Misc.getThreadLocalBuilder();
             b.put(cs0);
+            if (sep != NO_SEPARATOR) {
+                b.put(sep);
+            }
             b.put(cs1);
             return b.toString();
         }

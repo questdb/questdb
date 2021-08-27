@@ -332,6 +332,17 @@ public final class Chars {
         return -1;
     }
 
+    public static boolean isOnlyDecimals(CharSequence s) {
+        int len = s.length();
+        for (int i = len - 1; i > -1; i--) {
+            int digit = s.charAt(i) - 48;
+            if (digit < 0 || digit > 9) {
+                return false;
+            }
+        }
+        return len > 0;
+    }
+
     public static boolean isMalformed3(int b1, int b2, int b3) {
         return b1 == -32 && (b2 & 224) == 128 || (b2 & 192) != 128 || (b3 & 192) != 128;
     }
