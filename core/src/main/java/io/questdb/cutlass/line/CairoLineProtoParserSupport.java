@@ -148,36 +148,39 @@ public class CairoLineProtoParserSupport {
 
     public static int getValueType(CharSequence token) {
         int len = token.length();
-        if (len == 0) {
-            return ColumnType.UNDEFINED;
+        if (len > 0) {
+            switch (token.charAt(len - 1)) {
+                case 'i':
+                    if (len > 1) {
+                        if (token.charAt(1) == 'x') {
+                            return ColumnType.LONG256;
+                        }
+                        return ColumnType.LONG;
+                    }
+                    return ColumnType.CHAR;
+                case 'e':
+                    // tru(e)
+                    //  fals(e)
+                case 't':
+                case 'T':
+                    // t
+                    // T
+                case 'f':
+                case 'F':
+                    // f
+                    // F
+                    return ColumnType.BOOLEAN;
+                case '"':
+                    if (len < 2 || token.charAt(0) != '\"') {
+                        LOG.error().$("incorrectly quoted string: ").$(token).$();
+                        return ColumnType.UNDEFINED;
+                    }
+                    return ColumnType.STRING;
+                default:
+                    return ColumnType.DOUBLE;
+            }
         }
-        switch (token.charAt(len - 1)) {
-            case 'i':
-                if (token.charAt(1) == 'x') {
-                    return ColumnType.LONG256;
-                }
-                return ColumnType.LONG;
-            case 'e':
-                // tru(e)
-                //  fals(e)
-            case 't':
-            case 'T':
-                // t
-                // T
-            case 'f':
-            case 'F':
-                // f
-                // F
-                return ColumnType.BOOLEAN;
-            case '"':
-                if (len < 2 || token.charAt(0) != '\"') {
-                    LOG.error().$("incorrectly quoted string: ").$(token).$();
-                    return ColumnType.UNDEFINED;
-                }
-                return ColumnType.STRING;
-            default:
-                return ColumnType.DOUBLE;
-        }
+        return ColumnType.UNDEFINED;
     }
 
     public static boolean isTrue(CharSequence value) {

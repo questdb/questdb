@@ -181,8 +181,6 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
                 });
     }
 
-
-
     @Test
     public void testGetValueType() {
         Assert.assertEquals(ColumnType.LONG256, CairoLineProtoParserSupport.getValueType("oxi"));
@@ -198,6 +196,7 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
         Assert.assertEquals(ColumnType.UNDEFINED, CairoLineProtoParserSupport.getValueType(""));
         Assert.assertEquals(ColumnType.STRING, CairoLineProtoParserSupport.getValueType("\"\""));
         Assert.assertEquals(ColumnType.DOUBLE, CairoLineProtoParserSupport.getValueType("a"));
+        Assert.assertEquals(ColumnType.CHAR, CairoLineProtoParserSupport.getValueType("i"));
     }
 
     private void test(int columnType, String expected, Consumer<LineProtoSender> senderConsumer) throws Exception {
