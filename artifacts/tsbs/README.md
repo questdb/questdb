@@ -38,8 +38,8 @@ cd ~/tmp/go/src/github.com/timescale/
 Clone the TSBS repository, build test and install Go binaries:
 
 ```bash
-git clone git@github.com:questdb/tsbs.git
-cd ~/tmp/go/src/github.com/timescale/tsbs/ && git checkout questdb-tsbs-load-new
+git clone git@github.com:timescale/tsbs.git
+cd tsbs
 
 GOPATH=~/tmp/go go build -v ./...
 GOPATH=~/tmp/go go test -v github.com/timescale/tsbs/cmd/tsbs_load_questdb
@@ -108,8 +108,8 @@ cd ~/tmp/go/src/github.com/timescale/
 sudo portinstall influxdb
 
 mkdir -p ~/tmp/go/src/github.com/timescale/ && cd ~/tmp/go/src/github.com/timescale/
-git clone git@github.com:questdb/tsbs.git
-cd ~/tmp/go/src/github.com/timescale/tsbs/ && git checkout questdb-tsbs-load-new
+git clone git@github.com:timescale/tsbs.git
+cd tsbs
 
 GOPATH=~/tmp/go go build -v ./...
 GOPATH=~/tmp/go go test -v github.com/timescale/tsbs/cmd/tsbs_load_questdb
