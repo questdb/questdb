@@ -58,7 +58,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final CairoConfiguration configuration;
     private final LongList columnNameType = new LongList();
     private final LongList columnIndexAndType = new LongList();
-    private final IntList columnIndexToGeoBitsSize = new IntList();
+    private final IntList geohashBitsSizeByColIdx = new IntList();
     private final LongList columnValues = new LongList();
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final MicrosecondClock clock;
@@ -226,7 +226,8 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     private int getGeoHashBitsSize(int idx) {
-        return idx < columnIndexToGeoBitsSize.size() ? columnIndexToGeoBitsSize.getQuick(idx) : 0;
+        // TODO: remove checks
+        return idx >= 0 && idx < geohashBitsSizeByColIdx.size() ? geohashBitsSizeByColIdx.getQuick(idx) : 0;
     }
 
     private void cacheWriter(CacheEntry entry, CachedCharSequence tableName) {
@@ -244,7 +245,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private void clearState() {
         columnNameType.clear();
         columnIndexAndType.clear();
-        columnIndexToGeoBitsSize.clear();
+        geohashBitsSizeByColIdx.clear();
         columnValues.clear();
     }
 
@@ -357,7 +358,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         assert valueType > ColumnType.UNDEFINED;
         if (columnType > ColumnType.UNDEFINED) {
             boolean valid;
-            boolean validGeohash = false;
+            int geohashBits = 0;
             final int valueTypeTag = ColumnType.tagOf(valueType);
             final int columnTypeTag = ColumnType.tagOf(columnType);
             switch (valueTypeTag) {
@@ -375,7 +376,8 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 case ColumnType.STRING:
                     valid = columnTypeTag == ColumnType.STRING ||
                             columnTypeTag == ColumnType.CHAR;
-                    if (!valid && (validGeohash = columnTypeTag == ColumnType.GEOHASH)) {
+                    if (!valid && columnTypeTag == ColumnType.GEOHASH) {
+                        geohashBits = GeoHashes.getBitsPrecision(columnType);
                         valid = true;
                     }
                     break;
@@ -394,8 +396,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             if (valid) {
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, columnType));
                 columnValues.add(value.getCacheAddress());
-                columnIndexToGeoBitsSize.ensureCapacity(columnIndex + 1);
-                columnIndexToGeoBitsSize.set(columnIndex, validGeohash ? GeoHashes.getBitsPrecision(columnType) : 0);
+                geohashBitsSizeByColIdx.add(geohashBits);
             } else {
                 LOG.error().$("mismatched column and value types [table=").$(writer.getTableName())
                         .$(", column=").$(metadata.getColumnName(columnIndex))

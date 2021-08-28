@@ -1019,7 +1019,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
 
             int getColumnTypeMeta(int colIndex) {
-                System.out.println("POLLA: " + colIndex);
+                // TODO: remove checks
                 return colIndex >= 0 && colIndex < colTypeMetaByColIndex.size() ?
                         colTypeMetaByColIndex.getQuick(colIndex) : NOT_A_GEOHASH;
             }
