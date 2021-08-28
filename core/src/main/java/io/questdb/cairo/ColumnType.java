@@ -68,10 +68,10 @@ public final class ColumnType {
     public static final short NULL = 20;
 
     // Virtual storage types, only needed to flatten storage switch extension with GEOHASH column types
-    public static final short GEOBYTE = -1;
-    public static final short GEOSHORT = -2;
-    public static final short GEOINT = -4;
-    public static final short GEOLONG = -8;
+    public static final short GEOBYTE = 1001;
+    public static final short GEOSHORT = 1002;
+    public static final short GEOINT = 1004;
+    public static final short GEOLONG = 1008;
 
 
     public static final short MAX = NULL;

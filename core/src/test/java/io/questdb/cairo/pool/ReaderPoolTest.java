@@ -37,7 +37,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -571,19 +570,18 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 Rnd rnd = new Rnd();
                 try {
                     barrier.await();
-
-                    String colName;
+                    String tblName;
                     for (int i = 0; i < iterations; i++) {
-                        colName = tableNames[rnd.nextPositiveInt() % readerCount];
+                        tblName = tableNames[rnd.nextPositiveInt() % readerCount];
                         while (true) {
                             boolean lockAcquired = false;
                             try {
-                                lockAcquired = pool.lock(colName);
+                                lockAcquired = pool.lock(tblName);
                                 LockSupport.parkNanos(1L);
                             } finally {
                                 if (lockAcquired) {
                                     lockTimes.add(System.currentTimeMillis());
-                                    pool.unlock(colName);
+                                    pool.unlock(tblName);
                                     break;
                                 }
                             }
@@ -603,12 +601,12 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     workerTimes.add(System.currentTimeMillis());
                     for (int i = 0; i < iterations; i++) {
                         int index = rnd.nextPositiveInt() % readerCount;
-                        String colName = tableNames[index];
+                        String tblName = tableNames[index];
                         String expected = expectedRowsPerReader[index];
-                        try (TableReader r = pool.get(colName)) {
+                        try (TableReader r = pool.get(tblName)) {
                             sink.clear();
                             TestUtils.assertReader(expected, r, sink);
-                            if (barrier.getNumberWaiting() > 0 && colName.equals(tableNames[readerCount - 1])) {
+                            if (barrier.getNumberWaiting() > 0 && tblName.equals(tableNames[readerCount - 1])) {
                                 barrier.await();
                             }
                             LockSupport.parkNanos(10L);

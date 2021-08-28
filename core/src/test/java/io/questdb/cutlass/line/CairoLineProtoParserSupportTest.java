@@ -40,7 +40,7 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
 
     @Test
     public void testPutByteBadValueIsTreatedAsNull() throws Exception {
-        test(ColumnType.BYTE,
+        testColumnType(ColumnType.BYTE, 30,
                 "column\tlocation\ttimestamp\n" +
                         "5\t\t1970-01-01T00:00:04.000000Z\n",
                 (sender) -> {
@@ -64,7 +64,7 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
 
     @Test
     public void testPutShortBadValueIsTreatedAsNull() throws Exception {
-        test(ColumnType.SHORT,
+        testColumnType(ColumnType.SHORT, 30,
                 "column\tlocation\ttimestamp\n" +
                         "0\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
                         "300\t\t1970-01-01T00:00:02.000000Z\n" +
@@ -90,7 +90,7 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
 
     @Test
     public void testPutIntBadValueIsTreatedAsNull() throws Exception {
-        test(ColumnType.INT,
+        testColumnType(ColumnType.INT, 30,
                 "column\tlocation\ttimestamp\n" +
                         "NaN\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
                         "5\t\t1970-01-01T00:00:04.000000Z\n",
@@ -115,7 +115,7 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
 
     @Test
     public void testPutFloatBadValueIsTreatedAsNull() throws Exception {
-        test(ColumnType.FLOAT,
+        testColumnType(ColumnType.FLOAT, 30,
                 "column\tlocation\ttimestamp\n" +
                         "Infinity\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
                         "3.1416\t\t1970-01-01T00:00:02.000000Z\n" +
@@ -144,7 +144,7 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
 
     @Test
     public void testPutLong256BadValueIsTreatedAsNull() throws Exception {
-        test(ColumnType.LONG256,
+        testColumnType(ColumnType.LONG256, 30,
                 "column\tlocation\ttimestamp\n",
                 (sender) -> {
                     sender.metric(tableName)
@@ -167,7 +167,7 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
 
     @Test
     public void testPutBinaryBadValueIsTreatedAsNull() throws Exception {
-        test(ColumnType.BINARY,
+        testColumnType(ColumnType.BINARY, 30,
                 "column\tlocation\ttimestamp\n",
                 (sender) -> {
                     sender.metric(tableName)
@@ -199,14 +199,17 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
         Assert.assertEquals(ColumnType.CHAR, CairoLineProtoParserSupport.getValueType("i"));
     }
 
-    private void test(int columnType, String expected, Consumer<LineProtoSender> senderConsumer) throws Exception {
+    private void testColumnType(int columnType,
+                                int geohashColumnBits,
+                                String expected,
+                                Consumer<LineProtoSender> senderConsumer) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
                     try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
                         CairoTestUtils.create(model
                                 .col(targetColumnName, columnType)
-                                .col(locationColumnName, ColumnType.geohashWithPrecision(30))
+                                .col(locationColumnName, ColumnType.geohashWithPrecision(geohashColumnBits))
                                 .timestamp());
                     }
                     receiver.start();

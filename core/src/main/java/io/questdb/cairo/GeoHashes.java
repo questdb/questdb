@@ -53,8 +53,6 @@ public class GeoHashes {
     };
 
     private static final int BITS_OFFSET = 8;
-    private static final char MAX_CHAR = 'z' + 1;
-    private static final char MIN_CHAR = '0' - 1;
     private static final char[] base32 = {
             '0', '1', '2', '3', '4', '5', '6', '7',
             '8', '9', 'b', 'c', 'd', 'e', 'f', 'g',
@@ -66,6 +64,11 @@ public class GeoHashes {
         for (int bits = 1; bits <= MAX_BITS_LENGTH; bits++) {
             GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
         }
+    }
+
+    public static boolean isValidChar(char ch) {
+        int idx = ch - 48;
+        return idx >= 0 && idx < base32Indexes.length && base32Indexes[idx] != -1;
     }
 
     public static long bitmask(int count, int shift) {
@@ -128,43 +131,34 @@ public class GeoHashes {
         return result;
     }
 
-    public static long fromString(CharSequence hash, int parseLen) throws NumericException {
-        if (hash == null || hash.length() == 0 || parseLen == 0) {
+    public static long fromString(CharSequence hash, int start, int parseLen) throws NumericException {
+        if (parseLen <= 0 || hash == null || hash.length() == 0) {
             return GeoHashes.NULL;
         }
-        if (parseLen <  0 || parseLen > hash.length() || parseLen > MAX_STRING_LENGTH) {
-            throw NumericException.INSTANCE;
-        }
-        return fromString0(hash, 0, parseLen);
-    }
-
-    public static long fromString(CharSequence hash, int start, int parseLen) throws NumericException {
-        if (start < 0 || parseLen < 0 || parseLen > MAX_STRING_LENGTH || (hash != null && hash.length() != 0 && start + parseLen > hash.length())) {
-            throw NumericException.INSTANCE;
-        }
-        if (hash == null || parseLen == 0) {
-            return NULL;
-        }
-        return fromString0(hash, start, start + parseLen);
+        int n = Math.min(MAX_STRING_LENGTH, parseLen);
+        return fromString0(hash, start, start + n);
     }
 
     public static long fromString(CharSequence hash, int start, int parseLen, int bitsPrecision) throws NumericException {
-        long output = fromString(hash, start, parseLen);
-        if (output == NULL) {
-            return output;
+        if (parseLen == 0) {
+            return NULL;
         }
-        if (bitsPrecision != 0 && (bitsPrecision < 1 || bitsPrecision > MAX_BITS_LENGTH || parseLen * 5 < bitsPrecision)) {
+        int n = Math.min(MAX_STRING_LENGTH, parseLen);
+        int hashBits = 5 * n;
+        if (hashBits < bitsPrecision) {
             throw NumericException.INSTANCE;
         }
-        return bitsPrecision == 0 ? output : output >>> (parseLen * 5 - bitsPrecision);
+        long geohash = fromString0(hash, start, start + n);
+        return geohash >>> (hashBits - bitsPrecision);
     }
 
-    private static long fromString0(CharSequence hash, int start, int end) throws NumericException {
+    public static long fromString0(CharSequence hash, int start, int end) throws NumericException {
+        // this is the speedy version
         long output = 0;
         for (int i = start; i < end; ++i) {
-            char c = hash.charAt(i);
-            if (c > MIN_CHAR && c < MAX_CHAR) {
-                byte idx = base32Indexes[(int) c - 48];
+            int c = hash.charAt(i) - 48; // not calling isValidChar to avoid indirection
+            if (c >= 0 && c < base32Indexes.length) {
+                byte idx = base32Indexes[c];
                 if (idx >= 0) {
                     output = (output << 5) | idx;
                     continue;
@@ -185,7 +179,7 @@ public class GeoHashes {
                 if (prefix == null) {
                     continue;
                 }
-                final long hash = fromString(prefix, prefix.length());
+                final long hash = fromString(prefix, 0, prefix.length());
                 if (hash == NULL) {
                     continue;
                 }

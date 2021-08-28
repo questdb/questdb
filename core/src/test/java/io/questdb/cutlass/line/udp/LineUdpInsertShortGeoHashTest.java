@@ -86,7 +86,7 @@ public class LineUdpInsertShortGeoHashTest extends LineUdpInsertGeoHashTest {
     }
 
     @Override
-    public void testSeeminglyGoodLookingStringWhichIsTooLongToBeAGeoHash() throws Exception {
+    public void testExcessivelyLongGeoHashesAreTruncated() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
@@ -95,7 +95,7 @@ public class LineUdpInsertShortGeoHashTest extends LineUdpInsertGeoHashTest {
                     sendGeoHashLine("9v1s8hm7wpkssv1h");
                     assertReader(tableName,
                             "geohash\ttimestamp\n" +
-                                    "\t1970-01-01T00:00:01.000000Z\n");
+                                    "01001110110000\t1970-01-01T00:00:01.000000Z\n");
                 }
             }
         });

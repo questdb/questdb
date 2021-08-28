@@ -372,7 +372,8 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                             columnTypeTag == ColumnType.CHAR;
                     if (!valid && columnTypeTag == ColumnType.GEOHASH) {
                         valid = true;
-                        columnIndexToGeoBitsSize.add(GeoHashes.getBitsPrecision(columnType));
+                        columnIndexToGeoBitsSize.ensureCapacity(columnIndex + 1);
+                        columnIndexToGeoBitsSize.set(columnIndex, GeoHashes.getBitsPrecision(columnType));
                     }
                     break;
                 case ColumnType.DOUBLE:

@@ -24,13 +24,22 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.Misc;
-import io.questdb.std.NumericException;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
+
 public class GeoHashesTest {
+
+    private Rnd rnd;
+
+    @Before
+    public void setUp() {
+        rnd = new Rnd();
+    }
+
     @Test
     public void testBitsPrecision() {
         Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(ColumnType.GEOHASH));
@@ -177,19 +186,21 @@ public class GeoHashesTest {
         Assert.assertEquals("GEOHASH", ColumnType.nameOf(ColumnType.GEOHASH));
     }
 
-    @Test(expected = NumericException.class)
+    @Test
     public void testFromStringNegativeStart() throws NumericException {
-        GeoHashes.fromString("", -1, 0, 0);
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromString("", -1, 0, 0));
     }
 
     @Test(expected = NumericException.class)
     public void testFromStringNegativeParseLen() throws NumericException {
-        GeoHashes.fromString("", 0, -1, 0);
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromString("", 0, -1, 0));
     }
 
-    @Test(expected = NumericException.class)
+    @Test
     public void testFromStringInvalidBitsPrecision1() throws NumericException {
-        GeoHashes.fromString("123", 0, 3, -1);
+        Assert.assertEquals(
+                GeoHashes.fromString("123", 0, 3, -1),
+                GeoHashes.fromString("123", 0, 3, 0));
     }
 
     @Test(expected = NumericException.class)
@@ -197,7 +208,7 @@ public class GeoHashesTest {
         GeoHashes.fromString("123", 0, 3, GeoHashes.MAX_BITS_LENGTH + 1);
     }
 
-    @Test(expected = NumericException.class)
+    @Test(expected = StringIndexOutOfBoundsException.class)
     public void testFromStringNotEnoughChars() throws NumericException {
         GeoHashes.fromString("123", 0, 4, 15);
     }
@@ -212,14 +223,9 @@ public class GeoHashesTest {
         GeoHashes.fromString("123456789abcde", 1, GeoHashes.MAX_STRING_LENGTH + 2, 0);
     }
 
-    @Test(expected = NumericException.class)
+    @Test(expected = StringIndexOutOfBoundsException.class)
     public void testFromStringShorterThanRequiredLength() throws NumericException {
         GeoHashes.fromString("123", 1, 7, 0);
-    }
-
-    @Test
-    public void testFromNullYieldsNull() throws NumericException {
-        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromString(null, 1, 1, 0));
     }
 
     @Test
@@ -229,27 +235,27 @@ public class GeoHashesTest {
 
     @Test
     public void testFromStringJustOneChar() throws NumericException {
-        Assert.assertEquals(24, GeoHashes.fromString("ast", 1, 1, 0));
+        Assert.assertEquals(0, GeoHashes.fromString("ast", 1, 1, 0));
     }
 
     @Test
     public void testFromStringIgnoreQuotes1() throws NumericException {
-        Assert.assertEquals(27760644473312309L, GeoHashes.fromString("'sp052w92p1p'", 1, 11, 0));
+        Assert.assertEquals(27760644473312309L, GeoHashes.fromString("'sp052w92p1p'", 1, 11));
     }
 
     @Test
     public void testFromStringIgnoreQuotes2() throws NumericException {
-        Assert.assertEquals(27760644473312309L, GeoHashes.fromString("'sp052w92p1p'", 1, 11, 0));
+        Assert.assertEquals(27760644473312309L, GeoHashes.fromString("'sp052w92p1p'", 1, 11));
     }
 
     @Test(expected = NumericException.class)
-    public void testFromStringIBadChar() throws NumericException {
+    public void testFromStringBadChar() throws NumericException {
         Assert.assertEquals(27760644473312309L, GeoHashes.fromString("'sp05@w92p1p'", 1, 11, 0));
     }
 
     @Test
     public void testFromStringIgnoreQuotesTruncateChars() throws NumericException {
-        Assert.assertEquals(807941, GeoHashes.fromString("'sp052w92p1p'", 1, 4, 0));
+        Assert.assertEquals(807941, GeoHashes.fromString("'sp052w92p1p'", 1, 4));
         StringSink sink = Misc.getThreadLocalBuilder();
         GeoHashes.toString(807941, 4, sink);
         Assert.assertEquals("sp05", sink.toString());
@@ -262,4 +268,27 @@ public class GeoHashesTest {
         GeoHashes.toString(807941, 4, sink);
         Assert.assertEquals("sp05", sink.toString());
     }
+
+    @Test
+    public void testIsValidChar() {
+        IntHashSet base32Chars = new IntHashSet(base32.length);
+        for (char ch : base32) {
+            base32Chars.add(ch);
+            Assert.assertTrue(GeoHashes.isValidChar(ch));
+        }
+        for (int i = 0; i < 15000; i++) {
+            char ch = (char) rnd.nextPositiveInt();
+            Assert.assertEquals(base32Chars.contains(ch), GeoHashes.isValidChar(ch));
+        }
+    }
+
+    private static final char[] base32 = {
+            '0', '1', '2', '3', '4', '5', '6', '7',
+            '8', '9', 'b', 'c', 'd', 'e', 'f', 'g',
+            'h', 'j', 'k', 'm', 'n', 'p', 'q', 'r',
+            's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+            'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J',
+            'K', 'M', 'N', 'P', 'Q', 'R', 'S', 'T',
+            'U', 'V', 'W', 'X', 'Y', 'Z'
+    };
 }

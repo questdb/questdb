@@ -56,7 +56,7 @@ public class GeoHashNativeTest {
         final long gh = GeoHashes.fromCoordinates(lat, lon, 8 * 5);
         sink.clear();
         GeoHashes.toString(gh, 8, sink);
-        final long gh1 = GeoHashes.fromString(sink, 8);
+        final long gh1 = GeoHashes.fromString0(sink, 0, 8);
         Assert.assertEquals(gh, gh1);
     }
 
@@ -64,7 +64,7 @@ public class GeoHashNativeTest {
     public void testFromString() throws NumericException {
         sink.clear();
         sink.put("@s");
-        GeoHashes.fromString(sink.toString(), 2);
+        GeoHashes.fromString(sink.toString(), 0, 2);
     }
 
     @Test
@@ -100,7 +100,7 @@ public class GeoHashNativeTest {
             GeoHashes.toString(h, prec, sink);
             strh.add(sink);
         }
-        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap*5), bits);
+        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap * 5), bits);
         for (int i = 0; i < bits.size() / 2; i += 2) {
             final long b = bits.get(i);
             final long m = bits.get(i + 1);
@@ -116,9 +116,9 @@ public class GeoHashNativeTest {
         strh.add("");
         strh.add(null);
         strh.add("$invalid");
-        strh.add("questdb1234567890");
+        strh.add("questdb.10");
 
-        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap*5), bits);
+        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap * 5), bits);
         Assert.assertEquals(0, bits.size());
     }
 
@@ -129,7 +129,7 @@ public class GeoHashNativeTest {
         CharSequenceHashSet strh = new CharSequenceHashSet();
         strh.add("questdb");
 
-        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap*5), bits);
+        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap * 5), bits);
         Assert.assertEquals(2, bits.size());
     }
 
@@ -140,7 +140,7 @@ public class GeoHashNativeTest {
         CharSequenceHashSet strh = new CharSequenceHashSet();
         strh.add("");
         strh.add("a medium sized banana");
-        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap*5), bits);
+        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap * 5), bits);
         Assert.assertEquals(0, bits.size());
     }
 
@@ -240,7 +240,7 @@ public class GeoHashNativeTest {
         }
 
         for (int i = 0; i < maxGeoHashSizeChars; i++) {
-            final long gh = GeoHashes.fromString(expectedStr[i], expectedStr[i].length());
+            final long gh = GeoHashes.fromString(expectedStr[i], 0, expectedStr[i].length());
             Assert.assertEquals(expectedHash[i], gh);
             sink.clear();
             GeoHashes.toString(gh, expectedStr[i].length(), sink);
@@ -284,7 +284,7 @@ public class GeoHashNativeTest {
     @Test
     public void tstsRndD() {
         Rnd r = new Rnd();
-        for(int i = 0; i < 1000; i++) {
+        for (int i = 0; i < 1000; i++) {
             double d = r.nextDouble();
             Assert.assertTrue(Double.toString(d), Math.abs(d) < 1.0);
         }
@@ -313,8 +313,8 @@ public class GeoHashNativeTest {
 
     @Test
     public void testFromStringNull() throws NumericException {
-        Assert.assertEquals(GeoHashes.fromString(null, 0), GeoHashes.NULL);
-        Assert.assertEquals(GeoHashes.fromString("", 0), GeoHashes.NULL);
+        Assert.assertEquals(GeoHashes.fromString(null, 0, 0), GeoHashes.NULL);
+        Assert.assertEquals(GeoHashes.fromString("", 0, 0), GeoHashes.NULL);
     }
 
     @SuppressWarnings("ResultOfMethodCallIgnored")

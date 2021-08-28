@@ -84,11 +84,11 @@ public class LineTcpInsertByteGeoHashTest extends LineTcpInsertGeoHashTest {
     }
 
     @Override
-    public void testSeeminglyGoodLookingStringWhichIsTooLongToBeAGeoHash() throws Exception {
+    public void testExcessivelyLongGeoHashesAreTruncated() throws Exception {
         assertGeoHash(4,
                 "tracking geohash=\"9v1s8hm7wpkssv1h\" 1000000000\n",
                 "geohash\ttimestamp\n" +
-                        "\t1970-01-01T00:00:01.000000Z\n");
+                        "0100\t1970-01-01T00:00:01.000000Z\n");
     }
 
     @Override

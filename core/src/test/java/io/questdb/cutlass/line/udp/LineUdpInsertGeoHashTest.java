@@ -51,7 +51,7 @@ abstract class LineUdpInsertGeoHashTest extends LineUdpInsertTest {
     public abstract void testTableHasGeoHashMessageDoesNot() throws Exception;
 
     @Test
-    public abstract void testSeeminglyGoodLookingStringWhichIsTooLongToBeAGeoHash() throws Exception;
+    public abstract void testExcessivelyLongGeoHashesAreTruncated() throws Exception;
 
     @Test
     public abstract void testGeoHashesNotEnoughPrecision() throws Exception;
