@@ -40,8 +40,8 @@ public class GeoHashes {
     private static final int[] GEO_TYPE_SIZE_POW2 = new int[MAX_BITS_LENGTH + 1];
 
     static final byte[] base32Indexes = {
-            0, 1, 2, 3, 4, 5, 6, 7,        // 30-37, '0'..'7'
-            8, 9, -1, -1, -1, -1, -1, -1,  // 38-2F, '8','9'
+            0, 1, 2, 3, 4, 5, 6, 7,         // 30-37, '0'..'7'
+            8, 9, -1, -1, -1, -1, -1, -1,   // 38-2F, '8','9'
             -1, -1, 10, 11, 12, 13, 14, 15, // 40-47, 'B'..'G'
             16, -1, 17, 18, -1, 19, 20, -1, // 48-4F, 'H','J','K','M','N'
             21, 22, 23, 24, 25, 26, 27, 28, // 50-57, 'P'..'W'
@@ -64,11 +64,6 @@ public class GeoHashes {
         for (int bits = 1; bits <= MAX_BITS_LENGTH; bits++) {
             GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
         }
-    }
-
-    public static boolean isValidChar(char ch) {
-        int idx = ch - 48;
-        return idx >= 0 && idx < base32Indexes.length && base32Indexes[idx] != -1;
     }
 
     public static long bitmask(int count, int shift) {
@@ -138,31 +133,6 @@ public class GeoHashes {
         return fromString0(hash, start, start + Math.min(MAX_STRING_LENGTH, parseLen));
     }
 
-    public static long fromStringTruncating(long lo, long hi, int bitsPrecision) throws NumericException {
-        if (lo == hi) {
-            return NULL;
-        }
-        int chars = Math.min((int) (hi - lo), MAX_STRING_LENGTH);
-        int actualBits = 5 * chars;
-        if (actualBits < bitsPrecision) {
-            throw NumericException.INSTANCE;
-        }
-        long geohash = 0;
-        for (long p = lo, i = 0; i < chars; p++, i++) {
-            char c = (char) Unsafe.getUnsafe().getByte(p);
-            if (c >= 48 && c < 123) { // base32Indexes.length + 48
-                byte idx = base32Indexes[c - 48];
-                if (idx >= 0) {
-                    geohash = (geohash << 5) | idx;
-                    continue;
-                }
-                throw NumericException.INSTANCE;
-            }
-            throw NumericException.INSTANCE;
-        }
-        return geohash >>> (actualBits - bitsPrecision);
-    }
-
     public static long fromStringTruncating(CharSequence hash, int start, int end, int bitsPrecision) throws NumericException {
         if (end == start) {
             return NULL;
@@ -176,11 +146,36 @@ public class GeoHashes {
         return geohash >>> (hashBits - bitsPrecision);
     }
 
+    public static long fromStringTruncating(long lo, long hi, int bitsPrecision) throws NumericException {
+        if (lo >= hi) {
+            return NULL;
+        }
+        int chars = Math.min((int) (hi - lo), MAX_STRING_LENGTH);
+        int actualBits = 5 * chars;
+        if (actualBits < bitsPrecision) {
+            throw NumericException.INSTANCE;
+        }
+        long geohash = 0;
+        for (long p = lo, i = 0; i < chars; p++, i++) {
+            char c = (char) Unsafe.getUnsafe().getByte(p);
+            if (c >= 48 && c < 123) { // base32Indexes.length + 48
+                byte idx = base32Indexes[c - 48];
+                if (idx != -1) {
+                    geohash = (geohash << 5) | idx;
+                    continue;
+                }
+                throw NumericException.INSTANCE;
+            }
+            throw NumericException.INSTANCE;
+        }
+        return geohash >>> (actualBits - bitsPrecision);
+    }
+
     public static long fromString0(CharSequence hash, int start, int end) throws NumericException {
         // this is the speedy version
         long output = 0;
         for (int i = start; i < end; ++i) {
-            char c = hash.charAt(i); // not calling isValidChar to avoid indirection
+            char c = hash.charAt(i);
             if (c >= 48 && c < 123) { // base32Indexes.length + 48
                 byte idx = base32Indexes[c - 48];
                 if (idx >= 0) {

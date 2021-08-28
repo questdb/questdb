@@ -544,9 +544,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                             long geohash;
                             try {
                                 geohash = GeoHashes.fromStringTruncating(
-                                        entity.getValue().getLo(), entity.getValue().getHi(), Numbers.decodeLowShort(colTypeMeta));
+                                        entity.getValue().getLo(),
+                                        entity.getValue().getHi(),
+                                        Numbers.decodeLowShort(colTypeMeta));
                             } catch (NumericException e) {
-                                // not a geohash, insert null instead
                                 geohash = GeoHashes.NULL;
                             }
                             switch (Numbers.decodeHighShort(colTypeMeta)) {
@@ -963,7 +964,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         private class ThreadLocalDetails implements Closeable {
             private final Path path = new Path();
             private final ObjIntHashMap<CharSequence> columnIndexByName = new ObjIntHashMap<>();
-            private final IntIntHashMap colTypeMetaByColIndex = new IntIntHashMap(); // used to deal with geohashes
+            private final IntList colTypeMetaByColIndex = new IntList(); // used to deal with geohashes
             private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
             private final ObjList<SymbolCache> unusedSymbolCaches;
 
@@ -1017,7 +1018,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
 
             int getColumnTypeMeta(int colIndex) {
-                return colTypeMetaByColIndex.get(colIndex);
+                return colIndex >= 0 && colIndex < colTypeMetaByColIndex.size() ?
+                        colTypeMetaByColIndex.get(colIndex) : NOT_A_GEOHASH;
             }
 
             private int getColumnIndex0(CharSequence colName) {
@@ -1034,10 +1036,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                         columnIndexByName.put(metadata.getColumnName(n), n);
                         int colType = metadata.getColumnType(n);
                         if (!ColumnType.isGeoHash(colType)) {
-                            colTypeMetaByColIndex.put(n, NOT_A_GEOHASH);
+                            colTypeMetaByColIndex.add(NOT_A_GEOHASH);
                         } else {
-                            colTypeMetaByColIndex.put(
-                                    n,
+                            colTypeMetaByColIndex.add(
                                     Numbers.encodeLowHighShorts(
                                             (short) GeoHashes.getBitsPrecision(colType),
                                             (short) ColumnType.storageTag(colType)));

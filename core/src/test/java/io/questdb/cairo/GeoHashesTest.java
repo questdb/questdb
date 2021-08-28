@@ -281,19 +281,6 @@ public class GeoHashesTest {
         Assert.assertEquals("sp05", sink.toString());
     }
 
-    @Test
-    public void testIsValidChar() {
-        IntHashSet base32Chars = new IntHashSet(base32.length);
-        for (char ch : base32) {
-            base32Chars.add(ch);
-            Assert.assertTrue(GeoHashes.isValidChar(ch));
-        }
-        for (int i = 0; i < 15000; i++) {
-            char ch = (char) rnd.nextPositiveInt();
-            Assert.assertEquals(base32Chars.contains(ch), GeoHashes.isValidChar(ch));
-        }
-    }
-
     private static final char[] base32 = {
             '0', '1', '2', '3', '4', '5', '6', '7',
             '8', '9', 'b', 'c', 'd', 'e', 'f', 'g',
