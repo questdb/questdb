@@ -135,20 +135,44 @@ public class GeoHashes {
         if (parseLen <= 0 || hash == null || hash.length() == 0) {
             return GeoHashes.NULL;
         }
-        int n = Math.min(MAX_STRING_LENGTH, parseLen);
-        return fromString0(hash, start, start + n);
+        return fromString0(hash, start, start + Math.min(MAX_STRING_LENGTH, parseLen));
     }
 
-    public static long fromString(CharSequence hash, int start, int parseLen, int bitsPrecision) throws NumericException {
-        if (parseLen == 0) {
+    public static long fromStringTruncating(long lo, long hi, int bitsPrecision) throws NumericException {
+        if (lo == hi) {
             return NULL;
         }
-        int n = Math.min(MAX_STRING_LENGTH, parseLen);
-        int hashBits = 5 * n;
+        int chars = Math.min((int) (hi - lo), MAX_STRING_LENGTH);
+        int actualBits = 5 * chars;
+        if (actualBits < bitsPrecision) {
+            throw NumericException.INSTANCE;
+        }
+        long geohash = 0;
+        for (long p = lo, i = 0; i < chars; p++, i++) {
+            char c = (char) Unsafe.getUnsafe().getByte(p);
+            if (c >= 48 && c < 123) { // base32Indexes.length + 48
+                byte idx = base32Indexes[c - 48];
+                if (idx >= 0) {
+                    geohash = (geohash << 5) | idx;
+                    continue;
+                }
+                throw NumericException.INSTANCE;
+            }
+            throw NumericException.INSTANCE;
+        }
+        return geohash >>> (actualBits - bitsPrecision);
+    }
+
+    public static long fromStringTruncating(CharSequence hash, int start, int end, int bitsPrecision) throws NumericException {
+        if (end == start) {
+            return NULL;
+        }
+        int chars = Math.min(end - start, MAX_STRING_LENGTH);
+        int hashBits = 5 * chars;
         if (hashBits < bitsPrecision) {
             throw NumericException.INSTANCE;
         }
-        long geohash = fromString0(hash, start, start + n);
+        long geohash = fromString0(hash, start, start + chars);
         return geohash >>> (hashBits - bitsPrecision);
     }
 
@@ -156,13 +180,14 @@ public class GeoHashes {
         // this is the speedy version
         long output = 0;
         for (int i = start; i < end; ++i) {
-            int c = hash.charAt(i) - 48; // not calling isValidChar to avoid indirection
-            if (c >= 0 && c < base32Indexes.length) {
-                byte idx = base32Indexes[c];
+            char c = hash.charAt(i); // not calling isValidChar to avoid indirection
+            if (c >= 48 && c < 123) { // base32Indexes.length + 48
+                byte idx = base32Indexes[c - 48];
                 if (idx >= 0) {
                     output = (output << 5) | idx;
                     continue;
                 }
+                throw NumericException.INSTANCE;
             }
             throw NumericException.INSTANCE;
         }
@@ -176,13 +201,10 @@ public class GeoHashes {
         for (int i = 0, sz = prefixes.size(); i < sz; i++) {
             try {
                 final CharSequence prefix = prefixes.get(i);
-                if (prefix == null) {
+                if (prefix == null || prefix.length() == 0) {
                     continue;
                 }
-                final long hash = fromString(prefix, 0, prefix.length());
-                if (hash == NULL) {
-                    continue;
-                }
+                final long hash = fromString0(prefix, 0, prefix.length());
                 final int bits = 5 * prefix.length();
                 final int shift = columnBits - bits;
                 long norm = hash << shift;

@@ -30,8 +30,8 @@ import org.junit.Test;
 public class LineTcpInsertByteGeoHashTest extends LineTcpInsertGeoHashTest {
     @Test
     public void testInsertMissingGeoHashHasNoEffect() throws Exception {
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
-            if (b > 1) {
+        for (int b = 5; b <= GeoHashes.MAX_BITS_LENGTH; b+=5) {
+            if (b > 5) {
                 setUp();
             }
             // NewLineProtoParser.putValue does not accept zero len entity values
