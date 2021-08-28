@@ -84,7 +84,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         }
         // Don't parse full string, it can be over 12 chars and result in overflow
         int parseChars = (typeBits - 1) / 5 + 1;
-        long lvalue = GeoHashes.fromString0(value, 0, parseChars);
+        long lvalue = GeoHashes.fromString(value, 0, parseChars);
         return lvalue >>> (parseChars * 5 - typeBits);
     }
 

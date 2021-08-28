@@ -126,67 +126,58 @@ public class GeoHashes {
         return result;
     }
 
-    public static long fromString(CharSequence hash, int start, int parseLen) throws NumericException {
-        if (parseLen <= 0 || hash == null || hash.length() == 0) {
-            return GeoHashes.NULL;
-        }
-        return fromString0(hash, start, start + Math.min(MAX_STRING_LENGTH, parseLen));
-    }
-
-    public static long fromStringTruncating(CharSequence hash, int start, int end, int bitsPrecision) throws NumericException {
-        if (end == start) {
+    public static long fromStringTruncatingNl(CharSequence hash, int start, int end, int bits) throws NumericException {
+        if (start == end) {
             return NULL;
         }
-        int chars = Math.min(end - start, MAX_STRING_LENGTH);
-        int hashBits = 5 * chars;
-        if (hashBits < bitsPrecision) {
+        final int chars = Math.min(end - start, MAX_STRING_LENGTH);
+        int actualBits = 5 * chars;
+        if (actualBits < bits) {
             throw NumericException.INSTANCE;
         }
-        long geohash = fromString0(hash, start, start + chars);
-        return geohash >>> (hashBits - bitsPrecision);
+        return fromString(hash, start, start + chars) >>> (actualBits - bits);
     }
 
-    public static long fromStringTruncating(long lo, long hi, int bitsPrecision) throws NumericException {
-        if (lo >= hi) {
+    public static long fromStringTruncatingNl(long lo, long hi, int bits) throws NumericException {
+        if (lo == hi) {
             return NULL;
         }
-        int chars = Math.min((int) (hi - lo), MAX_STRING_LENGTH);
+        final int chars = Math.min((int) (hi - lo), MAX_STRING_LENGTH);
         int actualBits = 5 * chars;
-        if (actualBits < bitsPrecision) {
+        if (actualBits < bits) {
             throw NumericException.INSTANCE;
         }
         long geohash = 0;
-        for (long p = lo, i = 0; i < chars; p++, i++) {
-            char c = (char) Unsafe.getUnsafe().getByte(p);
-            if (c >= 48 && c < 123) { // base32Indexes.length + 48
-                byte idx = base32Indexes[c - 48];
-                if (idx != -1) {
-                    geohash = (geohash << 5) | idx;
-                    continue;
-                }
-                throw NumericException.INSTANCE;
-            }
-            throw NumericException.INSTANCE;
+        for (long p = lo, limit = p + chars; p < limit; p++) {
+            geohash = appendChar(geohash, (char) Unsafe.getUnsafe().getByte(p)); // base32
         }
-        return geohash >>> (actualBits - bitsPrecision);
+        return geohash >>> (actualBits - bits);
     }
 
-    public static long fromString0(CharSequence hash, int start, int end) throws NumericException {
-        // this is the speedy version
-        long output = 0;
-        for (int i = start; i < end; ++i) {
-            char c = hash.charAt(i);
-            if (c >= 48 && c < 123) { // base32Indexes.length + 48
-                byte idx = base32Indexes[c - 48];
-                if (idx >= 0) {
-                    output = (output << 5) | idx;
-                    continue;
-                }
-                throw NumericException.INSTANCE;
-            }
-            throw NumericException.INSTANCE;
+    public static long fromStringNl(CharSequence geohash, int start, int length) throws NumericException {
+        if (length <= 0 || geohash == null || geohash.length() == 0) {
+            return GeoHashes.NULL;
         }
-        return output;
+        return fromString(geohash, start, start + (length <= MAX_STRING_LENGTH ? length : MAX_STRING_LENGTH));
+    }
+
+    public static long fromString(CharSequence hash, int start, int end) throws NumericException {
+        // 0 means no bounds/length/nullity checks
+        long geohash = 0;
+        for (int i = start; i < end; ++i) {
+            geohash = appendChar(geohash, hash.charAt(i));
+        }
+        return geohash;
+    }
+
+    private static long appendChar(long geohash, char c) throws NumericException {
+        if (c >= 48 && c < 123) { // 123 = base32Indexes.length + 48
+            byte idx = base32Indexes[c - 48];
+            if (idx >= 0) {
+                return (geohash << 5) | idx;
+            }
+        }
+        throw NumericException.INSTANCE;
     }
 
     public static void fromStringToBits(final CharSequenceHashSet prefixes, int columnType, final DirectLongList prefixesBits) {
@@ -199,7 +190,7 @@ public class GeoHashes {
                 if (prefix == null || prefix.length() == 0) {
                     continue;
                 }
-                final long hash = fromString0(prefix, 0, prefix.length());
+                final long hash = fromString(prefix, 0, prefix.length());
                 final int bits = 5 * prefix.length();
                 final int shift = columnBits - bits;
                 long norm = hash << shift;

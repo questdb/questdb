@@ -110,19 +110,19 @@ public class CairoLineProtoParserSupport {
                     break;
                 case ColumnType.GEOBYTE:
                     row.putGeoHashByte(columnIndex,  // skip quotes
-                            (byte) GeoHashes.fromStringTruncating(value, 1, value.length() - 1, columnTypeMeta));
+                            (byte) GeoHashes.fromStringTruncatingNl(value, 1, value.length() - 1, columnTypeMeta));
                     break;
                 case ColumnType.GEOSHORT:
                     row.putGeoHashShort(columnIndex,
-                            (short) GeoHashes.fromStringTruncating(value, 1, value.length() - 1, columnTypeMeta));
+                            (short) GeoHashes.fromStringTruncatingNl(value, 1, value.length() - 1, columnTypeMeta));
                     break;
                 case ColumnType.GEOINT:
                     row.putGeoHashInt(columnIndex,
-                            (int) GeoHashes.fromStringTruncating(value, 1, value.length() - 1, columnTypeMeta));
+                            (int) GeoHashes.fromStringTruncatingNl(value, 1, value.length() - 1, columnTypeMeta));
                     break;
                 case ColumnType.GEOLONG:
                     row.putGeoHashLong(columnIndex,
-                            GeoHashes.fromStringTruncating(value, 1, value.length() - 1, columnTypeMeta));
+                            GeoHashes.fromStringTruncatingNl(value, 1, value.length() - 1, columnTypeMeta));
                     break;
                 default:
                     // unsupported types are ignored

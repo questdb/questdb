@@ -56,13 +56,14 @@ import static io.questdb.network.IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATIO
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
-    private static final int NOT_A_GEOHASH = -1;
     private static final int REBALANCE_EVENT_ID = -1; // A rebalance event is used to rebalance load across different threads
     private static final int INCOMPLETE_EVENT_ID = -2; // An incomplete event is used when the queue producer has grabbed an event but is
     // not able to populate it for some reason, the event needs to be committed to the
     // queue incomplete
     private static final int RELEASE_WRITER_EVENT_ID = -3;
     private static final int[] DEFAULT_COLUMN_TYPES = new int[NewLineProtoParser.N_ENTITY_TYPES];
+    private static final int NOT_A_GEOHASH = 0;
+
     private final CairoEngine engine;
     private final CairoSecurityContext securityContext;
     private final CairoConfiguration cairoConfiguration;
@@ -543,7 +544,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         } else {
                             long geohash;
                             try {
-                                geohash = GeoHashes.fromStringTruncating(
+                                geohash = GeoHashes.fromStringTruncatingNl(
                                         entity.getValue().getLo(),
                                         entity.getValue().getHi(),
                                         Numbers.decodeLowShort(colTypeMeta));
@@ -1018,8 +1019,9 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
 
             int getColumnTypeMeta(int colIndex) {
+                System.out.println("POLLA: " + colIndex);
                 return colIndex >= 0 && colIndex < colTypeMetaByColIndex.size() ?
-                        colTypeMetaByColIndex.get(colIndex) : NOT_A_GEOHASH;
+                        colTypeMetaByColIndex.getQuick(colIndex) : NOT_A_GEOHASH;
             }
 
             private int getColumnIndex0(CharSequence colName) {

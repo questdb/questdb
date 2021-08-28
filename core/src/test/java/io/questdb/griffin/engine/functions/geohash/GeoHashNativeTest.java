@@ -56,7 +56,7 @@ public class GeoHashNativeTest {
         final long gh = GeoHashes.fromCoordinates(lat, lon, 8 * 5);
         sink.clear();
         GeoHashes.toString(gh, 8, sink);
-        final long gh1 = GeoHashes.fromString0(sink, 0, 8);
+        final long gh1 = GeoHashes.fromString(sink, 0, 8);
         Assert.assertEquals(gh, gh1);
     }
 
@@ -64,7 +64,7 @@ public class GeoHashNativeTest {
     public void testFromString() throws NumericException {
         sink.clear();
         sink.put("@s");
-        GeoHashes.fromString0(sink.toString(), 0, 2);
+        GeoHashes.fromString(sink.toString(), 0, 2);
     }
 
     @Test
@@ -240,7 +240,7 @@ public class GeoHashNativeTest {
         }
 
         for (int i = 0; i < maxGeoHashSizeChars; i++) {
-            final long gh = GeoHashes.fromString0(expectedStr[i], 0, expectedStr[i].length());
+            final long gh = GeoHashes.fromString(expectedStr[i], 0, expectedStr[i].length());
             Assert.assertEquals(expectedHash[i], gh);
             sink.clear();
             GeoHashes.toString(gh, expectedStr[i].length(), sink);
@@ -313,8 +313,8 @@ public class GeoHashNativeTest {
 
     @Test
     public void testFromStringNull() throws NumericException {
-        Assert.assertEquals(GeoHashes.fromString(null, 0, 0), GeoHashes.NULL);
-        Assert.assertEquals(GeoHashes.fromString("", 0, 0), GeoHashes.NULL);
+        Assert.assertEquals(GeoHashes.fromStringNl(null, 0, 0), GeoHashes.NULL);
+        Assert.assertEquals(GeoHashes.fromStringNl("", 0, 0), GeoHashes.NULL);
     }
 
     @SuppressWarnings("ResultOfMethodCallIgnored")
