@@ -33,6 +33,25 @@
         "webcomponent"
       ],
       "scope": "questdb"
+    },
+    "registry_npm": {
+      "image": "cliops/verdaccio@1.0.0",
+      "name": "registry_npm",
+      "cliopsVar": {
+        "name": "registry_npm",
+        "types": [
+          "npm-registry",
+          "verdaccio",
+          "dependency"
+        ],
+        "type": "npm-registry"
+      },
+      "types": [
+        "npm-registry",
+        "verdaccio",
+        "dependency"
+      ],
+      "type": "npm-registry"
     }
   }
 }

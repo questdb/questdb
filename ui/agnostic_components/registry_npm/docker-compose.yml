@@ -1,0 +1,23 @@
+version: "3.7" 
+services: 
+  npm_registry:
+    image: verdaccio/verdaccio:latest
+    container_name: npm_registry
+    ports: 
+      - "4873:4873"
+    volumes: 
+      - type: volume
+        source: npm_registry-registry-storage
+        target: /verdaccio/storage
+      # - "./conf.yml:/verdaccio/conf/config.yaml"
+    networks: 
+      # - traefik
+      - npm-registry
+# networks: 
+#   traefik: 
+#     external: true
+volumes: 
+  npm_registry-registry-storage: 
+networks: 
+  npm-registry: 
+    name: npm-registry

@@ -66,8 +66,8 @@
         "git add"
       ]
     },
-    "name": "@questdb/virtual-scroll",
-    "version": "0.0.1",
+    "name": "@questdb_design-system/virtual-scroll",
+    "version": "0.0.2",
     "description": "Webcomponent virtualScroll following open-wc recommendations",
     "author": "",
     "license": "MIT",
@@ -76,8 +76,7 @@
       "access": "public"
     },
     "files": [
-      "dist/virtual-scroll.*",
-      "dist/polyfills"
+      "dist/*"
     ]
   }
   
