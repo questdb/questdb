@@ -183,8 +183,6 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
 
     @Test
     public void testGetValueType() {
-        Assert.assertEquals(ColumnType.LONG256, CairoLineProtoParserSupport.getValueType("oxi"));
-        Assert.assertEquals(ColumnType.LONG, CairoLineProtoParserSupport.getValueType("oXi"));
         Assert.assertEquals(ColumnType.BOOLEAN, CairoLineProtoParserSupport.getValueType("e"));
         Assert.assertEquals(ColumnType.BOOLEAN, CairoLineProtoParserSupport.getValueType("t"));
         Assert.assertEquals(ColumnType.BOOLEAN, CairoLineProtoParserSupport.getValueType("T"));
@@ -195,8 +193,15 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
         Assert.assertEquals(ColumnType.UNDEFINED, CairoLineProtoParserSupport.getValueType("a\""));
         Assert.assertEquals(ColumnType.UNDEFINED, CairoLineProtoParserSupport.getValueType(""));
         Assert.assertEquals(ColumnType.STRING, CairoLineProtoParserSupport.getValueType("\"\""));
-        Assert.assertEquals(ColumnType.DOUBLE, CairoLineProtoParserSupport.getValueType("a"));
         Assert.assertEquals(ColumnType.CHAR, CairoLineProtoParserSupport.getValueType("i"));
+
+        // TODO: these are mismatches, I suppose the parse is more relaxed here for efficiency
+        Assert.assertEquals(ColumnType.DOUBLE, CairoLineProtoParserSupport.getValueType("a"));
+        Assert.assertEquals(ColumnType.DOUBLE, CairoLineProtoParserSupport.getValueType("oX"));
+        Assert.assertEquals(ColumnType.DOUBLE, CairoLineProtoParserSupport.getValueType("ox1"));
+        Assert.assertEquals(ColumnType.LONG256, CairoLineProtoParserSupport.getValueType("oxi"));
+        Assert.assertEquals(ColumnType.LONG, CairoLineProtoParserSupport.getValueType("xi"));
+        Assert.assertEquals(ColumnType.LONG, CairoLineProtoParserSupport.getValueType("oXi"));
     }
 
     private void testColumnType(int columnType,
