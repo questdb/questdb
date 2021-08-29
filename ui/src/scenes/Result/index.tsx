@@ -29,7 +29,7 @@ import { Download2 } from "@styled-icons/remix-line/Download2"
 import { Grid } from "@styled-icons/remix-line/Grid"
 import { PieChart } from "@styled-icons/remix-line/PieChart"
 import { Refresh } from "@styled-icons/remix-line/Refresh"
-import "@questdb/virtual-scroll"
+import "@questdb_design-system/virtual-scroll"
 
 import {
   PaneContent,
@@ -46,14 +46,15 @@ import { BusEvent } from "consts"
 import { selectors } from "store"
 import { color } from "utils"
 import * as QuestDB from "utils/questdb"
-
+/*eslint-disable */
 declare global {
   namespace JSX {
     interface IntrinsicElements {
       "virtual-scroll": any
     }
   }
-} 
+}
+/*eslint-disable */
 const Menu = styled(PaneMenu)`
   justify-content: space-between;
 `

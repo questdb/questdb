@@ -50,6 +50,9 @@ services:
         source: ./ui/webpack.config.js
         target: /usr/src/webpack.config.js
       - type: bind
+        source: ./ui/.npmrc
+        target: /usr/src/.npmrc
+      - type: bind
         source: ./ui/agnostic_components/virtual-scroll/package.json
         target: /usr/src/node_modules/@questdb/virtual-scroll/package.json
       - type: bind
@@ -58,9 +61,9 @@ services:
       - type: volume
         source: questdb-ui
         target: /usr/src/dist
-    # entrypoint: /bin/sh -c "while sleep 1000; do :; done"
+    entrypoint: /bin/sh -c "while sleep 1000; do :; done"
     network_mode: host
-    entrypoint: npm run build
+    # entrypoint: npm run build
   # deploy-ui: 
   #   build: 
   #     context: ./ui
