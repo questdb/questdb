@@ -30,7 +30,7 @@ import org.junit.Test;
 public class LineTcpInsertByteGeoHashTest extends LineTcpInsertGeoHashTest {
     @Test
     public void testInsertMissingGeoHashHasNoEffect() throws Exception {
-        for (int b = 5; b <= GeoHashes.MAX_BITS_LENGTH; b+=5) {
+        for (int b = 5; b <= GeoHashes.MAX_BITS_LENGTH; b += 5) {
             if (b > 5) {
                 setUp();
             }
@@ -101,11 +101,13 @@ public class LineTcpInsertByteGeoHashTest extends LineTcpInsertGeoHashTest {
         assertGeoHash(4,
                 "tracking geohash=\"9@tralala\" 1000000000\n" +
                         "tracking geohash=\"4-12\" 2000000000\n" +
-                        "tracking john=\"4-12\",activity=\"lion taming\" 2000000000\n" +
+                        "tracking geohash=\"\",john=\"4-12\",activity=\"lion taming\" 2000000000\n" +
+                        "tracking john=\"4-12\",geohash=\"\",activity=\"lion taming\" 2000000000\n" +
                         "tracking geohash=\"jurl\" 3000000000\n",
                 "geohash\ttimestamp\tjohn\tactivity\n" +
                         "\t1970-01-01T00:00:01.000000Z\t\t\n" +
                         "\t1970-01-01T00:00:02.000000Z\t\t\n" +
+                        "\t1970-01-01T00:00:02.000000Z\t4-12\tlion taming\n" +
                         "\t1970-01-01T00:00:02.000000Z\t4-12\tlion taming\n" +
                         "\t1970-01-01T00:00:03.000000Z\t\t\n",
                 "john", "activity");

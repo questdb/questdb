@@ -62,7 +62,6 @@ class LineTcpMeasurementScheduler implements Closeable {
     // queue incomplete
     private static final int RELEASE_WRITER_EVENT_ID = -3;
     private static final int[] DEFAULT_COLUMN_TYPES = new int[NewLineProtoParser.N_ENTITY_TYPES];
-    private static final int NOT_A_GEOHASH = 0;
 
     private final CairoEngine engine;
     private final CairoSecurityContext securityContext;
@@ -529,7 +528,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     case NewLineProtoParser.ENTITY_TYPE_STRING:
                     case NewLineProtoParser.ENTITY_TYPE_LONG256: {
                         final int colTypeMeta = localDetails.getColumnTypeMeta(colIndex);
-                        if (colTypeMeta == NOT_A_GEOHASH) {
+                        if (colTypeMeta == 0) { // not a geohash
                             Unsafe.getUnsafe().putByte(bufPos, entity.getType());
                             bufPos += Byte.BYTES;
                             int l = entity.getValue().length();
@@ -965,9 +964,10 @@ class LineTcpMeasurementScheduler implements Closeable {
         private class ThreadLocalDetails implements Closeable {
             private final Path path = new Path();
             private final ObjIntHashMap<CharSequence> columnIndexByName = new ObjIntHashMap<>();
-            private final IntList colTypeMetaByColIndex = new IntList(); // used to deal with geohashes
             private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
             private final ObjList<SymbolCache> unusedSymbolCaches;
+            // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
+            private final IntList geohashBitsSizeByColIdx = new IntList();
 
             ThreadLocalDetails(ObjList<SymbolCache> unusedSymbolCaches) {
                 this.unusedSymbolCaches = unusedSymbolCaches;
@@ -1007,7 +1007,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     }
                 }
                 symbolCacheByColumnIndex.clear();
-                colTypeMetaByColIndex.clear();
+                geohashBitsSizeByColIdx.clear();
             }
 
             int getColumnIndex(CharSequence colName) {
@@ -1019,9 +1019,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
 
             int getColumnTypeMeta(int colIndex) {
-                // TODO: remove checks
-                return colIndex >= 0 && colIndex < colTypeMetaByColIndex.size() ?
-                        colTypeMetaByColIndex.getQuick(colIndex) : NOT_A_GEOHASH;
+                return geohashBitsSizeByColIdx.getQuick(colIndex + 1); // first val accounts for new cols, index -1
             }
 
             private int getColumnIndex0(CharSequence colName) {
@@ -1029,18 +1027,22 @@ class LineTcpMeasurementScheduler implements Closeable {
                     TableReaderMetadata metadata = reader.getMetadata();
                     int colIndex = metadata.getColumnIndexQuiet(colName);
                     if (colIndex < 0) {
-                        return -1;
+                        if (geohashBitsSizeByColIdx.size() == 0) {
+                            geohashBitsSizeByColIdx.add(0); // first value is for cols indexed with -1
+                        }
+                        return CharSequenceIntHashMap.NO_ENTRY_VALUE;
                     }
                     // re-cache all column names/types once
                     columnIndexByName.clear();
-                    colTypeMetaByColIndex.clear();
+                    geohashBitsSizeByColIdx.clear();
+                    geohashBitsSizeByColIdx.add(0); // first value is for cols indexed with -1
                     for (int n = 0, sz = metadata.getColumnCount(); n < sz; n++) {
                         columnIndexByName.put(metadata.getColumnName(n), n);
                         int colType = metadata.getColumnType(n);
                         if (!ColumnType.isGeoHash(colType)) {
-                            colTypeMetaByColIndex.add(NOT_A_GEOHASH);
+                            geohashBitsSizeByColIdx.add(0);
                         } else {
-                            colTypeMetaByColIndex.add(
+                            geohashBitsSizeByColIdx.add(
                                     Numbers.encodeLowHighShorts(
                                             (short) GeoHashes.getBitsPrecision(colType),
                                             (short) ColumnType.storageTag(colType)));

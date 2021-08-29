@@ -58,7 +58,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final CairoConfiguration configuration;
     private final LongList columnNameType = new LongList();
     private final LongList columnIndexAndType = new LongList();
-    private final IntList geohashBitsSizeByColIdx = new IntList();
+    private final IntList geohashBitsSizeByColIdx = new IntList(); // 0 if not a geohash, else bits precision
     private final LongList columnValues = new LongList();
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final MicrosecondClock clock;
@@ -156,6 +156,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 break;
             case EVT_TIMESTAMP:
                 columnValues.add(token.getCacheAddress());
+                geohashBitsSizeByColIdx.add(0);
                 break;
             default:
                 break;
@@ -190,7 +191,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 CairoLineProtoParserSupport.putValue(
                         row,
                         (int) columnNameType.getQuick(i * 2 + 1),
-                        getGeoHashBitsSize(i),
+                        geohashBitsSizeByColIdx.getQuick(i),
                         i,
                         cache.get(columnValues.getQuick(i))
                 );
@@ -214,7 +215,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 CairoLineProtoParserSupport.putValue(
                         row,
                         Numbers.decodeHighInt(value),
-                        getGeoHashBitsSize(i),
+                        geohashBitsSizeByColIdx.getQuick(i),
                         Numbers.decodeLowInt(value),
                         cache.get(columnValues.getQuick(i))
                 );
@@ -223,11 +224,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         } catch (BadCastException ignore) {
             row.cancel();
         }
-    }
-
-    private int getGeoHashBitsSize(int idx) {
-        // TODO: remove checks
-        return idx >= 0 && idx < geohashBitsSizeByColIdx.size() ? geohashBitsSizeByColIdx.getQuick(idx) : 0;
     }
 
     private void cacheWriter(CacheEntry entry, CachedCharSequence tableName) {
@@ -331,7 +327,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         if (valueType == ColumnType.UNDEFINED) {
             switchModeToSkipLine();
         } else {
-            parseValue(value, valueType, cache);
+            parseValue(value, valueType, cache, true);
         }
     }
 
@@ -346,7 +342,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     private void parseTagValue(CachedCharSequence value, CharSequenceCache cache) {
-        parseValue(value, ColumnType.SYMBOL, cache);
+        parseValue(value, ColumnType.SYMBOL, cache, false);
     }
 
     @SuppressWarnings("unused")
@@ -354,7 +350,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         parseValueNewTable(value, ColumnType.SYMBOL);
     }
 
-    private void parseValue(CachedCharSequence value, int valueType, CharSequenceCache cache) {
+    private void parseValue(CachedCharSequence value, int valueType, CharSequenceCache cache, boolean isForField) {
         assert valueType > ColumnType.UNDEFINED;
         if (columnType > ColumnType.UNDEFINED) {
             boolean valid;
@@ -376,7 +372,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 case ColumnType.STRING:
                     valid = columnTypeTag == ColumnType.STRING ||
                             columnTypeTag == ColumnType.CHAR;
-                    if (!valid && columnTypeTag == ColumnType.GEOHASH) {
+                    if (!valid && isForField && columnTypeTag == ColumnType.GEOHASH) {
                         geohashBits = GeoHashes.getBitsPrecision(columnType);
                         valid = true;
                     }
@@ -411,6 +407,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 writer.addColumn(colNameAsChars, valueType);
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnCount++, valueType));
                 columnValues.add(value.getCacheAddress());
+                geohashBitsSizeByColIdx.add(0);
             } else {
                 LOG.error().$("invalid column name [table=").$(writer.getTableName())
                         .$(", columnName=").$(colNameAsChars)
@@ -423,6 +420,8 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private void parseValueNewTable(CachedCharSequence value, int valueType) {
         columnNameType.add(valueType);
         columnValues.add(value.getCacheAddress());
+        geohashBitsSizeByColIdx.add(0); // not a geohash, no constant literal
+                                        // that can be recognised yet
     }
 
     private void prepareNewColumn(CachedCharSequence token) {
