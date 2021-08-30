@@ -140,7 +140,8 @@ public final class SqlParser {
                 characterStore,
                 GenericLexer.unquote(node.token),
                 Chars.indexOf(node.token, '.'),
-                model.getAliasToColumnMap()
+                model.getAliasToColumnMap(),
+                node.type != ExpressionNode.LITERAL
         );
     }
 
