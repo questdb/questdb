@@ -162,7 +162,7 @@ public class GeoHashes {
     }
 
     public static long fromString(CharSequence hash, int start, int end) throws NumericException {
-        // 0 means no bounds/length/nullity checks
+        // no bounds/length/nullity checks
         long geohash = 0;
         for (int i = start; i < end; ++i) {
             geohash = appendChar(geohash, hash.charAt(i));
@@ -212,6 +212,14 @@ public class GeoHashes {
 
     public static int hashSize(long hashz) {
         return (int) (hashz >>> MAX_BITS_LENGTH);
+    }
+
+    public static long toHash(long hashz) {
+        return hashz & 0x0fffffffffffffffL;
+    }
+
+    public static long toHashWithSize(long hash, int length) {
+        return (((long) length) << 60L) + hash;
     }
 
     public static int getBitsPrecision(int type) {

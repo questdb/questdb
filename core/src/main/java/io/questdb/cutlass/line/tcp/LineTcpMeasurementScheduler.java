@@ -62,7 +62,6 @@ class LineTcpMeasurementScheduler implements Closeable {
     // queue incomplete
     private static final int RELEASE_WRITER_EVENT_ID = -3;
     private static final int[] DEFAULT_COLUMN_TYPES = new int[NewLineProtoParser.N_ENTITY_TYPES];
-
     private final CairoEngine engine;
     private final CairoSecurityContext securityContext;
     private final CairoConfiguration cairoConfiguration;
