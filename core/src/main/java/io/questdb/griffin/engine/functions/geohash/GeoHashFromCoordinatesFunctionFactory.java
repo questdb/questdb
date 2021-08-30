@@ -34,7 +34,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GeoHashFunction;
 import io.questdb.griffin.engine.functions.constants.GeoHashConstant;
-import io.questdb.griffin.engine.functions.rnd.RndGeoHashFunctionFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -80,11 +79,7 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
                 throw SqlException.$(argPositions.getQuick(1), "latitude must be in [-90.0..90.0] range");
             }
 
-            try {
-                return GeoHashConstant.newInstance(GeoHashes.fromCoordinates(lat, lon, bits), type);
-            } catch (NumericException e) {
-                return GeoHashConstant.newInstance(GeoHashes.NULL, type);
-            }
+            return GeoHashConstant.newInstance(GeoHashes.fromCoordinatesUnsafe(lat, lon, bits), type);
         } else {
             return new FromCoordinatesFixedBitsFunction(lonArg, latArg, bits);
         }
