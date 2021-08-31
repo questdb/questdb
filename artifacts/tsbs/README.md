@@ -103,17 +103,25 @@ cd ~/tmp/go/src/github.com/timescale/
 
 ## Benchmarking influxdb and questdb on FreeBSD
 
-```bash
-# install influxdb
-sudo portinstall influxdb
+The following commands build and install the TSBS tool,
+this step can be skipped if installation has already been performed according to the instructions above.
 
-mkdir -p ~/tmp/go/src/github.com/timescale/ && cd ~/tmp/go/src/github.com/timescale/
+```bash
+mkdir -p ~/tmp/go/src/github.com/timescale/
+cd ~/tmp/go/src/github.com/timescale/
+
 git clone git@github.com:timescale/tsbs.git
 cd tsbs
 
 GOPATH=~/tmp/go go build -v ./...
 GOPATH=~/tmp/go go test -v github.com/timescale/tsbs/cmd/tsbs_load_questdb
 GOPATH=~/tmp/go go install -v ./...
+```
+
+Install InfluxDB:
+
+```bash
+sudo portinstall influxdb
 ```
 
 The
