@@ -31,6 +31,14 @@ import io.questdb.std.str.CharSink;
 
 public class GeoHashes {
 
+    // geohash null value: -1
+    // we use the highest bit of every storage size (byte, short, int, long)
+    // to indicate null value. When a null value is cast down, nullity is
+    // preserved, i.e. highest bit remains set:
+    //     long nullLong = -1L;
+    //     short nullShort = (short) nullLong;
+    //     nullShort == nullLong;
+    // in addition, -1 is the first negative non geohash value.
     public static final byte BYTE_NULL = -1;
     public static final short SHORT_NULL = -1;
     public static final int INT_NULL = -1;
