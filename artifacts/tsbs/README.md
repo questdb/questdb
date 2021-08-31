@@ -75,8 +75,8 @@ Generated data can be loaded directly using the tool:
 ~/tmp/go/bin/tsbs_load_questdb --file /tmp/data --workers 4
 ```
 
-Alternatively, shell scripts are provided which can be used to generate and load
-data:
+Alternatively, shell scripts are provided which can be used to
+generate and load data:
 
 ```bash
 cd ~/tmp/go/src/github.com/timescale/
