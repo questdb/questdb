@@ -201,7 +201,7 @@ public class EngineMigration {
                                                     migration.migrate(context);
                                                     path.trimTo(plen);
                                                 }
-                                            } catch (Exception e) {
+                                            } catch (Throwable e) {
                                                 LOG.error().$("failed to upgrade table path=")
                                                         .$(path.trimTo(plen))
                                                         .$(", exception: ")
@@ -252,6 +252,7 @@ public class EngineMigration {
     }
 
     private static class MigrationActions {
+
         public static void addGeoHashCompatibleMetadataChangesAndProvisionTxnSpace(MigrationContext migrationContext) {
             final FilesFacade ff = migrationContext.getFf();
             Path path = migrationContext.getTablePath();
@@ -268,20 +269,46 @@ public class EngineMigration {
                     final int columnCount = rwMem.getInt(TableUtils.META_OFFSET_COUNT);
                     rwMem.putInt(TableUtils.META_OFFSET_VERSION, ColumnType.VERSION);
 
-                    long offset = TableUtils.META_OFFSET_COLUMN_TYPES;
-                    for (int i = 0; i < columnCount; i++) {
-                        final byte oldTypeId = rwMem.getByte(offset);
-                        final long oldFlags = rwMem.getLong(offset + 1);
-                        final int blockCapacity = rwMem.getInt(offset + 1 + 8);
+                    final long oldMetaColumnDataSize = 16L;
+                    // we are extending the file and writing columns in the reverse order
+                    long readOffset = TableUtils.META_OFFSET_COLUMN_TYPES + (columnCount - 1) * oldMetaColumnDataSize;
+                    long writeOffset = TableUtils.META_OFFSET_COLUMN_TYPES + (columnCount - 1) * META_COLUMN_DATA_SIZE;
+
+                    // file size changed, we need to copy "column names" section further down the file
+                    long nameSectionSize = ff.length(rwMem.getFd()) - readOffset - oldMetaColumnDataSize;
+
+                    // resize the file to ensure we have enough addressable memory
+                    rwMem.jumpTo(writeOffset + META_COLUMN_DATA_SIZE + nameSectionSize);
+
+                    // copy name section
+                    final long addr = rwMem.getPageAddress(0);
+
+                    Vect.memmove(
+                            addr + writeOffset + META_COLUMN_DATA_SIZE,
+                            addr + readOffset + oldMetaColumnDataSize,
+                            nameSectionSize
+                    );
+
+                    final Rnd rnd = migrationContext.getConfiguration().getRandom();
+                    for (
+                            ; readOffset >= TableUtils.META_OFFSET_COLUMN_TYPES
+                            ; readOffset -= oldMetaColumnDataSize, writeOffset -= META_COLUMN_DATA_SIZE
+                    ) {
+                        final byte oldTypeId = rwMem.getByte(readOffset);
+                        final long oldFlags = rwMem.getLong(readOffset + 1);
+                        final int blockCapacity = rwMem.getInt(readOffset + 1 + 8);
                         // column type id is int now
                         // we grabbed 3 reserved bytes for extra type info
                         // extra for old types is zeros
-                        rwMem.putInt(offset, oldTypeId + 1); // ColumnType.VERSION_420 - ColumnType.VERSION_419 = 1
-                        rwMem.putLong(offset + 4, oldFlags);
-                        rwMem.putInt(offset + 4 + 8, blockCapacity);
-                        offset += TableUtils.META_COLUMN_DATA_SIZE;
+                        // we are also extending column information from 16 to 32 bytes
+                        assert writeOffset >= TableUtils.META_OFFSET_COLUMN_TYPES;
+                        rwMem.putInt(writeOffset, oldTypeId + 1); // ColumnType.VERSION_420 - ColumnType.VERSION_419 = 1
+                        rwMem.putLong(writeOffset + 4, oldFlags);
+                        rwMem.putInt(writeOffset + 4 + 8, blockCapacity);
+                        rwMem.putLong(writeOffset + 4 + 8 + 4, rnd.nextLong());
                     }
                 }
+
                 path.trimTo(plen).concat(TXN_FILE_NAME).$();
 
                 long oldOffsetMapWriterCount = 72;

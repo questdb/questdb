@@ -107,7 +107,7 @@ public final class TableUtils {
     // INT - symbol map count, this is a variable part of transaction file
     // below this offset we will have INT values for symbol map size
     static final long META_OFFSET_PARTITION_BY = 4;
-    static final long META_COLUMN_DATA_SIZE = 16;
+    static final long META_COLUMN_DATA_SIZE = 32;
     static final long META_COLUMN_DATA_RESERVED = 3;
     static final long META_OFFSET_COLUMN_TYPES = 128;
     static final int META_FLAG_BIT_INDEXED = 1;
@@ -130,27 +130,26 @@ public final class TableUtils {
     }
 
     public static void createTable(
-            FilesFacade ff,
+            CairoConfiguration configuration,
             MemoryMARW memory,
             Path path,
-            @Transient CharSequence root,
             TableStructure structure,
-            int mkDirMode,
             int tableId
     ) {
-        createTable(ff, memory, path, root, structure, mkDirMode, ColumnType.VERSION, tableId);
+        createTable(configuration, memory, path, structure, ColumnType.VERSION, tableId);
     }
 
     public static void createTable(
-            FilesFacade ff,
+            CairoConfiguration configuration,
             MemoryMARW memory,
             Path path,
-            @Transient CharSequence root,
             TableStructure structure,
-            int mkDirMode,
             int tableVersion,
             int tableId
     ) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final CharSequence root = configuration.getRoot();
+        final int mkDirMode = configuration.getMkDirMode();
         LOG.debug().$("create table [name=").$(structure.getTableName()).$(']').$();
         path.of(root).concat(structure.getTableName());
 
@@ -175,6 +174,8 @@ public final class TableUtils {
             mem.putLong(structure.getCommitLag());
             mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
+            final Rnd rnd = configuration.getRandom();
+
             for (int i = 0; i < count; i++) {
                 mem.putInt(structure.getColumnType(i));
                 long flags = 0;
@@ -188,7 +189,11 @@ public final class TableUtils {
 
                 mem.putLong(flags);
                 mem.putInt(structure.getIndexBlockCapacity(i));
+                mem.putLong(rnd.nextLong());
+                // reserved
+                mem.skip(8);
             }
+
             for (int i = 0; i < count; i++) {
                 mem.putStr(structure.getColumnName(i));
             }
@@ -263,6 +268,7 @@ public final class TableUtils {
                     oldPosition > -1
                             && getColumnType(masterMeta, i) == getColumnType(slaveMeta, oldPosition)
                             && isColumnIndexed(masterMeta, i) == isColumnIndexed(slaveMeta, oldPosition)
+//                            && getColumnHash(masterMeta, i) == getColumnHash(slaveMeta, oldPosition)
             ) {
                 Unsafe.getUnsafe().putInt(index + i * 8L, oldPosition + 1);
                 Unsafe.getUnsafe().putInt(index + oldPosition * 8L + 4, i + 1);
@@ -296,6 +302,10 @@ public final class TableUtils {
             return;
         }
         Unsafe.free(address, Unsafe.getUnsafe().getInt(address));
+    }
+
+    public static long getColumnHash(MemoryR metaMem, int columnIndex) {
+        return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 16);
     }
 
     public static long getColumnNameOffset(int columnCount) {

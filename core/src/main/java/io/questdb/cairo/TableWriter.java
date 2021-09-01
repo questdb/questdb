@@ -1824,6 +1824,8 @@ public class TableWriter implements Closeable {
 
             ddlMem.putLong(flags);
             ddlMem.putInt(indexValueBlockCapacity);
+            ddlMem.putLong(configuration.getRandom().nextLong());
+            ddlMem.skip(8);
 
             long nameOffset = getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
@@ -2149,6 +2151,8 @@ public class TableWriter implements Closeable {
                     }
                     ddlMem.putLong(flags);
                     ddlMem.putInt(indexValueBlockSize);
+                    ddlMem.putLong(getColumnHash(metaMem, i));
+                    ddlMem.skip(8);
                 }
             }
 
@@ -5115,6 +5119,8 @@ public class TableWriter implements Closeable {
         }
         ddlMem.putLong(flags);
         ddlMem.putInt(getIndexBlockCapacity(metaMem, i));
+        ddlMem.putLong(getColumnHash(metaMem, i));
+        ddlMem.skip(8);
     }
 
     private void writeColumnTop(CharSequence name) {

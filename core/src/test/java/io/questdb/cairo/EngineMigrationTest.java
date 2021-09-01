@@ -705,12 +705,10 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
                 try (TableModel model = new TableModel(configuration, "y_419", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()) {
                     TableUtils.createTable(
-                            model.getCairoCfg().getFilesFacade(),
+                            model.getCairoCfg(),
                             model.getMem(),
                             model.getPath(),
-                            model.getCairoCfg().getRoot(),
                             model,
-                            model.getCairoCfg().getMkDirMode(),
                             ColumnType.VERSION,
                             (int) engine.getNextTableId()
                     );

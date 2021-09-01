@@ -30,6 +30,7 @@ import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.NanosecondClock;
 import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -37,206 +38,30 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface CairoConfiguration {
 
-    int getBindVariablePoolSize();
+    ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
-    int getO3PurgeDiscoveryQueueCapacity();
+    boolean enableTestFactories();
 
-    int getO3PurgeQueueCapacity();
+    int getAnalyticColumnPoolCapacity();
 
-    int getSampleByIndexSearchPageSize();
+    long getAppendPageSize();
 
-    int getSqlCopyBufferSize();
+    DateFormat getBackupDirTimestampFormat();
 
-    int getCopyPoolCapacity();
-
-    int getCreateAsSelectRetryCount();
-
-    CharSequence getDefaultMapType();
-
-    boolean getDefaultSymbolCacheFlag();
-
-    int getDefaultSymbolCapacity();
-
-    int getFileOperationRetryCount();
-
-    FilesFacade getFilesFacade();
-
-    long getIdleCheckInterval();
-
-    long getInactiveReaderTTL();
-
-    long getInactiveWriterTTL();
-
-    int getIndexValueBlockSize();
-
-    int getDoubleToStrCastScale();
-
-    int getFloatToStrCastScale();
-
-    int getMaxSwapFileCount();
-
-    MicrosecondClock getMicrosecondClock();
-
-    MillisecondClock getMillisecondClock();
-
-    default NanosecondClock getNanosecondClock() {
-        return NanosecondClockImpl.INSTANCE;
-    }
-
-    int getMkDirMode();
-
-    int getParallelIndexThreshold();
-
-    int getReaderPoolMaxSegments();
-
-    CharSequence getRoot();
-
-    // null input root disables "copy" sql
-    CharSequence getInputRoot();
+    int getBackupMkDirMode();
 
     // null disables backups
     CharSequence getBackupRoot();
 
-    DateFormat getBackupDirTimestampFormat();
-
     CharSequence getBackupTempDirName();
 
-    int getBackupMkDirMode();
-
-    long getSpinLockTimeoutUs();
-
-    int getSqlCharacterStoreCapacity();
-
-    int getSqlCharacterStoreSequencePoolCapacity();
-
-    int getSqlColumnPoolCapacity();
-
-    double getSqlCompactMapLoadFactor();
-
-    int getSqlExpressionPoolCapacity();
-
-    double getSqlFastMapLoadFactor();
-
-    int getSqlJoinContextPoolCapacity();
-
-    int getSqlLexerPoolCapacity();
-
-    int getSqlMapKeyCapacity();
-
-    int getSqlMapPageSize();
-
-    int getSqlDistinctTimestampKeyCapacity();
-
-    double getSqlDistinctTimestampLoadFactor();
-
-    int getSqlMapMaxPages();
-
-    int getSqlMapMaxResizes();
-
-    int getSqlModelPoolCapacity();
-
-    long getSqlSortKeyPageSize();
-
-    int getSqlSortKeyMaxPages();
-
-    long getSqlSortLightValuePageSize();
-
-    int getSqlSortLightValueMaxPages();
-
-    int getSqlHashJoinValuePageSize();
-
-    int getSqlHashJoinValueMaxPages();
-
-    int getSqlAnalyticStorePageSize();
-
-    int getSqlAnalyticStoreMaxPages();
-
-    int getSqlAnalyticRowIdPageSize();
-
-    int getSqlAnalyticRowIdMaxPages();
-
-    int getSqlAnalyticTreeKeyPageSize();
-
-    int getSqlAnalyticTreeKeyMaxPages();
-
-    long getSqlLatestByRowCount();
-
-    int getSqlHashJoinLightValuePageSize();
-
-    int getSqlHashJoinLightValueMaxPages();
-
-    int getSqlSortValuePageSize();
-
-    int getSqlSortValueMaxPages();
-
-    TextConfiguration getTextConfiguration();
-
-    long getWorkStealTimeoutNanos();
-
-    boolean isParallelIndexingEnabled();
-
-    /**
-     * This holds table metadata, which is usually quite small. 16K page should be adequate.
-     *
-     * @return memory page size
-     */
-    int getSqlJoinMetadataPageSize();
-
-    int getSqlJoinMetadataMaxResizes();
-
-    int getAnalyticColumnPoolCapacity();
-
-    int getCreateTableModelPoolCapacity();
-
-    int getColumnCastModelPoolCapacity();
-
-    int getRenameTableModelPoolCapacity();
-
-    int getWithClauseModelPoolCapacity();
-
-    int getInsertPoolCapacity();
-
-    int getCommitMode();
-
-    DateLocale getDefaultDateLocale();
-
-    int getGroupByPoolCapacity();
-
-    int getMaxSymbolNotEqualsCount();
-
-    int getGroupByMapCapacity();
-
-    boolean enableTestFactories();
-
-    TelemetryConfiguration getTelemetryConfiguration();
-
-    long getAppendPageSize();
-
-    int getTableBlockWriterQueueCapacity();
-
-    int getColumnIndexerQueueCapacity();
-
-    int getVectorAggregateQueueCapacity();
-
-    int getO3CallbackQueueCapacity();
-
-    int getO3PartitionQueueCapacity();
-
-    int getO3OpenColumnQueueCapacity();
-
-    int getO3CopyQueueCapacity();
-
-    int getO3PartitionUpdateQueueCapacity();
+    int getBindVariablePoolSize();
 
     BuildInformation getBuildInformation();
 
-    long getDatabaseIdHi();
+    int getColumnCastModelPoolCapacity();
 
-    long getDatabaseIdLo();
-
-    int getTxnScoreboardEntryCount();
-
-    int getMaxUncommittedRows();
+    int getColumnIndexerQueueCapacity();
 
     /**
      * Default commit lag in microseconds for new tables. This value
@@ -246,7 +71,196 @@ public interface CairoConfiguration {
      */
     long getCommitLag();
 
-    boolean isO3QuickSortEnabled();
+    int getCommitMode();
+
+    int getCopyPoolCapacity();
+
+    int getCreateAsSelectRetryCount();
+
+    int getCreateTableModelPoolCapacity();
+
+    long getDatabaseIdHi();
+
+    long getDatabaseIdLo();
+
+    DateLocale getDefaultDateLocale();
+
+    CharSequence getDefaultMapType();
+
+    boolean getDefaultSymbolCacheFlag();
+
+    int getDefaultSymbolCapacity();
+
+    int getDoubleToStrCastScale();
+
+    int getFileOperationRetryCount();
+
+    FilesFacade getFilesFacade();
+
+    int getFloatToStrCastScale();
+
+    int getGroupByMapCapacity();
+
+    int getGroupByPoolCapacity();
+
+    long getIdleCheckInterval();
+
+    long getInactiveReaderTTL();
+
+    long getInactiveWriterTTL();
+
+    int getIndexValueBlockSize();
+
+    // null input root disables "copy" sql
+    CharSequence getInputRoot();
+
+    int getInsertPoolCapacity();
 
     int getLatestByQueueCapacity();
+
+    int getMaxSwapFileCount();
+
+    int getMaxSymbolNotEqualsCount();
+
+    int getMaxUncommittedRows();
+
+    MicrosecondClock getMicrosecondClock();
+
+    MillisecondClock getMillisecondClock();
+
+    int getMkDirMode();
+
+    default NanosecondClock getNanosecondClock() {
+        return NanosecondClockImpl.INSTANCE;
+    }
+
+    int getO3CallbackQueueCapacity();
+
+    int getO3CopyQueueCapacity();
+
+    int getO3OpenColumnQueueCapacity();
+
+    int getO3PartitionQueueCapacity();
+
+    int getO3PartitionUpdateQueueCapacity();
+
+    int getO3PurgeDiscoveryQueueCapacity();
+
+    int getO3PurgeQueueCapacity();
+
+    int getParallelIndexThreshold();
+
+    default Rnd getRandom() {
+        Rnd rnd = RANDOM.get();
+        if (rnd == null) {
+            RANDOM.set(rnd = new Rnd(
+                    getMillisecondClock().getTicks(),
+                    getMicrosecondClock().getTicks())
+            );
+        }
+        return rnd;
+    }
+
+    int getReaderPoolMaxSegments();
+
+    int getRenameTableModelPoolCapacity();
+
+    CharSequence getRoot();
+
+    int getSampleByIndexSearchPageSize();
+
+    long getSpinLockTimeoutUs();
+
+    int getSqlAnalyticRowIdMaxPages();
+
+    int getSqlAnalyticRowIdPageSize();
+
+    int getSqlAnalyticStoreMaxPages();
+
+    int getSqlAnalyticStorePageSize();
+
+    int getSqlAnalyticTreeKeyMaxPages();
+
+    int getSqlAnalyticTreeKeyPageSize();
+
+    int getSqlCharacterStoreCapacity();
+
+    int getSqlCharacterStoreSequencePoolCapacity();
+
+    int getSqlColumnPoolCapacity();
+
+    double getSqlCompactMapLoadFactor();
+
+    int getSqlCopyBufferSize();
+
+    int getSqlDistinctTimestampKeyCapacity();
+
+    double getSqlDistinctTimestampLoadFactor();
+
+    int getSqlExpressionPoolCapacity();
+
+    double getSqlFastMapLoadFactor();
+
+    int getSqlHashJoinLightValueMaxPages();
+
+    int getSqlHashJoinLightValuePageSize();
+
+    int getSqlHashJoinValueMaxPages();
+
+    int getSqlHashJoinValuePageSize();
+
+    int getSqlJoinContextPoolCapacity();
+
+    int getSqlJoinMetadataMaxResizes();
+
+    /**
+     * This holds table metadata, which is usually quite small. 16K page should be adequate.
+     *
+     * @return memory page size
+     */
+    int getSqlJoinMetadataPageSize();
+
+    long getSqlLatestByRowCount();
+
+    int getSqlLexerPoolCapacity();
+
+    int getSqlMapKeyCapacity();
+
+    int getSqlMapMaxPages();
+
+    int getSqlMapMaxResizes();
+
+    int getSqlMapPageSize();
+
+    int getSqlModelPoolCapacity();
+
+    int getSqlSortKeyMaxPages();
+
+    long getSqlSortKeyPageSize();
+
+    int getSqlSortLightValueMaxPages();
+
+    long getSqlSortLightValuePageSize();
+
+    int getSqlSortValueMaxPages();
+
+    int getSqlSortValuePageSize();
+
+    int getTableBlockWriterQueueCapacity();
+
+    TelemetryConfiguration getTelemetryConfiguration();
+
+    TextConfiguration getTextConfiguration();
+
+    int getTxnScoreboardEntryCount();
+
+    int getVectorAggregateQueueCapacity();
+
+    int getWithClauseModelPoolCapacity();
+
+    long getWorkStealTimeoutNanos();
+
+    boolean isO3QuickSortEnabled();
+
+    boolean isParallelIndexingEnabled();
 }

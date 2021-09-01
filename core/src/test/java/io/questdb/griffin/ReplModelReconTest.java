@@ -558,7 +558,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     @Test
     public void testOrderedAddColumnTopViaEngineCmd() throws Exception {
         assertMemoryLeak(() -> {
-
             createDataOrderedAddColumnTop();
 
             // We are going to be triggering sync event via engine. For this we will need to know our master
@@ -692,7 +691,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     // this test fails because master and slave cannot reconcile the situation
     // where column by the same name was first removed and then re-added. We need more information on
     // column metadata to help us reconcile this. Until this time the test exists but fails. When
