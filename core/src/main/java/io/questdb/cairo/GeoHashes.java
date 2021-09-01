@@ -210,7 +210,7 @@ public class GeoHashes {
         if(hashToken == null) {
             throw NumericException.INSTANCE;
         }
-        final long hash = GeoHashes.fromString(hashToken, 0, hashToken.length());
+        final long hash = GeoHashes.fromStringNl(hashToken, 0, hashToken.length());
         final int prefixType = ColumnType.geohashWithPrecision(5 * hashToken.length()); //TODO: geohash literals
         addNormalizedGeoPrefix(hash, prefixType, columnType, prefixes);
     }
