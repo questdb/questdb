@@ -143,28 +143,21 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         return GeoHashes.isValidBits(tok, 2);
     }
 
-    public static int extractGeoHashBitsSuffix(CharSequence tok) throws SqlException {
-        return extractGeoHashBitsSuffix(0, tok);
-    }
-
-    public static int extractGeoHashBitsSuffix(int position, CharSequence tok) throws SqlException {
-        // a return value of 0 means that a valid suffix was not found.
-        // when '/dd', '/d' is 0, the return value contains the number
-        // of chars (2, 3 slash included).
+    public static int extractGeoHashSuffix(int position, CharSequence tok) throws SqlException {
+        // ExpressionParser produces a FloatingSequencePair, toString() == "geohash const"/{'d' | 'dd'}
+        // where <d> are checked to be [0..9].
         int tokLen = tok.length();
+        if (tokLen == 0) {
+            return 0;
+        }
         if (tokLen > 1) {
-            if (tokLen > 2 && tok.charAt(tokLen - 3) == 47) { // '/dd'
-                char dd = tok.charAt(tokLen - 2);
-                if (dd >= 48 && dd <= 57) { // '0'..'9'
-                    char du = tok.charAt(tokLen - 1);
-                    if (du >= 48 && du <= 57) {
-                        short bits = (short) (10 * dd + du - 528); // 10 * 48 + 48
-                        if (bits >= 1 && bits <= GeoHashes.MAX_BITS_LENGTH) {
-                            return Numbers.encodeLowHighShorts((short) 3, bits);
-                        }
-                        throw SqlException.$(position, "invalid bits size for GEOHASH constant");
-                    }
+            if (tokLen >= 3 && tok.charAt(tokLen - 3) == 47) { // '/dd'
+                // caller (e.g. FunctionParser.createConstant) ensures 'dd' are numeric
+                short bits = (short) (10 * tok.charAt(tokLen - 2) + tok.charAt(tokLen - 1) - 528); // 10 * 48 + 48
+                if (bits >= 1 && bits <= GeoHashes.MAX_BITS_LENGTH) {
+                    return Numbers.encodeLowHighShorts((short) 3, bits);
                 }
+                throw SqlException.$(position, "invalid bits size for GEOHASH constant");
             }
             if (tok.charAt(tokLen - 2) == 47) { // '/d'
                 char du = tok.charAt(tokLen - 1);
@@ -174,7 +167,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
                 throw SqlException.$(position, "invalid bits size for GEOHASH constant");
             }
         }
-        return Numbers.encodeLowHighShorts((short) 0, (short) (5 * (tokLen - 1))); // no suffix
+        return Numbers.encodeLowHighShorts((short) 0, (short) (5 * Math.max(tokLen - 1, 0))); // - '#'
     }
 
     public final void defineSymbol(String token) {

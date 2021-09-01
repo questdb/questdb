@@ -472,7 +472,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             // geohash from chars constant
             try {
                 // optional '/dd', '/d' (max 3 chars, 1..60)
-                int sdd = GenericLexer.extractGeoHashBitsSuffix(position, tok);
+                int sdd = GenericLexer.extractGeoHashSuffix(position, tok);
                 int sddLen = Numbers.decodeLowShort(sdd);
                 int bits = Numbers.decodeHighShort(sdd);
                 return GeoHashConstant.newInstance(

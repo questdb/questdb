@@ -408,41 +408,45 @@ public class GenericLexerTest {
     }
 
     @Test
+    public void testExtractGeoHashBitsSuffixZero() {
+        Assert.assertThrows("", SqlException.class, () -> {
+            GenericLexer.extractGeoHashSuffix(0, "/0");
+        });
+        Assert.assertThrows("", SqlException.class, () -> {
+            GenericLexer.extractGeoHashSuffix(0, "/00");
+        });
+    }
+
+    @Test
     public void testExtractGeoHashBitsSuffixValid() throws SqlException {
-        Assert.assertEquals(
-                Numbers.encodeLowHighShorts((short) 2, (short) 0),
-                GenericLexer.extractGeoHashBitsSuffix("/0"));
-        Assert.assertEquals(
-                Numbers.encodeLowHighShorts((short) 3, (short) 0),
-                GenericLexer.extractGeoHashBitsSuffix("/00"));
         for (int bits = 1; bits < 10; bits++) {
             Assert.assertEquals(
                     Numbers.encodeLowHighShorts((short) 2, (short) bits),
-                    GenericLexer.extractGeoHashBitsSuffix("/" + bits));
+                    GenericLexer.extractGeoHashSuffix(0, "/" + bits));
         }
         for (int bits = 1; bits < 10; bits++) {
             Assert.assertEquals(
                     Numbers.encodeLowHighShorts((short) 3, (short) bits),
-                    GenericLexer.extractGeoHashBitsSuffix("/0" + bits));
+                    GenericLexer.extractGeoHashSuffix(0, "/0" + bits));
         }
         for (int bits = 10; bits <= 60; bits++) {
             Assert.assertEquals(
                     Numbers.encodeLowHighShorts((short) 3, (short) bits),
-                    GenericLexer.extractGeoHashBitsSuffix("/" + bits));
+                    GenericLexer.extractGeoHashSuffix(0, "/" + bits));
         }
     }
 
     @Test
-    public void testExtractGeoHashBitsSuffixNotValid() throws SqlException {
-        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix(""));
-        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix("/"));
-        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix("0"));
-        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix("01"));
-        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix("/x"));
-        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix("/1x"));
-        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix("/x1"));
-        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix("/xx"));
-        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix("/-1"));
-        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix("001"));
+    public void testExtractGeoHashBitsSuffixNoSuffix() throws SqlException {
+        Assert.assertEquals(0, GenericLexer.extractGeoHashSuffix(0, ""));
+        for (String tok : new String[]{"#", "#/", "#p", "#pp", "#ppp", "#0", "#01", "#001"}) {
+            System.out.println(tok);
+            Assert.assertEquals(Numbers.encodeLowHighShorts((short) 0, (short) (5 * (tok.length() - 1))),
+                    GenericLexer.extractGeoHashSuffix(0, tok));
+        }
+        for (String tok : new String[]{"#/x", "#/1x", "#/x1", "#/xx", "#/-1", }) {
+            Assert.assertThrows("[0] invalid bits size for GEOHASH constant",
+                    SqlException.class, () -> GenericLexer.extractGeoHashSuffix(0, tok));
+        }
     }
 }
