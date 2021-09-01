@@ -93,7 +93,7 @@ public class GeoHashes {
 
     private static long fromBitString(CharSequence bits, int start, int len) throws NumericException {
         long result = 0;
-        for (int i = start; i < len; i++) { // truncate
+        for (int i = start; i < len; i++) {
             switch (bits.charAt(i)) {
                 case 48: // '0'
                     result = result << 1;

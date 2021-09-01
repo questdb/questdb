@@ -152,7 +152,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         }
         if (tokLen > 1) {
             if (tokLen >= 3 && tok.charAt(tokLen - 3) == 47) { // '/dd'
-                // caller (e.g. FunctionParser.createConstant) ensures 'dd' are numeric
+                // caller (e.g. ExpressionParser) ensures 'dd' are numeric
                 short bits = (short) (10 * tok.charAt(tokLen - 2) + tok.charAt(tokLen - 1) - 528); // 10 * 48 + 48
                 if (bits >= 1 && bits <= GeoHashes.MAX_BITS_LENGTH) {
                     return Numbers.encodeLowHighShorts((short) 3, bits);
