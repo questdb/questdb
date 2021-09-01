@@ -66,7 +66,7 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(expectedGeohash.length() * 5, GeoHashes.getBitsPrecision(function.getType()));
         Assert.assertEquals(expectedHash, function.getGeoHashLong(null));
         Assert.assertThrows(UnsupportedOperationException.class, () -> function.getLong(null));
-        Assert.assertEquals(0, GeoHashes.hashSize(function.getGeoHashLong(null)));
+        Assert.assertEquals(0, GeoHashes.hashSize(function.getGeoHashLong(null))); // TODO: rechnical debt, remove
         assertGeoHashLongStrEquals(expectedGeohash, function);
     }
 

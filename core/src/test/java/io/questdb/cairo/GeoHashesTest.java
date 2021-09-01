@@ -27,20 +27,12 @@ package io.questdb.cairo;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.util.function.BiFunction;
 
 
 public class GeoHashesTest {
-
-    private Rnd rnd;
-
-    @Before
-    public void setUp() {
-        rnd = new Rnd();
-    }
 
     @Test
     public void testBitsPrecision() {
@@ -364,19 +356,21 @@ public class GeoHashesTest {
 
     @Test
     public void testIsValidChar() {
+        Rnd rnd = new Rnd();
         IntHashSet base32Chars = new IntHashSet(base32.length);
         for (char ch : base32) {
             base32Chars.add(ch);
-            Assert.assertTrue(GeoHashes.isValidChar(ch));
+            Assert.assertTrue(GeoHashes.isValidChars("" + ch, 0));
         }
         for (int i = 0; i < 15000; i++) {
             char ch = (char) rnd.nextPositiveInt();
-            Assert.assertEquals(base32Chars.contains(ch), GeoHashes.isValidChar(ch));
+            Assert.assertEquals(base32Chars.contains(ch), GeoHashes.isValidChars("" + ch, 0));
         }
     }
 
     @Test
     public void testIsValidChars1() {
+        Rnd rnd = new Rnd();
         StringSink sink = Misc.getThreadLocalBuilder();
         for (int len = 1; len <= 12; len++) {
             sink.clear();
@@ -387,6 +381,7 @@ public class GeoHashesTest {
 
     @Test
     public void testIsValidChars2() {
+        Rnd rnd = new Rnd();
         StringSink sink = Misc.getThreadLocalBuilder();
         for (int len = 1; len <= 12; len++) {
             sink.clear();
@@ -398,6 +393,7 @@ public class GeoHashesTest {
 
     @Test
     public void testIsValidCharsWhenIsNot() {
+        Rnd rnd = new Rnd();
         StringSink sink = Misc.getThreadLocalBuilder();
         for (int len = 1; len <= 12; len++) {
             sink.clear();
@@ -407,18 +403,15 @@ public class GeoHashesTest {
         }
     }
 
-    @Test(expected = IndexOutOfBoundsException.class)
-    public void testIsValidCharsOutOfBounds1() {
-        GeoHashes.isValidChars(null, -1);
-    }
-
-    @Test(expected = IndexOutOfBoundsException.class)
+    @Test
     public void testIsValidCharsOutOfBounds2() {
-        GeoHashes.isValidChars("", 1);
+        Assert.assertTrue(GeoHashes.isValidChars("", 0));
+        Assert.assertTrue(GeoHashes.isValidChars("", 1));
     }
 
     @Test
     public void testIsValidBits1() {
+        Rnd rnd = new Rnd();
         StringSink sink = Misc.getThreadLocalBuilder();
         for (int len = 1; len <= 60; len++) {
             sink.clear();
@@ -429,6 +422,7 @@ public class GeoHashesTest {
 
     @Test
     public void testIsValidBits2() {
+        Rnd rnd = new Rnd();
         StringSink sink = Misc.getThreadLocalBuilder();
         for (int len = 1; len <= 60; len++) {
             sink.clear();
@@ -440,6 +434,7 @@ public class GeoHashesTest {
 
     @Test
     public void testIsValidBitsWhenIsNot() {
+        Rnd rnd = new Rnd();
         StringSink sink = Misc.getThreadLocalBuilder();
         for (int len = 1; len <= 60; len++) {
             sink.clear();
@@ -449,14 +444,53 @@ public class GeoHashesTest {
         }
     }
 
-    @Test(expected = IndexOutOfBoundsException.class)
-    public void testIsValidBitsOutOfBounds1() {
-        GeoHashes.isValidBits(null, -1);
+    @Test
+    public void testFromBitStringValid() throws NumericException {
+        Assert.assertEquals(0, GeoHashes.fromBitString("", 0));
+        Assert.assertEquals(0, GeoHashes.fromBitString("", 1));
+        Assert.assertEquals(0, GeoHashes.fromBitString( // truncates
+                "0000000000" + "0000000000" + "0000000000" +
+                "0000000000" + "0000000000" + "0000000000" +
+                "1", 0));
+        Assert.assertEquals(0, GeoHashes.fromBitString( // same as empty string
+                "0000000000" + "0000000000" + "0000000000" +
+                        "0000000000" + "0000000000" + "0000000000" +
+                        "1", 60));
+        Assert.assertEquals(0, GeoHashes.fromBitString(
+                "0000000000" + "0000000000" + "0000000000" +
+                        "0000000000" + "0000000000" + "0000000000" +
+                        "1", 59));
+        Assert.assertEquals(1, GeoHashes.fromBitString(
+                "0000000000" + "0000000000" + "0000000000" +
+                        "0000000000" + "0000000000" + "0000000001",0));
+        Assert.assertEquals(1, GeoHashes.fromBitString(
+                "0000000000" + "0000000000" + "0000000000" +
+                        "0000000000" + "0000000000" + "0000000001",59));
+
+        StringSink sink = Misc.getThreadLocalBuilder();
+        for (int bits = 1; bits <= GeoHashes.MAX_BITS_LENGTH; bits++) {
+            long geoPi = GeoHashes.fromCoordinates(3.14159, 3.14159, bits);
+            sink.clear();
+            GeoHashes.toBitString(geoPi, bits, sink);
+            Assert.assertEquals(geoPi, GeoHashes.fromBitString(sink.toString(), 0));
+        }
     }
 
-    @Test(expected = IndexOutOfBoundsException.class)
-    public void testIsValidBitsOutOfBounds2() {
-        GeoHashes.isValidBits("", 1);
+    @Test
+    public void testFromBitStringNl() throws NumericException {
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromBitStringNl("", 0));
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromBitStringNl("0011", 4));
+        Assert.assertNotEquals(GeoHashes.NULL, GeoHashes.fromBitStringNl("0", 0));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromBitStringNotValid1() throws NumericException {
+        GeoHashes.fromBitStringNl(" ", 0);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromBitStringNotValid2() throws NumericException {
+        GeoHashes.fromBitStringNl("012", 0);
     }
 
     private static final char[] base32 = {

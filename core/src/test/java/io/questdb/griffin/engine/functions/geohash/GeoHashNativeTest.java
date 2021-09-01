@@ -40,6 +40,9 @@ public class GeoHashNativeTest {
     static final double lon = 121.473;
     static final StringSink sink = new StringSink();
 
+    // TODO: technical debt, everything but testSlideFoundBlocks, testAiota
+    //       needs to go to GeoHashesTest, and some redundancy needs to go
+
 
     private static double rnd_double(double min, double max) {
         return ThreadLocalRandom.current().nextDouble(min, max);
@@ -69,16 +72,17 @@ public class GeoHashNativeTest {
 
     @Test
     public void testFromCoordinates() throws NumericException {
-        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 5), GeoHashes.fromBitString("11100"));
-        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 2 * 5), GeoHashes.fromBitString("1110011001"));
-        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 3 * 5), GeoHashes.fromBitString("111001100111100"));
-        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 4 * 5), GeoHashes.fromBitString("11100110011110000011"));
-        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 5 * 5), GeoHashes.fromBitString("1110011001111000001111000"));
-        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 6 * 5), GeoHashes.fromBitString("111001100111100000111100010001"));
-        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 7 * 5), GeoHashes.fromBitString("11100110011110000011110001000110001"));
-        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 8 * 5), GeoHashes.fromBitString("1110011001111000001111000100011000111111"));
+        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 5), GeoHashes.fromBitString("11100", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 2 * 5), GeoHashes.fromBitString("1110011001", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 3 * 5), GeoHashes.fromBitString("111001100111100", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 4 * 5), GeoHashes.fromBitString("11100110011110000011", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 5 * 5), GeoHashes.fromBitString("1110011001111000001111000", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 6 * 5), GeoHashes.fromBitString("111001100111100000111100010001", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 7 * 5), GeoHashes.fromBitString("11100110011110000011110001000110001", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 8 * 5), GeoHashes.fromBitString("1110011001111000001111000100011000111111", 0));
     }
 
+    // TODO: technical debt, remove, geohashes variable size col
     @Test
     public void testToHash() throws NumericException {
         final long gh = GeoHashes.fromCoordinates(lat, lon, 8 * 5);
@@ -287,7 +291,7 @@ public class GeoHashNativeTest {
         String expected = "1100010101000000010100010111000100100010101010000110101";
         Assert.assertEquals(expected, Long.toBinaryString(hash));
         assertSuccess(hash, expected.length(), expected, toBitString);
-        Assert.assertEquals(hash, GeoHashes.fromBitString(expected));
+        Assert.assertEquals(hash, GeoHashes.fromBitString(expected, 0));
     }
 
     @Test
@@ -300,14 +304,14 @@ public class GeoHashNativeTest {
     }
 
     @Test
-    public void testFromBitStringInvalid() {
-        CharSequence tooLongBitString = Chars.repeat("1", 61);
-        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromBitString(tooLongBitString));
+    public void testFromBitStringInvalid() throws NumericException {
+        CharSequence tooLongBitString = Chars.repeat("1", 61); // truncates
+        Assert.assertEquals(1152921504606846975L, GeoHashes.fromBitString(tooLongBitString, 0));
     }
 
     @Test
     public void testFromBitStringInvalid2() {
-        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromBitString("a"));
+        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromBitString("a", 0));
     }
 
     @Test

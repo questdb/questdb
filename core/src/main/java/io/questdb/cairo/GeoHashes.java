@@ -74,59 +74,31 @@ public class GeoHashes {
         }
     }
 
-    public static boolean isValidChar(char ch) {
-        int idx = ch - 48;
-        return idx >= 0 && idx < base32Indexes.length && base32Indexes[idx] != -1;
-    }
-
-    public static boolean isValidChars(CharSequence tok, int start) {
-        if (start < 0 || start > tok.length()) {
-            throw new IndexOutOfBoundsException();
-        }
-        int idx;
-        for (int i = start, n = tok.length(), excessIdx = base32Indexes.length; i < n; i++) {
-            idx = tok.charAt(i) - 48;
-            if (idx < 0 || idx >= excessIdx || base32Indexes[idx] == -1) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    public static boolean isValidBits(CharSequence tok, int start) {
-        if (start < 0 || start > tok.length()) {
-            throw new IndexOutOfBoundsException();
-        }
-        int idx;
-        for (int i = start, n = tok.length(); i < n; i++) {
-            idx = tok.charAt(i) - 48;
-            if (idx < 0 || idx > 1) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     public static long bitmask(int count, int shift) {
         // e.g. 3, 4 -> 1110000
         return ((1L << count) - 1) << shift;
     }
 
-    public static long fromBitString(CharSequence bits) throws NumericException {
-        return fromBitString(bits, 0);
+    public static long fromBitStringNl(CharSequence bits, int start) throws NumericException {
+        int len = bits.length();
+        if (len - start <= 0) {
+            return NULL;
+        }
+        return fromBitString(bits, start, Math.min(bits.length(), MAX_BITS_LENGTH));
     }
 
     public static long fromBitString(CharSequence bits, int start) throws NumericException {
-        if (start < 0 || bits.length() - start > MAX_BITS_LENGTH) {
-            throw NumericException.INSTANCE;
-        }
+        return fromBitString(bits, start, Math.min(bits.length(), MAX_BITS_LENGTH));
+    }
+
+    private static long fromBitString(CharSequence bits, int start, int len) throws NumericException {
         long result = 0;
-        for (int i = start, n = bits.length(); i < n; i++) {
+        for (int i = start; i < len; i++) { // truncate
             switch (bits.charAt(i)) {
-                case '0':
+                case 48: // '0'
                     result = result << 1;
                     break;
-                case '1':
+                case 49: // '1'
                     result = (result << 1) | 1;
                     break;
                 default:
@@ -216,13 +188,36 @@ public class GeoHashes {
     }
 
     private static long appendChar(long geohash, char c) throws NumericException {
+        byte idx;
         if (c >= 48 && c < 123) { // 123 = base32Indexes.length + 48
-            byte idx = base32Indexes[c - 48];
+            idx = base32Indexes[c - 48];
             if (idx >= 0) {
                 return (geohash << 5) | idx;
             }
         }
         throw NumericException.INSTANCE;
+    }
+
+    public static boolean isValidChars(CharSequence tok, int start) {
+        int idx;
+        for (int i = start, n = tok.length(); i < n; i++) {
+            idx = tok.charAt(i);
+            if (idx < 48 || idx >= 123 || base32Indexes[idx - 48] == -1) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static boolean isValidBits(CharSequence tok, int start) {
+        int idx;
+        for (int i = start, n = tok.length(); i < n; i++) {
+            idx = tok.charAt(i);
+            if (idx < 48 || idx > 49) { // '0', '1'
+                return false;
+            }
+        }
+        return true;
     }
 
     public static void fromStringToBits(final CharSequenceHashSet prefixes, int columnType, final DirectLongList prefixesBits) {
@@ -255,14 +250,17 @@ public class GeoHashes {
         }
     }
 
+    // TODO: technical debt, remove. Was going to be variable size geohash col
     public static int hashSize(long hashz) {
         return (int) (hashz >>> MAX_BITS_LENGTH);
     }
 
+    // TODO: technical debt, remove. Was going to be variable size geohash col
     public static long toHash(long hashz) {
         return hashz & 0x0fffffffffffffffL;
     }
 
+    // TODO: technical debt, remove. Was going to be variable size geohash col
     public static long toHashWithSize(long hash, int length) {
         return (((long) length) << 60L) + hash;
     }

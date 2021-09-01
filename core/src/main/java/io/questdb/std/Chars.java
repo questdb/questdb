@@ -335,8 +335,8 @@ public final class Chars {
     public static boolean isOnlyDecimals(CharSequence s) {
         int len = s.length();
         for (int i = len - 1; i > -1; i--) {
-            int digit = s.charAt(i) - 48;
-            if (digit < 0 || digit > 9) {
+            int digit = s.charAt(i);
+            if (digit < 48 || digit > 57) { // '0'..'9'
                 return false;
             }
         }

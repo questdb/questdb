@@ -284,68 +284,66 @@ public class GenericLexerTest {
 
     @Test
     public void testImmutablePairOf1() {
-        GenericLexer lex = new GenericLexer(64);
-        lex.of("orange");
-        CharSequence cs = lex.next();
-        lex.immutablePairOf(GenericLexer.immutableOf(cs), cs);
-        Assert.assertEquals("orange", lex.getContent());
-        Assert.assertNull(lex.getUnparsed());
-        Assert.assertEquals(6, lex.getPosition());
-        Assert.assertEquals(6, lex.getTokenHi());
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("orange");
+        CharSequence cs = ts.next();
+        ts.immutablePairOf(GenericLexer.immutableOf(cs), cs);
+        Assert.assertEquals("orange", ts.getContent());
+        Assert.assertNull(ts.getUnparsed());
+        Assert.assertEquals(6, ts.getPosition());
+        Assert.assertEquals(6, ts.getTokenHi());
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testImmutablePairOf2() {
-        GenericLexer lex = new GenericLexer(64);
-        lex.of("orange");
-        CharSequence cs = lex.next();
-        lex.immutablePairOf(cs, cs);
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("orange");
+        CharSequence cs = ts.next();
+        ts.immutablePairOf(cs, cs);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testImmutablePairOf3() {
-        GenericLexer lex = new GenericLexer(64);
-        lex.immutablePairOf("", "");
+        GenericLexer ts = new GenericLexer(64);
+        ts.immutablePairOf("", "");
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testImmutablePairOf4() {
-        GenericLexer lex = new GenericLexer(64);
-        lex.of("geohash 31b");
-        lex.immutablePairOf(GenericLexer.immutableOf(lex.next()), lex.next());
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("geohash 31b");
+        ts.immutablePairOf(GenericLexer.immutableOf(ts.next()), ts.next());
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testImmutablePairOf5() {
-        GenericLexer lex = new GenericLexer(64);
-        lex.of("geohash 31b");
-        CharSequence tok0 = GenericLexer.immutableOf(lex.next());
-        lex.next();
-        CharSequence pair = lex.immutablePairOf(tok0, lex.next());
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("geohash 31b");
+        CharSequence tok0 = GenericLexer.immutableOf(ts.next());
+        ts.next();
+        CharSequence pair = ts.immutablePairOf(tok0, ts.next());
         pair.subSequence(0, 2);
     }
 
     @Test(expected = IndexOutOfBoundsException.class)
     public void testImmutablePairOf6() {
-        GenericLexer lex = new GenericLexer(64);
-        lex.of("geohash 31b");
-        CharSequence tok0 = GenericLexer.immutableOf(lex.next());
-        lex.next();
-        GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair)
-                lex.immutablePairOf(tok0, lex.next());
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("geohash 31b");
+        CharSequence tok0 = GenericLexer.immutableOf(ts.next());
+        ts.next();
+        GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair) ts.immutablePairOf(tok0, ts.next());
         pair.charAt(17_000);
     }
 
     @Test
     public void testImmutablePairOf7() {
-        GenericLexer lex = new GenericLexer(64);
+        GenericLexer ts = new GenericLexer(64);
         String culprit = "geohash 31b";
-        lex.of(culprit);
-        CharSequence geohashTok = GenericLexer.immutableOf(lex.next());
-        lex.next();
-        CharSequence sizeTok = lex.next();
-        GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair)
-                lex.immutablePairOf(geohashTok, sizeTok);
+        ts.of(culprit);
+        CharSequence tok0 = GenericLexer.immutableOf(ts.next());
+        ts.next();
+        CharSequence tok1 = ts.next();
+        GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair) ts.immutablePairOf(tok0, tok1);
         Assert.assertEquals(culprit.length() - 1, pair.length());
         StringSink sink = Misc.getThreadLocalBuilder();
         for (int i = 0; i < pair.length(); i++) {
@@ -373,5 +371,78 @@ public class GenericLexerTest {
         }
         pair.clear();
         Assert.assertEquals(pair.toString(), sink.toString());
+    }
+
+    @Test
+    public void testIsGeoHashCharsConstantValid() {
+        Assert.assertTrue(GenericLexer.isGeoHashCharsConstant("#0"));
+        Assert.assertTrue(GenericLexer.isGeoHashCharsConstant("#1"));
+        Assert.assertTrue(GenericLexer.isGeoHashCharsConstant("#sp"));
+        Assert.assertTrue(GenericLexer.isGeoHashCharsConstant("#sp052w92p1p8"));
+    }
+
+    @Test
+    public void testIsGeoHashCharsConstantNotValid() {
+        Assert.assertFalse(GenericLexer.isGeoHashCharsConstant("#"));
+        Assert.assertFalse(GenericLexer.isGeoHashCharsConstant("0"));
+        Assert.assertFalse(GenericLexer.isGeoHashCharsConstant(""));
+        Assert.assertFalse(GenericLexer.isGeoHashCharsConstant("##1"));
+        Assert.assertFalse(GenericLexer.isGeoHashCharsConstant("#sp@sp"));
+        Assert.assertFalse(GenericLexer.isGeoHashCharsConstant("#sp052w92p1p88"));
+    }
+
+    @Test
+    public void testIsGeoHashBitsConstantValid() {
+        Assert.assertTrue(GenericLexer.isGeoHashBitsConstant("##0"));
+        Assert.assertTrue(GenericLexer.isGeoHashBitsConstant("##1"));
+        Assert.assertTrue(GenericLexer.isGeoHashBitsConstant("##111111111100000000001111111111000000000011111111110000000000"));
+    }
+
+    @Test
+    public void testIsGeoHashBitsConstantNotValid() {
+        Assert.assertFalse(GenericLexer.isGeoHashBitsConstant("00110"));
+        Assert.assertFalse(GenericLexer.isGeoHashBitsConstant("#0"));
+        Assert.assertFalse(GenericLexer.isGeoHashBitsConstant("##"));
+        Assert.assertFalse(GenericLexer.isGeoHashBitsConstant("##12"));
+        Assert.assertFalse(GenericLexer.isGeoHashBitsConstant("##0111111111100000000001111111111000000000011111111110000000000"));
+    }
+
+    @Test
+    public void testExtractGeoHashBitsSuffixValid() throws SqlException {
+        Assert.assertEquals(
+                Numbers.encodeLowHighShorts((short) 2, (short) 0),
+                GenericLexer.extractGeoHashBitsSuffix("/0"));
+        Assert.assertEquals(
+                Numbers.encodeLowHighShorts((short) 3, (short) 0),
+                GenericLexer.extractGeoHashBitsSuffix("/00"));
+        for (int bits = 1; bits < 10; bits++) {
+            Assert.assertEquals(
+                    Numbers.encodeLowHighShorts((short) 2, (short) bits),
+                    GenericLexer.extractGeoHashBitsSuffix("/" + bits));
+        }
+        for (int bits = 1; bits < 10; bits++) {
+            Assert.assertEquals(
+                    Numbers.encodeLowHighShorts((short) 3, (short) bits),
+                    GenericLexer.extractGeoHashBitsSuffix("/0" + bits));
+        }
+        for (int bits = 10; bits <= 60; bits++) {
+            Assert.assertEquals(
+                    Numbers.encodeLowHighShorts((short) 3, (short) bits),
+                    GenericLexer.extractGeoHashBitsSuffix("/" + bits));
+        }
+    }
+
+    @Test
+    public void testExtractGeoHashBitsSuffixNotValid() throws SqlException {
+        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix(""));
+        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix("/"));
+        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix("0"));
+        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix("01"));
+        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix("/x"));
+        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix("/1x"));
+        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix("/x1"));
+        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix("/xx"));
+        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix("/-1"));
+        Assert.assertEquals(0, GenericLexer.extractGeoHashBitsSuffix("001"));
     }
 }

@@ -428,43 +428,43 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGeoHashTypeConstant1() throws SqlException {
+    public void testGeoHash1() throws SqlException {
         x("geohash6c", "geohash(6c)");
     }
 
     @Test
-    public void testGeoHashTypeConstant2() throws SqlException {
+    public void testGeoHash2() throws SqlException {
         x("geohash31b", "geohash(31b)");
     }
 
     @Test
-    public void testGeoHashStrConstant() throws SqlException {
+    public void testGeoHash3() throws SqlException {
         x("GEOHASH", "GEOHASH");
     }
 
     @Test
-    public void testGeoHashTypeConstantWithLotsOfNoise1() throws SqlException {
+    public void testGeoHash4() throws SqlException {
         x("geohash6c", "geohash ( 6c" +
                 "-- this is a comment, as you can see" +
                 "\n\n\r)");
     }
 
     @Test
-    public void testGeoHashTypeConstantWithLotsOfNoise2() throws SqlException {
+    public void testGeoHash5() throws SqlException {
         x("geohash6c", " geohash\r\n  (\n 6c\n" +
                 "-- this is a comment, as you can see" +
                 "\n\n\r)-- my tralala");
     }
 
     @Test
-    public void testGeoHashTypeConstantFail1() {
+    public void testGeoHashFail1() {
         assertFail("GEOHASH(",
                 7,
                 "invalid GEOHASH, invalid type precision");
     }
 
     @Test
-    public void testGeoHashTypeConstantFail2() {
+    public void testGeoHashFail2() {
         assertFail("GEOHASH()",
                 8,
                 "invalid GEOHASH, invalid type precision");

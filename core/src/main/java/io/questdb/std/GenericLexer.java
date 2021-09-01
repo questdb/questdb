@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.GeoHashes;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
@@ -120,6 +121,60 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             return value.subSequence(1, value.length() - 1);
         }
         return immutableOf(value);
+    }
+
+    public static boolean isGeoHashCharsConstant(CharSequence tok) {
+        // used by ExpressionParser to detect a geohash chars constant i.e. #sp052w92p1p8
+        // the EP will eagerly try to detect '/dd' following the geohash token, and if so
+        // it will create a FloatingSequencePair with '/' as separator. At this point
+        // however, '/dd' does not exist, tok is just the potential geohash chars constant
+        int len = tok.length();
+        if (len < 2 || len - 1 > GeoHashes.MAX_STRING_LENGTH || tok.charAt(0) != 35) { // '#'
+            return false;
+        }
+        return GeoHashes.isValidChars(tok, 1);
+    }
+
+    public static boolean isGeoHashBitsConstant(CharSequence tok) {
+        int len = tok.length();
+        if (len < 3 || len - 2 > GeoHashes.MAX_BITS_LENGTH || tok.charAt(0) != 35 || tok.charAt(1) != 35) { // '#'
+            return false;
+        }
+        return GeoHashes.isValidBits(tok, 2);
+    }
+
+    public static int extractGeoHashBitsSuffix(CharSequence tok) throws SqlException {
+        return extractGeoHashBitsSuffix(0, tok);
+    }
+
+    public static int extractGeoHashBitsSuffix(int position, CharSequence tok) throws SqlException {
+        // a return value of 0 means that a valid suffix was not found.
+        // when '/dd', '/d' is 0, the return value contains the number
+        // of chars (2, 3 slash included).
+        int tokLen = tok.length();
+        if (tokLen > 1) {
+            if (tokLen > 2 && tok.charAt(tokLen - 3) == 47) { // '/dd'
+                char dd = tok.charAt(tokLen - 2);
+                if (dd >= 48 && dd <= 57) { // '0'..'9'
+                    char du = tok.charAt(tokLen - 1);
+                    if (du >= 48 && du <= 57) {
+                        short bits = (short) (10 * dd + du - 528); // 10 * 48 + 48
+                        if (bits >= 1 && bits <= GeoHashes.MAX_BITS_LENGTH) {
+                            return Numbers.encodeLowHighShorts((short) 3, bits);
+                        }
+                        throw SqlException.$(position, "invalid bits size for GEOHASH constant");
+                    }
+                }
+            }
+            if (tok.charAt(tokLen - 2) == 47) { // '/d'
+                char du = tok.charAt(tokLen - 1);
+                if (du >= 49 && du <= 57) { // '1' .. '9'
+                    return Numbers.encodeLowHighShorts((short) 2, (short) (du - 48));
+                }
+                throw SqlException.$(position, "invalid bits size for GEOHASH constant");
+            }
+        }
+        return Numbers.encodeLowHighShorts((short) 0, (short) (5 * (tokLen - 1))); // no suffix
     }
 
     public final void defineSymbol(String token) {
@@ -428,16 +483,14 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
 
         @Override
         public char charAt(int index) {
-            if (index >= 0 && index < length()) {
-                final int cs0Len = cs0.length();
-                if (index < cs0Len) {
-                    return cs0.charAt(index);
-                } else if (index == cs0Len && sep != NO_SEPARATOR) {
-                    return sep;
-                }
-                return cs1.charAt(index - cs0Len - (sep != NO_SEPARATOR ? 1 : 0));
+            int cs0Len = cs0.length();
+            if (index < cs0Len) {
+                return cs0.charAt(index);
             }
-            throw new IndexOutOfBoundsException();
+            if (sep == NO_SEPARATOR) {
+                return cs1.charAt(index - cs0Len);
+            }
+            return index == cs0Len ? sep : cs1.charAt(index - cs0Len - 1);
         }
 
         @Override

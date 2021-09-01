@@ -1892,12 +1892,12 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         assertFailure(21, "missing bits size for GEOHASH constant", "select #sp052w92p1p8/0R");
         assertFailure(21, "missing bits size for GEOHASH constant", "select #sp052w92p1p8/t");
         assertFailure(21, "missing bits size for GEOHASH constant", "select #sp052w92p1p8/-1");
-        assertFailure(7, "invalid GEOHASH constant: #sp052w92p1p8/011", "select #sp052w92p1p8/ 011");
-        assertFailure(7, "invalid GEOHASH constant: #sp052w92p1p8/61", "select #sp052w92p1p8/ 61");
-        assertFailure(7, "invalid GEOHASH constant: #sp052w92p1p8/045", "select #sp052w92p1p8/045");
+        assertFailure(7, "invalid bits size for GEOHASH constant", "select #sp052w92p1p8/ 61");
+        assertFailure(7, "invalid constant: #sp052w92p1p8/011", "select #sp052w92p1p8/ 011");
+        assertFailure(7, "invalid constant: #sp052w92p1p8/045", "select #sp052w92p1p8/045");
         assertFailure(7, "invalid constant: #sp/15", "select #sp/15"); // lacks precision
         assertFailure(7, "Invalid column: #", "select #/0");
-        assertFailure(7, "invalid GEOHASH constant: #1/0", "select #1/0");
+        assertFailure(7, "invalid bits size for GEOHASH constant", "select #sp052w92p18/0");
     }
 
     @Test

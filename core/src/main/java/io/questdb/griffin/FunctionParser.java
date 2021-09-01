@@ -460,66 +460,32 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             return Constants.getTypeConstant(columnType);
         }
 
-        // geohash kingdom
-
         // geohash type constant
 
         if (startsWithGeoHashKeyword(tok)) {
-            int bits = SqlParser.parseGeoHashSize(position, 7, tok);
-            return GeoHashTypeConstant.getInstanceByPrecision(bits);
+            return GeoHashTypeConstant.getInstanceByPrecision(
+                    SqlParser.parseGeoHashSize(position, 7, tok));
         }
 
-        if (len > 1 && tok.charAt(0) == '#') {
+        if (len > 1 && tok.charAt(0) == 35) { // '#'
 
             // geohash from chars constant
-
-            // optional '/dd' (max 3 chars 0..60)
-            final int lastCh = tok.charAt(len - 1) - 48;
-            int ch = lastCh;
-            int bits = ch; // optimistic d
-            int bitsLen = 1;
-            for (int i = len - 2, n = len - 4; i > n; i--, bitsLen++) {
-                ch = tok.charAt(i) - 48;
-                if (ch >= 0 && ch <= 9) {
-                    bits += ch * (bitsLen * 10);
-                } else {
-                    break;
-                }
-            }
-            if (ch == -1) { // '/' - 48
-                if (bits < 1 || bits > GeoHashes.MAX_BITS_LENGTH) {
-                    throw SqlException.position(position).put("invalid GEOHASH constant: ").put(tok);
-                }
-                bitsLen++; // slash
-            } else {
-                if (bits != lastCh) {
-                    // no bits but geohash ends with numeric digits
-                    // or, bits but too many digits
-                    int slash = len - bitsLen - 1;
-                    for (; slash >= 1 && tok.charAt(slash) != '/'; slash--) {
-                        // no-op
-                    }
-                    if (slash > 1) {
-                        throw SqlException.position(position).put("invalid GEOHASH constant: ").put(tok);
-                    }
-                }
-                bits = 5 * (len - 1);
-                bitsLen = 0;
-            }
-
             try {
+                // optional '/dd', '/d' (max 3 chars, 1..60)
+                int sdd = GenericLexer.extractGeoHashBitsSuffix(position, tok);
+                int sddLen = Numbers.decodeLowShort(sdd);
+                int bits = Numbers.decodeHighShort(sdd);
                 return GeoHashConstant.newInstance(
-                        GeoHashes.fromString(tok, 1, len - bitsLen - 1, bits),
-                        ColumnType.geohashWithPrecision(bits)); // minus leading '#' and leading bits if present
+                        GeoHashes.fromStringTruncatingNl(tok, 1, len - sddLen, bits),
+                        ColumnType.geohashWithPrecision(bits));
             } catch (NumericException e) {
             }
 
             // geohash from binary constant
-
             try {
                 return GeoHashConstant.newInstance(
-                        GeoHashes.fromBitString(tok, 2),
-                        ColumnType.geohashWithPrecision(len - 2)); // minus leading '##'
+                        GeoHashes.fromBitStringNl(tok, 2), // minus leading '##'
+                        ColumnType.geohashWithPrecision(len - 2));  // minus leading '##'
             } catch (NumericException e) {
             }
         }

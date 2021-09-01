@@ -24,8 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.GeoHashes;
-
 public class SqlKeywords {
     public static final String CONCAT_FUNC_NAME = "concat";
 
@@ -197,46 +195,6 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i) | 32) == 'n';
-    }
-
-    public static boolean isCharsGeoHashConstant(CharSequence tok) {
-        int len = tok.length();
-        if (len < 2 || len - 1 > GeoHashes.MAX_STRING_LENGTH || tok.charAt(0) != '#') {
-            return false;
-        }
-        return GeoHashes.isValidChars(tok, 1);
-    }
-
-    public static boolean isBitsGeoHashConstant(CharSequence tok) {
-        int len = tok.length();
-        if (len < 3 || len - 2 > GeoHashes.MAX_BITS_LENGTH || tok.charAt(0) != '#' || tok.charAt(1) != '#') {
-            return false;
-        }
-        return GeoHashes.isValidBits(tok, 2);
-    }
-
-    public static boolean isCharsGeoHashConstantIgnorePrefix(CharSequence tok) {
-        int len = tok.length();
-        if (len < 1) {
-            return false;
-        }
-        int start = tok.charAt(0) == '#' ? 1 : 0;
-        if (len - start > GeoHashes.MAX_STRING_LENGTH) {
-            return false;
-        }
-        return GeoHashes.isValidChars(tok, start);
-    }
-
-    public static boolean isBitsGeoHashConstantIgnorePrefix(CharSequence tok) {
-        int len = tok.length();
-        if (len < 1) {
-            return false;
-        }
-        int start = tok.charAt(0) == '#' && len > 2 && tok.charAt(1) == '#' ? 2 : 0;
-        if (len - start > GeoHashes.MAX_BITS_LENGTH) {
-            return false;
-        }
-        return GeoHashes.isValidBits(tok, start);
     }
 
     public static boolean isByKeyword(CharSequence tok) {

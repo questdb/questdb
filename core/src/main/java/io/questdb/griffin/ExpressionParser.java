@@ -320,12 +320,12 @@ class ExpressionParser {
                         break;
 
                     case '#':
-                        if (SqlKeywords.isCharsGeoHashConstant(tok)) { // e.g. #sp052w92p1p8[/bits]
+                        if (GenericLexer.isGeoHashCharsConstant(tok)) { // e.g. #sp052w92p1p8
                             thisBranch = BRANCH_CONSTANT;
                             CharSequence geohashTok = GenericLexer.immutableOf(tok);
-                            // optional / bits
+                            // optional / bits '/dd', '/d'
                             CharSequence slash = SqlUtil.fetchNext(lexer);
-                            if (slash == null || slash.charAt(0) != '/') {
+                            if (slash == null || slash.charAt(0) != 47) { // '/'
                                 lexer.unparse();
                                 opStack.push(expressionNodePool.next().of(
                                         ExpressionNode.CONSTANT,
@@ -346,9 +346,13 @@ class ExpressionParser {
                             break;
                         }
 
-                        if (SqlKeywords.isBitsGeoHashConstant(tok)) { // e.g. ##01110001
+                        if (GenericLexer.isGeoHashBitsConstant(tok)) { // e.g. ##01110001
                             thisBranch = BRANCH_CONSTANT;
-                            opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, position));
+                            opStack.push(expressionNodePool.next().of(
+                                    ExpressionNode.CONSTANT,
+                                    GenericLexer.immutableOf(tok),
+                                    Integer.MIN_VALUE,
+                                    position));
                             break;
                         }
 
