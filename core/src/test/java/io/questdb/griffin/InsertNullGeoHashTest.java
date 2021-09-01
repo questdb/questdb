@@ -82,7 +82,7 @@ public class InsertNullGeoHashTest extends AbstractGriffinTest {
                         "geohash " + queryExtra,
                         String.format(
                                 "create table geohash (geohash %s)",
-                                ColumnType.nameOf(ColumnType.geohashWithPrecision(b))),
+                                ColumnType.nameOf(ColumnType.getGeoHashTypeWithBits(b))),
                         null,
                         String.format(
                                 "insert into geohash select null from long_sequence(%d)",

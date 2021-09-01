@@ -45,8 +45,6 @@ public class GeoHashes {
     public static final long NULL = -1L;
     public static final int MAX_BITS_LENGTH = 60;
     public static final int MAX_STRING_LENGTH = 12;
-    private static final int[] GEO_TYPE_SIZE_POW2 = new int[MAX_BITS_LENGTH + 1];
-
     static final byte[] base32Indexes = {
             0, 1, 2, 3, 4, 5, 6, 7,         // 30-37, '0'..'7'
             8, 9, -1, -1, -1, -1, -1, -1,   // 38-2F, '8','9'
@@ -59,20 +57,14 @@ public class GeoHashes {
             21, 22, 23, 24, 25, 26, 27, 28, // 70-77, 'p'..'w'
             29, 30, 31                      // 78-7A, 'x'..'z'
     };
+    private static final int[] GEO_TYPE_SIZE_POW2 = new int[MAX_BITS_LENGTH + 1];
 
-    private static final int BITS_OFFSET = 8;
     private static final char[] base32 = {
             '0', '1', '2', '3', '4', '5', '6', '7',
             '8', '9', 'b', 'c', 'd', 'e', 'f', 'g',
             'h', 'j', 'k', 'm', 'n', 'p', 'q', 'r',
             's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
     };
-
-    static {
-        for (int bits = 1; bits <= MAX_BITS_LENGTH; bits++) {
-            GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
-        }
-    }
 
     public static long bitmask(int count, int shift) {
         // e.g. 3, 4 -> 1110000
@@ -134,6 +126,52 @@ public class GeoHashes {
         return result;
     }
 
+    public static long fromString(CharSequence hash, int start, int end) throws NumericException {
+        // no bounds/length/nullity checks
+        long geohash = 0;
+        for (int i = start; i < end; ++i) {
+            geohash = appendChar(geohash, hash.charAt(i));
+        }
+        return geohash;
+    }
+
+    public static long fromStringNl(CharSequence geohash, int start, int length) throws NumericException {
+        if (length <= 0 || geohash == null || geohash.length() == 0) {
+            return GeoHashes.NULL;
+        }
+        return fromString(geohash, start, start + (Math.min(length, MAX_STRING_LENGTH)));
+    }
+
+    public static void fromStringToBits(final CharSequenceHashSet prefixes, int columnType, final DirectLongList prefixesBits) {
+        prefixesBits.clear();
+        final int columnSize = ColumnType.sizeOf(columnType);
+        final int columnBits = ColumnType.getGeoHashBits(columnType);
+        for (int i = 0, sz = prefixes.size(); i < sz; i++) {
+            try {
+                final CharSequence prefix = prefixes.get(i);
+                if (prefix == null || prefix.length() == 0) {
+                    continue;
+                }
+                final long hash = fromString(prefix, 0, prefix.length());
+                final int bits = 5 * prefix.length();
+                final int shift = columnBits - bits;
+                long norm = hash << shift;
+                long mask = bitmask(bits, shift);
+                mask |= 1L << (columnSize * 8 - 1); // set the most significant bit to ignore null from prefix matching
+                // if the prefix is more precise than hashes,
+                // exclude it from matching
+                if (bits > columnBits) {
+                    norm = 0L;
+                    mask = -1L;
+                }
+                prefixesBits.add(norm);
+                prefixesBits.add(mask);
+            } catch (NumericException e) {
+                // Skip invalid geo hashes
+            }
+        }
+    }
+
     public static long fromStringTruncatingNl(CharSequence hash, int start, int end, int bits) throws NumericException {
         if (start == end) {
             return NULL;
@@ -162,59 +200,16 @@ public class GeoHashes {
         return geohash >>> (actualBits - bits);
     }
 
-    public static long fromStringNl(CharSequence geohash, int start, int length) throws NumericException {
-        if (length <= 0 || geohash == null || geohash.length() == 0) {
-            return GeoHashes.NULL;
-        }
-        return fromString(geohash, start, start + (length <= MAX_STRING_LENGTH ? length : MAX_STRING_LENGTH));
-    }
-
-    public static long fromString(CharSequence hash, int start, int end) throws NumericException {
-        // no bounds/length/nullity checks
-        long geohash = 0;
-        for (int i = start; i < end; ++i) {
-            geohash = appendChar(geohash, hash.charAt(i));
-        }
-        return geohash;
-    }
-
-    private static long appendChar(long geohash, char c) throws NumericException {
-        if (c >= 48 && c < 123) { // 123 = base32Indexes.length + 48
-            byte idx = base32Indexes[c - 48];
-            if (idx >= 0) {
-                return (geohash << 5) | idx;
-            }
-        }
-        throw NumericException.INSTANCE;
-    }
-
-    public static void fromStringToBits(final CharSequenceHashSet prefixes, int columnType, final DirectLongList prefixesBits) {
-        prefixesBits.clear();
-        final int columnSize = ColumnType.sizeOf(columnType);
-        final int columnBits = GeoHashes.getBitsPrecision(columnType);
-        for (int i = 0, sz = prefixes.size(); i < sz; i++) {
-            try {
-                final CharSequence prefix = prefixes.get(i);
-                if (prefix == null || prefix.length() == 0) {
-                    continue;
-                }
-                final long hash = fromString(prefix, 0, prefix.length());
-                final int bits = 5 * prefix.length();
-                final int shift = columnBits - bits;
-                long norm = hash << shift;
-                long mask = bitmask(bits, shift);
-                mask |= 1L << (columnSize * 8 - 1); // set the most significant bit to ignore null from prefix matching
-                // if the prefix is more precise than hashes,
-                // exclude it from matching
-                if (bits > columnBits) {
-                    norm = 0L;
-                    mask = -1L;
-                }
-                prefixesBits.add(norm);
-                prefixesBits.add(mask);
-            } catch (NumericException e) {
-                // Skip invalid geo hashes
-            }
+    public static long getGeoLong(int type, Function func, Record rec) {
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.GEOBYTE:
+                return func.getGeoHashByte(rec);
+            case ColumnType.GEOSHORT:
+                return func.getGeoHashShort(rec);
+            case ColumnType.GEOINT:
+                return func.getGeoHashInt(rec);
+            default:
+                return func.getGeoHashLong(rec);
         }
     }
 
@@ -222,37 +217,22 @@ public class GeoHashes {
         return (int) (hashz >>> MAX_BITS_LENGTH);
     }
 
-    public static long toHash(long hashz) {
-        return hashz & 0x0fffffffffffffffL;
+    public static int pow2SizeOf(int columnType) {
+        assert ColumnType.tagOf(columnType) == ColumnType.GEOHASH;
+        int bits = ColumnType.getGeoHashBits(columnType);
+        return pow2SizeOfBits(bits);
     }
 
-    public static long toHashWithSize(long hash, int length) {
-        return (((long) length) << 60L) + hash;
-    }
-
-    public static int getBitsPrecision(int type) {
-        assert ColumnType.tagOf(type) == ColumnType.GEOHASH; // This maybe relaxed in the future
-        return (byte) ((type >> BITS_OFFSET) & 0xFF);
-    }
-
-    public static int setBitsPrecision(int type, int bits) {
-        return (type & ~(0xFF << 8)) | (Byte.toUnsignedInt((byte) bits) << 8);
+    public static int pow2SizeOfBits(int bits) {
+        assert bits <= MAX_BITS_LENGTH;
+        return GEO_TYPE_SIZE_POW2[bits];
     }
 
     public static int sizeOf(int columnType) {
         assert ColumnType.tagOf(columnType) == ColumnType.GEOHASH;
-        int bits = getBitsPrecision(columnType);
+        int bits = ColumnType.getGeoHashBits(columnType);
         if (bits <= MAX_BITS_LENGTH && bits > 0) {
             return 1 << GEO_TYPE_SIZE_POW2[bits];
-        }
-        return -1; // Corrupt metadata
-    }
-
-    public static int pow2SizeOf(int columnType) {
-        assert ColumnType.tagOf(columnType) == ColumnType.GEOHASH;
-        int bits = getBitsPrecision(columnType);
-        if (bits <= MAX_BITS_LENGTH) {
-            return GEO_TYPE_SIZE_POW2[bits];
         }
         return -1; // Corrupt metadata
     }
@@ -268,7 +248,16 @@ public class GeoHashes {
         }
     }
 
+    public static long toHash(long hashz) {
+        return hashz & 0x0fffffffffffffffL;
+    }
+
+    public static long toHashWithSize(long hash, int length) {
+        return (((long) length) << 60L) + hash;
+    }
+
     public static void toString(long hash, int chars, CharSink sink) {
+        // todo: null check could be optional here
         if (hash != NULL) {
             // Below assertion can happen if there is corrupt metadata
             // which should not happen in production code since reader and writer check table metadata
@@ -279,16 +268,19 @@ public class GeoHashes {
         }
     }
 
-    public static long getGeoLong(int type, Function func, Record rec) {
-        switch (ColumnType.sizeOf(type)) {
-            case Byte.BYTES:
-                return func.getGeoHashByte(rec);
-            case Short.BYTES:
-                return func.getGeoHashShort(rec);
-            case Integer.BYTES:
-                return func.getGeoHashInt(rec);
-            default:
-                return func.getGeoHashLong(rec);
+    private static long appendChar(long hash, char c) throws NumericException {
+        if (c >= 48 && c < 123) { // 123 = base32Indexes.length + 48
+            byte idx = base32Indexes[c - 48];
+            if (idx >= 0) {
+                return (hash << 5) | idx;
+            }
+        }
+        throw NumericException.INSTANCE;
+    }
+
+    static {
+        for (int bits = 1; bits <= MAX_BITS_LENGTH; bits++) {
+            GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
         }
     }
 }

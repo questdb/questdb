@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
@@ -32,18 +31,12 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
-public abstract class GeoHashFunction implements ScalarFunction {
+public abstract class AbstractGeoHashFunction implements ScalarFunction {
 
     protected int type; // +number bits
 
-    protected GeoHashFunction(int type) {
-        assert ColumnType.GEOHASH == ColumnType.tagOf(type);
+    protected AbstractGeoHashFunction(int type) {
         this.type = type;
-    }
-
-    @Override
-    public final char getChar(Record rec) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -67,12 +60,12 @@ public abstract class GeoHashFunction implements ScalarFunction {
     }
 
     @Override
-    public final long getDate(Record rec) {
+    public final char getChar(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final long getLong(Record rec) {
+    public final long getDate(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -92,6 +85,26 @@ public abstract class GeoHashFunction implements ScalarFunction {
     }
 
     @Override
+    public final long getLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final void getLong256(Record rec, CharSink sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final Long256 getLong256A(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final Long256 getLong256B(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
     }
@@ -102,12 +115,17 @@ public abstract class GeoHashFunction implements ScalarFunction {
     }
 
     @Override
-    public final CharSequence getStrB(Record rec) {
+    public final String getStr(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final String getStr(Record rec) {
+    public final void getStr(Record rec, CharSink sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final CharSequence getStrB(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -128,26 +146,6 @@ public abstract class GeoHashFunction implements ScalarFunction {
 
     @Override
     public final long getTimestamp(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final Long256 getLong256A(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final Long256 getLong256B(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final void getLong256(Record rec, CharSink sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final void getStr(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
     }
 

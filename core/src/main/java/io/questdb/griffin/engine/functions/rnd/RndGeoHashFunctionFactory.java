@@ -33,10 +33,27 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.GeoHashFunction;
-import io.questdb.std.*;
+import io.questdb.griffin.engine.functions.GeoByteFunction;
+import io.questdb.griffin.engine.functions.GeoIntFunction;
+import io.questdb.griffin.engine.functions.GeoLongFunction;
+import io.questdb.griffin.engine.functions.GeoShortFunction;
+import io.questdb.std.IntList;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 
 public class RndGeoHashFunctionFactory implements FunctionFactory {
+
+    public static long nextGeoHash(Rnd rnd, int bits) {
+        double x = rnd.nextDouble() * 180.0 - 90.0;
+        double y = rnd.nextDouble() * 360.0 - 180.0;
+        try {
+            return GeoHashes.fromCoordinates(x, y, bits);
+        } catch (NumericException e) {
+            // Should never happen
+            return GeoHashes.NULL;
+        }
+    }
 
     @Override
     public String getSignature() {
@@ -53,28 +70,27 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         if (bits < 1 || bits > GeoHashes.MAX_BITS_LENGTH) {
             throw SqlException.$(argPositions.getQuick(0), "precision must be in [1..60] range");
         }
-        return new RndFunction(bits);
-    }
-
-    public static long nextGeoHash(Rnd rnd, int bits) {
-        double x = rnd.nextDouble() * 180.0 - 90.0;
-        double y = rnd.nextDouble() * 360.0 - 180.0;
-        try {
-            return GeoHashes.fromCoordinates(x, y, bits);
-        } catch (NumericException e) {
-            // Should never happen
-            return GeoHashes.NULL;
+        final int type = ColumnType.getGeoHashTypeWithBits(bits);
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.GEOBYTE:
+                return new RndByteFunction(type);
+            case ColumnType.GEOSHORT:
+                return new RndShortFunction(type);
+            case ColumnType.GEOINT:
+                return new RndIntFunction(type);
+            default:
+                return new RndLongFunction(type);
         }
     }
 
-    private static class RndFunction extends GeoHashFunction implements Function {
+    private static class RndByteFunction extends GeoByteFunction implements Function {
 
         private final int bits;
         private Rnd rnd;
 
-        public RndFunction(int bits) {
-            super(ColumnType.geohashWithPrecision(bits));
-            this.bits = bits;
+        public RndByteFunction(int type) {
+            super(type);
+            this.bits = ColumnType.getGeoHashBits(type);
         }
 
         @Override
@@ -83,13 +99,66 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
+        }
+    }
+
+    private static class RndShortFunction extends GeoShortFunction implements Function {
+
+        private final int bits;
+        private Rnd rnd;
+
+        public RndShortFunction(int type) {
+            super(type);
+            this.bits = ColumnType.getGeoHashBits(type);
+        }
+
+        @Override
         public short getGeoHashShort(Record rec) {
             return (short) nextGeoHash(rnd, bits);
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
+        }
+    }
+
+    private static class RndIntFunction extends GeoIntFunction implements Function {
+
+        private final int bits;
+        private Rnd rnd;
+
+        public RndIntFunction(int type) {
+            super(type);
+            this.bits = ColumnType.getGeoHashBits(type);
+        }
+
+        @Override
         public int getGeoHashInt(Record rec) {
             return (int) nextGeoHash(rnd, bits);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public short getGeoHashShort(Record rec) {
+            return (byte) nextGeoHash(rnd, bits);
+        }
+    }
+
+    private static class RndLongFunction extends GeoLongFunction implements Function {
+
+        private final int bits;
+        private Rnd rnd;
+
+        public RndLongFunction(int type) {
+            super(type);
+            this.bits = ColumnType.getGeoHashBits(type);
         }
 
         @Override
@@ -100,6 +169,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public short getGeoHashShort(Record rec) {
+            return (byte) nextGeoHash(rnd, bits);
         }
     }
 }

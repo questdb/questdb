@@ -54,6 +54,7 @@ void MULTI_VERSION_NAME (filter_with_prefix)(
         const int64_t prefixes_count,
         int64_t *out_filtered_count
 ) {
+    EBADF;
     switch (hashes_type_size) {
         case 1:
             filter_with_prefix_generic<int8_t, Vec64c, Vec64cb>(

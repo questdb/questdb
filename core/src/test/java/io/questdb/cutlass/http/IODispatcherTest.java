@@ -141,7 +141,7 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void queryWithDoubleQuotesParsedCorrecly() throws Exception {
+    public void queryWithDoubleQuotesParsedCorrectly() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
                 .withWorkerCount(1)

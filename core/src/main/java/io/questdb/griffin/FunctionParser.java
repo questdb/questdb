@@ -112,8 +112,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 return TimestampColumn.newInstance(index);
             case ColumnType.RECORD:
                 return new RecordColumn(index, metadata.getMetadata(index));
-            case ColumnType.GEOHASH:
-                return GeoHashColumn.newInstance(index, columnType);
+            case ColumnType.GEOBYTE:
+                return new GeoByteColumn(index, columnType);
+            case ColumnType.GEOSHORT:
+                return new GeoShortColumn(index, columnType);
+            case ColumnType.GEOINT:
+                return new GeoIntColumn(index, columnType);
+            case ColumnType.GEOLONG:
+                return new GeoLongColumn(index, columnType);
             case ColumnType.NULL:
                 return NullConstant.NULL;
             case ColumnType.LONG256:
@@ -461,7 +467,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
         // geohash?
         if (startsWithGeoHashKeyword(tok)) {
-            int bits = SqlParser.parseGeoHashSize(position, 7, tok);
+            int bits = SqlParser.parseGeoHashBits(position, 7, tok);
             return GeoHashTypeConstant.getInstanceByPrecision(bits);
         }
 
@@ -559,7 +565,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     final short argTypeTag = ColumnType.tagOf(argType);
                     final short sigArgTypeTag = ColumnType.tagOf(sigArgType);
 
-                    if (sigArgTypeTag == argTypeTag) {
+                    if (sigArgTypeTag == argTypeTag || (sigArgTypeTag == ColumnType.GEOHASH && ColumnType.isGeoHash(argType))) {
                         switch (match) {
                             case MATCH_NO_MATCH: // was it no match
                                 match = MATCH_EXACT_MATCH;
@@ -774,20 +780,29 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 } else {
                     return new Long256Constant(function.getLong256A(null));
                 }
-            case ColumnType.GEOHASH:
-                if (function instanceof GeoHashConstant) {
+            case ColumnType.GEOBYTE:
+                if (function instanceof GeoByteConstant) {
                     return function;
                 } else {
-                    switch (ColumnType.sizeOf(type)) {
-                        case Byte.BYTES:
-                            return GeoHashConstant.newInstance(function.getGeoHashByte(null), type);
-                        case Short.BYTES:
-                            return GeoHashConstant.newInstance(function.getGeoHashShort(null), type);
-                        case Integer.BYTES:
-                            return GeoHashConstant.newInstance(function.getGeoHashInt(null), type);
-                        default:
-                            return GeoHashConstant.newInstance(function.getGeoHashLong(null), type);
-                    }
+                    return new GeoByteConstant(function.getGeoHashByte(null), type);
+                }
+            case ColumnType.GEOSHORT:
+                if (function instanceof GeoShortConstant) {
+                    return function;
+                } else {
+                    return new GeoShortConstant(function.getGeoHashShort(null), type);
+                }
+            case ColumnType.GEOINT:
+                if (function instanceof GeoIntConstant) {
+                    return function;
+                } else {
+                    return new GeoIntConstant(function.getGeoHashInt(null), type);
+                }
+            case ColumnType.GEOLONG:
+                if (function instanceof GeoLongConstant) {
+                    return function;
+                } else {
+                    return new GeoLongConstant(function.getGeoHashLong(null), type);
                 }
             case ColumnType.DATE:
                 if (function instanceof DateConstant) {

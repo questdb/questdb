@@ -30,11 +30,11 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.GeoHashFunction;
+import io.questdb.griffin.engine.functions.GeoByteFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
-class FirstGeoHashGroupByFunctionLong extends GeoHashFunction implements GroupByFunction, UnaryFunction {
+class FirstGeoHashGroupByFunctionLong extends GeoByteFunction implements GroupByFunction, UnaryFunction {
     protected final Function function;
     protected int valueIndex;
 

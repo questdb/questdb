@@ -22,22 +22,33 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
-import org.junit.Assert;
-import org.junit.Test;
+import io.questdb.cairo.sql.Record;
 
-public class GeoHashTypeConstantTest {
+public abstract class GeoShortFunction extends AbstractGeoHashFunction {
 
-    @Test
-    public void testConstant() {
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
-            GeoHashTypeConstant constant = GeoHashTypeConstant.getInstanceByPrecision(b);
-            int type = ColumnType.getGeoHashTypeWithBits(b);
-            Assert.assertEquals(type, constant.getType());
-            Assert.assertEquals(GeoHashes.NULL, GeoHashes.getGeoLong(type, constant,null));
-        }
+    protected GeoShortFunction(int type) {
+        super(type);
+    }
+
+    @Override
+    public byte getGeoHashByte(Record rec) {
+        return (byte) ColumnType.getHashTruncateUsingBits(
+                getGeoHashShort(rec),
+                ColumnType.getGeoHashBits(type),
+                Byte.SIZE - 1
+        );
+    }
+
+    @Override
+    public int getGeoHashInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final long getGeoHashLong(Record rec) {
+        throw new UnsupportedOperationException();
     }
 }

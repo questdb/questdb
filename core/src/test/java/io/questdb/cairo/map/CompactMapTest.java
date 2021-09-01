@@ -424,10 +424,10 @@ public class CompactMapTest extends AbstractCairoTest {
                                 .add(ColumnType.DATE)
                                 .add(ColumnType.TIMESTAMP)
                                 .add(ColumnType.BOOLEAN)
-                                .add(ColumnType.geohashWithPrecision(5))
-                                .add(ColumnType.geohashWithPrecision(10))
-                                .add(ColumnType.geohashWithPrecision(20))
-                                .add(ColumnType.geohashWithPrecision(40))
+                                .add(ColumnType.getGeoHashTypeWithBits(5))
+                                .add(ColumnType.getGeoHashTypeWithBits(10))
+                                .add(ColumnType.getGeoHashTypeWithBits(20))
+                                .add(ColumnType.getGeoHashTypeWithBits(40))
                         ,
                         N,
                         0.9,
@@ -473,7 +473,7 @@ public class CompactMapTest extends AbstractCairoTest {
     public void testGeoHashValueAccess() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int precisionBits = 10;
-            int geohashType = ColumnType.geohashWithPrecision(precisionBits);
+            int geohashType = ColumnType.getGeoHashTypeWithBits(precisionBits);
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
                 model
                         .col("a", ColumnType.LONG)

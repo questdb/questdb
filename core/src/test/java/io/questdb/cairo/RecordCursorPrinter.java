@@ -43,11 +43,6 @@ public class RecordCursorPrinter {
         this.delimiter = '\t';
     }
 
-    public RecordCursorPrinter withTypes(boolean enabled) {
-        this.printTypes = enabled;
-        return this;
-    }
-
     public void print(RecordCursor cursor, RecordMetadata metadata, boolean header, CharSink sink) {
         if (header) {
             printHeader(metadata, sink);
@@ -81,12 +76,15 @@ public class RecordCursorPrinter {
         sink.flush();
     }
 
-    public void printRecordNoNl(Record r, RecordMetadata m, CharSink sink) {
-        for (int i = 0, sz = m.getColumnCount(); i < sz; i++) {
-            if (i > 0) {
-                sink.put(delimiter);
-            }
-            printColumn(r, m, i, sink);
+    public void printFullColumn(RecordCursor cursor, RecordMetadata metadata, int i, boolean header, CharSink sink) {
+        if (header) {
+            printHeader(metadata, sink);
+        }
+
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            printColumn(record, metadata, i, sink);
+            sink.put('\n');
         }
     }
 
@@ -104,16 +102,18 @@ public class RecordCursorPrinter {
         }
     }
 
-    public void printFullColumn(RecordCursor cursor, RecordMetadata metadata, int i, boolean header, CharSink sink) {
-        if (header) {
-            printHeader(metadata, sink);
+    public void printRecordNoNl(Record r, RecordMetadata m, CharSink sink) {
+        for (int i = 0, sz = m.getColumnCount(); i < sz; i++) {
+            if (i > 0) {
+                sink.put(delimiter);
+            }
+            printColumn(r, m, i, sink);
         }
+    }
 
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            printColumn(record, metadata, i, sink);
-            sink.put('\n');
-        }
+    public RecordCursorPrinter withTypes(boolean enabled) {
+        this.printTypes = enabled;
+        return this;
     }
 
     protected void printColumn(Record r, RecordMetadata m, int i, CharSink sink) {
@@ -155,17 +155,20 @@ public class RecordCursorPrinter {
             case ColumnType.LONG:
                 sink.put(r.getLong(i));
                 break;
-            case ColumnType.GEOHASH:
-                int bitsPrecision = GeoHashes.getBitsPrecision(m.getColumnType(i));
-                long hash = getGeoHash(r, i, m.getColumnType(i));
-                if (hash == GeoHashes.NULL) {
-                    break; // optimisation
+            case ColumnType.GEOBYTE:
+                putGeoHash(r.getGeoHashByte(i), ColumnType.getGeoHashBits(columnType), sink);
+                break;
+            case ColumnType.GEOSHORT:
+                putGeoHash(r.getGeoHashShort(i), ColumnType.getGeoHashBits(columnType), sink);
+                break;
+            case ColumnType.GEOINT:
+                putGeoHash(r.getGeoHashInt(i), ColumnType.getGeoHashBits(columnType), sink);
+                break;
+            case ColumnType.GEOLONG:
+                if (ColumnType.getGeoHashBits(columnType) > 60) {
+                    System.out.println("ok");
                 }
-                if (bitsPrecision % 5 == 0) {
-                    GeoHashes.toString(hash, bitsPrecision / 5, sink);
-                } else {
-                    GeoHashes.toBitString(hash, bitsPrecision, sink);
-                }
+                putGeoHash(r.getGeoHashLong(i), ColumnType.getGeoHashBits(columnType), sink);
                 break;
             case ColumnType.BYTE:
                 sink.put(r.getByte(i));
@@ -187,16 +190,15 @@ public class RecordCursorPrinter {
         }
     }
 
-    private long getGeoHash(Record r, int column, int columnType) {
-        switch (ColumnType.sizeOf(columnType)) {
-            case 1:
-                return r.getGeoHashByte(column);
-            case 2:
-                return r.getGeoHashShort(column);
-            case 4:
-                return r.getGeoHashInt(column);
-            default:
-                return r.getGeoHashLong(column);
+    // todo: add this method to sink
+    private void putGeoHash(long hash, int bits, CharSink sink) {
+        if (hash == GeoHashes.NULL) {
+            return;
+        }
+        if (bits % 5 == 0) {
+            GeoHashes.toString(hash, bits / 5, sink);
+        } else {
+            GeoHashes.toBitString(hash, bits, sink);
         }
     }
 }

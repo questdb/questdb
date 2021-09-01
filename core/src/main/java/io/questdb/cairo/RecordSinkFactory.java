@@ -103,7 +103,7 @@ public class RecordSinkFactory {
             final int factor = columnFilter.getIndexFactor(index);
             index = (index * factor - 1);
             final int type = columnTypes.getColumnType(index);
-            switch (factor * ColumnType.storageTag(type)) {
+            switch (factor * ColumnType.tagOf(type)) {
                 case ColumnType.INT:
                     asm.aload(2);
                     asm.aload(1);

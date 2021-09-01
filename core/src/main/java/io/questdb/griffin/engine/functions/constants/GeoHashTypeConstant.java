@@ -28,9 +28,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
-import io.questdb.griffin.engine.functions.GeoHashFunction;
+import io.questdb.griffin.engine.functions.GeoByteFunction;
 
-public class GeoHashTypeConstant extends GeoHashFunction implements TypeConstant {
+public class GeoHashTypeConstant extends GeoByteFunction implements TypeConstant {
     private final static GeoHashTypeConstant[] INSTANCES = new GeoHashTypeConstant[GeoHashes.MAX_BITS_LENGTH];
 
     @Override
@@ -55,7 +55,7 @@ public class GeoHashTypeConstant extends GeoHashFunction implements TypeConstant
 
     static {
         for(int i = 0; i < GeoHashes.MAX_BITS_LENGTH; i++) {
-            INSTANCES[i] = new GeoHashTypeConstant(ColumnType.geohashWithPrecision(i + 1));
+            INSTANCES[i] = new GeoHashTypeConstant(ColumnType.getGeoHashTypeWithBits(i + 1));
         }
     }
 

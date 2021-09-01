@@ -451,7 +451,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
             int columnIdx = columnSkewList.size() > 0 ? columnSkewList.getQuick(columnIndex) : columnIndex;
             int columnType = columnTypesAndFlags.getQuick(2 * columnIndex);
-            switch (ColumnType.storageTag(columnType)) {
+            switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.BOOLEAN:
                     putBooleanValue(socket, record, columnIdx);
                     break;
@@ -637,8 +637,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
 
         int flags = 0;
-        if (ColumnType.tagOf(columnType) == ColumnType.GEOHASH) {
-            int bitSize = GeoHashes.getBitsPrecision(columnType);
+        int bitSize = ColumnType.getGeoHashBits(columnType);
+        if (bitSize > 0) {
             if (bitSize % 5 == 0) {
                 // It's 5 bit per char. If it's integer number of chars value to be serialized as chars
                 flags = -bitSize / 5;

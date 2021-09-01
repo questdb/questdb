@@ -109,7 +109,7 @@ public class GeoHashNativeTest {
             GeoHashes.toString(h, prec, sink);
             strh.add(sink);
         }
-        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap * 5), bits);
+        GeoHashes.fromStringToBits(strh, ColumnType.getGeoHashTypeWithBits(cap * 5), bits);
         for (int i = 0; i < bits.size() / 2; i += 2) {
             final long b = bits.get(i);
             final long m = bits.get(i + 1);
@@ -127,7 +127,7 @@ public class GeoHashNativeTest {
         strh.add("$invalid");
         strh.add("questdb.10");
 
-        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap * 5), bits);
+        GeoHashes.fromStringToBits(strh, ColumnType.getGeoHashTypeWithBits(cap * 5), bits);
         Assert.assertEquals(0, bits.size());
     }
 
@@ -138,7 +138,7 @@ public class GeoHashNativeTest {
         CharSequenceHashSet strh = new CharSequenceHashSet();
         strh.add("questdb");
 
-        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap * 5), bits);
+        GeoHashes.fromStringToBits(strh, ColumnType.getGeoHashTypeWithBits(cap * 5), bits);
         Assert.assertEquals(2, bits.size());
     }
 
@@ -149,7 +149,7 @@ public class GeoHashNativeTest {
         CharSequenceHashSet strh = new CharSequenceHashSet();
         strh.add("");
         strh.add("a medium sized banana");
-        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap * 5), bits);
+        GeoHashes.fromStringToBits(strh, ColumnType.getGeoHashTypeWithBits(cap * 5), bits);
         Assert.assertEquals(0, bits.size());
     }
 

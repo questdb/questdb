@@ -2755,7 +2755,7 @@ public class JoinTest extends AbstractGriffinTest {
                         "3\t6\t9\t3\t6\t9\t15\n");
     }
 
-    private void testJoinWithGeohash() throws Exception {
+    private void testJoinWithGeoHash() throws Exception {
         testFullFat(() -> assertMemoryLeak(() -> {
             final String query = "with x1 as (select distinct * from x)," +
                     "y1 as (select distinct * from y) " +
@@ -3777,7 +3777,7 @@ public class JoinTest extends AbstractGriffinTest {
     @Test
     public void testJoinWithGeohashCompactMap() throws Exception {
         defaultMapType = "compact";
-        testJoinWithGeohash();
+        testJoinWithGeoHash();
     }
 
     @Test
@@ -3789,7 +3789,7 @@ public class JoinTest extends AbstractGriffinTest {
     @Test
     public void testJoinWithGeohashFastMap() throws Exception {
         defaultMapType = "fast";
-        testJoinWithGeohash();
+        testJoinWithGeoHash();
     }
 
     @Test

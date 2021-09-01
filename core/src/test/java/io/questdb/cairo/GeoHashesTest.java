@@ -36,69 +36,60 @@ public class GeoHashesTest {
 
     @Test
     public void testBitsPrecision() {
-        Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(ColumnType.GEOHASH));
-        Assert.assertEquals(0, GeoHashes.getBitsPrecision(ColumnType.GEOHASH));
-
-        int geohashCol = ColumnType.geohashWithPrecision(42);
-        Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(geohashCol));
-        Assert.assertEquals(42, GeoHashes.getBitsPrecision(geohashCol));
-        geohashCol = ColumnType.geohashWithPrecision(24);
-        Assert.assertEquals(24, GeoHashes.getBitsPrecision(geohashCol));
+        int geoHashCol = ColumnType.getGeoHashTypeWithBits(42);
+        Assert.assertEquals(ColumnType.GEOLONG, ColumnType.tagOf(geoHashCol));
+        Assert.assertEquals(42, ColumnType.getGeoHashBits(geoHashCol));
+        geoHashCol = ColumnType.getGeoHashTypeWithBits(24);
+        Assert.assertEquals(ColumnType.GEOINT, ColumnType.tagOf(geoHashCol));
+        Assert.assertEquals(24, ColumnType.getGeoHashBits(geoHashCol));
     }
 
     @Test
-    public void testBitsPrecisionNeg() {
-        Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(ColumnType.GEOHASH));
-        Assert.assertEquals(0, GeoHashes.getBitsPrecision(ColumnType.GEOHASH));
+    public void testGeoHashTypesValuesAreValid() {
+        Assert.assertEquals(ColumnType.GEOBYTE, ColumnType.tagOf(ColumnType.GEOBYTE));
+        Assert.assertEquals(0, ColumnType.getGeoHashBits(ColumnType.GEOBYTE));
 
-        int geohashCol = GeoHashes.setBitsPrecision(ColumnType.GEOHASH, -5);
-        Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(geohashCol));
-        Assert.assertEquals(-5, GeoHashes.getBitsPrecision(geohashCol));
-        geohashCol = GeoHashes.setBitsPrecision(geohashCol, 24);
-        Assert.assertEquals(24, GeoHashes.getBitsPrecision(geohashCol));
-        geohashCol = GeoHashes.setBitsPrecision(geohashCol, -12);
-        Assert.assertEquals(-12, GeoHashes.getBitsPrecision(geohashCol));
+        Assert.assertEquals(ColumnType.GEOSHORT, ColumnType.tagOf(ColumnType.GEOSHORT));
+        Assert.assertEquals(0, ColumnType.getGeoHashBits(ColumnType.GEOSHORT));
+
+        Assert.assertEquals(ColumnType.GEOINT, ColumnType.tagOf(ColumnType.GEOINT));
+        Assert.assertEquals(0, ColumnType.getGeoHashBits(ColumnType.GEOINT));
+
+        Assert.assertEquals(ColumnType.GEOLONG, ColumnType.tagOf(ColumnType.GEOLONG));
+        Assert.assertEquals(0, ColumnType.getGeoHashBits(ColumnType.GEOLONG));
     }
 
     @Test
     public void testStorageSize() {
-        Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(ColumnType.GEOHASH));
-        Assert.assertEquals(0, GeoHashes.getBitsPrecision(ColumnType.GEOHASH));
+        int geoHashType = ColumnType.getGeoHashTypeWithBits(42);
+        Assert.assertEquals(ColumnType.GEOLONG, ColumnType.tagOf(geoHashType));
+        Assert.assertEquals(42, ColumnType.getGeoHashBits(geoHashType));
 
-        int geohashCol = ColumnType.geohashWithPrecision(42);
-        Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(geohashCol));
-        Assert.assertEquals(64 / 8, GeoHashes.sizeOf(geohashCol));
-        Assert.assertEquals(3, GeoHashes.pow2SizeOf(geohashCol));
+        geoHashType = ColumnType.getGeoHashTypeWithBits(16);
+        Assert.assertEquals(ColumnType.GEOINT, ColumnType.tagOf(geoHashType));
+        Assert.assertEquals(16, ColumnType.getGeoHashBits(geoHashType));
 
-        geohashCol = ColumnType.geohashWithPrecision(24);
-        Assert.assertEquals(32 / 8, GeoHashes.sizeOf(geohashCol));
-        Assert.assertEquals(2, GeoHashes.pow2SizeOf(geohashCol));
+        geoHashType = ColumnType.getGeoHashTypeWithBits(8);
+        Assert.assertEquals(ColumnType.GEOSHORT, ColumnType.tagOf(geoHashType));
+        Assert.assertEquals(8, ColumnType.getGeoHashBits(geoHashType));
 
-        geohashCol = ColumnType.geohashWithPrecision(13);
-        Assert.assertEquals(16 / 8, GeoHashes.sizeOf(geohashCol));
-        Assert.assertEquals(1, GeoHashes.pow2SizeOf(geohashCol));
-
-        geohashCol = ColumnType.geohashWithPrecision(7);
-        Assert.assertEquals(1, GeoHashes.sizeOf(geohashCol));
-        Assert.assertEquals(0, GeoHashes.pow2SizeOf(geohashCol));
+        geoHashType = ColumnType.getGeoHashTypeWithBits(7);
+        Assert.assertEquals(ColumnType.GEOBYTE, ColumnType.tagOf(geoHashType));
+        Assert.assertEquals(7, ColumnType.getGeoHashBits(geoHashType));
     }
 
     @Test
     public void testStorageSizeWithNull() {
         for (int i = 1; i < 61; i++) {
-            int geohashCol = ColumnType.geohashWithPrecision(i);
+            final int type = ColumnType.getGeoHashTypeWithBits(i);
             if (i < 8) {
-                Assert.assertEquals(1, GeoHashes.sizeOf(geohashCol));
-                Assert.assertEquals(0, GeoHashes.pow2SizeOf(geohashCol));
+                Assert.assertEquals(ColumnType.GEOBYTE, ColumnType.tagOf(type));
             } else if (i < 16) {
-                Assert.assertEquals(2, GeoHashes.sizeOf(geohashCol));
-                Assert.assertEquals(1, GeoHashes.pow2SizeOf(geohashCol));
+                Assert.assertEquals(ColumnType.GEOSHORT, ColumnType.tagOf(type));
             } else if (i < 32) {
-                Assert.assertEquals(4, GeoHashes.sizeOf(geohashCol));
-                Assert.assertEquals(2, GeoHashes.pow2SizeOf(geohashCol));
+                Assert.assertEquals(ColumnType.GEOINT, ColumnType.tagOf(type));
             } else {
-                Assert.assertEquals(8, GeoHashes.sizeOf(geohashCol));
-                Assert.assertEquals(3, GeoHashes.pow2SizeOf(geohashCol));
+                Assert.assertEquals(ColumnType.GEOLONG, ColumnType.tagOf(type));
             }
         }
     }
@@ -112,68 +103,68 @@ public class GeoHashesTest {
                 "GEOHASH(1c) -> 1294 (5)\n" +
                 "GEOHASH(6b) -> 1550 (6)\n" +
                 "GEOHASH(7b) -> 1806 (7)\n" +
-                "GEOHASH(8b) -> 2062 (8)\n" +
-                "GEOHASH(9b) -> 2318 (9)\n" +
-                "GEOHASH(2c) -> 2574 (10)\n" +
-                "GEOHASH(11b) -> 2830 (11)\n" +
-                "GEOHASH(12b) -> 3086 (12)\n" +
-                "GEOHASH(13b) -> 3342 (13)\n" +
-                "GEOHASH(14b) -> 3598 (14)\n" +
-                "GEOHASH(3c) -> 3854 (15)\n" +
-                "GEOHASH(16b) -> 4110 (16)\n" +
-                "GEOHASH(17b) -> 4366 (17)\n" +
-                "GEOHASH(18b) -> 4622 (18)\n" +
-                "GEOHASH(19b) -> 4878 (19)\n" +
-                "GEOHASH(4c) -> 5134 (20)\n" +
-                "GEOHASH(21b) -> 5390 (21)\n" +
-                "GEOHASH(22b) -> 5646 (22)\n" +
-                "GEOHASH(23b) -> 5902 (23)\n" +
-                "GEOHASH(24b) -> 6158 (24)\n" +
-                "GEOHASH(5c) -> 6414 (25)\n" +
-                "GEOHASH(26b) -> 6670 (26)\n" +
-                "GEOHASH(27b) -> 6926 (27)\n" +
-                "GEOHASH(28b) -> 7182 (28)\n" +
-                "GEOHASH(29b) -> 7438 (29)\n" +
-                "GEOHASH(6c) -> 7694 (30)\n" +
-                "GEOHASH(31b) -> 7950 (31)\n" +
-                "GEOHASH(32b) -> 8206 (32)\n" +
-                "GEOHASH(33b) -> 8462 (33)\n" +
-                "GEOHASH(34b) -> 8718 (34)\n" +
-                "GEOHASH(7c) -> 8974 (35)\n" +
-                "GEOHASH(36b) -> 9230 (36)\n" +
-                "GEOHASH(37b) -> 9486 (37)\n" +
-                "GEOHASH(38b) -> 9742 (38)\n" +
-                "GEOHASH(39b) -> 9998 (39)\n" +
-                "GEOHASH(8c) -> 10254 (40)\n" +
-                "GEOHASH(41b) -> 10510 (41)\n" +
-                "GEOHASH(42b) -> 10766 (42)\n" +
-                "GEOHASH(43b) -> 11022 (43)\n" +
-                "GEOHASH(44b) -> 11278 (44)\n" +
-                "GEOHASH(9c) -> 11534 (45)\n" +
-                "GEOHASH(46b) -> 11790 (46)\n" +
-                "GEOHASH(47b) -> 12046 (47)\n" +
-                "GEOHASH(48b) -> 12302 (48)\n" +
-                "GEOHASH(49b) -> 12558 (49)\n" +
-                "GEOHASH(10c) -> 12814 (50)\n" +
-                "GEOHASH(51b) -> 13070 (51)\n" +
-                "GEOHASH(52b) -> 13326 (52)\n" +
-                "GEOHASH(53b) -> 13582 (53)\n" +
-                "GEOHASH(54b) -> 13838 (54)\n" +
-                "GEOHASH(11c) -> 14094 (55)\n" +
-                "GEOHASH(56b) -> 14350 (56)\n" +
-                "GEOHASH(57b) -> 14606 (57)\n" +
-                "GEOHASH(58b) -> 14862 (58)\n" +
-                "GEOHASH(59b) -> 15118 (59)\n" +
-                "GEOHASH(12c) -> 15374 (60)\n";
+                "GEOHASH(8b) -> 2063 (8)\n" +
+                "GEOHASH(9b) -> 2319 (9)\n" +
+                "GEOHASH(2c) -> 2575 (10)\n" +
+                "GEOHASH(11b) -> 2831 (11)\n" +
+                "GEOHASH(12b) -> 3087 (12)\n" +
+                "GEOHASH(13b) -> 3343 (13)\n" +
+                "GEOHASH(14b) -> 3599 (14)\n" +
+                "GEOHASH(3c) -> 3855 (15)\n" +
+                "GEOHASH(16b) -> 4112 (16)\n" +
+                "GEOHASH(17b) -> 4368 (17)\n" +
+                "GEOHASH(18b) -> 4624 (18)\n" +
+                "GEOHASH(19b) -> 4880 (19)\n" +
+                "GEOHASH(4c) -> 5136 (20)\n" +
+                "GEOHASH(21b) -> 5392 (21)\n" +
+                "GEOHASH(22b) -> 5648 (22)\n" +
+                "GEOHASH(23b) -> 5904 (23)\n" +
+                "GEOHASH(24b) -> 6160 (24)\n" +
+                "GEOHASH(5c) -> 6416 (25)\n" +
+                "GEOHASH(26b) -> 6672 (26)\n" +
+                "GEOHASH(27b) -> 6928 (27)\n" +
+                "GEOHASH(28b) -> 7184 (28)\n" +
+                "GEOHASH(29b) -> 7440 (29)\n" +
+                "GEOHASH(6c) -> 7696 (30)\n" +
+                "GEOHASH(31b) -> 7952 (31)\n" +
+                "GEOHASH(32b) -> 8209 (32)\n" +
+                "GEOHASH(33b) -> 8465 (33)\n" +
+                "GEOHASH(34b) -> 8721 (34)\n" +
+                "GEOHASH(7c) -> 8977 (35)\n" +
+                "GEOHASH(36b) -> 9233 (36)\n" +
+                "GEOHASH(37b) -> 9489 (37)\n" +
+                "GEOHASH(38b) -> 9745 (38)\n" +
+                "GEOHASH(39b) -> 10001 (39)\n" +
+                "GEOHASH(8c) -> 10257 (40)\n" +
+                "GEOHASH(41b) -> 10513 (41)\n" +
+                "GEOHASH(42b) -> 10769 (42)\n" +
+                "GEOHASH(43b) -> 11025 (43)\n" +
+                "GEOHASH(44b) -> 11281 (44)\n" +
+                "GEOHASH(9c) -> 11537 (45)\n" +
+                "GEOHASH(46b) -> 11793 (46)\n" +
+                "GEOHASH(47b) -> 12049 (47)\n" +
+                "GEOHASH(48b) -> 12305 (48)\n" +
+                "GEOHASH(49b) -> 12561 (49)\n" +
+                "GEOHASH(10c) -> 12817 (50)\n" +
+                "GEOHASH(51b) -> 13073 (51)\n" +
+                "GEOHASH(52b) -> 13329 (52)\n" +
+                "GEOHASH(53b) -> 13585 (53)\n" +
+                "GEOHASH(54b) -> 13841 (54)\n" +
+                "GEOHASH(11c) -> 14097 (55)\n" +
+                "GEOHASH(56b) -> 14353 (56)\n" +
+                "GEOHASH(57b) -> 14609 (57)\n" +
+                "GEOHASH(58b) -> 14865 (58)\n" +
+                "GEOHASH(59b) -> 15121 (59)\n" +
+                "GEOHASH(12c) -> 15377 (60)\n";
         StringSink everything = new StringSink();
         for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
-            int type = ColumnType.geohashWithPrecision(b);
+            int type = ColumnType.getGeoHashTypeWithBits(b);
             String name = ColumnType.nameOf(type);
             everything.put(name)
                     .put(" -> ")
                     .put(type)
                     .put(" (")
-                    .put(GeoHashes.getBitsPrecision(type))
+                    .put(ColumnType.getGeoHashBits(type))
                     .put(")\n");
         }
         Assert.assertEquals(expected, everything.toString());
@@ -322,7 +313,7 @@ public class GeoHashesTest {
     }
 
     @Test
-    public void testFromStringTruncatingNlIgnoreQuotesTruncateBits2() throws NumericException {
+    public void testFromStringTruncatingNlIgnoreQuotesTruncateBits2() {
         testUnsafeFromStringTruncatingNl("'sp052w92p1p'", (lo, hi) -> {
             try {
                 Assert.assertEquals(807941, GeoHashes.fromStringTruncatingNl(lo + 1, lo + 5, 20));

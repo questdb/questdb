@@ -39,7 +39,6 @@ public class RndGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
     private FunctionParser functionParser;
     private GenericRecordMetadata metadata;
     private Rnd rnd;
-    private Rnd rndShared;
 
     @Before
     public void setUp5() {
@@ -47,8 +46,7 @@ public class RndGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
         functionParser = createFunctionParser();
         metadata = new GenericRecordMetadata();
         rnd = new Rnd();
-        rndShared = new Rnd();
-        SharedRandom.RANDOM.set(rndShared);
+        SharedRandom.RANDOM.set(new Rnd());
     }
 
     @Test
@@ -113,7 +111,7 @@ public class RndGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
     private Function getFunction(int bits) throws SqlException {
         Function function = parseFunction(String.format("rnd_geohash(%d)", bits), metadata, functionParser);
-        Assert.assertEquals(ColumnType.geohashWithPrecision(bits), function.getType());
+        Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(bits), function.getType());
         Assert.assertFalse(function.isConstant());
         function.init(null, sqlExecutionContext);
         return function;

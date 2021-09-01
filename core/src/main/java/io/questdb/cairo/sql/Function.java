@@ -119,6 +119,7 @@ public interface Function extends Closeable {
 
     byte getGeoHashByte(Record rec);
 
+    // todo: rename for consistency
     short getGeoHashShort(Record rec);
 
     int getGeoHashInt(Record rec);

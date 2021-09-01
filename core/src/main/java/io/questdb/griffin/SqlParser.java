@@ -1630,14 +1630,14 @@ public final class SqlParser {
         }
         if (ColumnType.GEOHASH == type) {
             expectTok(lexer, '(');
-            final int size = parseGeoHashSize(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
+            final int bits = parseGeoHashBits(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
             expectTok(lexer, ')');
-            return ColumnType.geohashWithPrecision(size);
+            return ColumnType.getGeoHashTypeWithBits(bits);
         }
         return type;
     }
 
-    static int parseGeoHashSize(int position, int start, CharSequence sizeStr) throws SqlException {
+    static int parseGeoHashBits(int position, int start, CharSequence sizeStr) throws SqlException {
         assert start >= 0;
         if (sizeStr.length() - start < 2) {
             throw SqlException.position(position)

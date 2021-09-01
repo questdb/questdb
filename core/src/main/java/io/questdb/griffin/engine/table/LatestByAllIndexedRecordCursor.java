@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -158,7 +157,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
             }
 
             // -1 must be dead case here
-            final int hashesColumnSize = ColumnType.isGeoHash(hashColumnType) ? GeoHashes.sizeOf(hashColumnType) : -1;
+            final int hashesColumnSize = ColumnType.isGeoHash(hashColumnType) ? ColumnType.getPow2SizeOfGeoHashType(hashColumnType) : -1;
 
             int queuedCount = 0;
             for (long i = 0; i < taskCount; ++i) {

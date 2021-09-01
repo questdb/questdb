@@ -33,7 +33,7 @@ import org.junit.Test;
 
 public class GeoHashFunctionTest {
 
-    private static final GeoHashFunction nullFunction = new GeoHashFunction(ColumnType.GEOHASH) {
+    private static final GeoByteFunction nullFunction = new GeoByteFunction(ColumnType.GEOHASH) {
         @Override
         public byte getGeoHashByte(Record rec) {
             return GeoHashes.BYTE_NULL;

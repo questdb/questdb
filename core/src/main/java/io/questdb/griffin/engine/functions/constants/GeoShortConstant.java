@@ -26,18 +26,22 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
-import org.junit.Assert;
-import org.junit.Test;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.GeoShortFunction;
 
-public class GeoHashTypeConstantTest {
+public class GeoShortConstant extends GeoShortFunction implements ConstantFunction {
 
-    @Test
-    public void testConstant() {
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
-            GeoHashTypeConstant constant = GeoHashTypeConstant.getInstanceByPrecision(b);
-            int type = ColumnType.getGeoHashTypeWithBits(b);
-            Assert.assertEquals(type, constant.getType());
-            Assert.assertEquals(GeoHashes.NULL, GeoHashes.getGeoLong(type, constant,null));
-        }
+    public static final GeoShortConstant NULL = new GeoShortConstant(GeoHashes.SHORT_NULL, ColumnType.GEOSHORT);
+
+    private final short hash;
+
+    public GeoShortConstant(short hash, int typep) {
+        super(typep);
+        this.hash = hash;
+    }
+
+    @Override
+    public short getGeoHashShort(Record rec) {
+        return hash;
     }
 }

@@ -45,7 +45,7 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
 
     @Before
     public void setUp5() {
-        Arrays.stream(CAST_FUNCS).forEach(functions::add);
+        functions.addAll(Arrays.asList(CAST_FUNCS));
         Collections.shuffle(functions);
         functionParser = createFunctionParser();
         metadata = new GenericRecordMetadata();
@@ -62,26 +62,70 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
     }
 
     @Test
-    public void testCastNullGeoHash1() throws SqlException {
+    public void testCastNullGeoLongChars() throws SqlException {
         Function function = parseFunction("cast(null as GeOhAsH(12c))", metadata, functionParser);
         Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(ColumnType.geohashWithPrecision(12*5), function.getType());
+        Assert.assertEquals(ColumnType.GEOLONG, function.getType());
         Assert.assertEquals(GeoHashes.NULL, function.getGeoHashLong(null));
     }
 
     @Test
-    public void testCastNullGeoHash2() throws SqlException {
+    public void testCastNullGeoByteChars() throws SqlException {
+        Function function = parseFunction("cast(null as GeOhAsH(1c))", metadata, functionParser);
+        Assert.assertTrue(function.isConstant());
+        Assert.assertEquals(ColumnType.GEOBYTE, function.getType());
+        Assert.assertEquals(GeoHashes.BYTE_NULL, function.getGeoHashByte(null));
+    }
+
+    @Test
+    public void testCastNullGeoShortChars() throws SqlException {
+        Function function = parseFunction("cast(null as GeOhAsH(3c))", metadata, functionParser);
+        Assert.assertTrue(function.isConstant());
+        Assert.assertEquals(ColumnType.GEOSHORT, function.getType());
+        Assert.assertEquals(GeoHashes.SHORT_NULL, function.getGeoHashShort(null));
+    }
+
+    @Test
+    public void testCastNullGeoIntChars() throws SqlException {
+        Function function = parseFunction("cast(null as GeOhAsH(6c))", metadata, functionParser);
+        Assert.assertTrue(function.isConstant());
+        Assert.assertEquals(ColumnType.GEOINT, function.getType());
+        Assert.assertEquals(GeoHashes.INT_NULL, function.getGeoHashInt(null));
+    }
+
+    @Test
+    public void testCastNullGeoLongBits() throws SqlException {
         Function function = parseFunction("cast(null as GeOhAsH(60b))", metadata, functionParser);
         Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(ColumnType.geohashWithPrecision(60), function.getType());
+        Assert.assertEquals(ColumnType.GEOLONG, function.getType());
+        Assert.assertEquals(GeoHashes.BYTE_NULL, function.getGeoHashByte(null));
+        Assert.assertEquals(GeoHashes.SHORT_NULL, function.getGeoHashShort(null));
+        Assert.assertEquals(GeoHashes.INT_NULL, function.getGeoHashInt(null));
         Assert.assertEquals(GeoHashes.NULL, function.getGeoHashLong(null));
+    }
+
+    @Test
+    public void testCastNullGeoByteBits() throws SqlException {
+        Function function = parseFunction("cast(null as GeOhAsH(7b))", metadata, functionParser);
+        Assert.assertTrue(function.isConstant());
+        Assert.assertEquals(ColumnType.GEOBYTE, function.getType());
+        Assert.assertEquals(GeoHashes.BYTE_NULL, function.getGeoHashByte(null));
+    }
+
+    @Test
+    public void testCastNullGeoShortBits() throws SqlException {
+        Function function = parseFunction("cast(null as GeOhAsH(8b))", metadata, functionParser);
+        Assert.assertTrue(function.isConstant());
+        Assert.assertEquals(ColumnType.GEOSHORT, function.getType());
+        Assert.assertEquals(GeoHashes.NULL, function.getGeoHashByte(null));
+        Assert.assertEquals(GeoHashes.NULL, function.getGeoHashShort(null));
     }
 
     @Test
     public void testCastNullGeoHash3() throws SqlException {
         Function function = parseFunction("cast('' as GeOhAsH(60b))", metadata, functionParser);
         Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(ColumnType.geohashWithPrecision(60), function.getType());
+        Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(60), function.getType());
         Assert.assertEquals(GeoHashes.NULL, function.getGeoHashLong(null));
     }
 

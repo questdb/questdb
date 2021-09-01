@@ -77,7 +77,7 @@ abstract class LineUdpInsertGeoHashTest extends LineUdpInsertTest {
 
     protected static void createTable(CairoEngine engine, int bitsPrecision) {
         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-            CairoTestUtils.create(model.col(targetColumnName, ColumnType.geohashWithPrecision(bitsPrecision)).timestamp());
+            CairoTestUtils.create(model.col(targetColumnName, ColumnType.getGeoHashTypeWithBits(bitsPrecision)).timestamp());
         }
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "pleasure")) {
             writer.warmUp();

@@ -78,13 +78,13 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private long columnName;
     private int columnType;
     private final FieldNameParser MY_FIELD_NAME = this::parseFieldName;
-    private final FieldValueParser MY_TAG_VALUE = this::parseTagValue;
     private long tableName;
     private final LineEndParser MY_NEW_LINE_END = this::createTableAndAppendRow;
     private LineEndParser onLineEnd;
     private FieldNameParser onFieldName;
     private FieldValueParser onFieldValue;
     private FieldValueParser onTagValue;
+    private final FieldValueParser MY_TAG_VALUE = this::parseTagValue;
     private final FieldValueParser MY_FIELD_VALUE = this::parseFieldValue;
     private final FieldValueParser MY_NEW_FIELD_VALUE = this::parseFieldValueNewTable;
 
@@ -354,7 +354,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         assert valueType > ColumnType.UNDEFINED;
         if (columnType > ColumnType.UNDEFINED) {
             boolean valid;
-            int geohashBits = 0;
+            int geoHashBits = 0;
             final int valueTypeTag = ColumnType.tagOf(valueType);
             final int columnTypeTag = ColumnType.tagOf(columnType);
             switch (valueTypeTag) {
@@ -371,11 +371,9 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                     break;
                 case ColumnType.STRING:
                     valid = columnTypeTag == ColumnType.STRING ||
-                            columnTypeTag == ColumnType.CHAR;
-                    if (!valid && isForField && columnTypeTag == ColumnType.GEOHASH) {
-                        geohashBits = GeoHashes.getBitsPrecision(columnType);
-                        valid = true;
-                    }
+                            columnTypeTag == ColumnType.CHAR ||
+                            isForField &&
+                                    (geoHashBits = ColumnType.getGeoHashBits(columnType)) != 0;
                     break;
                 case ColumnType.DOUBLE:
                     valid = columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT;
@@ -392,7 +390,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             if (valid) {
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, columnType));
                 columnValues.add(value.getCacheAddress());
-                geohashBitsSizeByColIdx.add(geohashBits);
+                geohashBitsSizeByColIdx.add(geoHashBits);
             } else {
                 LOG.error().$("mismatched column and value types [table=").$(writer.getTableName())
                         .$(", column=").$(metadata.getColumnName(columnIndex))
@@ -421,7 +419,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         columnNameType.add(valueType);
         columnValues.add(value.getCacheAddress());
         geohashBitsSizeByColIdx.add(0); // not a geohash, no constant literal
-                                        // that can be recognised yet
+        // that can be recognised yet
     }
 
     private void prepareNewColumn(CachedCharSequence token) {

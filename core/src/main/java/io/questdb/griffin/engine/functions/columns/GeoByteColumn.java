@@ -22,22 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
-import org.junit.Assert;
-import org.junit.Test;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.GeoByteFunction;
 
-public class GeoHashTypeConstantTest {
+public class GeoByteColumn extends GeoByteFunction {
+    private final int columnIndex;
 
-    @Test
-    public void testConstant() {
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
-            GeoHashTypeConstant constant = GeoHashTypeConstant.getInstanceByPrecision(b);
-            int type = ColumnType.getGeoHashTypeWithBits(b);
-            Assert.assertEquals(type, constant.getType());
-            Assert.assertEquals(GeoHashes.NULL, GeoHashes.getGeoLong(type, constant,null));
-        }
+    public GeoByteColumn(int columnIndex, int columnType) {
+        super(columnType);
+        this.columnIndex = columnIndex;
+    }
+
+    @Override
+    public byte getGeoHashByte(Record rec) {
+        return rec.getGeoHashByte(columnIndex);
     }
 }

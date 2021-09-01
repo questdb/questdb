@@ -22,39 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.GeoHashFunction;
+import io.questdb.griffin.engine.functions.GeoShortFunction;
 
-public class GeoHashConstant extends GeoHashFunction implements ConstantFunction {
-    private final long hash; // does NOT encode size
+public class GeoShortColumn extends GeoShortFunction {
+    private final int columnIndex;
 
-    public GeoHashConstant(long hash, int typep) {
-        super(typep);
-        this.hash = hash;
-    }
-
-    public static GeoHashConstant newInstance(long hash, int type) {
-        return new GeoHashConstant(hash, type);
-    }
-
-    public byte getGeoHashByte(Record rec) {
-        return (byte)hash;
+    public GeoShortColumn(int columnIndex, int columnType) {
+        super(columnType);
+        this.columnIndex = columnIndex;
     }
 
     @Override
     public short getGeoHashShort(Record rec) {
-        return (short)hash;
-    }
-
-    @Override
-    public int getGeoHashInt(Record rec) {
-        return (int)hash;
-    }
-
-    @Override
-    public long getGeoHashLong(Record rec) {
-        return hash;
+        return rec.getGeoHashShort(columnIndex);
     }
 }
