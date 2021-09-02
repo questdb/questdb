@@ -249,12 +249,12 @@ public class GeoHashesTest {
     public void testFromStringTruncatingNlShorterThanRequiredLength2() {
         testUnsafeFromStringTruncatingNl("123", (lo, hi) -> {
             try {
-                Assert.assertEquals(807941, GeoHashes.fromStringTruncatingNl(lo, lo + 7, 0));
+                GeoHashes.fromStringTruncatingNl(lo, lo + 7, 0);
                 Assert.fail();
             } catch (StringIndexOutOfBoundsException fail) {
                 Assert.fail();
             } catch (NumericException success) {
-                // no-op
+                Assert.assertEquals(null, success.getMessage());
             }
             return null;
         });
@@ -427,9 +427,9 @@ public class GeoHashesTest {
         Assert.assertEquals(0, GeoHashes.fromBitString("", 0));
         Assert.assertEquals(0, GeoHashes.fromBitString("", 1));
         Assert.assertEquals(1, GeoHashes.fromBitString(
-                "##000000000000000000000000000000000000000000000000000000000001",2));
+                "##000000000000000000000000000000000000000000000000000000000001", 2));
         Assert.assertEquals(1, GeoHashes.fromBitString(
-                "##000000000000000000000000000000000000000000000000000000000001",59));
+                "##000000000000000000000000000000000000000000000000000000000001", 59));
     }
 
     @Test
