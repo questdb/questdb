@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.griffin.engine.functions.rnd.RndGeoHashFunctionFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
@@ -114,6 +115,22 @@ public class Rnd {
         s0 = l0;
         l1 ^= l1 << 23;
         return (s1 = l1 ^ l0 ^ (l1 >> 17) ^ (l0 >> 26)) + l0;
+    }
+
+    public byte nextGeoHashByte(int bits) {
+        return (byte) RndGeoHashFunctionFactory.nextGeoHash(this, bits);
+    }
+
+    public short nextGeoHashShort(int bits) {
+        return (short) RndGeoHashFunctionFactory.nextGeoHash(this, bits);
+    }
+
+    public int nextGeoHashInt(int bits) {
+        return (int) RndGeoHashFunctionFactory.nextGeoHash(this, bits);
+    }
+
+    public long nextGeoHashLong(int bits) {
+        return RndGeoHashFunctionFactory.nextGeoHash(this, bits);
     }
 
     public int nextPositiveInt() {
