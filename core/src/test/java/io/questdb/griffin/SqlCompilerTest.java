@@ -1985,6 +1985,38 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGeoLiteralInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select rnd_str('#1234', '#88484') as str from long_sequence(1000) )", sqlExecutionContext);
+            try {
+                compiler.compile("select * from x where str = #1234 '", sqlExecutionContext); // random char at the end
+                Assert.fail();
+            } catch (SqlException ex) {
+                // Add error test assertion
+                Assert.assertEquals("[34] dangling expression", ex.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testGeoLiteralAsColName() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select rnd_str('#1234', '#88484') as \"#0101a\" from long_sequence(5) )", sqlExecutionContext);
+            assertSql("select * from x where \"#0101a\" = '#1234'", "#0101a\n" +
+                    "#1234\n" +
+                    "#1234\n");
+        });
+    }
+
+    @Test
+    public void testGeoLiteralAsColName2() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select rnd_geohash(14) as \"#0101a\" from long_sequence(5) )", sqlExecutionContext);
+            assertSql("select * from x where #1234 = \"#0101a\"", "#0101a\n");
+        });
+    }
+
+    @Test
     public void testCreateAsSelect() throws SqlException {
         String expectedData = "a1\ta\tb\tc\td\te\tf\tf1\tg\th\ti\tj\tj1\tk\tl\tm\n" +
                 "1569490116\tNaN\tfalse\t\tNaN\t0.7611\t428\t-1593\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
