@@ -71,29 +71,19 @@ public class RndGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testGetGeoHashByte() throws SqlException {
-        for (int bits = 1; bits <= 8; bits++) {
+        for (int bits = 1; bits < 8; bits++) {
             Function function = getFunction(bits);
-            for (int i=0, n = 1000; i < n; i++) {
+            for (int i = 0, n = 1000; i < n; i++) {
                 Assert.assertEquals(rnd.nextGeoHashByte(bits), function.getGeoHashByte(null));
             }
         }
     }
 
     @Test
-    public void testGetGeoHashShort() throws SqlException {
-        for (int bits = 1; bits <= 16; bits++) {
-            Function function = getFunction(bits);
-            for (int i=0, n = 1000; i < n; i++) {
-                Assert.assertEquals(rnd.nextGeoHashShort(bits), function.getGeoHashShort(null));
-            }
-        }
-    }
-
-    @Test
     public void testGetGeoHashInt() throws SqlException {
-        for (int bits = 1; bits <= 32; bits++) {
+        for (int bits = 16; bits < 32; bits++) {
             Function function = getFunction(bits);
-            for (int i=0, n = 1000; i < n; i++) {
+            for (int i = 0, n = 1000; i < n; i++) {
                 Assert.assertEquals(rnd.nextGeoHashInt(bits), function.getGeoHashInt(null));
             }
         }
@@ -101,10 +91,22 @@ public class RndGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testGetGeoHashLong() throws SqlException {
-        for (int bits = 1; bits <= 32; bits++) {
+        for (int bits = 32; bits <= 60; bits++) {
             Function function = getFunction(bits);
-            for (int i=0, n = 1000; i < n; i++) {
+            for (int i = 0, n = 1000; i < n; i++) {
                 Assert.assertEquals(rnd.nextGeoHashLong(bits), function.getGeoHashLong(null));
+            }
+        }
+    }
+
+    @Test
+    public void testGetGeoHashShort() throws SqlException {
+        // last bit of geo-short is reserved for null, therefore
+        // geo-short is 15 bits max
+        for (int bits = 8; bits < 16; bits++) {
+            Function function = getFunction(bits);
+            for (int i = 0, n = 1000; i < n; i++) {
+                Assert.assertEquals(rnd.nextGeoHashShort(bits), function.getGeoHashShort(null));
             }
         }
     }

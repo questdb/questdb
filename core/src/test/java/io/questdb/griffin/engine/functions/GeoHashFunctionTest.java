@@ -38,26 +38,11 @@ public class GeoHashFunctionTest {
         public byte getGeoHashByte(Record rec) {
             return GeoHashes.BYTE_NULL;
         }
-
-        @Override
-        public short getGeoHashShort(Record rec) {
-            return GeoHashes.SHORT_NULL;
-        }
-
-        @Override
-        public int getGeoHashInt(Record rec) {
-            return GeoHashes.INT_NULL;
-        }
-
-        @Override
-        public long getGeoHashLong(Record rec) {
-            return GeoHashes.NULL;
-        }
     };
 
     @Test
     public void testGetStrIntoSink1() {
-        Assert.assertEquals(GeoHashes.NULL, nullFunction.getGeoHashLong(null));
+        Assert.assertEquals(GeoHashes.NULL, nullFunction.getGeoHashByte(null));
         StringSink sink = new StringSink();
         try {
             nullFunction.getStr(null, sink);

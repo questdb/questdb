@@ -98,7 +98,7 @@ public final class Constants {
         typeConstants.extendAndSet(ColumnType.BINARY, BinTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.LONG256, Long256TypeConstant.INSTANCE);
 
-        for (int b = 1; b < GeoHashes.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b < ColumnType.MAX_BITS_LENGTH; b++) {
             geoNullConstants.extendAndSet(b, getGeoHashConstant(GeoHashes.NULL, b));
         }
     }

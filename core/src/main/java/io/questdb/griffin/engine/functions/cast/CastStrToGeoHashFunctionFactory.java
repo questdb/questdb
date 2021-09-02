@@ -35,10 +35,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GeoByteFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.Constants;
-import io.questdb.griffin.engine.functions.constants.GeoByteConstant;
 import io.questdb.std.*;
 
-import static io.questdb.cairo.GeoHashes.MAX_BITS_LENGTH;
+import static io.questdb.cairo.ColumnType.MAX_BITS_LENGTH;
 
 public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
     @Override

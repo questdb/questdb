@@ -67,7 +67,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
                                 CairoConfiguration configuration,
                                 SqlExecutionContext sqlExecutionContext) throws SqlException {
         int bits = args.getQuick(0).getInt(null);
-        if (bits < 1 || bits > GeoHashes.MAX_BITS_LENGTH) {
+        if (bits < 1 || bits > ColumnType.MAX_BITS_LENGTH) {
             throw SqlException.$(argPositions.getQuick(0), "precision must be in [1..60] range");
         }
         final int type = ColumnType.getGeoHashTypeWithBits(bits);

@@ -26,7 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 
 public class GeoHashes {
@@ -43,7 +46,6 @@ public class GeoHashes {
     public static final short SHORT_NULL = -1;
     public static final int INT_NULL = -1;
     public static final long NULL = -1L;
-    public static final int MAX_BITS_LENGTH = 60;
     public static final int MAX_STRING_LENGTH = 12;
     static final byte[] base32Indexes = {
             0, 1, 2, 3, 4, 5, 6, 7,         // 30-37, '0'..'7'
@@ -57,7 +59,6 @@ public class GeoHashes {
             21, 22, 23, 24, 25, 26, 27, 28, // 70-77, 'p'..'w'
             29, 30, 31                      // 78-7A, 'x'..'z'
     };
-    private static final int[] GEO_TYPE_SIZE_POW2 = new int[MAX_BITS_LENGTH + 1];
 
     private static final char[] base32 = {
             '0', '1', '2', '3', '4', '5', '6', '7',
@@ -72,7 +73,7 @@ public class GeoHashes {
     }
 
     public static long fromBitString(CharSequence bits) throws NumericException {
-        if (bits.length() > MAX_BITS_LENGTH) {
+        if (bits.length() > ColumnType.MAX_BITS_LENGTH) {
             throw NumericException.INSTANCE;
         }
         long result = 0;
@@ -98,7 +99,7 @@ public class GeoHashes {
         if (lng < -180.0 || lng > 180.0) {
             throw NumericException.INSTANCE;
         }
-        assert bits > 0 && bits <= MAX_BITS_LENGTH;
+        assert bits > 0 && bits <= ColumnType.MAX_BITS_LENGTH;
         double minLat = -90, maxLat = 90;
         double minLng = -180, maxLng = 180;
         long result = 0;
@@ -172,16 +173,16 @@ public class GeoHashes {
         }
     }
 
-    public static long fromStringTruncatingNl(CharSequence hash, int start, int end, int bits) throws NumericException {
+    public static long fromStringTruncatingNl(CharSequence hash, int start, int end, int toBits) throws NumericException {
         if (start == end) {
             return NULL;
         }
         final int chars = Math.min(end - start, MAX_STRING_LENGTH);
-        int actualBits = 5 * chars;
-        if (actualBits < bits) {
+        int fromBits = 5 * chars;
+        if (fromBits < toBits) {
             throw NumericException.INSTANCE;
         }
-        return fromString(hash, start, start + chars) >>> (actualBits - bits);
+        return ColumnType.truncateGeoHashBits(fromString(hash, start, start + chars), fromBits, toBits);
     }
 
     public static long fromStringTruncatingNl(long lo, long hi, int bits) throws NumericException {
@@ -197,7 +198,7 @@ public class GeoHashes {
         for (long p = lo, limit = p + chars; p < limit; p++) {
             geohash = appendChar(geohash, (char) Unsafe.getUnsafe().getByte(p)); // base32
         }
-        return geohash >>> (actualBits - bits);
+        return ColumnType.truncateGeoHashBits(geohash, actualBits, bits);
     }
 
     public static long getGeoLong(int type, Function func, Record rec) {
@@ -213,35 +214,11 @@ public class GeoHashes {
         }
     }
 
-    public static int hashSize(long hashz) {
-        return (int) (hashz >>> MAX_BITS_LENGTH);
-    }
-
-    public static int pow2SizeOf(int columnType) {
-        assert ColumnType.tagOf(columnType) == ColumnType.GEOHASH;
-        int bits = ColumnType.getGeoHashBits(columnType);
-        return pow2SizeOfBits(bits);
-    }
-
-    public static int pow2SizeOfBits(int bits) {
-        assert bits <= MAX_BITS_LENGTH;
-        return GEO_TYPE_SIZE_POW2[bits];
-    }
-
-    public static int sizeOf(int columnType) {
-        assert ColumnType.tagOf(columnType) == ColumnType.GEOHASH;
-        int bits = ColumnType.getGeoHashBits(columnType);
-        if (bits <= MAX_BITS_LENGTH && bits > 0) {
-            return 1 << GEO_TYPE_SIZE_POW2[bits];
-        }
-        return -1; // Corrupt metadata
-    }
-
     public static void toBitString(long hash, int bits, CharSink sink) {
         if (hash != NULL) {
             // Below assertion can happen if there is corrupt metadata
             // which should not happen in production code since reader and writer check table metadata
-            assert bits > 0 && bits <= MAX_BITS_LENGTH;
+            assert bits > 0 && bits <= ColumnType.MAX_BITS_LENGTH;
             for (int i = bits - 1; i >= 0; --i) {
                 sink.put(((hash >> i) & 1) == 1 ? '1' : '0');
             }
@@ -276,11 +253,5 @@ public class GeoHashes {
             }
         }
         throw NumericException.INSTANCE;
-    }
-
-    static {
-        for (int bits = 1; bits <= MAX_BITS_LENGTH; bits++) {
-            GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
-        }
     }
 }

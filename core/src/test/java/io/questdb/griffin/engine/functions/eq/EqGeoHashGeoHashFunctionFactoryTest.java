@@ -193,7 +193,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNull6() {
         args.add(NullConstant.NULL);
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.MAX_BITS_LENGTH; b++) {
             args.extendAndSet(1, nullConstantForBitsPrecision(b));
             createEqFunctionAndAssert(true);
         }
@@ -201,7 +201,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testNull7() {
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.MAX_BITS_LENGTH; b++) {
             args.clear();
             args.add(nullConstantForBitsPrecision(b));
             args.add(NullConstant.NULL);
@@ -211,7 +211,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testNull8() {
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.MAX_BITS_LENGTH; b++) {
             args.clear();
             args.add(nullConstantForBitsPrecision(b));
             args.add(nullConstantForBitsPrecision(((b + 1) % 60) + 1));
@@ -238,7 +238,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testConstConst1() {
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.MAX_BITS_LENGTH; b++) {
             args.clear();
             args.add(Constants.getGeoHashConstant(0, b));
             args.add(Constants.getGeoHashConstant(0, b));
@@ -248,7 +248,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testConstConst2() {
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.MAX_BITS_LENGTH; b++) {
             args.clear();
             args.add(Constants.getGeoHashConstant(0, b));
             args.add(Constants.getGeoHashConstant(1, b));
@@ -258,7 +258,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testConstConst3() {
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.MAX_BITS_LENGTH; b++) {
             args.clear();
             args.add(Constants.getGeoHashConstant(1, b));
             args.add(Constants.getGeoHashConstant(1, ((b + 1) % 60) + 1));

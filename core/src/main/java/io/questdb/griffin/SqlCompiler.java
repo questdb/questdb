@@ -244,7 +244,7 @@ public class SqlCompiler implements Closeable {
         int wPutStrChar = asm.poolMethod(TableWriter.Row.class, "putStr", "(IC)V");
         int wPutChar = asm.poolMethod(TableWriter.Row.class, "putChar", "(IC)V");
         int wPutBin = asm.poolMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
-        int geoHashTruncate = asm.poolMethod(ColumnType.class, "geoHashTruncate", "(JII)J");
+        int truncateGeoHashTypes = asm.poolMethod(ColumnType.class, "truncateGeoHashTypes", "(JII)J");
 
         int copyNameIndex = asm.poolUtf8("copy");
         int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;)V");
@@ -632,7 +632,7 @@ public class SqlCompiler implements Closeable {
                             asm.i2l();
                             asm.iconst(fromColumnType);
                             asm.iconst(toColumnType);
-                            asm.invokeStatic(geoHashTruncate);
+                            asm.invokeStatic(truncateGeoHashTypes);
                             asm.l2i();
                             asm.i2b();
                             asm.invokeVirtual(wPutByte);
@@ -651,7 +651,7 @@ public class SqlCompiler implements Closeable {
                             asm.i2l();
                             asm.iconst(fromColumnType);
                             asm.iconst(toColumnType);
-                            asm.invokeStatic(geoHashTruncate);
+                            asm.invokeStatic(truncateGeoHashTypes);
                             asm.l2i();
                             asm.i2b();
                             asm.invokeVirtual(wPutByte);
@@ -660,7 +660,7 @@ public class SqlCompiler implements Closeable {
                             asm.i2l();
                             asm.iconst(fromColumnType);
                             asm.iconst(toColumnType);
-                            asm.invokeStatic(geoHashTruncate);
+                            asm.invokeStatic(truncateGeoHashTypes);
                             asm.l2i();
                             asm.i2s();
                             asm.invokeVirtual(wPutShort);
@@ -678,7 +678,7 @@ public class SqlCompiler implements Closeable {
                         case ColumnType.GEOBYTE:
                             asm.iconst(fromColumnType);
                             asm.iconst(toColumnType);
-                            asm.invokeStatic(geoHashTruncate);
+                            asm.invokeStatic(truncateGeoHashTypes);
                             asm.l2i();
                             asm.i2b();
                             asm.invokeVirtual(wPutByte);
@@ -686,7 +686,7 @@ public class SqlCompiler implements Closeable {
                         case ColumnType.GEOSHORT:
                             asm.iconst(fromColumnType);
                             asm.iconst(toColumnType);
-                            asm.invokeStatic(geoHashTruncate);
+                            asm.invokeStatic(truncateGeoHashTypes);
                             asm.l2i();
                             asm.i2s();
                             asm.invokeVirtual(wPutShort);
@@ -694,7 +694,7 @@ public class SqlCompiler implements Closeable {
                         case ColumnType.GEOINT:
                             asm.iconst(fromColumnType);
                             asm.iconst(toColumnType);
-                            asm.invokeStatic(geoHashTruncate);
+                            asm.invokeStatic(truncateGeoHashTypes);
                             asm.l2i();
                             asm.invokeVirtual(wPutInt);
                             break;

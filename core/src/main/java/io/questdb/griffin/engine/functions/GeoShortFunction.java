@@ -35,7 +35,7 @@ public abstract class GeoShortFunction extends AbstractGeoHashFunction {
 
     @Override
     public byte getGeoHashByte(Record rec) {
-        return (byte) ColumnType.getHashTruncateUsingBits(
+        return (byte) ColumnType.truncateGeoHashBits(
                 getGeoHashShort(rec),
                 ColumnType.getGeoHashBits(type),
                 Byte.SIZE - 1

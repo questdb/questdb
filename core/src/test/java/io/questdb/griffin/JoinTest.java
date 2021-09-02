@@ -2790,6 +2790,16 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
+            sink.clear();
+            TestUtils.printSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink
+            );
+
+            System.out.println(sink);
+
             compiler.setFullSatJoins(true);
             assertSql(query, expected);
             compiler.setFullSatJoins(false);

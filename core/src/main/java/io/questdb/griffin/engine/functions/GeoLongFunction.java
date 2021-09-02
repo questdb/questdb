@@ -35,7 +35,7 @@ public abstract class GeoLongFunction extends AbstractGeoHashFunction {
 
     @Override
     public byte getGeoHashByte(Record rec) {
-        return (byte) ColumnType.getHashTruncateUsingBits(
+        return (byte) ColumnType.truncateGeoHashBits(
                 getGeoHashLong(rec),
                 ColumnType.getGeoHashBits(type),
                 Byte.SIZE - 1
@@ -44,7 +44,7 @@ public abstract class GeoLongFunction extends AbstractGeoHashFunction {
 
     @Override
     public short getGeoHashShort(Record rec) {
-        return (short) ColumnType.getHashTruncateUsingBits(
+        return (short) ColumnType.truncateGeoHashBits(
                 getGeoHashLong(rec),
                 ColumnType.getGeoHashBits(type),
                 Short.SIZE - 1
@@ -53,7 +53,7 @@ public abstract class GeoLongFunction extends AbstractGeoHashFunction {
 
     @Override
     public int getGeoHashInt(Record rec) {
-        return (short) ColumnType.getHashTruncateUsingBits(
+        return (short) ColumnType.truncateGeoHashBits(
                 getGeoHashLong(rec),
                 ColumnType.getGeoHashBits(type),
                 Integer.SIZE - 1

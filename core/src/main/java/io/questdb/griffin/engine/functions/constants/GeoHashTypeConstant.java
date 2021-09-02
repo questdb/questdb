@@ -31,7 +31,7 @@ import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.GeoByteFunction;
 
 public class GeoHashTypeConstant extends GeoByteFunction implements TypeConstant {
-    private final static GeoHashTypeConstant[] INSTANCES = new GeoHashTypeConstant[GeoHashes.MAX_BITS_LENGTH];
+    private final static GeoHashTypeConstant[] INSTANCES = new GeoHashTypeConstant[ColumnType.MAX_BITS_LENGTH];
 
     @Override
     public byte getGeoHashByte(Record rec) {
@@ -54,7 +54,7 @@ public class GeoHashTypeConstant extends GeoByteFunction implements TypeConstant
     }
 
     static {
-        for(int i = 0; i < GeoHashes.MAX_BITS_LENGTH; i++) {
+        for(int i = 0; i < ColumnType.MAX_BITS_LENGTH; i++) {
             INSTANCES[i] = new GeoHashTypeConstant(ColumnType.getGeoHashTypeWithBits(i + 1));
         }
     }

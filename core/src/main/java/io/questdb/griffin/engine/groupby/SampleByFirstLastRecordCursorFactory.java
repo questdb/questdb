@@ -354,7 +354,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                     prevSamplePeriodOffset = samplePeriodIndexOffset = 0;
                     crossRowState = NONE;
                     samplePeriodStart = Numbers.LONG_NaN;
-                    // Fall trough to STATE_FETCH_NEXT_DATA_FRAME;
+                    // Fall through to STATE_FETCH_NEXT_DATA_FRAME;
 
                 case STATE_FETCH_NEXT_DATA_FRAME:
                     currentFrame = pageFrameCursor.next();

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.geohash;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -142,7 +143,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     @Test
     public void testAlterTableAddGeohashBitsColumn() throws Exception {
         assertMemoryLeak(() -> {
-            for (int l = GeoHashes.MAX_BITS_LENGTH; l > 0; l--) {
+            for (int l = ColumnType.MAX_BITS_LENGTH; l > 0; l--) {
                 String tableName = "pos" + l;
                 compiler.compile(String.format("create table %s(x long)", tableName), sqlExecutionContext);
                 compiler.compile(String.format("alter table %s add hash geohash(%sb)", tableName, l), sqlExecutionContext);

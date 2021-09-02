@@ -142,22 +142,22 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testCastStringToGeoHash() throws SqlException {
-        String expectedGeohash = "sp052w92";
+        String expectedGeoHash = "sp052w92";
         long expectedHash = 847187636514L;
 
         Function function = parseFunction(
-                String.format("cast('%s' as GEOHASH(8c))", expectedGeohash),
+                String.format("cast('%s' as GEOHASH(8c))", expectedGeoHash),
                 metadata,
-                functionParser);
+                functionParser
+        );
 
         Assert.assertTrue(function.isConstant());
-        Assert.assertNotEquals(ColumnType.GEOHASH, function.getType());
-        Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(expectedGeohash.length() * 5), function.getType());
-        Assert.assertEquals(expectedGeohash.length() * 5, ColumnType.getGeoHashBits(function.getType()));
+        Assert.assertEquals(ColumnType.GEOLONG, ColumnType.tagOf(function.getType()));
+        Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(expectedGeoHash.length() * 5), function.getType());
+        Assert.assertEquals(expectedGeoHash.length() * 5, ColumnType.getGeoHashBits(function.getType()));
         Assert.assertEquals(expectedHash, function.getGeoHashLong(null));
         Assert.assertThrows(UnsupportedOperationException.class, () -> function.getLong(null));
-        Assert.assertEquals(0, GeoHashes.hashSize(function.getGeoHashLong(null)));
-        assertGeoHashLongStrEquals(expectedGeohash, function);
+        assertGeoHashLongStrEquals(expectedGeoHash, function);
     }
 
     @Test

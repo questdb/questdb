@@ -39,32 +39,31 @@ public class GeoHashNativeTest {
     static final double lat = 31.23;
     static final double lon = 121.473;
     static final StringSink sink = new StringSink();
+    private static final StringConverter toString = GeoHashes::toString;
+    private static final StringConverter toBitString = GeoHashes::toBitString;
 
-
-    private static double rnd_double(double min, double max) {
-        return ThreadLocalRandom.current().nextDouble(min, max);
-    }
-
-    private static long rnd_geohash(int size) throws NumericException {
-        double x = rnd_double(-90, 90);
-        double y = rnd_double(-180, 180);
-        return GeoHashes.fromCoordinates(x, y, size * 5);
+    public static int hashSize(long hashz) {
+        return (int) (hashz >>> ColumnType.MAX_BITS_LENGTH);
     }
 
     @Test
-    public void testFromStringNl() throws NumericException {
-        final long gh = GeoHashes.fromCoordinates(lat, lon, 8 * 5);
-        sink.clear();
-        GeoHashes.toString(gh, 8, sink);
-        final long gh1 = GeoHashes.fromString(sink, 0, 8);
-        Assert.assertEquals(gh, gh1);
+    public void testBitmask() {
+        for (int i = 0; i < 64; i++) {
+            final long bm = GeoHashes.bitmask(1, i);
+            Assert.assertEquals(1L << i, bm);
+        }
+        Assert.assertEquals(7L << 5, GeoHashes.bitmask(3, 5));
     }
 
-    @Test(expected = NumericException.class)
-    public void testFromString() throws NumericException {
-        sink.clear();
-        sink.put("@s");
-        GeoHashes.fromString(sink.toString(), 0, 2);
+    @Test
+    public void testFromBitStringInvalid() {
+        CharSequence tooLongBitString = Chars.repeat("1", 61);
+        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromBitString(tooLongBitString));
+    }
+
+    @Test
+    public void testFromBitStringInvalid2() {
+        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromBitString("a"));
     }
 
     @Test
@@ -79,22 +78,33 @@ public class GeoHashNativeTest {
         Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 8 * 5), GeoHashes.fromBitString("1110011001111000001111000100011000111111"));
     }
 
+    @SuppressWarnings("ResultOfMethodCallIgnored")
     @Test
-    public void testToHash() throws NumericException {
-        final long gh = GeoHashes.fromCoordinates(lat, lon, 8 * 5);
-        final long ghz = GeoHashes.toHashWithSize(gh, 8);
-        Assert.assertEquals(gh, GeoHashes.toHash(ghz));
-        Assert.assertEquals(0, GeoHashes.hashSize(gh));
-        Assert.assertEquals(8, GeoHashes.hashSize(ghz));
+    public void testFromCoordinatesEdge() {
+        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromCoordinates(-91, 0, 10));
+        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromCoordinates(0, 190, 10));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromString() throws NumericException {
+        sink.clear();
+        sink.put("@s");
+        GeoHashes.fromString(sink.toString(), 0, 2);
     }
 
     @Test
-    public void testBitmask() {
-        for (int i = 0; i < 64; i++) {
-            final long bm = GeoHashes.bitmask(1, i);
-            Assert.assertEquals(1L << i, bm);
-        }
-        Assert.assertEquals(7L << 5, GeoHashes.bitmask(3, 5));
+    public void testFromStringNl() throws NumericException {
+        final long gh = GeoHashes.fromCoordinates(lat, lon, 8 * 5);
+        sink.clear();
+        GeoHashes.toString(gh, 8, sink);
+        final long gh1 = GeoHashes.fromString(sink, 0, 8);
+        Assert.assertEquals(gh, gh1);
+    }
+
+    @Test
+    public void testFromStringNull() throws NumericException {
+        Assert.assertEquals(GeoHashes.fromStringNl(null, 0, 0), GeoHashes.NULL);
+        Assert.assertEquals(GeoHashes.fromStringNl("", 0, 0), GeoHashes.NULL);
     }
 
     @Test
@@ -132,17 +142,6 @@ public class GeoHashNativeTest {
     }
 
     @Test
-    public void testFromStringToBitsSingle() {
-        final int cap = 12;
-        DirectLongList bits = new DirectLongList(cap * 2); // hash and mask
-        CharSequenceHashSet strh = new CharSequenceHashSet();
-        strh.add("questdb");
-
-        GeoHashes.fromStringToBits(strh, ColumnType.getGeoHashTypeWithBits(cap * 5), bits);
-        Assert.assertEquals(2, bits.size());
-    }
-
-    @Test
     public void testFromStringToBitsInvalidStrings() {
         final int cap = 12;
         DirectLongList bits = new DirectLongList(cap * 2); // hash and mask
@@ -154,53 +153,14 @@ public class GeoHashNativeTest {
     }
 
     @Test
-    public void testSlideFoundBlocks() {
-        int keyCount = 20;
+    public void testFromStringToBitsSingle() {
+        final int cap = 12;
+        DirectLongList bits = new DirectLongList(cap * 2); // hash and mask
+        CharSequenceHashSet strh = new CharSequenceHashSet();
+        strh.add("questdb");
 
-        DirectLongList rows = new DirectLongList(keyCount);
-        rows.extend(keyCount);
-
-        GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
-
-        final int workerCount = 5;
-
-        final long chunkSize = (keyCount + workerCount - 1) / workerCount;
-        final int taskCount = (int) ((keyCount + chunkSize - 1) / chunkSize);
-
-        final long argumentsAddress = LatestByArguments.allocateMemoryArray(taskCount);
-        try {
-            for (long i = 0; i < taskCount; ++i) {
-                final long klo = i * chunkSize;
-                final long khi = Long.min(klo + chunkSize, keyCount);
-                final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
-                LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
-                LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
-                LatestByArguments.setKeyLo(argsAddress, klo);
-                LatestByArguments.setKeyHi(argsAddress, khi);
-                LatestByArguments.setRowsSize(argsAddress, 0);
-
-                // 0, 2, 4, 0, 2 ...
-                // zero, half, full
-                long sz = (i % 3) * 2;
-                LatestByArguments.setFilteredSize(argsAddress, sz);
-            }
-            final long rowCount = GeoHashNative.slideFoundBlocks(argumentsAddress, taskCount);
-            Assert.assertEquals(8, rowCount);
-
-            Assert.assertEquals(4, rows.get(0));
-            Assert.assertEquals(5, rows.get(1));
-            Assert.assertEquals(8, rows.get(2));
-            Assert.assertEquals(9, rows.get(3));
-            Assert.assertEquals(10, rows.get(4));
-            Assert.assertEquals(11, rows.get(5));
-            Assert.assertEquals(16, rows.get(6));
-            Assert.assertEquals(17, rows.get(7));
-
-        } finally {
-            rows.close();
-            LatestByArguments.releaseMemoryArray(argumentsAddress, taskCount);
-        }
-
+        GeoHashes.fromStringToBits(strh, ColumnType.getGeoHashTypeWithBits(cap * 5), bits);
+        Assert.assertEquals(2, bits.size());
     }
 
     @Test
@@ -259,6 +219,90 @@ public class GeoHashNativeTest {
     }
 
     @Test
+    public void testSlideFoundBlocks() {
+        int keyCount = 20;
+
+        DirectLongList rows = new DirectLongList(keyCount);
+        rows.extend(keyCount);
+
+        GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
+
+        final int workerCount = 5;
+
+        final long chunkSize = (keyCount + workerCount - 1) / workerCount;
+        final int taskCount = (int) ((keyCount + chunkSize - 1) / chunkSize);
+
+        final long argumentsAddress = LatestByArguments.allocateMemoryArray(taskCount);
+        try {
+            for (long i = 0; i < taskCount; ++i) {
+                final long klo = i * chunkSize;
+                final long khi = Long.min(klo + chunkSize, keyCount);
+                final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
+                LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
+                LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
+                LatestByArguments.setKeyLo(argsAddress, klo);
+                LatestByArguments.setKeyHi(argsAddress, khi);
+                LatestByArguments.setRowsSize(argsAddress, 0);
+
+                // 0, 2, 4, 0, 2 ...
+                // zero, half, full
+                long sz = (i % 3) * 2;
+                LatestByArguments.setFilteredSize(argsAddress, sz);
+            }
+            final long rowCount = GeoHashNative.slideFoundBlocks(argumentsAddress, taskCount);
+            Assert.assertEquals(8, rowCount);
+
+            Assert.assertEquals(4, rows.get(0));
+            Assert.assertEquals(5, rows.get(1));
+            Assert.assertEquals(8, rows.get(2));
+            Assert.assertEquals(9, rows.get(3));
+            Assert.assertEquals(10, rows.get(4));
+            Assert.assertEquals(11, rows.get(5));
+            Assert.assertEquals(16, rows.get(6));
+            Assert.assertEquals(17, rows.get(7));
+
+        } finally {
+            rows.close();
+            LatestByArguments.releaseMemoryArray(argumentsAddress, taskCount);
+        }
+
+    }
+
+    @Test
+    public void testToBitString() throws NumericException {
+        long hash = 27760644473312309L;
+        String expected = "1100010101000000010100010111000100100010101010000110101";
+        Assert.assertEquals(expected, Long.toBinaryString(hash));
+        assertSuccess(hash, expected.length(), expected, toBitString);
+        Assert.assertEquals(hash, GeoHashes.fromBitString(expected));
+    }
+
+    @Test
+    public void testToBitStringInvalidSizeInBits() {
+        boolean assertsEnable = false;
+        assert assertsEnable = true; // Test only when assertions enabled
+        if (assertsEnable) {
+            Assert.assertThrows(AssertionError.class, () -> GeoHashes.toBitString(-0, 0, sink));
+            Assert.assertThrows(AssertionError.class, () -> GeoHashes.toBitString(-31, 0, sink));
+        }
+    }
+
+    @Test
+    public void testToBitStringNull() {
+        assertSuccess(-1, Integer.MIN_VALUE, "", toBitString);
+        assertSuccess(-1L, Integer.MAX_VALUE, "", toBitString);
+    }
+
+    @Test
+    public void testToHash() throws NumericException {
+        final long gh = GeoHashes.fromCoordinates(lat, lon, 8 * 5);
+        final long ghz = GeoHashes.toHashWithSize(gh, 8);
+        Assert.assertEquals(gh, GeoHashes.toHash(ghz));
+        Assert.assertEquals(0, hashSize(gh));
+        Assert.assertEquals(8, hashSize(ghz));
+    }
+
+    @Test
     public void testToString() {
         assertSuccess(-1, Integer.MIN_VALUE, "", toString);
         assertSuccess(-1L, Integer.MAX_VALUE, "", toString);
@@ -276,21 +320,6 @@ public class GeoHashNativeTest {
     }
 
     @Test
-    public void testToBitStringNull() {
-        assertSuccess(-1, Integer.MIN_VALUE, "", toBitString);
-        assertSuccess(-1L, Integer.MAX_VALUE, "", toBitString);
-    }
-
-    @Test
-    public void testToBitString() throws NumericException {
-        long hash = 27760644473312309L;
-        String expected = "1100010101000000010100010111000100100010101010000110101";
-        Assert.assertEquals(expected, Long.toBinaryString(hash));
-        assertSuccess(hash, expected.length(), expected, toBitString);
-        Assert.assertEquals(hash, GeoHashes.fromBitString(expected));
-    }
-
-    @Test
     public void tstsRndD() {
         Rnd r = new Rnd();
         for (int i = 0; i < 1000; i++) {
@@ -299,47 +328,15 @@ public class GeoHashNativeTest {
         }
     }
 
-    @Test
-    public void testFromBitStringInvalid() {
-        CharSequence tooLongBitString = Chars.repeat("1", 61);
-        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromBitString(tooLongBitString));
+    private static double rnd_double(double min, double max) {
+        return ThreadLocalRandom.current().nextDouble(min, max);
     }
 
-    @Test
-    public void testFromBitStringInvalid2() {
-        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromBitString("a"));
+    private static long rnd_geohash(int size) throws NumericException {
+        double x = rnd_double(-90, 90);
+        double y = rnd_double(-180, 180);
+        return GeoHashes.fromCoordinates(x, y, size * 5);
     }
-
-    @Test
-    public void testToBitStringInvalidSizeInBits() {
-        boolean assertsEnable = false;
-        assert assertsEnable = true; // Test only when assertions enabled
-        if (assertsEnable) {
-            Assert.assertThrows(AssertionError.class, () -> GeoHashes.toBitString(-0, 0, sink));
-            Assert.assertThrows(AssertionError.class, () -> GeoHashes.toBitString(-31, 0, sink));
-        }
-    }
-
-    @Test
-    public void testFromStringNull() throws NumericException {
-        Assert.assertEquals(GeoHashes.fromStringNl(null, 0, 0), GeoHashes.NULL);
-        Assert.assertEquals(GeoHashes.fromStringNl("", 0, 0), GeoHashes.NULL);
-    }
-
-    @SuppressWarnings("ResultOfMethodCallIgnored")
-    @Test
-    public void testFromCoordinatesEdge() {
-        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromCoordinates(-91, 0, 10));
-        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromCoordinates(0, 190, 10));
-    }
-
-    @FunctionalInterface
-    private interface StringConverter {
-        void convert(long hash, int size, CharSink sink) throws NumericException;
-    }
-
-    private static final StringConverter toString = GeoHashes::toString;
-    private static final StringConverter toBitString = GeoHashes::toBitString;
 
     private static void assertSuccess(long hash, int size, String message, StringConverter converter) {
         try {
@@ -349,5 +346,10 @@ public class GeoHashNativeTest {
         } catch (IllegalArgumentException | NumericException err) {
             Assert.fail();
         }
+    }
+
+    @FunctionalInterface
+    private interface StringConverter {
+        void convert(long hash, int size, CharSink sink) throws NumericException;
     }
 }

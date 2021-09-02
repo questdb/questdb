@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 
 // ColumnType layout - 32bit
@@ -78,7 +79,9 @@ public final class ColumnType {
     public static final short TYPES_SIZE = MAX + 1;
     private static final int[] TYPE_SIZE_POW2 = new int[TYPES_SIZE];
     private static final int[] TYPE_SIZE = new int[TYPES_SIZE];
+    public static final int MAX_BITS_LENGTH;
     public static final int NO_OVERLOAD = 10000;
+    static final int[] GEO_TYPE_SIZE_POW2;
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     // For function overload the priority is taken from left to right
@@ -106,22 +109,13 @@ public final class ColumnType {
     private ColumnType() {
     }
 
-    // This method used by row copier assembler
-    public static long geoHashTruncate(long value, int fromType, int toType) {
-        final int fromBits = getGeoHashBits(fromType);
-        final int toBits = getGeoHashBits(toType);
-        assert fromBits >= toBits;
-        return getHashTruncateUsingBits(value, fromBits, toBits);
-    }
-
     public static int getGeoHashBits(int type) {
         return (byte) ((type >> BITS_OFFSET) & 0xFF);
     }
 
     public static int getGeoHashTypeWithBits(int bits) {
         assert bits > 0;
-        // todo: consolidate, there is a function retuning GEOBYTE etc
-        switch (GeoHashes.pow2SizeOfBits(bits)) {
+        switch (pow2SizeOfBits(bits)) {
             case 0:
                 return (GEOBYTE & ~(0xFF << 8)) | (bits << 8);
             case 1:
@@ -133,12 +127,8 @@ public final class ColumnType {
         }
     }
 
-    public static long getHashTruncateUsingBits(long value, int fromBits, int toBits) {
-        return value >> (fromBits - toBits);
-    }
-
     public static int getPow2SizeOfGeoHashType(int type) {
-        return 1 << GeoHashes.pow2SizeOfBits(ColumnType.getGeoHashBits(type));
+        return 1 << pow2SizeOfBits(ColumnType.getGeoHashBits(type));
     }
 
     public static boolean isBinary(int columnType) {
@@ -220,14 +210,19 @@ public final class ColumnType {
     }
 
     public static int pow2SizeOf(int columnType) {
-        final int size = TYPE_SIZE_POW2[tagOf(columnType)];
+        return TYPE_SIZE_POW2[tagOf(columnType)];
 
         // todo: do we need this section below ?
-        if (size > -2) {
-            return size;
-        }
-        // Geohashes
-        return GeoHashes.pow2SizeOf(columnType);
+//        if (size > -2) {
+//            return size;
+//        }
+//         Geohashes
+//        return GeoHashes.pow2SizeOf(columnType);
+    }
+
+    public static int pow2SizeOfBits(int bits) {
+        assert bits <= MAX_BITS_LENGTH;
+        return GEO_TYPE_SIZE_POW2[bits];
     }
 
     public static int setDesignatedTimestampBit(int tsType, boolean designated) {
@@ -254,6 +249,18 @@ public final class ColumnType {
         return (short) nameTypeMap.get(name);
     }
 
+    public static long truncateGeoHashBits(long value, int fromBits, int toBits) {
+        return value >> (fromBits - toBits);
+    }
+
+    // This method used by row copier assembler
+    public static long truncateGeoHashTypes(long value, int fromType, int toType) {
+        final int fromBits = getGeoHashBits(fromType);
+        final int toBits = getGeoHashBits(toType);
+        assert fromBits >= toBits;
+        return truncateGeoHashBits(value, fromBits, toBits);
+    }
+
     private static short indexOf(short[] list, short value) {
         for (short i = 0; i < list.length; i++) {
             if (list[i] == value) {
@@ -278,6 +285,12 @@ public final class ColumnType {
     }
 
     static {
+        MAX_BITS_LENGTH = 60;
+        GEO_TYPE_SIZE_POW2 = new int[MAX_BITS_LENGTH + 1];
+        for (int bits = 1; bits <= MAX_BITS_LENGTH; bits++) {
+            GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
+        }
+
         typeNameMap.put(BOOLEAN, "BOOLEAN");
         typeNameMap.put(BYTE, "BYTE");
         typeNameMap.put(DOUBLE, "DOUBLE");
@@ -300,7 +313,7 @@ public final class ColumnType {
 
         StringSink sink = new StringSink();
 
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= MAX_BITS_LENGTH; b++) {
             sink.clear();
 
             if (b % 5 != 0) {
@@ -375,6 +388,7 @@ public final class ColumnType {
         TYPE_SIZE[LONG256] = Long256.BYTES;
         TYPE_SIZE[GEOBYTE] = Byte.BYTES;
         TYPE_SIZE[GEOSHORT] = Short.BYTES;
+        TYPE_SIZE[GEOINT] = Integer.BYTES;
         TYPE_SIZE[GEOLONG] = Long.BYTES;
         TYPE_SIZE[BINARY] = 0;
         TYPE_SIZE[PARAMETER] = -1;
