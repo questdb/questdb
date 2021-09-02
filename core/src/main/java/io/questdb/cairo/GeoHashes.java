@@ -84,11 +84,11 @@ public class GeoHashes {
         if (len - start <= 0) {
             return NULL;
         }
-        return fromBitString(bits, start, Math.min(bits.length(), MAX_BITS_LENGTH));
+        return fromBitString(bits, start, Math.min(bits.length(), MAX_BITS_LENGTH + start));
     }
 
     public static long fromBitString(CharSequence bits, int start) throws NumericException {
-        return fromBitString(bits, start, Math.min(bits.length(), MAX_BITS_LENGTH));
+        return fromBitString(bits, start, Math.min(bits.length(), MAX_BITS_LENGTH + start));
     }
 
     private static long fromBitString(CharSequence bits, int start, int limit) throws NumericException {

@@ -30,12 +30,10 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -2013,6 +2011,16 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select rnd_geohash(14) as \"#0101a\" from long_sequence(5) )", sqlExecutionContext);
             assertSql("select * from x where #1234 = \"#0101a\"", "#0101a\n");
+        });
+    }
+
+    @Test
+    public void testGeoLiteralBinLength() throws Exception {
+        assertMemoryLeak(() -> {
+            StringSink bitString = Misc.getThreadLocalBuilder();
+            bitString.put(Chars.repeat("0", 59)).put('1');
+            assertSql("select ##" + bitString + " as geobits", "geobits\n" +
+                    "000000000001\n");
         });
     }
 

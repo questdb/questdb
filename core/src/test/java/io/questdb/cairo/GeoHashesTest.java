@@ -426,19 +426,10 @@ public class GeoHashesTest {
     public void testFromBitStringValid() throws NumericException {
         Assert.assertEquals(0, GeoHashes.fromBitString("", 0));
         Assert.assertEquals(0, GeoHashes.fromBitString("", 1));
-        Assert.assertEquals(0, GeoHashes.fromBitString( // truncates
-                "000000000000000000000000000000000000000000000000000000000000" + // x60
-                "1", 0));
-        Assert.assertEquals(0, GeoHashes.fromBitString( // same as empty string
-                "000000000000000000000000000000000000000000000000000000000000" +
-                        "1", 60));
-        Assert.assertEquals(0, GeoHashes.fromBitString(
-                "000000000000000000000000000000000000000000000000000000000000" +
-                        "1", 59));
         Assert.assertEquals(1, GeoHashes.fromBitString(
-                "000000000000000000000000000000000000000000000000000000000001",0));
+                "##000000000000000000000000000000000000000000000000000000000001",2));
         Assert.assertEquals(1, GeoHashes.fromBitString(
-                "000000000000000000000000000000000000000000000000000000000001",59));
+                "##000000000000000000000000000000000000000000000000000000000001",59));
     }
 
     @Test
@@ -446,6 +437,12 @@ public class GeoHashesTest {
         Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromBitStringNl("", 0));
         Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromBitStringNl("0011", 4));
         Assert.assertNotEquals(GeoHashes.NULL, GeoHashes.fromBitStringNl("0", 0));
+        Assert.assertEquals(1, GeoHashes.fromBitStringNl( // same as empty string
+                "##000000000000000000000000000000000000000000000000000000000000" + "1", 60));
+        Assert.assertEquals(1, GeoHashes.fromBitStringNl(
+                "##000000000000000000000000000000000000000000000000000000000000" + "1", 59));
+        Assert.assertEquals(0, GeoHashes.fromBitStringNl( // truncates
+                "##000000000000000000000000000000000000000000000000000000000000" + "1", 2));
     }
 
     @Test(expected = NumericException.class)
