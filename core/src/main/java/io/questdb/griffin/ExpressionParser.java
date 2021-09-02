@@ -325,7 +325,7 @@ class ExpressionParser {
                             CharSequence geohashTok = GenericLexer.immutableOf(tok);
                             // optional / bits '/dd', '/d'
                             CharSequence slash = SqlUtil.fetchNext(lexer);
-                            if (slash == null || slash.charAt(0) != 47) { // '/'
+                            if (slash == null || slash.charAt(0) != '/') {
                                 lexer.unparse();
                                 opStack.push(expressionNodePool.next().of(
                                         ExpressionNode.CONSTANT,

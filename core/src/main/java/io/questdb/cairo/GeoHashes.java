@@ -95,10 +95,10 @@ public class GeoHashes {
         long result = 0;
         for (int i = start; i < limit; i++) {
             switch (bits.charAt(i)) {
-                case 48: // '0'
+                case '0':
                     result = result << 1;
                     break;
-                case 49: // '1'
+                case '1':
                     result = (result << 1) | 1;
                     break;
                 default:
@@ -213,7 +213,7 @@ public class GeoHashes {
         int idx;
         for (int i = start, n = tok.length(); i < n; i++) {
             idx = tok.charAt(i);
-            if (idx < 48 || idx > 49) { // '0', '1'
+            if (idx < '0' || idx > '1') {
                 return false;
             }
         }
