@@ -306,7 +306,8 @@ public class GeoHashNativeTest {
     @Test
     public void testFromBitStringInvalid() throws NumericException {
         CharSequence tooLongBitString = Chars.repeat("1", 61); // truncates
-        Assert.assertEquals(1152921504606846975L, GeoHashes.fromBitString(tooLongBitString, 0));
+        long maxGeohash = GeoHashes.fromString("zzzzzzzzzzzz", 0, 12);
+        Assert.assertEquals(maxGeohash, GeoHashes.fromBitString(tooLongBitString, 0));
     }
 
     @Test

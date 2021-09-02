@@ -471,12 +471,23 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGeoHashConstant() throws SqlException {
+    public void testGeoHashConstantValid() throws SqlException {
         x("#sp052w92p1p8/7", " #sp052w92p1p8\r\n  / 7\n 6c\n" +
                 "-- this is a comment, as you can see" +
                 "\n\n\r-- my tralala");
         x("#sp052w92p1p8/7", "#sp052w92p1p8 / 7");
         x("#sp052w92p1p8", "#sp052w92p1p8");
+        x("#sp052w92p1p8/0", "#sp052w92p1p8 / 0"); // valid at the expression level
+        x("#sp052w92p1p8/61", "#sp052w92p1p8 / 61"); // valid at the expression level
+    }
+
+    @Test
+    public void testGeoHashConstantNotValid() throws SqlException {
+        assertFail("#sp052w92p1p8/", 13, "missing bits size for GEOHASH constant");
+        assertFail("#sp052w92p1p8/x", 14, "missing bits size for GEOHASH constant");
+        assertFail("#sp052w92p1p8/xx", 14, "missing bits size for GEOHASH constant");
+        assertFail("#sp052w92p1p8/1x", 14, "missing bits size for GEOHASH constant");
+        assertFail("#sp052w92p1p8/x1", 14, "missing bits size for GEOHASH constant");
     }
 
     @Test

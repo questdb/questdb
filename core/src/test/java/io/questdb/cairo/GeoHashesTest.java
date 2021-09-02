@@ -355,9 +355,9 @@ public class GeoHashesTest {
     }
 
     @Test
-    public void testIsValidChar() {
+    public void testIsValidChars1() {
         Rnd rnd = new Rnd();
-        IntHashSet base32Chars = new IntHashSet(base32.length);
+        IntHashSet base32Chars = new IntHashSet(base32.length); // upper and lower case
         for (char ch : base32) {
             base32Chars.add(ch);
             Assert.assertTrue(GeoHashes.isValidChars("" + ch, 0));
@@ -365,17 +365,6 @@ public class GeoHashesTest {
         for (int i = 0; i < 15000; i++) {
             char ch = (char) rnd.nextPositiveInt();
             Assert.assertEquals(base32Chars.contains(ch), GeoHashes.isValidChars("" + ch, 0));
-        }
-    }
-
-    @Test
-    public void testIsValidChars1() {
-        Rnd rnd = new Rnd();
-        StringSink sink = Misc.getThreadLocalBuilder();
-        for (int len = 1; len <= 12; len++) {
-            sink.clear();
-            randomGeoHashChars(rnd, sink, len);
-            Assert.assertTrue(GeoHashes.isValidChars(sink, 0));
         }
     }
 
@@ -404,24 +393,13 @@ public class GeoHashesTest {
     }
 
     @Test
-    public void testIsValidCharsOutOfBounds2() {
+    public void testIsValidCharsOutOfBounds() {
         Assert.assertTrue(GeoHashes.isValidChars("", 0));
         Assert.assertTrue(GeoHashes.isValidChars("", 1));
     }
 
     @Test
     public void testIsValidBits1() {
-        Rnd rnd = new Rnd();
-        StringSink sink = Misc.getThreadLocalBuilder();
-        for (int len = 1; len <= 60; len++) {
-            sink.clear();
-            randomGeoHashBits(rnd, sink, len);
-            Assert.assertTrue(GeoHashes.isValidBits(sink, 0));
-        }
-    }
-
-    @Test
-    public void testIsValidBits2() {
         Rnd rnd = new Rnd();
         StringSink sink = Misc.getThreadLocalBuilder();
         for (int len = 1; len <= 60; len++) {
@@ -449,31 +427,18 @@ public class GeoHashesTest {
         Assert.assertEquals(0, GeoHashes.fromBitString("", 0));
         Assert.assertEquals(0, GeoHashes.fromBitString("", 1));
         Assert.assertEquals(0, GeoHashes.fromBitString( // truncates
-                "0000000000" + "0000000000" + "0000000000" +
-                "0000000000" + "0000000000" + "0000000000" +
+                "000000000000000000000000000000000000000000000000000000000000" + // x60
                 "1", 0));
         Assert.assertEquals(0, GeoHashes.fromBitString( // same as empty string
-                "0000000000" + "0000000000" + "0000000000" +
-                        "0000000000" + "0000000000" + "0000000000" +
+                "000000000000000000000000000000000000000000000000000000000000" +
                         "1", 60));
         Assert.assertEquals(0, GeoHashes.fromBitString(
-                "0000000000" + "0000000000" + "0000000000" +
-                        "0000000000" + "0000000000" + "0000000000" +
+                "000000000000000000000000000000000000000000000000000000000000" +
                         "1", 59));
         Assert.assertEquals(1, GeoHashes.fromBitString(
-                "0000000000" + "0000000000" + "0000000000" +
-                        "0000000000" + "0000000000" + "0000000001",0));
+                "000000000000000000000000000000000000000000000000000000000001",0));
         Assert.assertEquals(1, GeoHashes.fromBitString(
-                "0000000000" + "0000000000" + "0000000000" +
-                        "0000000000" + "0000000000" + "0000000001",59));
-
-        StringSink sink = Misc.getThreadLocalBuilder();
-        for (int bits = 1; bits <= GeoHashes.MAX_BITS_LENGTH; bits++) {
-            long geoPi = GeoHashes.fromCoordinates(3.14159, 3.14159, bits);
-            sink.clear();
-            GeoHashes.toBitString(geoPi, bits, sink);
-            Assert.assertEquals(geoPi, GeoHashes.fromBitString(sink.toString(), 0));
-        }
+                "000000000000000000000000000000000000000000000000000000000001",59));
     }
 
     @Test
