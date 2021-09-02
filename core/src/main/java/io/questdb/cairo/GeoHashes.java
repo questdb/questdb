@@ -91,9 +91,9 @@ public class GeoHashes {
         return fromBitString(bits, start, Math.min(bits.length(), MAX_BITS_LENGTH));
     }
 
-    private static long fromBitString(CharSequence bits, int start, int len) throws NumericException {
+    private static long fromBitString(CharSequence bits, int start, int limit) throws NumericException {
         long result = 0;
-        for (int i = start; i < len; i++) {
+        for (int i = start; i < limit; i++) {
             switch (bits.charAt(i)) {
                 case 48: // '0'
                     result = result << 1;
@@ -202,7 +202,7 @@ public class GeoHashes {
         int idx;
         for (int i = start, n = tok.length(); i < n; i++) {
             idx = tok.charAt(i);
-            if (idx < 48 || idx >= 123 || base32Indexes[idx - 48] == -1) {
+            if (idx < 48 || idx > 122 || base32Indexes[idx - 48] == -1) {
                 return false;
             }
         }
