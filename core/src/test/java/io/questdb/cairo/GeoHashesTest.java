@@ -23,11 +23,17 @@
  ******************************************************************************/
 
 package io.questdb.cairo;
+
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.function.BiFunction;
+
+
 public class GeoHashesTest {
+
     @Test
     public void testBitsPrecision() {
         Assert.assertEquals(ColumnType.GEOHASH, ColumnType.tagOf(ColumnType.GEOHASH));
@@ -172,5 +178,194 @@ public class GeoHashesTest {
         }
         Assert.assertEquals(expected, everything.toString());
         Assert.assertEquals("GEOHASH", ColumnType.nameOf(ColumnType.GEOHASH));
+    }
+
+    @Test
+    public void testFromStringNl() throws NumericException {
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl("123", 0, 0));
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl("", 0, 0));
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl("", 0, 1));
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl("''", 1, 0));
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl("''", 1, 0));
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl(null, 0, 1));
+    }
+
+    @Test
+    public void testFromStringTruncatingNl1() throws NumericException {
+        for (int i = 5; i <= 60; i++) {
+            Assert.assertNotEquals(
+                    GeoHashes.fromStringTruncatingNl("123412341234", 0, 12, i - 1),
+                    GeoHashes.fromStringTruncatingNl("123412341234", 0, 12, i));
+        }
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromStringTruncatingNl2() throws NumericException {
+        GeoHashes.fromStringTruncatingNl("123", 0, 3, GeoHashes.MAX_BITS_LENGTH + 1);
+    }
+
+    @Test(expected = StringIndexOutOfBoundsException.class)
+    public void testFromStringNotEnoughChars() throws NumericException {
+        GeoHashes.fromString("123", 0, 4);
+    }
+
+    @Test(expected = StringIndexOutOfBoundsException.class)
+    public void testFromStringTruncatingNlNotEnoughChars() throws NumericException {
+        GeoHashes.fromStringTruncatingNl("123", 0, 4, 15);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromStringTruncatingNlNotEnoughBits() throws NumericException {
+        GeoHashes.fromStringTruncatingNl("123", 0, 3, 16);
+    }
+
+    @Test
+    public void testFromStringOverMaxCharsLength() throws NumericException {
+        Assert.assertEquals(
+                GeoHashes.fromString("23456789bcde", 0, 12),
+                GeoHashes.fromStringNl("!23456789bcde!", 1, GeoHashes.MAX_STRING_LENGTH + 2)
+        );
+    }
+
+    @Test
+    public void testFromStringTruncatingNlOverMaxCharsLength() throws NumericException {
+        Assert.assertEquals(
+                GeoHashes.fromStringTruncatingNl("23456789bcde", 0, 12, 0),
+                GeoHashes.fromStringTruncatingNl("123456789bcdezz", 1, GeoHashes.MAX_STRING_LENGTH + 2, 0)
+        );
+    }
+
+    @Test(expected = StringIndexOutOfBoundsException.class)
+    public void testFromStringShorterThanRequiredLength() throws NumericException {
+        GeoHashes.fromString("123", 1, 7);
+    }
+
+    @Test(expected = StringIndexOutOfBoundsException.class)
+    public void testFromStringTruncatingNlShorterThanRequiredLength1() throws NumericException {
+        GeoHashes.fromStringTruncatingNl("123", 1, 7, 0);
+    }
+
+    @Test
+    public void testFromStringTruncatingNlShorterThanRequiredLength2() {
+        testUnsafeFromStringTruncatingNl("123", (lo, hi) -> {
+            try {
+                Assert.assertEquals(807941, GeoHashes.fromStringTruncatingNl(lo, lo + 7, 0));
+                Assert.fail();
+            } catch (StringIndexOutOfBoundsException fail) {
+                Assert.fail();
+            } catch (NumericException success) {
+                // no-op
+            }
+            return null;
+        });
+    }
+
+    @Test
+    public void testFromStringNlYieldsNullDueToZeroRequiredLen() throws NumericException {
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl("''", 1, 0));
+    }
+
+    @Test
+    public void testFromStringTruncatingNlYieldsNullDueToZeroRequiredLen() throws NumericException {
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringTruncatingNl("''", 1, 1, 0));
+    }
+
+    @Test
+    public void testFromStringJustOneChar() throws NumericException {
+        Assert.assertEquals(0, GeoHashes.fromString("ast", 1, 1));
+    }
+
+    @Test
+    public void testFromStringNlJustOneChar() throws NumericException {
+        Assert.assertEquals(24, GeoHashes.fromStringNl("ast", 1, 1));
+    }
+
+    @Test
+    public void testFromStringTruncatingNlJustOneChar() throws NumericException {
+        Assert.assertEquals(24, GeoHashes.fromStringTruncatingNl("ast", 1, 2, 5));
+    }
+
+    @Test
+    public void testFromStringIgnoreQuotes() throws NumericException {
+        Assert.assertEquals(27760644473312309L, GeoHashes.fromString("'sp052w92p1p'", 1, 12));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromStringBadChar() throws NumericException {
+        Assert.assertEquals(27760644473312309L, GeoHashes.fromString("'sp05@w92p1p'", 1, 12));
+    }
+
+    @Test
+    public void testFromStringExcessChars1() throws NumericException {
+        Assert.assertEquals(-8466588206747298559L, GeoHashes.fromString("'sp052w92p1p812'", 1, 14));
+    }
+
+    @Test
+    public void testFromStringNlExcessChars() throws NumericException {
+        Assert.assertEquals(888340623145993896L, GeoHashes.fromStringNl("'sp052w92p1p812'", 1, 14));
+    }
+
+    @Test
+    public void testFromStringIgnoreQuotesTruncateChars() throws NumericException {
+        Assert.assertEquals(807941, GeoHashes.fromString("'sp052w92p1p'", 1, 5));
+        StringSink sink = Misc.getThreadLocalBuilder();
+        GeoHashes.toString(807941, 4, sink);
+        Assert.assertEquals("sp05", sink.toString());
+    }
+
+    @Test
+    public void testFromStringTruncatingNlIgnoreQuotesTruncateBits1() throws NumericException {
+        Assert.assertEquals(807941, GeoHashes.fromStringTruncatingNl("'sp052w92p1p'", 1, 11, 20));
+        StringSink sink = Misc.getThreadLocalBuilder();
+        GeoHashes.toString(807941, 4, sink);
+        Assert.assertEquals("sp05", sink.toString());
+    }
+
+    @Test
+    public void testFromStringTruncatingNlIgnoreQuotesTruncateBits2() throws NumericException {
+        testUnsafeFromStringTruncatingNl("'sp052w92p1p'", (lo, hi) -> {
+            try {
+                Assert.assertEquals(807941, GeoHashes.fromStringTruncatingNl(lo + 1, lo + 5, 20));
+            } catch (NumericException e) {
+                Assert.fail();
+            }
+            return null;
+        });
+    }
+
+    @Test
+    public void testFromStringTruncatingNlIgnoreQuotesTruncateBits3() {
+        testUnsafeFromStringTruncatingNl("23456789bcde", (lo0, hi0) -> {
+            testUnsafeFromStringTruncatingNl("123456789bcdezz", (lo1, hi1) -> {
+                try {
+                    Assert.assertEquals(
+                            GeoHashes.fromStringTruncatingNl(lo0, lo0 + 12, 0),
+                            GeoHashes.fromStringTruncatingNl(lo1 + 1, lo1 + 13, 0));
+
+                    Assert.assertNotEquals(
+                            GeoHashes.fromStringTruncatingNl(lo0, lo0 + 12, 20),
+                            GeoHashes.fromStringTruncatingNl(lo1 + 1, lo1 + 13, 25));
+                } catch (NumericException e) {
+                    Assert.fail();
+                }
+                return null;
+            });
+            return null;
+        });
+    }
+
+    private void testUnsafeFromStringTruncatingNl(CharSequence token, BiFunction<Long, Long, Void> code) {
+        final int len = token.length();
+        final long lo = Unsafe.malloc(len);
+        final long hi = lo + len;
+        try {
+            sun.misc.Unsafe unsafe = Unsafe.getUnsafe();
+            for (long p = lo; p < hi; p++) {
+                unsafe.putByte(p, (byte) token.charAt((int) (p - lo)));
+            }
+            code.apply(lo, hi);
+        } finally {
+            Unsafe.free(lo, len);
+        }
     }
 }

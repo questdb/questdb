@@ -122,8 +122,8 @@ public class TableWriter implements Closeable {
     private final TxWriter txFile;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final LongList o3PartitionRemoveCandidates = new LongList();
-    private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<O3MutableAtomicInteger>(O3MutableAtomicInteger::new, 64);
-    private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<O3Basket>(O3Basket::new, 64);
+    private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<>(O3MutableAtomicInteger::new, 64);
+    private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<>(O3Basket::new, 64);
     private final TxnScoreboard txnScoreboard;
     private final StringSink o3Sink = new StringSink();
     private final NativeLPSZ o3NativeLPSZ = new NativeLPSZ();
@@ -1442,8 +1442,9 @@ public class TableWriter implements Closeable {
             int typeSize = 4;
             long fileSize = ff.length(path);
             if (fileSize < partitionSize * typeSize) {
-                throw CairoException.instance(0).put("Column file row count does not match timestamp file row count. " +
-                        "Partition files inconsistent [file=")
+                throw CairoException.instance(0)
+                        .put("Column file row count does not match timestamp file row count. ")
+                        .put("Partition files inconsistent [file=")
                         .put(path)
                         .put(",expectedSize=")
                         .put(partitionSize * typeSize)
@@ -1467,8 +1468,9 @@ public class TableWriter implements Closeable {
         if (ff.exists(path)) {
             long fileSize = ff.length(path);
             if (fileSize < partitionSize << ColumnType.pow2SizeOf(columnType)) {
-                throw CairoException.instance(0).put("Column file row count does not match timestamp file row count. " +
-                        "Partition files inconsistent [file=")
+                throw CairoException.instance(0)
+                        .put("Column file row count does not match timestamp file row count. ")
+                        .put("Partition files inconsistent [file=")
                         .put(path)
                         .put(",expectedSize=")
                         .put(partitionSize << ColumnType.pow2SizeOf(columnType))
@@ -3208,8 +3210,8 @@ public class TableWriter implements Closeable {
                     other.slash$();
                     int errno;
                     if ((errno = ff.rmdir(other)) == 0) {
-                        LOG.info().$(
-                                "purged [path=").$(other)
+                        LOG.info()
+                                .$("purged [path=").$(other)
                                 .$(", readerTxn=").$(readerTxn)
                                 .$(", readerTxnCount=").$(readerTxnCount)
                                 .$(']').$();
@@ -4845,7 +4847,7 @@ public class TableWriter implements Closeable {
             final MemoryA primaryColumn = getPrimaryColumn(index);
             switch (ColumnType.sizeOf(type)) {
                 case 1:
-                    primaryColumn.putByte((byte)value);
+                    primaryColumn.putByte((byte) value);
                     break;
                 case 2:
                     primaryColumn.putShort((short) value);
@@ -4857,6 +4859,26 @@ public class TableWriter implements Closeable {
                     primaryColumn.putLong(value);
                     break;
             }
+            notNull(index);
+        }
+
+        public void putGeoHashByte(int index, byte value) {
+            getPrimaryColumn(index).putByte(value);
+            notNull(index);
+        }
+
+        public void putGeoHashShort(int index, short value) {
+            getPrimaryColumn(index).putShort(value);
+            notNull(index);
+        }
+
+        public void putGeoHashInt(int index, int value) {
+            getPrimaryColumn(index).putInt(value);
+            notNull(index);
+        }
+
+        public void putGeoHashLong(int index, long value) {
+            getPrimaryColumn(index).putLong(value);
             notNull(index);
         }
 

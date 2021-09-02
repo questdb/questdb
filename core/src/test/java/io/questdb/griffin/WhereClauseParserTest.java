@@ -656,13 +656,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testEqualsLambda() throws Exception {
         IntrinsicModel m = modelOf("x = (select * from x)");
-        assertFilter(m, "(select-choose * column from (x))x=");
+        assertFilter(m, "(select-choose * from (x))x=");
     }
 
     @Test
     public void testEqualsLambdaR() throws Exception {
         IntrinsicModel m = modelOf("(select * from x) = x");
-        assertFilter(m, "x(select-choose * column from (x))=");
+        assertFilter(m, "x(select-choose * from (x))=");
     }
 
     @Test
@@ -757,13 +757,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testGreaterThanLambda() throws Exception {
         IntrinsicModel m = modelOf("(select * from x) > x");
-        assertFilter(m, "x(select-choose * column from (x))>");
+        assertFilter(m, "x(select-choose * from (x))>");
     }
 
     @Test
     public void testGreaterThanLambdaR() throws Exception {
         IntrinsicModel m = modelOf("y > (select * from x)");
-        assertFilter(m, "(select-choose * column from (x))y>");
+        assertFilter(m, "(select-choose * from (x))y>");
     }
 
     @Test
@@ -975,7 +975,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testLambdaVsLambda() throws Exception {
-        runWhereSymbolTest("ex in (select * from abc) and sym in (select * from xyz)", "ex in (select-choose * column from (abc))");
+        runWhereSymbolTest("ex in (select * from abc) and sym in (select * from xyz)", "ex in (select-choose * from (abc))");
     }
 
     @Test
@@ -1017,13 +1017,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testLessThanLambda() throws Exception {
         IntrinsicModel m = modelOf("(select * from x) < x");
-        assertFilter(m, "x(select-choose * column from (x))<");
+        assertFilter(m, "x(select-choose * from (x))<");
     }
 
     @Test
     public void testLessThanLambdaR() throws Exception {
         IntrinsicModel m = modelOf("z < (select * from x)");
-        assertFilter(m, "(select-choose * column from (x))z<");
+        assertFilter(m, "(select-choose * from (x))z<");
     }
 
     @Test

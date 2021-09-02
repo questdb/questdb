@@ -38,12 +38,12 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -65,7 +65,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 Rnd rnd = new Rnd();
                 for (int i = 0; i < N; i++) {
-                    ts = populateRow(writer, ts, rnd, 60L * 60000L * 1000L);
+                    ts = populateRow(writer, rnd, ts, 60L * 60000L * 1000L);
                     writer.commit();
                 }
             }
@@ -206,14 +206,14 @@ public class TableWriterTest extends AbstractCairoTest {
             Assert.assertEquals(count, writer.size());
             writer.addColumn("abc", ColumnType.STRING);
             // add more data including updating new column
-            ts = populateTable2(rnd, writer, ts, count, interval);
+            ts = populateTable2(writer, rnd, count, ts, interval);
             Assert.assertEquals(2 * count, writer.size());
             writer.rollback();
         }
 
         // append more
         try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-            populateTable2(rnd, writer, ts, count, interval);
+            populateTable2(writer, rnd, count, ts, interval);
             writer.commit();
             Assert.assertEquals(2 * count, writer.size());
         }
@@ -491,9 +491,9 @@ public class TableWriterTest extends AbstractCairoTest {
                     return ff;
                 }
             }, PRODUCT)) {
-                Assert.assertEquals(12, writer.columns.size());
+                Assert.assertEquals(20, writer.columns.size());
                 writer.addColumn("abc", ColumnType.STRING);
-                Assert.assertEquals(14, writer.columns.size());
+                Assert.assertEquals(22, writer.columns.size());
                 Assert.assertTrue(ff.deleteAttempted);
             }
         });
@@ -1025,10 +1025,10 @@ public class TableWriterTest extends AbstractCairoTest {
             r.putInt(0, rnd.nextInt());
             r.cancel();
 
-            Assert.assertEquals(0L, writer.columns.getQuick(13).getAppendOffset());
+            Assert.assertEquals(0L, writer.columns.getQuick(21).getAppendOffset());
 
             // add more data including updating new column
-            ts = populateTable2(rnd, writer, ts, N, interval);
+            ts = populateTable2(writer, rnd, N, ts, interval);
             Assert.assertEquals(2 * N, writer.size());
 
             writer.rollback();
@@ -1036,7 +1036,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
         // append more
         try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-            populateTable2(rnd, writer, ts, N, interval);
+            populateTable2(writer, rnd, N, ts, interval);
             writer.commit();
             Assert.assertEquals(2 * N, writer.size());
         }
@@ -1687,7 +1687,7 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
             try (
-                    MemoryCMARW mem = Vm.getCMARWInstance() ;
+                    MemoryCMARW mem = Vm.getCMARWInstance();
                     Path path = new Path().of(root).concat("all").concat(TableUtils.TODO_FILE_NAME).$()
             ) {
                 mem.smallFile(FilesFacadeImpl.INSTANCE, path);
@@ -2582,7 +2582,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 Rnd rnd = new Rnd();
                 for (int i = 0; i < 100; i++) {
-                    ts = populateRow(w, ts, rnd, 60L * 60000L * 1000L);
+                    ts = populateRow(w, rnd, ts, 60L * 60000L * 1000L);
                 }
                 w.commit();
 
@@ -2682,6 +2682,25 @@ public class TableWriterTest extends AbstractCairoTest {
         testSymbolCacheFlag(false);
     }
 
+    @Test
+    public void TestSelectPartitionDirFmt() {
+        Assert.assertNull(TableWriter.selectPartitionDirFmt(PartitionBy.NONE));
+        sink.clear();
+        TableWriter.selectPartitionDirFmt(PartitionBy.DAY)
+                .format(0, DateFormatUtils.enLocale, "Z", sink);
+        Assert.assertEquals("1970-01-01", sink.toString());
+
+        sink.clear();
+        TableWriter.selectPartitionDirFmt(PartitionBy.MONTH)
+                .format(0, DateFormatUtils.enLocale, "Z", sink);
+        Assert.assertEquals("1970-01", sink.toString());
+
+        sink.clear();
+        TableWriter.selectPartitionDirFmt(PartitionBy.YEAR)
+                .format(0, DateFormatUtils.enLocale, "Z", sink);
+        Assert.assertEquals("1970", sink.toString());
+    }
+
     private long append10KNoSupplier(long ts, Rnd rnd, TableWriter writer) {
         int productId = writer.getColumnIndex("productId");
         int productName = writer.getColumnIndex("productName");
@@ -2773,7 +2792,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private void appendAndAssert10K(long ts, Rnd rnd) {
         try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-            Assert.assertEquals(12, writer.columns.size());
+            Assert.assertEquals(20, writer.columns.size());
             populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
             writer.commit(CommitMode.SYNC);
             Assert.assertEquals(30000, writer.size());
@@ -2792,6 +2811,10 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("supplier", ColumnType.SYMBOL).symbolCapacity(N)
                 .col("category", ColumnType.SYMBOL).symbolCapacity(N).indexed(true, 256)
                 .col("price", ColumnType.DOUBLE)
+                .col("locationByte", ColumnType.geohashWithPrecision(5))
+                .col("locationShort", ColumnType.geohashWithPrecision(15))
+                .col("locationInt", ColumnType.geohashWithPrecision(30))
+                .col("locationLong", ColumnType.geohashWithPrecision(60))
                 .timestamp()) {
             CairoTestUtils.create(model);
         }
@@ -2822,7 +2845,7 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.addColumn("abc", ColumnType.STRING);
 
             // add more data including updating new column
-            ts = populateTable2(rnd, writer, ts, n, interval);
+            ts = populateTable2(writer, rnd, n, ts, interval);
 
             writer.commit();
 
@@ -2831,7 +2854,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
         // append more
         try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-            populateTable2(rnd, writer, ts, n, interval);
+            populateTable2(writer, rnd, n, ts, interval);
             Assert.assertEquals(3 * n, writer.size());
             writer.commit();
             Assert.assertEquals(3 * n, writer.size());
@@ -2840,18 +2863,22 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private long populateProducts(TableWriter writer, Rnd rnd, long ts, int count, long increment) {
         for (int i = 0; i < count; i++) {
-            ts = populateRow(writer, ts, rnd, increment);
+            ts = populateRow(writer, rnd, ts, increment);
         }
         return ts;
     }
 
-    private long populateRow(TableWriter writer, long ts, Rnd rnd, long increment) {
+    private static long populateRow(TableWriter writer, Rnd rnd, long ts, long increment) {
         TableWriter.Row r = writer.newRow(ts += increment);
-        r.putInt(0, rnd.nextPositiveInt());
-        r.putStr(1, rnd.nextString(7));
-        r.putSym(2, rnd.nextString(4));
-        r.putSym(3, rnd.nextString(11));
-        r.putDouble(4, rnd.nextDouble());
+        r.putInt(0, rnd.nextPositiveInt());  // productId
+        r.putStr(1, rnd.nextString(7)); // productName
+        r.putSym(2, rnd.nextString(4)); // supplier
+        r.putSym(3, rnd.nextString(11)); // category
+        r.putDouble(4, rnd.nextDouble()); // price
+        r.putGeoHashByte(5, rnd.nextGeoHashByte(5)); // locationByte
+        r.putGeoHashShort(6, rnd.nextGeoHashShort(15)); // locationShort
+        r.putGeoHashInt(7, rnd.nextGeoHashInt(30)); // locationInt
+        r.putGeoHashLong(8, rnd.nextGeoHashLong(60)); // locationLong
         r.append();
         return ts;
     }
@@ -2886,16 +2913,9 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
-    private long populateTable2(Rnd rnd, TableWriter writer, long ts, int n, long interval) {
+    private long populateTable2(TableWriter writer, Rnd rnd, int n, long ts, long interval) {
         for (int i = 0; i < n; i++) {
-            TableWriter.Row r = writer.newRow(ts += interval);
-            r.putInt(0, rnd.nextPositiveInt());
-            r.putStr(1, rnd.nextString(7));
-            r.putSym(2, rnd.nextString(4));
-            r.putSym(3, rnd.nextString(11));
-            r.putDouble(4, rnd.nextDouble());
-            r.putStr(6, rnd.nextString(5));
-            r.append();
+            ts = populateRow(writer, rnd, ts, interval);
         }
         return ts;
     }
@@ -3010,14 +3030,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
                 for (int i = 0; i < N; i++) {
-                    TableWriter.Row r = writer.newRow(ts += 60L * 60000 * 1000L);
-                    r.putInt(0, rnd.nextPositiveInt());
-                    r.putStr(1, rnd.nextString(7));
-                    r.putSym(2, rnd.nextString(4));
-                    r.putSym(3, rnd.nextString(11));
-                    r.putDouble(4, rnd.nextDouble());
-                    r.putStr(6, rnd.nextString(10));
-                    r.append();
+                    ts = populateRow(writer, rnd, ts, 60L * 60000 * 1000L);
                 }
                 writer.commit();
                 Assert.assertEquals(N * 2, writer.size());
@@ -3040,7 +3053,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
                 Assert.assertEquals(20000, writer.size());
 
-                Assert.assertEquals(12, writer.columns.size());
+                Assert.assertEquals(20, writer.columns.size());
 
                 try {
                     writer.addColumn("abc", ColumnType.STRING);
@@ -3070,7 +3083,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
             };
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-                Assert.assertEquals(12, writer.columns.size());
+                Assert.assertEquals(20, writer.columns.size());
                 ts = populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
                 writer.commit();
                 try {
@@ -3671,7 +3684,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 ts = populateProducts(writer, rnd, ts, 10000, 60000 * 1000L);
                 writer.commit();
 
-                Assert.assertEquals(12, writer.columns.size());
+                Assert.assertEquals(20, writer.columns.size());
 
                 try {
                     writer.addColumn("abc", ColumnType.STRING);
