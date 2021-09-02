@@ -154,23 +154,23 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public byte getGeoHashByte(Record rec) {
-        return getBase().getGeoHashByte(rec);
+    public byte getGeoByte(Record rec) {
+        return getBase().getGeoByte(rec);
     }
 
     @Override
-    public short getGeoHashShort(Record rec) {
-        return getBase().getGeoHashShort(rec);
+    public short getGeoShort(Record rec) {
+        return getBase().getGeoShort(rec);
     }
 
     @Override
-    public int getGeoHashInt(Record rec) {
-        return getBase().getGeoHashInt(rec);
+    public int getGeoInt(Record rec) {
+        return getBase().getGeoInt(rec);
     }
 
     @Override
-    public long getGeoHashLong(Record rec) {
-        return getBase().getGeoHashLong(rec);
+    public long getGeoLong(Record rec) {
+        return getBase().getGeoLong(rec);
     }
 
     @Override

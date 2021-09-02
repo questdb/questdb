@@ -300,7 +300,7 @@ public class GeoHashesTest {
     public void testFromStringIgnoreQuotesTruncateChars() throws NumericException {
         Assert.assertEquals(807941, GeoHashes.fromString("'sp052w92p1p'", 1, 5));
         StringSink sink = Misc.getThreadLocalBuilder();
-        GeoHashes.toString(807941, 4, sink);
+        GeoHashes.appendChars(807941, 4, sink);
         Assert.assertEquals("sp05", sink.toString());
     }
 
@@ -308,7 +308,7 @@ public class GeoHashesTest {
     public void testFromStringTruncatingNlIgnoreQuotesTruncateBits1() throws NumericException {
         Assert.assertEquals(807941, GeoHashes.fromStringTruncatingNl("'sp052w92p1p'", 1, 11, 20));
         StringSink sink = Misc.getThreadLocalBuilder();
-        GeoHashes.toString(807941, 4, sink);
+        GeoHashes.appendChars(807941, 4, sink);
         Assert.assertEquals("sp05", sink.toString());
     }
 

@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
-import org.junit.Assert;
 import org.junit.Test;
 
 public class DoubleFunctionTest {
@@ -140,21 +139,21 @@ public class DoubleFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGeoHash() {
-        function.getGeoHashLong(null);
+        function.getGeoLong(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGeoHashInt() {
-        function.getGeoHashInt(null);
+        function.getGeoInt(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGeoHashByte() {
-        function.getGeoHashByte(null);
+        function.getGeoByte(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGeoHashShor() {
-        function.getGeoHashShort(null);
+        function.getGeoShort(null);
     }
 }

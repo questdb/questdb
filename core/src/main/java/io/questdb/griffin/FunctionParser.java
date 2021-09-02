@@ -784,25 +784,25 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 if (function instanceof GeoByteConstant) {
                     return function;
                 } else {
-                    return new GeoByteConstant(function.getGeoHashByte(null), type);
+                    return new GeoByteConstant(function.getGeoByte(null), type);
                 }
             case ColumnType.GEOSHORT:
                 if (function instanceof GeoShortConstant) {
                     return function;
                 } else {
-                    return new GeoShortConstant(function.getGeoHashShort(null), type);
+                    return new GeoShortConstant(function.getGeoShort(null), type);
                 }
             case ColumnType.GEOINT:
                 if (function instanceof GeoIntConstant) {
                     return function;
                 } else {
-                    return new GeoIntConstant(function.getGeoHashInt(null), type);
+                    return new GeoIntConstant(function.getGeoInt(null), type);
                 }
             case ColumnType.GEOLONG:
                 if (function instanceof GeoLongConstant) {
                     return function;
                 } else {
-                    return new GeoLongConstant(function.getGeoHashLong(null), type);
+                    return new GeoLongConstant(function.getGeoLong(null), type);
                 }
             case ColumnType.DATE:
                 if (function instanceof DateConstant) {

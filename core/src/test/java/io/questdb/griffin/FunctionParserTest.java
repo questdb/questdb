@@ -387,7 +387,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         testConstantPassThru(new GeoIntConstant(hash, ColumnType.getGeoHashTypeWithBits(bits)));
         functions.clear();
         sink.clear();
-        GeoHashes.toString(hash, 6, sink);
+        GeoHashes.appendChars(hash, 6, sink);
     }
 
     @Test
@@ -608,7 +608,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
         Function function = parseFunction("cast('sp052w92' as geohash(5c))", metadata, functionParser);
         Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(25), function.getType());
-        Assert.assertEquals(25854114, function.getGeoHashInt(record));
+        Assert.assertEquals(25854114, function.getGeoInt(record));
     }
 
     @Test
@@ -1538,16 +1538,16 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             Assert.assertEquals(expectedType, f.getType());
             switch (ColumnType.tagOf(expectedType)) {
                 case ColumnType.GEOBYTE:
-                    Assert.assertEquals(expectedValue, f.getGeoHashByte(null));
+                    Assert.assertEquals(expectedValue, f.getGeoByte(null));
                     break;
                 case ColumnType.GEOSHORT:
-                    Assert.assertEquals(expectedValue, f.getGeoHashShort(null));
+                    Assert.assertEquals(expectedValue, f.getGeoShort(null));
                     break;
                 case ColumnType.GEOINT:
-                    Assert.assertEquals(expectedValue, f.getGeoHashInt(null));
+                    Assert.assertEquals(expectedValue, f.getGeoInt(null));
                     break;
                 default:
-                    Assert.assertEquals(expectedValue, f.getGeoHashLong(null));
+                    Assert.assertEquals(expectedValue, f.getGeoLong(null));
                     break;
             }
         }

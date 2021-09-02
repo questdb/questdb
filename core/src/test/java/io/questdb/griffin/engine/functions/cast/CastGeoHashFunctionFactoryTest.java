@@ -57,7 +57,7 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
         Assert.assertTrue(function.isConstant());
         Assert.assertEquals(1, ColumnType.getGeoHashBits(function.getType()));
-        Assert.assertEquals(GeoHashes.NULL, function.getGeoHashByte(null));
+        Assert.assertEquals(GeoHashes.NULL, function.getGeoByte(null));
     }
 
     @Test
@@ -137,7 +137,7 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
         Assert.assertTrue(function.isConstant());
         Assert.assertEquals(10, ColumnType.getGeoHashBits(function.getType()));
-        Assert.assertEquals(GeoHashes.NULL, function.getGeoHashShort(null));
+        Assert.assertEquals(GeoHashes.NULL, function.getGeoShort(null));
     }
 
     @Test
@@ -155,7 +155,7 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(ColumnType.GEOLONG, ColumnType.tagOf(function.getType()));
         Assert.assertEquals(ColumnType.getGeoHashTypeWithBits(expectedGeoHash.length() * 5), function.getType());
         Assert.assertEquals(expectedGeoHash.length() * 5, ColumnType.getGeoHashBits(function.getType()));
-        Assert.assertEquals(expectedHash, function.getGeoHashLong(null));
+        Assert.assertEquals(expectedHash, function.getGeoLong(null));
         Assert.assertThrows(UnsupportedOperationException.class, () -> function.getLong(null));
         assertGeoHashLongStrEquals(expectedGeoHash, function);
     }
@@ -176,16 +176,16 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
                 Assert.assertEquals(castExpr, b, ColumnType.getGeoHashBits(function.getType()));
                 switch (ColumnType.tagOf(function.getType())) {
                     case ColumnType.GEOBYTE:
-                        Assert.assertEquals(castExpr, fullGeohash >>> (geohashLen * 5 - b), function.getGeoHashByte(null));
+                        Assert.assertEquals(castExpr, fullGeohash >>> (geohashLen * 5 - b), function.getGeoByte(null));
                         break;
                     case ColumnType.GEOSHORT:
-                        Assert.assertEquals(castExpr, fullGeohash >>> (geohashLen * 5 - b), function.getGeoHashShort(null));
+                        Assert.assertEquals(castExpr, fullGeohash >>> (geohashLen * 5 - b), function.getGeoShort(null));
                         break;
                     case ColumnType.GEOINT:
-                        Assert.assertEquals(castExpr, fullGeohash >>> (geohashLen * 5 - b), function.getGeoHashInt(null));
+                        Assert.assertEquals(castExpr, fullGeohash >>> (geohashLen * 5 - b), function.getGeoInt(null));
                         break;
                     default:
-                        Assert.assertEquals(castExpr, fullGeohash >>> (geohashLen * 5 - b), function.getGeoHashLong(null));
+                        Assert.assertEquals(castExpr, fullGeohash >>> (geohashLen * 5 - b), function.getGeoLong(null));
                         break;
                 }
             }
@@ -221,7 +221,7 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
 
         Assert.assertTrue(function.isConstant());
         Assert.assertEquals(5, ColumnType.getGeoHashBits(function.getType()));
-        Assert.assertEquals(GeoHashes.fromString("s", 0, 1), function.getGeoHashByte(null));
+        Assert.assertEquals(GeoHashes.fromString("s", 0, 1), function.getGeoByte(null));
     }
 
     private void assertGeoHashLongStrEquals(String expectedGeoHash, Function function) {
@@ -229,16 +229,16 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
         final int chars = ColumnType.getGeoHashBits(function.getType()) / 5;
         switch (ColumnType.tagOf(function.getType())) {
             case ColumnType.GEOBYTE:
-                GeoHashes.toString(function.getGeoHashByte(null), chars, sink);
+                GeoHashes.appendChars(function.getGeoByte(null), chars, sink);
                 break;
             case ColumnType.GEOSHORT:
-                GeoHashes.toString(function.getGeoHashShort(null), chars, sink);
+                GeoHashes.appendChars(function.getGeoShort(null), chars, sink);
                 break;
             case ColumnType.GEOINT:
-                GeoHashes.toString(function.getGeoHashInt(null), chars, sink);
+                GeoHashes.appendChars(function.getGeoInt(null), chars, sink);
                 break;
             default:
-                GeoHashes.toString(function.getGeoHashLong(null), chars, sink);
+                GeoHashes.appendChars(function.getGeoLong(null), chars, sink);
                 break;
         }
         TestUtils.assertEquals(expectedGeoHash, sink);

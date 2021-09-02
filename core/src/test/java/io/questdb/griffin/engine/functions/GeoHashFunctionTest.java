@@ -35,14 +35,14 @@ public class GeoHashFunctionTest {
 
     private static final GeoByteFunction nullFunction = new GeoByteFunction(ColumnType.GEOHASH) {
         @Override
-        public byte getGeoHashByte(Record rec) {
+        public byte getGeoByte(Record rec) {
             return GeoHashes.BYTE_NULL;
         }
     };
 
     @Test
     public void testGetStrIntoSink1() {
-        Assert.assertEquals(GeoHashes.NULL, nullFunction.getGeoHashByte(null));
+        Assert.assertEquals(GeoHashes.NULL, nullFunction.getGeoByte(null));
         StringSink sink = new StringSink();
         try {
             nullFunction.getStr(null, sink);

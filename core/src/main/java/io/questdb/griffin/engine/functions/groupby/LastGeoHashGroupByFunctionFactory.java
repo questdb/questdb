@@ -56,28 +56,28 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                 return new FirstGeoHashGroupByFunctionByte(type, function) {
                     @Override
                     public void computeNext(MapValue mapValue, Record record) {
-                        mapValue.putByte(this.valueIndex, this.function.getGeoHashByte(record));
+                        mapValue.putByte(this.valueIndex, this.function.getGeoByte(record));
                     }
                 };
             case ColumnType.GEOSHORT:
                 return new FirstGeoHashGroupByFunctionShort(type, function) {
                     @Override
                     public void computeNext(MapValue mapValue, Record record) {
-                        mapValue.putShort(this.valueIndex, this.function.getGeoHashShort(record));
+                        mapValue.putShort(this.valueIndex, this.function.getGeoShort(record));
                     }
                 };
             case ColumnType.GEOINT:
                 return new FirstGeoHashGroupByFunctionInt(type, function) {
                     @Override
                     public void computeNext(MapValue mapValue, Record record) {
-                        mapValue.putInt(this.valueIndex, this.function.getGeoHashInt(record));
+                        mapValue.putInt(this.valueIndex, this.function.getGeoInt(record));
                     }
                 };
             default:
                 return new FirstGeoHashGroupByFunctionLong(type, function) {
                     @Override
                     public void computeNext(MapValue mapValue, Record record) {
-                        mapValue.putLong(this.valueIndex, this.function.getGeoHashLong(record));
+                        mapValue.putLong(this.valueIndex, this.function.getGeoLong(record));
                     }
                 };
         }

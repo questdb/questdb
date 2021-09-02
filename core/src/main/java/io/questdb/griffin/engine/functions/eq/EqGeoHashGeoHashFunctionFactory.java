@@ -113,28 +113,28 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
                 return new GeoEqFunc(geohash1, geohash2) {
                     @Override
                     public boolean getBool(Record rec) {
-                        return negated != (geohash1.getGeoHashByte(rec) == geohash2.getGeoHashByte(rec));
+                        return negated != (geohash1.getGeoByte(rec) == geohash2.getGeoByte(rec));
                     }
                 };
             case ColumnType.GEOSHORT:
                 return new GeoEqFunc(geohash1, geohash2) {
                     @Override
                     public boolean getBool(Record rec) {
-                        return negated != (geohash1.getGeoHashShort(rec) == geohash2.getGeoHashShort(rec));
+                        return negated != (geohash1.getGeoShort(rec) == geohash2.getGeoShort(rec));
                     }
                 };
             case ColumnType.GEOINT:
                 return new GeoEqFunc(geohash1, geohash2) {
                     @Override
                     public boolean getBool(Record rec) {
-                        return negated != (geohash1.getGeoHashInt(rec) == geohash2.getGeoHashInt(rec));
+                        return negated != (geohash1.getGeoInt(rec) == geohash2.getGeoInt(rec));
                     }
                 };
             default:
                 return new GeoEqFunc(geohash1, geohash2) {
                     @Override
                     public boolean getBool(Record rec) {
-                        return negated != (geohash1.getGeoHashLong(rec) == geohash2.getGeoHashLong(rec));
+                        return negated != (geohash1.getGeoLong(rec) == geohash2.getGeoLong(rec));
                     }
                 };
         }
@@ -169,7 +169,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (hash == arg.getGeoHashByte(rec));
+            return negated != (hash == arg.getGeoByte(rec));
         }
     }
 
@@ -189,7 +189,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (hash == arg.getGeoHashShort(rec));
+            return negated != (hash == arg.getGeoShort(rec));
         }
     }
 
@@ -209,7 +209,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (hash == arg.getGeoHashInt(rec));
+            return negated != (hash == arg.getGeoInt(rec));
         }
     }
 
@@ -229,7 +229,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (hash == arg.getGeoHashLong(rec));
+            return negated != (hash == arg.getGeoLong(rec));
         }
     }
 

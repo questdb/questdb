@@ -94,7 +94,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public byte getGeoHashByte(Record rec) {
+        public byte getGeoByte(Record rec) {
             return (byte) nextGeoHash(rnd, bits);
         }
 
@@ -115,7 +115,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public short getGeoHashShort(Record rec) {
+        public short getGeoShort(Record rec) {
             return (short) nextGeoHash(rnd, bits);
         }
 
@@ -136,7 +136,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getGeoHashInt(Record rec) {
+        public int getGeoInt(Record rec) {
             return (int) nextGeoHash(rnd, bits);
         }
 
@@ -146,7 +146,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public short getGeoHashShort(Record rec) {
+        public short getGeoShort(Record rec) {
             return (byte) nextGeoHash(rnd, bits);
         }
     }
@@ -162,7 +162,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getGeoHashLong(Record rec) {
+        public long getGeoLong(Record rec) {
             return nextGeoHash(rnd, bits);
         }
 
@@ -172,7 +172,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public short getGeoHashShort(Record rec) {
+        public short getGeoShort(Record rec) {
             return (byte) nextGeoHash(rnd, bits);
         }
     }

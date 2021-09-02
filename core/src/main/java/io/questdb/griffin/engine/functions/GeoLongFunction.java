@@ -34,27 +34,27 @@ public abstract class GeoLongFunction extends AbstractGeoHashFunction {
     }
 
     @Override
-    public byte getGeoHashByte(Record rec) {
+    public byte getGeoByte(Record rec) {
         return (byte) ColumnType.truncateGeoHashBits(
-                getGeoHashLong(rec),
+                getGeoLong(rec),
                 ColumnType.getGeoHashBits(type),
                 Byte.SIZE - 1
         );
     }
 
     @Override
-    public short getGeoHashShort(Record rec) {
+    public short getGeoShort(Record rec) {
         return (short) ColumnType.truncateGeoHashBits(
-                getGeoHashLong(rec),
+                getGeoLong(rec),
                 ColumnType.getGeoHashBits(type),
                 Short.SIZE - 1
         );
     }
 
     @Override
-    public int getGeoHashInt(Record rec) {
+    public int getGeoInt(Record rec) {
         return (short) ColumnType.truncateGeoHashBits(
-                getGeoHashLong(rec),
+                getGeoLong(rec),
                 ColumnType.getGeoHashBits(type),
                 Integer.SIZE - 1
         );

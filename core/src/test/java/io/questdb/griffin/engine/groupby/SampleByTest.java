@@ -1974,8 +1974,6 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
-    // this test goes into infinite loop
     public void testIndexSampleWithColumnTopsGeo() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table xx (s symbol, k timestamp)" +

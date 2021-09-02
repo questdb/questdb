@@ -36,7 +36,7 @@ public class GeoIntColumn extends GeoIntFunction {
     }
 
     @Override
-    public int getGeoHashInt(Record rec) {
+    public int getGeoInt(Record rec) {
         return rec.getGeoHashInt(columnIndex);
     }
 }

@@ -41,7 +41,7 @@ public class GeoIntConstant extends GeoIntFunction implements ConstantFunction {
     }
 
     @Override
-    public int getGeoHashInt(Record rec) {
+    public int getGeoInt(Record rec) {
         return hash;
     }
 }

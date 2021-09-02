@@ -333,9 +333,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         } else {
             socket.put('\"');
             if (bitFlags < 0) {
-                GeoHashes.toString(value, -bitFlags, socket);
+                GeoHashes.appendCharsUnsafe(value, -bitFlags, socket);
             } else {
-                GeoHashes.toBitString(value, bitFlags, socket);
+                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, socket);
             }
             socket.put('\"');
         }

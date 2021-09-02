@@ -36,7 +36,7 @@ public class GeoByteColumn extends GeoByteFunction {
     }
 
     @Override
-    public byte getGeoHashByte(Record rec) {
+    public byte getGeoByte(Record rec) {
         return rec.getGeoHashByte(columnIndex);
     }
 }

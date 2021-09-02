@@ -34,22 +34,22 @@ public class GeoHashTypeConstant extends GeoByteFunction implements TypeConstant
     private final static GeoHashTypeConstant[] INSTANCES = new GeoHashTypeConstant[ColumnType.MAX_BITS_LENGTH];
 
     @Override
-    public byte getGeoHashByte(Record rec) {
+    public byte getGeoByte(Record rec) {
         return GeoHashes.BYTE_NULL;
     }
 
     @Override
-    public short getGeoHashShort(Record rec) {
+    public short getGeoShort(Record rec) {
         return GeoHashes.SHORT_NULL;
     }
 
     @Override
-    public int getGeoHashInt(Record rec) {
+    public int getGeoInt(Record rec) {
         return GeoHashes.INT_NULL;
     }
 
     @Override
-    public long getGeoHashLong(Record rec) {
+    public long getGeoLong(Record rec) {
         return GeoHashes.NULL;
     }
 

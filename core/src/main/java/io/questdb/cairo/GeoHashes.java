@@ -127,6 +127,10 @@ public class GeoHashes {
         return result;
     }
 
+    public static long fromString(CharSequence hash) throws NumericException {
+        return fromString(hash, 0, hash.length());
+    }
+
     public static long fromString(CharSequence hash, int start, int end) throws NumericException {
         // no bounds/length/nullity checks
         long geohash = 0;
@@ -204,24 +208,28 @@ public class GeoHashes {
     public static long getGeoLong(int type, Function func, Record rec) {
         switch (ColumnType.tagOf(type)) {
             case ColumnType.GEOBYTE:
-                return func.getGeoHashByte(rec);
+                return func.getGeoByte(rec);
             case ColumnType.GEOSHORT:
-                return func.getGeoHashShort(rec);
+                return func.getGeoShort(rec);
             case ColumnType.GEOINT:
-                return func.getGeoHashInt(rec);
+                return func.getGeoInt(rec);
             default:
-                return func.getGeoHashLong(rec);
+                return func.getGeoLong(rec);
         }
     }
 
     public static void toBitString(long hash, int bits, CharSink sink) {
         if (hash != NULL) {
-            // Below assertion can happen if there is corrupt metadata
-            // which should not happen in production code since reader and writer check table metadata
-            assert bits > 0 && bits <= ColumnType.MAX_BITS_LENGTH;
-            for (int i = bits - 1; i >= 0; --i) {
-                sink.put(((hash >> i) & 1) == 1 ? '1' : '0');
-            }
+            appendBinaryStringUnsafe(hash, bits, sink);
+        }
+    }
+
+    public static void appendBinaryStringUnsafe(long hash, int bits, CharSink sink) {
+        // Below assertion can happen if there is corrupt metadata
+        // which should not happen in production code since reader and writer check table metadata
+        assert bits > 0 && bits <= ColumnType.MAX_BITS_LENGTH;
+        for (int i = bits - 1; i >= 0; --i) {
+            sink.put(((hash >> i) & 1) == 1 ? '1' : '0');
         }
     }
 
@@ -233,15 +241,18 @@ public class GeoHashes {
         return (((long) length) << 60L) + hash;
     }
 
-    public static void toString(long hash, int chars, CharSink sink) {
-        // todo: null check could be optional here
+    public static void appendChars(long hash, int chars, CharSink sink) {
         if (hash != NULL) {
-            // Below assertion can happen if there is corrupt metadata
-            // which should not happen in production code since reader and writer check table metadata
-            assert chars > 0 && chars <= MAX_STRING_LENGTH;
-            for (int i = chars - 1; i >= 0; --i) {
-                sink.put(base32[(int) ((hash >> i * 5) & 0x1F)]);
-            }
+            appendCharsUnsafe(hash, chars, sink);
+        }
+    }
+
+    public static void appendCharsUnsafe(long hash, int chars, CharSink sink) {
+        // Below assertion can happen if there is corrupt metadata
+        // which should not happen in production code since reader and writer check table metadata
+        assert chars > 0 && chars <= MAX_STRING_LENGTH;
+        for (int i = chars - 1; i >= 0; --i) {
+            sink.put(base32[(int) ((hash >> i * 5) & 0x1F)]);
         }
     }
 

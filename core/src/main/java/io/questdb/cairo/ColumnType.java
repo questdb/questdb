@@ -211,13 +211,6 @@ public final class ColumnType {
 
     public static int pow2SizeOf(int columnType) {
         return TYPE_SIZE_POW2[tagOf(columnType)];
-
-        // todo: do we need this section below ?
-//        if (size > -2) {
-//            return size;
-//        }
-//         Geohashes
-//        return GeoHashes.pow2SizeOf(columnType);
     }
 
     public static int pow2SizeOfBits(int bits) {

@@ -41,7 +41,7 @@ public class GeoShortConstant extends GeoShortFunction implements ConstantFuncti
     }
 
     @Override
-    public short getGeoHashShort(Record rec) {
+    public short getGeoShort(Record rec) {
         return hash;
     }
 }

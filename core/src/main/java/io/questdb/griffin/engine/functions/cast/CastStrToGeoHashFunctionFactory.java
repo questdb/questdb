@@ -110,25 +110,25 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public byte getGeoHashByte(Record rec) {
+        public byte getGeoByte(Record rec) {
             assert bitsPrecision < 8;
             return (byte) getGeoHashLong0(rec);
         }
 
         @Override
-        public short getGeoHashShort(Record rec) {
+        public short getGeoShort(Record rec) {
             assert bitsPrecision >= 8 && bitsPrecision < 16;
             return (short) getGeoHashLong0(rec);
         }
 
         @Override
-        public int getGeoHashInt(Record rec) {
+        public int getGeoInt(Record rec) {
             assert bitsPrecision >= 16 && bitsPrecision < 32;
             return (int) getGeoHashLong0(rec);
         }
 
         @Override
-        public long getGeoHashLong(Record rec) {
+        public long getGeoLong(Record rec) {
             assert bitsPrecision >= 32;
             return getGeoHashLong0(rec);
         }

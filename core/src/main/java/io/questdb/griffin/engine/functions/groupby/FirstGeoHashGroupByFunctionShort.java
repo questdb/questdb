@@ -45,7 +45,7 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putShort(valueIndex, function.getGeoHashShort(record));
+        mapValue.putShort(valueIndex, function.getGeoShort(record));
     }
 
     @Override
@@ -75,22 +75,22 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
     }
 
     @Override
-    public byte getGeoHashByte(Record rec) {
+    public byte getGeoByte(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public int getGeoHashInt(Record rec) {
+    public int getGeoInt(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public short getGeoHashShort(Record rec) {
+    public short getGeoShort(Record rec) {
         return rec.getGeoHashShort(this.valueIndex);
     }
 
     @Override
-    public long getGeoHashLong(Record rec) {
+    public long getGeoLong(Record rec) {
         throw new UnsupportedOperationException();
     }
 }

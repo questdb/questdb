@@ -190,15 +190,14 @@ public class RecordCursorPrinter {
         }
     }
 
-    // todo: add this method to sink
     private void putGeoHash(long hash, int bits, CharSink sink) {
         if (hash == GeoHashes.NULL) {
             return;
         }
         if (bits % 5 == 0) {
-            GeoHashes.toString(hash, bits / 5, sink);
+            GeoHashes.appendCharsUnsafe(hash, bits / 5, sink);
         } else {
-            GeoHashes.toBitString(hash, bits, sink);
+            GeoHashes.appendBinaryStringUnsafe(hash, bits, sink);
         }
     }
 }

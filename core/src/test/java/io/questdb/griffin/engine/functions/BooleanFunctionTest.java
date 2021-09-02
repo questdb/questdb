@@ -185,21 +185,21 @@ public class BooleanFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGeoHash() {
-        functionA.getGeoHashLong(null);
+        functionA.getGeoLong(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGeoHashInt() {
-        functionA.getGeoHashInt(null);
+        functionA.getGeoInt(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGeoHashByte() {
-        functionA.getGeoHashByte(null);
+        functionA.getGeoByte(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGeoHashShor() {
-        functionA.getGeoHashShort(null);
+        functionA.getGeoShort(null);
     }
 }

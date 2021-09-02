@@ -39,7 +39,7 @@ public class GeoHashNativeTest {
     static final double lat = 31.23;
     static final double lon = 121.473;
     static final StringSink sink = new StringSink();
-    private static final StringConverter toString = GeoHashes::toString;
+    private static final StringConverter toString = GeoHashes::appendChars;
     private static final StringConverter toBitString = GeoHashes::toBitString;
 
     public static int hashSize(long hashz) {
@@ -96,7 +96,7 @@ public class GeoHashNativeTest {
     public void testFromStringNl() throws NumericException {
         final long gh = GeoHashes.fromCoordinates(lat, lon, 8 * 5);
         sink.clear();
-        GeoHashes.toString(gh, 8, sink);
+        GeoHashes.appendChars(gh, 8, sink);
         final long gh1 = GeoHashes.fromString(sink, 0, 8);
         Assert.assertEquals(gh, gh1);
     }
@@ -116,7 +116,7 @@ public class GeoHashNativeTest {
             final int prec = (i % 3) + 3;
             final long h = rnd_geohash(prec);
             sink.clear();
-            GeoHashes.toString(h, prec, sink);
+            GeoHashes.appendChars(h, prec, sink);
             strh.add(sink);
         }
         GeoHashes.fromStringToBits(strh, ColumnType.getGeoHashTypeWithBits(cap * 5), bits);
@@ -202,7 +202,7 @@ public class GeoHashNativeTest {
             int numBits = precision * 5;
             long hash = GeoHashes.fromCoordinates(39.982, 0.024, numBits);
             sink.clear();
-            GeoHashes.toString(hash, precision, sink);
+            GeoHashes.appendChars(hash, precision, sink);
             expectedStr[precision - 1] = sink.toString();
             expectedHash[precision - 1] = hash;
             everything.put(expectedHash[precision - 1]).put(" -> ").put(expectedStr[precision - 1]).put('\n');
@@ -212,7 +212,7 @@ public class GeoHashNativeTest {
             final long gh = GeoHashes.fromString(expectedStr[i], 0, expectedStr[i].length());
             Assert.assertEquals(expectedHash[i], gh);
             sink.clear();
-            GeoHashes.toString(gh, expectedStr[i].length(), sink);
+            GeoHashes.appendChars(gh, expectedStr[i].length(), sink);
             Assert.assertEquals(expectedStr[i], sink.toString());
         }
         Assert.assertEquals(expected, everything.toString());
@@ -314,8 +314,8 @@ public class GeoHashNativeTest {
         boolean assertsEnabled = false;
         assert assertsEnabled = true; // Test only when assertions enabled
         if (assertsEnabled) {
-            Assert.assertThrows(AssertionError.class, () -> GeoHashes.toString(-0, 0, sink));
-            Assert.assertThrows(AssertionError.class, () -> GeoHashes.toString(-0, 31, sink));
+            Assert.assertThrows(AssertionError.class, () -> GeoHashes.appendChars(-0, 0, sink));
+            Assert.assertThrows(AssertionError.class, () -> GeoHashes.appendChars(-0, 31, sink));
         }
     }
 

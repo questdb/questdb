@@ -34,25 +34,25 @@ public abstract class GeoIntFunction extends AbstractGeoHashFunction {
     }
 
     @Override
-    public byte getGeoHashByte(Record rec) {
+    public byte getGeoByte(Record rec) {
         return (byte) ColumnType.truncateGeoHashBits(
-                getGeoHashInt(rec),
+                getGeoInt(rec),
                 ColumnType.getGeoHashBits(type),
                 Byte.SIZE - 1
         );
     }
 
     @Override
-    public short getGeoHashShort(Record rec) {
+    public short getGeoShort(Record rec) {
         return (short) ColumnType.truncateGeoHashBits(
-                getGeoHashInt(rec),
+                getGeoInt(rec),
                 ColumnType.getGeoHashBits(type),
                 Short.SIZE - 1
         );
     }
 
     @Override
-    public final long getGeoHashLong(Record rec) {
+    public final long getGeoLong(Record rec) {
         throw new UnsupportedOperationException();
     }
 }

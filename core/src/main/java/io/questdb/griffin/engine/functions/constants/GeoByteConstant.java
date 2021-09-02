@@ -40,7 +40,7 @@ public class GeoByteConstant extends GeoByteFunction implements ConstantFunction
         this.hash = hash;
     }
 
-    public byte getGeoHashByte(Record rec) {
+    public byte getGeoByte(Record rec) {
         return hash;
     }
 }

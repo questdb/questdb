@@ -41,7 +41,7 @@ public class GeoLongConstant extends GeoLongFunction implements ConstantFunction
     }
 
     @Override
-    public long getGeoHashLong(Record rec) {
+    public long getGeoLong(Record rec) {
         return hash;
     }
 }

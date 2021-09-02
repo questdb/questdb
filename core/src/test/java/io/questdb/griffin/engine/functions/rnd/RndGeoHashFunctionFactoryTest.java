@@ -74,7 +74,7 @@ public class RndGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
         for (int bits = 1; bits < 8; bits++) {
             Function function = getFunction(bits);
             for (int i = 0, n = 1000; i < n; i++) {
-                Assert.assertEquals(rnd.nextGeoHashByte(bits), function.getGeoHashByte(null));
+                Assert.assertEquals(rnd.nextGeoHashByte(bits), function.getGeoByte(null));
             }
         }
     }
@@ -84,7 +84,7 @@ public class RndGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
         for (int bits = 16; bits < 32; bits++) {
             Function function = getFunction(bits);
             for (int i = 0, n = 1000; i < n; i++) {
-                Assert.assertEquals(rnd.nextGeoHashInt(bits), function.getGeoHashInt(null));
+                Assert.assertEquals(rnd.nextGeoHashInt(bits), function.getGeoInt(null));
             }
         }
     }
@@ -94,7 +94,7 @@ public class RndGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
         for (int bits = 32; bits <= 60; bits++) {
             Function function = getFunction(bits);
             for (int i = 0, n = 1000; i < n; i++) {
-                Assert.assertEquals(rnd.nextGeoHashLong(bits), function.getGeoHashLong(null));
+                Assert.assertEquals(rnd.nextGeoHashLong(bits), function.getGeoLong(null));
             }
         }
     }
@@ -106,7 +106,7 @@ public class RndGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
         for (int bits = 8; bits < 16; bits++) {
             Function function = getFunction(bits);
             for (int i = 0, n = 1000; i < n; i++) {
-                Assert.assertEquals(rnd.nextGeoHashShort(bits), function.getGeoHashShort(null));
+                Assert.assertEquals(rnd.nextGeoHashShort(bits), function.getGeoShort(null));
             }
         }
     }

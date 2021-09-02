@@ -33,17 +33,17 @@ public abstract class GeoByteFunction extends AbstractGeoHashFunction {
     }
 
     @Override
-    public short getGeoHashShort(Record rec) {
+    public short getGeoShort(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public int getGeoHashInt(Record rec) {
+    public int getGeoInt(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getGeoHashLong(Record rec) {
+    public long getGeoLong(Record rec) {
         throw new UnsupportedOperationException();
     }
 }

@@ -37,8 +37,6 @@ import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-import static io.questdb.cairo.GeoHashes.getGeoLong;
-
 public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
@@ -62,7 +60,7 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         int shift = srcBitsPrecision - targetBitsPrecision;
         if (shift > 0) {
             if (value.isConstant()) {
-                long val = getGeoLong(srcType, value, null);
+                long val = GeoHashes.getGeoLong(srcType, value, null);
                 // >> shift will take care of NULL value -1
                 return Constants.getGeoHashConstantWithType(val >> shift, targetType);
             }
@@ -76,7 +74,7 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         // check if this is a null of different bit count
-        if (value.isConstant() && value.getGeoHashByte(null) == GeoHashes.NULL) {
+        if (value.isConstant() && value.getGeoByte(null) == GeoHashes.NULL) {
             return Constants.getNullConstant(targetType);
         }
 
@@ -141,8 +139,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getGeoHashLong(Record rec) {
-            return value.getGeoHashLong(rec) >> shift;
+        public long getGeoLong(Record rec) {
+            return value.getGeoLong(rec) >> shift;
         }
     }
 
@@ -162,8 +160,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public byte getGeoHashByte(Record rec) {
-            return (byte) (value.getGeoHashLong(rec) >> shift);
+        public byte getGeoByte(Record rec) {
+            return (byte) (value.getGeoLong(rec) >> shift);
         }
     }
 
@@ -183,8 +181,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public short getGeoHashShort(Record rec) {
-            return (short) (value.getGeoHashLong(rec) >> shift);
+        public short getGeoShort(Record rec) {
+            return (short) (value.getGeoLong(rec) >> shift);
         }
     }
 
@@ -204,8 +202,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getGeoHashInt(Record rec) {
-            return (int) (value.getGeoHashLong(rec) >> shift);
+        public int getGeoInt(Record rec) {
+            return (int) (value.getGeoLong(rec) >> shift);
         }
     }
 
@@ -226,8 +224,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
 
 
         @Override
-        public int getGeoHashInt(Record rec) {
-            return value.getGeoHashInt(rec) >> shift;
+        public int getGeoInt(Record rec) {
+            return value.getGeoInt(rec) >> shift;
         }
     }
 
@@ -247,8 +245,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public byte getGeoHashByte(Record rec) {
-            return (byte) (value.getGeoHashInt(rec) >> shift);
+        public byte getGeoByte(Record rec) {
+            return (byte) (value.getGeoInt(rec) >> shift);
         }
     }
 
@@ -268,8 +266,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public short getGeoHashShort(Record rec) {
-            return (short) (value.getGeoHashInt(rec) >> shift);
+        public short getGeoShort(Record rec) {
+            return (short) (value.getGeoInt(rec) >> shift);
         }
     }
 
@@ -289,8 +287,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public short getGeoHashShort(Record rec) {
-            return (short) (value.getGeoHashShort(rec) >> shift);
+        public short getGeoShort(Record rec) {
+            return (short) (value.getGeoShort(rec) >> shift);
         }
     }
 
@@ -310,8 +308,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public byte getGeoHashByte(Record rec) {
-            return (byte) (value.getGeoHashShort(rec) >> shift);
+        public byte getGeoByte(Record rec) {
+            return (byte) (value.getGeoShort(rec) >> shift);
         }
     }
 
@@ -331,8 +329,8 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public byte getGeoHashByte(Record rec) {
-            return (byte) (value.getGeoHashByte(rec) >> shift);
+        public byte getGeoByte(Record rec) {
+            return (byte) (value.getGeoByte(rec) >> shift);
         }
     }
 }
