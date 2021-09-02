@@ -329,7 +329,7 @@ class ExpressionParser {
                                 lexer.unparse();
                                 opStack.push(expressionNodePool.next().of(
                                         ExpressionNode.CONSTANT,
-                                        geohashTok,
+                                        geohashTok, // standard token, no suffix '/d', '/dd'
                                         Integer.MIN_VALUE,
                                         position));
                                 break;
@@ -340,7 +340,7 @@ class ExpressionParser {
                             }
                             opStack.push(expressionNodePool.next().of(
                                     ExpressionNode.CONSTANT,
-                                    lexer.immutablePairOf(geohashTok, '/', tok),
+                                    lexer.immutablePairOf(geohashTok, '/', tok), // token plus suffix '/d', '/dd', where d in [0..9]
                                     Integer.MIN_VALUE,
                                     position));
                             break;
@@ -350,7 +350,7 @@ class ExpressionParser {
                             thisBranch = BRANCH_CONSTANT;
                             opStack.push(expressionNodePool.next().of(
                                     ExpressionNode.CONSTANT,
-                                    GenericLexer.immutableOf(tok),
+                                    GenericLexer.immutableOf(tok), // geohash bit literals do not allow suffix syntax
                                     Integer.MIN_VALUE,
                                     position));
                             break;

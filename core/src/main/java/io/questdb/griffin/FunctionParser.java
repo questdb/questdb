@@ -470,6 +470,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         if (len > 1 && tok.charAt(0) == 35) { // '#'
 
             // geohash from chars constant
+
             try {
                 // optional '/dd', '/d' (max 3 chars, 1..60)
                 int sdd = GenericLexer.extractGeoHashSuffix(position, tok);
@@ -482,6 +483,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             }
 
             // geohash from binary constant
+
             try {
                 return GeoHashConstant.newInstance(
                         GeoHashes.fromBitStringNl(tok, 2), // minus leading '##'
