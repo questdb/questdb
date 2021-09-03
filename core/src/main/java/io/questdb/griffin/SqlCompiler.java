@@ -2425,15 +2425,9 @@ public class SqlCompiler implements Closeable {
                     case ColumnType.CHAR:
                         function = CHAR_TO_STR_FUNCTION_FACTORY.newInstance(function);
                         // fall through to STRING
-                    case ColumnType.STRING:
+                    default:
                         function = GEO_HASH_FUNCTION_FACTORY.newInstance(functionPosition, columnType, function);
                         break;
-                    default:
-                        throw SqlException.position(functionPosition)
-                                .put("cannot cast ")
-                                .put(ColumnType.nameOf(function.getType()))
-                                .put(" to ")
-                                .put(ColumnType.nameOf(columnType));
                 }
             }
             valueFunctions.add(function);

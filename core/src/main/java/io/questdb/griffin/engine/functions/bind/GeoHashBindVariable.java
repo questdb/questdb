@@ -22,29 +22,54 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions;
+package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
+import io.questdb.griffin.engine.functions.GeoByteFunction;
+import io.questdb.std.Mutable;
 
-public abstract class GeoByteFunction extends AbstractGeoHashFunction {
+class GeoHashBindVariable extends AbstractGeoHashFunction implements ScalarFunction, Mutable {
+    long value;
 
-    protected GeoByteFunction(int type) {
-        super(type);
+    public GeoHashBindVariable() {
+        super(ColumnType.GEOLONG);
     }
 
     @Override
     public short getGeoShort(Record rec) {
-        throw new UnsupportedOperationException();
+        return (short) value;
     }
 
     @Override
     public int getGeoInt(Record rec) {
-        throw new UnsupportedOperationException();
+        return (int) value;
     }
 
     @Override
     public long getGeoLong(Record rec) {
-        throw new UnsupportedOperationException();
+        return value;
+    }
+
+    @Override
+    public void clear() {
+        this.value = GeoHashes.NULL;
+    }
+
+    @Override
+    public byte getGeoByte(Record rec) {
+        return (byte) value;
+    }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    void setType(int type) {
+        this.type = type;
     }
 }
