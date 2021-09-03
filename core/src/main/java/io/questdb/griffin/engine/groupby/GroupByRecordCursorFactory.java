@@ -89,6 +89,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         final RecordCursor baseCursor = base.getCursor(executionContext);
 
         try {
+            Function.init(recordFunctions, baseCursor, executionContext);
             final Record baseRecord = baseCursor.getRecord();
             final int n = groupByFunctions.size();
             while (baseCursor.hasNext()) {
@@ -100,7 +101,6 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             }
             cursor.of(baseCursor, dataMap.getCursor());
             // init all record function for this cursor, in case functions require metadata and/or symbol tables
-            Function.init(recordFunctions, baseCursor, executionContext);
             return cursor;
         } catch (Throwable e) {
             baseCursor.close();
