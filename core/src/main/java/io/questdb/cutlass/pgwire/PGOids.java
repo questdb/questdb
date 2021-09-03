@@ -69,6 +69,8 @@ public class PGOids {
     public static final int X_B_PG_BOOL = 1 | X_PG_BOOL;
     public static final int X_PG_TIMESTAMP = ((PG_TIMESTAMP >> 24) & 0xff) | ((PG_TIMESTAMP << 8) & 0xff0000) | ((PG_TIMESTAMP >> 8) & 0xff00) | ((PG_TIMESTAMP << 24) & 0xff000000);
     public static final int X_B_PG_TIMESTAMP = 1 | X_PG_TIMESTAMP;
+    public static final int X_PG_BYTEA = ((PG_BYTEA >> 24) & 0xff) | ((PG_BYTEA << 8) & 0xff0000) | ((PG_BYTEA >> 8) & 0xff00) | ((PG_BYTEA << 24) & 0xff000000);
+    public static final int X_B_PG_BYTEA = 1 | X_PG_BYTEA;
     public static final int PG_CATALOG_OID = 11;
     public static final int PG_CLASS_OID = 1259;
     public static final int PG_PUBLIC_OID = 2200;
@@ -131,6 +133,7 @@ public class PGOids {
         TYPE_OIDS.extendAndSet(ColumnType.DATE, PG_TIMESTAMP); // DATE
         TYPE_OIDS.extendAndSet(ColumnType.BINARY, PG_BYTEA); // BYTEA
         TYPE_OIDS.extendAndSet(ColumnType.LONG256, PG_NUMERIC); // NUMERIC
+        TYPE_OIDS.extendAndSet(ColumnType.GEOHASH, PG_VARCHAR); // VARCHAR
 
         PG_TYPE_OIDS.add(PG_VARCHAR);
         PG_TYPE_OIDS.add(PG_TIMESTAMP);
