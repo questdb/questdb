@@ -384,9 +384,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 }
             } while (keepReceiving && operation == IOOperation.READ);
         } catch (SqlException e) {
-            reportError(e.getPosition(), e.getFlyweightMessage());
+            reportError(e.getPosition(), e.getFlyweightMessage(), 0);
         } catch (CairoException e) {
-            reportError(-1, e.getFlyweightMessage());
+            reportError(-1, e.getFlyweightMessage(), e.getErrno());
         }
     }
 
@@ -1434,7 +1434,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         prepareDescribePortalResponse();
     }
 
-    private void prepareError(int position, CharSequence message) {
+    private void prepareError(int position, CharSequence message, long errno) {
         responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
         long addr = responseAsciiSink.skip();
         responseAsciiSink.put('C');
@@ -1448,7 +1448,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
         responseAsciiSink.put((char) 0);
         responseAsciiSink.putLen(addr);
-        LOG.error().$("error [pos=").$(position).$(", msg=`").$(message).$("`]").$();
+        LOG.error()
+                .$("error [pos=").$(position)
+                .$(", msg=`").$(message).$('`')
+                .$(", errno=`").$(errno)
+                .I$();
     }
 
     private void prepareForNewQuery() {
@@ -1988,8 +1992,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         return n;
     }
 
-    private void reportError(int position, CharSequence flyweightMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        prepareError(position, flyweightMessage);
+    private void reportError(int position, CharSequence flyweightMessage, long errno)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        prepareError(position, flyweightMessage, errno);
         sendReadyForNewQuery();
         clearRecvBuffer();
     }
@@ -2049,7 +2054,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             responseAsciiSink.putLen(addr);
         } else {
             final SqlException e = SqlException.$(0, "table '").put(textLoader.getTableName()).put("' does not exist");
-            prepareError(e.getPosition(), e.getFlyweightMessage());
+            prepareError(e.getPosition(), e.getFlyweightMessage(), 0);
             prepareReadyForQuery();
         }
         sendAndReset();
