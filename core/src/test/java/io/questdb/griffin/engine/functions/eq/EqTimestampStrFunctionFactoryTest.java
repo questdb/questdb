@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.std.IntList;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -107,9 +108,13 @@ public class EqTimestampStrFunctionFactoryTest extends AbstractFunctionFactoryTe
         String t1 = "2020-12-31T23:59:59.000000Z";
         callAndAssert(signature, parseUTCTimestamp(t1), "2020-12-31T23:59:58.000000Z;1s", true);
         callAndAssert(signature, parseUTCTimestamp(t1), "2020-12-31T23:59:59.000000Z;1s", true);
-        callAndAssert(signature, parseUTCTimestamp(t1), "2020-12-31T23:59:59.000000Z;-1s", false);
         callAndAssert(signature, parseUTCTimestamp(t1), "2019;1y", true);
         callAndAssert(signature, parseUTCTimestamp(t1), "2020;-1s", false);
+        try {
+            callBySignature(signature, parseUTCTimestamp(t1), "2020-12-31T23:59:59.000000Z;-1s");
+        } catch (SqlException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "Invalid date");
+        }
     }
 
     private void testTimestampAsStringWithPeriodAndCount(String signature) throws NumericException, SqlException {
@@ -124,7 +129,11 @@ public class EqTimestampStrFunctionFactoryTest extends AbstractFunctionFactoryTe
         callAndAssert(signature, parseUTCTimestamp(t1), "2020-12-31T23:59:59.000001Z;30m;2d;5", false);
         callAndAssert(signature, parseUTCTimestamp(t1), "2020-12-23;-1s;2d;5", false);
         callAndAssert(signature, parseUTCTimestamp(t2), "2020-12-23;-1s;2d;5", true);
-        callAndAssert(signature, parseUTCTimestamp(t1), "2020-12-24T00:00:00.000000Z;-1s;2d;5", false);
+        try {
+            callBySignature(signature, parseUTCTimestamp(t1), "2020-12-24T00:00:00.000000Z;-1s;2d;5");
+        } catch (SqlException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "Invalid date");
+        }
     }
 
     private void callAndAssert(String signature, long arg1, String arg2, boolean expectedIfEquals) throws SqlException {
