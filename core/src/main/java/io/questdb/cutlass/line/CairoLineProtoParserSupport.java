@@ -30,6 +30,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableWriter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 
@@ -142,18 +143,19 @@ public class CairoLineProtoParserSupport {
         public static final BadCastException INSTANCE = new BadCastException();
     }
 
-    public static int getValueType(CharSequence token) {
+    public static int guessValueType(CharSequence token) {
+        // returning UNDEFINED makes the whole line be skipped.
+        // the goal of this method is to guess the potential type
+        // and then it will be parsed accordingly by CairoLineProtocolParser.
         int len = token.length();
         if (len > 0) {
-            switch (token.charAt(len - 1)) {
+            char lastChar = token.charAt(len - 1); // see LineProtoSender.field methods
+            switch (lastChar) {
                 case 'i':
-                    if (len > 1) {
-                        if (token.charAt(1) == 'x') {
-                            return ColumnType.LONG256;
-                        }
-                        return ColumnType.LONG;
+                    if (len > 3 && token.charAt(0) == '0' && token.charAt(1) == 'x') {
+                        return ColumnType.LONG256;
                     }
-                    return ColumnType.CHAR;
+                    return ColumnType.LONG;
                 case 'e':
                     // tru(e)
                     //  fals(e)
@@ -173,6 +175,12 @@ public class CairoLineProtoParserSupport {
                     }
                     return ColumnType.STRING;
                 default:
+                    if (lastChar >= '0' && lastChar <= '9') {
+                        if (len > 2 && token.charAt(0) == '0' && token.charAt(1) == 'x') {
+                            return ColumnType.LONG256;
+                        }
+                        return Chars.isOnlyDecimals(token) ? ColumnType.LONG : ColumnType.DOUBLE;
+                    }
                     return ColumnType.DOUBLE;
             }
         }
