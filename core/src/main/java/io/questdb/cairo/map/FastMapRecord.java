@@ -375,24 +375,4 @@ final class FastMapRecord implements MapRecord {
         this.address1 = address + keyDataOffset;
         this.address2 = address + keyBlockOffset;
     }
-
-    private static class DirectBinarySequence implements BinarySequence {
-        private long address;
-        private long len;
-
-        @Override
-        public byte byteAt(long index) {
-            return Unsafe.getUnsafe().getByte(address + index);
-        }
-
-        @Override
-        public long length() {
-            return len;
-        }
-
-        public void of(long address, long len) {
-            this.address = address;
-            this.len = len;
-        }
-    }
 }

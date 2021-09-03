@@ -38,8 +38,8 @@ cd ~/tmp/go/src/github.com/timescale/
 Clone the TSBS repository, build test and install Go binaries:
 
 ```bash
-git clone git@github.com:questdb/tsbs.git
-cd ~/tmp/go/src/github.com/timescale/tsbs/ && git checkout questdb-tsbs-load-new
+git clone git@github.com:timescale/tsbs.git
+cd tsbs
 
 GOPATH=~/tmp/go go build -v ./...
 GOPATH=~/tmp/go go test -v github.com/timescale/tsbs/cmd/tsbs_load_questdb
@@ -75,8 +75,8 @@ Generated data can be loaded directly using the tool:
 ~/tmp/go/bin/tsbs_load_questdb --file /tmp/data --workers 4
 ```
 
-Alternatively, shell scripts are provided which can be used to generate and load
-data:
+Alternatively, shell scripts are provided which can be used to
+generate and load data:
 
 ```bash
 cd ~/tmp/go/src/github.com/timescale/
@@ -103,17 +103,25 @@ cd ~/tmp/go/src/github.com/timescale/
 
 ## Benchmarking influxdb and questdb on FreeBSD
 
-```bash
-# install influxdb
-sudo portinstall influxdb
+The following commands build and install the TSBS tool,
+this step can be skipped if installation has already been performed according to the instructions above.
 
-mkdir -p ~/tmp/go/src/github.com/timescale/ && cd ~/tmp/go/src/github.com/timescale/
-git clone git@github.com:questdb/tsbs.git
-cd ~/tmp/go/src/github.com/timescale/tsbs/ && git checkout questdb-tsbs-load-new
+```bash
+mkdir -p ~/tmp/go/src/github.com/timescale/
+cd ~/tmp/go/src/github.com/timescale/
+
+git clone git@github.com:timescale/tsbs.git
+cd tsbs
 
 GOPATH=~/tmp/go go build -v ./...
 GOPATH=~/tmp/go go test -v github.com/timescale/tsbs/cmd/tsbs_load_questdb
 GOPATH=~/tmp/go go install -v ./...
+```
+
+Install InfluxDB:
+
+```bash
+sudo portinstall influxdb
 ```
 
 The
