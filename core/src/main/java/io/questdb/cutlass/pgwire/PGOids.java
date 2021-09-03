@@ -133,6 +133,7 @@ public class PGOids {
         TYPE_OIDS.extendAndSet(ColumnType.DATE, PG_TIMESTAMP); // DATE
         TYPE_OIDS.extendAndSet(ColumnType.BINARY, PG_BYTEA); // BYTEA
         TYPE_OIDS.extendAndSet(ColumnType.LONG256, PG_NUMERIC); // NUMERIC
+        TYPE_OIDS.extendAndSet(ColumnType.GEOHASH, PG_VARCHAR); // VARCHAR
 
         PG_TYPE_OIDS.add(PG_VARCHAR);
         PG_TYPE_OIDS.add(PG_TIMESTAMP);
