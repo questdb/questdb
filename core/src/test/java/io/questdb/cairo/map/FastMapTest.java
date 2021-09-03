@@ -488,9 +488,7 @@ public class FastMapTest extends AbstractCairoTest {
 
             BytecodeAssembler asm = new BytecodeAssembler();
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-                model
-                        .col("a", ColumnType.LONG)
-                        .col("b", geohashType);
+                model.col("a", ColumnType.LONG).col("b", geohashType);
                 CairoTestUtils.create(model);
             }
 

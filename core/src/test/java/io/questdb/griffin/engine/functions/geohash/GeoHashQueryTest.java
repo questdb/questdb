@@ -440,10 +440,10 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "t1", "test")) {
                 for(int i = 0; i < 10; i++) {
                     TableWriter.Row row = writer.newRow();
-                    row.putGeoHash(0, GeoHashes.fromString("qeustdb", 1));
-                    row.putGeoHash(1, GeoHashes.fromString("qeustdb", 2));
-                    row.putGeoHash(2, GeoHashes.fromString("qeustdb", 4));
-                    row.putGeoHash(3, GeoHashes.fromString("qeustdb123456", 8));
+                    row.putGeoHash(0, GeoHashes.fromString("qeustdb", 0, 1));
+                    row.putGeoHash(1, GeoHashes.fromString("qeustdb", 0, 2));
+                    row.putGeoHash(2, GeoHashes.fromString("qeustdb", 0, 4));
+                    row.putGeoHash(3, GeoHashes.fromString("qeustdb123456", 0, 8));
                     row.putGeoHash(4, i);
                     row.append();
                 }
