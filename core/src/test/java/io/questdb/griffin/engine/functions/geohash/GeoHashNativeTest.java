@@ -100,7 +100,7 @@ public class GeoHashNativeTest {
     @Test
     public void testFromStringToBits() throws NumericException {
         final int cap = 12;
-        DirectLongList bits = new DirectLongList(cap * 2); // hash and mask
+        LongList bits = new LongList(cap * 2); // hash and mask
         CharSequenceHashSet strh = new CharSequenceHashSet();
         for (int i = 0; i < cap; i++) {
             final int prec = (i % 3) + 3;
@@ -120,7 +120,7 @@ public class GeoHashNativeTest {
     @Test
     public void testFromStringToBitsInvalidNull() {
         final int cap = 12;
-        DirectLongList bits = new DirectLongList(cap * 2); // hash and mask
+        LongList bits = new LongList(cap * 2); // hash and mask
         CharSequenceHashSet strh = new CharSequenceHashSet();
         strh.add("");
         strh.add(null);
@@ -134,7 +134,7 @@ public class GeoHashNativeTest {
     @Test
     public void testFromStringToBitsSingle() {
         final int cap = 12;
-        DirectLongList bits = new DirectLongList(cap * 2); // hash and mask
+        LongList bits = new LongList(cap * 2); // hash and mask
         CharSequenceHashSet strh = new CharSequenceHashSet();
         strh.add("questdb");
 
@@ -145,7 +145,7 @@ public class GeoHashNativeTest {
     @Test
     public void testFromStringToBitsInvalidStrings() {
         final int cap = 12;
-        DirectLongList bits = new DirectLongList(cap * 2); // hash and mask
+        LongList bits = new LongList(cap * 2); // hash and mask
         CharSequenceHashSet strh = new CharSequenceHashSet();
         strh.add("");
         strh.add("a medium sized banana");

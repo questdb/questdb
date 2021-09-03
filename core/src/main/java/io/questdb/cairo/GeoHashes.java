@@ -187,7 +187,7 @@ public class GeoHashes {
         }
         throw NumericException.INSTANCE;
     }
-
+/*
     public static void fromStringToBits(final CharSequenceHashSet prefixes, int columnType, final DirectLongList prefixesBits) {
         prefixesBits.clear();
         final int columnSize = ColumnType.sizeOf(columnType);
@@ -217,7 +217,45 @@ public class GeoHashes {
             }
         }
     }
+*/
+    public static void fromStringToBits(final CharSequenceHashSet prefixes, int columnType, final LongList prefixesBits) {
+        prefixesBits.clear();
+        for (int i = 0, sz = prefixes.size(); i < sz; i++) {
+            try {
+                final CharSequence prefix = prefixes.get(i);
+                addNormalizedGeoPrefix(prefix, columnType, prefixesBits);
+            } catch (NumericException e) {
+                // Skip invalid geo hashes
+            }
+        }
+    }
 
+    public static void addNormalizedGeoPrefix(CharSequence hashToken, int columnType, final LongList prefixes) throws NumericException {
+        if(hashToken == null) {
+            throw NumericException.INSTANCE;
+        }
+        final long hash = GeoHashes.fromStringNl(hashToken, 0, hashToken.length());
+        final int prefixType = ColumnType.geohashWithPrecision(5 * hashToken.length()); //TODO: geohash literals
+        addNormalizedGeoPrefix(hash, prefixType, columnType, prefixes);
+    }
+
+    public static void addNormalizedGeoPrefix(long hash, int prefixType, int columnType, final LongList prefixes) throws NumericException {
+        final int bits = GeoHashes.getBitsPrecision(prefixType);
+        final int columnSize = ColumnType.sizeOf(columnType);
+        final int columnBits = GeoHashes.getBitsPrecision(columnType);
+
+        if (hash == NULL || bits > columnBits) {
+            throw NumericException.INSTANCE;
+        }
+
+        final int shift = columnBits - bits;
+        long norm = hash << shift;
+        long mask = GeoHashes.bitmask(bits, shift);
+        mask |= 1L << (columnSize * 8 - 1); // set the most significant bit to ignore null from prefix matching
+
+        prefixes.add(norm);
+        prefixes.add(mask);
+    }
     public static int hashSize(long hashz) {
         return (int) (hashz >>> MAX_BITS_LENGTH);
     }
