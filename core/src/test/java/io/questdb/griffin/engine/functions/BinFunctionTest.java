@@ -45,6 +45,31 @@ public class BinFunctionTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testChar() {
+        function.getChar(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoByte() {
+        function.getGeoByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoInt() {
+        function.getGeoInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoLong() {
+        function.getGeoLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoShort() {
+        function.getGeoShort(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetBool() {
         function.getBool(null);
     }
@@ -115,13 +140,13 @@ public class BinFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetTimestamp() {
-        function.getTimestamp(null);
+    public void testGetSymbolB() {
+        function.getSymbolB(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testChar() {
-        function.getChar(null);
+    public void testGetTimestamp() {
+        function.getTimestamp(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -137,25 +162,5 @@ public class BinFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testLong256B() {
         function.getLong256B(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHash() {
-        function.getGeoLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashInt() {
-        function.getGeoInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashByte() {
-        function.getGeoByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashShor() {
-        function.getGeoShort(null);
     }
 }

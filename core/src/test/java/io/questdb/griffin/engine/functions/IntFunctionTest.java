@@ -124,22 +124,32 @@ public class IntFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHash() {
+    public void testGeoLong() {
         function.getGeoLong(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashInt() {
+    public void testGetSymbolB() {
+        function.getSymbolB(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoInt() {
         function.getGeoInt(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashByte() {
+    public void testGeoByte() {
         function.getGeoByte(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashShor() {
+    public void testGeoShort() {
         function.getGeoShort(null);
+    }
+
+    @Test
+    public void testGetFloat() {
+        Assert.assertEquals(150, function.getFloat(null), 0.00001);
     }
 }

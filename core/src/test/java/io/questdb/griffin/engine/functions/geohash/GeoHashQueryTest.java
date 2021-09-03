@@ -404,8 +404,8 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     @Test
     public void assertInsertGeoHashWithTruncate() throws Exception {
         tearDown();
-        for (int b = 5; b <= 40; b *= 2) {
-            for (int i = b; i <= 40; i *= 2) {
+        for (int b = 1; b <= 60; b++) {
+            for (int i = b; i <= 60; i++) {
                 setUp();
                 try {
                     assertQuery(
@@ -419,6 +419,26 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                             true,
                             true,
                             true
+                    );
+                } finally {
+                    tearDown();
+                }
+            }
+        }
+    }
+
+    @Test
+    public void assertInsertGeoHashFromLowResIntoHigh() throws Exception {
+        tearDown();
+        for (int b = 60; b > 2; b--) {
+            for (int i = 1; i < b; i++) {
+                setUp();
+                try {
+                    assertFailure(
+                            String.format("insert into gh select rnd_geohash(%s) from long_sequence(5)", i),
+                            String.format("create table gh as (select rnd_geohash(%s) from long_sequence(5))", b),
+                            22,
+                            "inconvertible types"
                     );
                 } finally {
                     tearDown();

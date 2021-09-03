@@ -25,29 +25,20 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
-import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class Long256FunctionTest {
-    // assert that all type casts that are not possible will throw exception
-
-    private static final Long256Function function = new Long256Function() {
+public class RecordFunctionTest {
+    private static final Record record = new Record() {
         @Override
-        public void getLong256(Record rec, CharSink sink) {
+        public long getLong(int col) {
+            return 39909900999L;
         }
-
+    };
+    private static final RecordFunction function = new RecordFunction() {
         @Override
-        public Long256 getLong256A(Record rec) {
-            return Long256Impl.NULL_LONG256;
-        }
-
-        @Override
-        public Long256 getLong256B(Record rec) {
-            return Long256Impl.NULL_LONG256;
+        public Record getRecord(Record rec) {
+            return record;
         }
     };
 
@@ -74,6 +65,11 @@ public class Long256FunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGeoShort() {
         function.getGeoShort(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetArrayLength() {
+        function.getArrayLength();
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -116,9 +112,14 @@ public class Long256FunctionTest {
         function.getInt(null);
     }
 
-    @Test
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetLong() {
-        Assert.assertEquals(Numbers.LONG_NaN, function.getLong(null));
+        function.getLong(null);
+    }
+
+    @Test
+    public void testGetRecord() {
+        Assert.assertEquals(39909900999L, function.getRecord(null).getLong(0));
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -159,6 +160,21 @@ public class Long256FunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetSymbolB() {
         function.getSymbolB(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testLong256() {
+        function.getLong256(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testLong256A() {
+        function.getLong256A(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testLong256B() {
+        function.getLong256B(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

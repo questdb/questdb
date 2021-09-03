@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class ShortFunctionTest {
@@ -33,9 +34,29 @@ public class ShortFunctionTest {
     private static final ShortFunction function = new ShortFunction() {
         @Override
         public short getShort(Record rec) {
-            return 0;
+            return 49;
         }
     };
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoByte() {
+        function.getGeoByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoInt() {
+        function.getGeoInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoLong() {
+        function.getGeoLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoShort() {
+        function.getGeoShort(null);
+    }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
@@ -93,6 +114,11 @@ public class ShortFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetSymbolB() {
+        function.getSymbolB(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetTimestamp() {
         function.getTimestamp(null);
     }
@@ -112,23 +138,8 @@ public class ShortFunctionTest {
         function.getLong256B(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHash() {
-        function.getGeoLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashInt() {
-        function.getGeoInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashByte() {
-        function.getGeoByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashShor() {
-        function.getGeoShort(null);
+    @Test
+    public void testGetChar() {
+        Assert.assertEquals('1', function.getChar(null));
     }
 }

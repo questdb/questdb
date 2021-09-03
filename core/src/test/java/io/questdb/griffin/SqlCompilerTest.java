@@ -2273,27 +2273,31 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableWithO3() throws SqlException {
-        compiler.compile(
-                "create table x (" +
-                        "a INT, " +
-                        "t TIMESTAMP, " +
-                        "y BOOLEAN) " +
-                        "timestamp(t) " +
-                        "partition by DAY WITH maxUncommittedRows=10000, commitLag=250ms;",
-                sqlExecutionContext);
+    public void testCreateTableWithO3() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    compiler.compile(
+                            "create table x (" +
+                                    "a INT, " +
+                                    "t TIMESTAMP, " +
+                                    "y BOOLEAN) " +
+                                    "timestamp(t) " +
+                                    "partition by DAY WITH maxUncommittedRows=10000, commitLag=250ms;",
+                            sqlExecutionContext);
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE,
-                "x", "testing")) {
-            sink.clear();
-            TableWriterMetadata metadata = writer.getMetadata();
-            metadata.toJson(sink);
-            TestUtils.assertEquals(
-                    "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":2,\"name\":\"y\",\"type\":\"BOOLEAN\"}],\"timestampIndex\":1}",
-                    sink);
-            Assert.assertEquals(10000, metadata.getMaxUncommittedRows());
-            Assert.assertEquals(250000, metadata.getCommitLag());
-        }
+                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE,
+                            "x", "testing")) {
+                        sink.clear();
+                        TableWriterMetadata metadata = writer.getMetadata();
+                        metadata.toJson(sink);
+                        TestUtils.assertEquals(
+                                "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":2,\"name\":\"y\",\"type\":\"BOOLEAN\"}],\"timestampIndex\":1}",
+                                sink);
+                        Assert.assertEquals(10000, metadata.getMaxUncommittedRows());
+                        Assert.assertEquals(250000, metadata.getCommitLag());
+                    }
+                }
+        );
     }
 
     @Test

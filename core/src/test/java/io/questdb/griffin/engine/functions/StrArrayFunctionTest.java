@@ -25,36 +25,38 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
-import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
-import org.junit.Assert;
 import org.junit.Test;
 
-public class Long256FunctionTest {
+public class StrArrayFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final Long256Function function = new Long256Function() {
+    private static final StrArrayFunction function = new StrArrayFunction() {
         @Override
-        public void getLong256(Record rec, CharSink sink) {
+        public int getArrayLength() {
+            return 1;
         }
 
         @Override
-        public Long256 getLong256A(Record rec) {
-            return Long256Impl.NULL_LONG256;
+        public CharSequence getStr(Record rec, int arrayIndex) {
+            return "hello";
         }
 
         @Override
-        public Long256 getLong256B(Record rec) {
-            return Long256Impl.NULL_LONG256;
+        public void getStr(Record rec, CharSink sink, int arrayIndex) {
+            sink.put(getStr(rec, arrayIndex));
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec, int arrayIndex) {
+            return getStr(rec, arrayIndex);
+        }
+
+        @Override
+        public int getStrLen(Record rec, int arrayIndex) {
+            return getStr(rec, arrayIndex).length();
         }
     };
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testChar() {
-        function.getChar(null);
-    }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGeoByte() {
@@ -102,33 +104,8 @@ public class Long256FunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetDouble() {
-        function.getDouble(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetFloat() {
-        function.getFloat(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetInt() {
-        function.getInt(null);
-    }
-
-    @Test
-    public void testGetLong() {
-        Assert.assertEquals(Numbers.LONG_NaN, function.getLong(null));
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetRecordCursorFactory() {
         function.getRecordCursorFactory();
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetShort() {
-        function.getShort(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -162,7 +139,27 @@ public class Long256FunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testTimestamp() {
+    public void testGetTimestamp() {
         function.getTimestamp(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testLong256() {
+        function.getLong256(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testLong256A() {
+        function.getLong256A(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testLong256B() {
+        function.getLong256B(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetChar() {
+        function.getChar(null);
     }
 }

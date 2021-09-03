@@ -128,9 +128,9 @@ public class SqlCompiler implements Closeable {
         this.functionParser = new FunctionParser(
                 configuration,
                 functionFactoryCache != null
-                                     ? functionFactoryCache
-                                     : new FunctionFactoryCache(engine.getConfiguration(), ServiceLoader.load(
-                                             FunctionFactory.class, FunctionFactory.class.getClassLoader()))
+                        ? functionFactoryCache
+                        : new FunctionFactoryCache(engine.getConfiguration(), ServiceLoader.load(
+                        FunctionFactory.class, FunctionFactory.class.getClassLoader()))
         );
         this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser);
 
@@ -627,21 +627,16 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.GEOSHORT:
                     asm.invokeInterface(rGetGeoShort, 1);
-                    switch (ColumnType.tagOf(toColumnType)) {
-                        case ColumnType.GEOBYTE:
-                            asm.i2l();
-                            asm.iconst(fromColumnType);
-                            asm.iconst(toColumnType);
-                            asm.invokeStatic(truncateGeoHashTypes);
-                            asm.l2i();
-                            asm.i2b();
-                            asm.invokeVirtual(wPutByte);
-                            break;
-                        case ColumnType.GEOSHORT:
-                            asm.invokeVirtual(wPutShort);
-                            break;
-                        default:
-                            break;
+                    if (ColumnType.tagOf(toColumnType) == ColumnType.GEOBYTE) {
+                        asm.i2l();
+                        asm.iconst(fromColumnType);
+                        asm.iconst(toColumnType);
+                        asm.invokeStatic(truncateGeoHashTypes);
+                        asm.l2i();
+                        asm.i2b();
+                        asm.invokeVirtual(wPutByte);
+                    } else {
+                        asm.invokeVirtual(wPutShort);
                     }
                     break;
                 case ColumnType.GEOINT:
@@ -665,10 +660,8 @@ public class SqlCompiler implements Closeable {
                             asm.i2s();
                             asm.invokeVirtual(wPutShort);
                             break;
-                        case ColumnType.GEOINT:
-                            asm.invokeVirtual(wPutInt);
-                            break;
                         default:
+                            asm.invokeVirtual(wPutInt);
                             break;
                     }
                     break;
@@ -698,10 +691,8 @@ public class SqlCompiler implements Closeable {
                             asm.l2i();
                             asm.invokeVirtual(wPutInt);
                             break;
-                        case ColumnType.GEOLONG:
-                            asm.invokeVirtual(wPutLong);
-                            break;
                         default:
+                            asm.invokeVirtual(wPutLong);
                             break;
                     }
                     break;
@@ -896,7 +887,7 @@ public class SqlCompiler implements Closeable {
                     if (SqlKeywords.isPartitionKeyword(tok)) {
                         alterTableDropOrAttachPartition(writer, PartitionAction.ATTACH, executionContext);
                     } else {
-                        throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
+                        throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
                     }
                 } else if (SqlKeywords.isRenameKeyword(tok)) {
                     tok = expectToken(lexer, "'column'");
@@ -973,29 +964,6 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(lexer.lastTokenPosition(), "'table' or 'system' expected");
         }
         return compiledQuery.ofAlter();
-    }
-
-    private void alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, TableWriter writer) throws SqlException {
-        if (isMaxUncommittedRowsParam(paramName)) {
-            int maxUncommittedRows;
-            try {
-                maxUncommittedRows = Numbers.parseInt(value);
-            } catch (NumericException e) {
-                throw SqlException.$(paramNameNamePosition, "invalid value [value=").put(value).put(",parameter=").put(paramName).put(']');
-            }
-            if (maxUncommittedRows < 0) {
-                throw SqlException.$(paramNameNamePosition, "maxUncommittedRows must be non negative");
-            }
-            writer.setMetaMaxUncommittedRows(maxUncommittedRows);
-        } else if (isCommitLag(paramName)) {
-            long commitLag = SqlUtil.expectMicros(value, paramNameNamePosition);
-            if (commitLag < 0) {
-                throw SqlException.$(paramNameNamePosition, "commitLag must be non negative");
-            }
-            writer.setMetaCommitLag(commitLag);
-        } else {
-            throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(paramName).put('\'');
-        }
     }
 
     private void alterTableAddColumn(int tableNamePosition, TableWriter writer) throws SqlException {
@@ -1148,8 +1116,13 @@ public class SqlCompiler implements Closeable {
                         false
                 );
             } catch (CairoException e) {
-                LOG.error().$("Cannot add column '").$(writer.getTableName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, "could add column [error=").put(e.getFlyweightMessage())
+                LOG.error()
+                        .$("could not add column [table=").$(writer.getTableName())
+                        .$(", column=").$(columnName)
+                        .$(", errno=").$(e.getErrno())
+                        .$(", error=").$(e.getFlyweightMessage())
+                        .I$();
+                throw SqlException.$(tableNamePosition, "could not add column [error=").put(e.getFlyweightMessage())
                         .put(", errno=").put(e.getErrno())
                         .put(']');
             }
@@ -1354,6 +1327,29 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
         } while (true);
+    }
+
+    private void alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, TableWriter writer) throws SqlException {
+        if (isMaxUncommittedRowsParam(paramName)) {
+            int maxUncommittedRows;
+            try {
+                maxUncommittedRows = Numbers.parseInt(value);
+            } catch (NumericException e) {
+                throw SqlException.$(paramNameNamePosition, "invalid value [value=").put(value).put(",parameter=").put(paramName).put(']');
+            }
+            if (maxUncommittedRows < 0) {
+                throw SqlException.$(paramNameNamePosition, "maxUncommittedRows must be non negative");
+            }
+            writer.setMetaMaxUncommittedRows(maxUncommittedRows);
+        } else if (isCommitLag(paramName)) {
+            long commitLag = SqlUtil.expectMicros(value, paramNameNamePosition);
+            if (commitLag < 0) {
+                throw SqlException.$(paramNameNamePosition, "commitLag must be non negative");
+            }
+            writer.setMetaCommitLag(commitLag);
+        } else {
+            throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(paramName).put('\'');
+        }
     }
 
     private void backupTable(@NotNull CharSequence tableName, @NotNull SqlExecutionContext executionContext) {

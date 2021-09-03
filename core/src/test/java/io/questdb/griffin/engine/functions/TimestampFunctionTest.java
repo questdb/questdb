@@ -42,6 +42,31 @@ public class TimestampFunctionTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testChar() {
+        function.getChar(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoByte() {
+        function.getGeoByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoInt() {
+        function.getGeoInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoLong() {
+        function.getGeoLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoShort() {
+        function.getGeoShort(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
         function.getBin(null);
     }
@@ -67,21 +92,6 @@ public class TimestampFunctionTest {
     }
 
     @Test
-    public void testGetNullDate() {
-        final TimestampFunction function = new TimestampFunction() {
-            @Override
-            public long getTimestamp(Record rec) {
-                return Numbers.LONG_NaN;
-            }
-
-            @Override
-            public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            }
-        };
-        Assert.assertEquals(Numbers.LONG_NaN, function.getDate(null));
-    }
-
-    @Test
     public void testGetDouble() {
         Assert.assertEquals(145000, function.getDouble(null), 0.1);
     }
@@ -99,6 +109,21 @@ public class TimestampFunctionTest {
     @Test
     public void testGetLong() {
         Assert.assertEquals(145000, function.getLong(null));
+    }
+
+    @Test
+    public void testGetNullDate() {
+        final TimestampFunction function = new TimestampFunction() {
+            @Override
+            public long getTimestamp(Record rec) {
+                return Numbers.LONG_NaN;
+            }
+
+            @Override
+            public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            }
+        };
+        Assert.assertEquals(Numbers.LONG_NaN, function.getDate(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -137,8 +162,8 @@ public class TimestampFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testChar() {
-        function.getChar(null);
+    public void testGetSymbolB() {
+        function.getSymbolB(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -154,25 +179,5 @@ public class TimestampFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testLong256B() {
         function.getLong256B(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHash() {
-        function.getGeoLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashInt() {
-        function.getGeoInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashByte() {
-        function.getGeoByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashShor() {
-        function.getGeoShort(null);
     }
 }

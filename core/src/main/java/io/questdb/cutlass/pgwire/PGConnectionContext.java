@@ -700,7 +700,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         for (int i = 0; i < columnCount; i++) {
             final int type = activeSelectColumnTypes.getQuick(2 * i);
             final short columnBinaryFlag = getColumnBinaryFlag(type);
-            final int typeTag = ColumnType.storageTag(type);
+            final int typeTag = ColumnType.tagOf(type);
 
             final int tagWithFlag = toColumnBinaryType(columnBinaryFlag, typeTag);
             switch (tagWithFlag) {
@@ -823,9 +823,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         } else {
             final long a = responseAsciiSink.skip();
             if (bitFlags < 0) {
-                GeoHashes.toString(value, -bitFlags, responseAsciiSink);
+                GeoHashes.appendCharsUnsafe(value, -bitFlags, responseAsciiSink);
             } else {
-                GeoHashes.toBitString(value, bitFlags, responseAsciiSink);
+                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, responseAsciiSink);
             }
             responseAsciiSink.putLenEx(a);
         }
@@ -996,12 +996,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             int columnType = m.getColumnType(i);
             int flags = 0;
             if (ColumnType.tagOf(columnType) == ColumnType.GEOHASH) {
-                int bitSize = GeoHashes.getBitsPrecision(columnType);
-                if (bitSize > 0 && bitSize % 5 == 0) {
+                final int bits = ColumnType.getGeoHashBits(columnType);
+                if (bits > 0 && bits % 5 == 0) {
                     // It's 5 bit per char. If it's integer number of chars value to be serialized as chars
-                    flags = -bitSize / 5;
+                    flags = -bits / 5;
                 } else {
-                    flags = bitSize;
+                    flags = bits;
                 }
             }
             activeSelectColumnTypes.setQuick(2 * i, columnType);
