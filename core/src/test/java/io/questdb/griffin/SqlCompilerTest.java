@@ -1983,7 +1983,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGeoLiteralInvalid() throws Exception {
+    public void testGeoLiteralInvalid1() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select rnd_str('#1234', '#88484') as str from long_sequence(1000) )", sqlExecutionContext);
             try {
@@ -1992,6 +1992,20 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             } catch (SqlException ex) {
                 // Add error test assertion
                 Assert.assertEquals("[34] dangling expression", ex.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testGeoLiteralInvalid2() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select rnd_str('#1234', '#88484') as str from long_sequence(1000) )", sqlExecutionContext);
+            try {
+                compiler.compile("select * from x where str = #1234'", sqlExecutionContext); // random char at the end
+                Assert.fail();
+            } catch (SqlException ex) {
+                // Add error test assertion
+                Assert.assertEquals("[33] dangling expression", ex.getMessage());
             }
         });
     }

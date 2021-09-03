@@ -290,6 +290,16 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
                     break;
             }
         }
+        if (term != 0) { // dangling terms
+            if (_len == 1) {
+                _hi += 1; // emit term
+            } else {
+                FloatingSequence termfs = csPool.next();
+                termfs.lo = _hi;
+                termfs.hi = _hi + 1;
+                next = termfs; // term is next
+            }
+        }
         return last = flyweightSequence;
     }
 

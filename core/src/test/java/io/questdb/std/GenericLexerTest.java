@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.GeoHashes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.std.str.StringSink;
@@ -165,6 +166,17 @@ public class GenericLexerTest {
         }
 
         TestUtils.assertEquals("a+'b'*abc", sink);
+    }
+
+    @Test
+    public void testBrokenSingleQuotedToken() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("#1234'");
+        Assert.assertEquals("#1234", ts.next().toString());
+        Assert.assertEquals("'", ts.next().toString());
+        ts.of("'#123");
+        Assert.assertEquals("'", ts.next().toString());
+        Assert.assertEquals("#123", ts.next().toString());
     }
 
     @Test
