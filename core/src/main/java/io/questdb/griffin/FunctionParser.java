@@ -486,7 +486,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
             try {
                 return GeoHashConstant.newInstance(
-                        GeoHashes.fromBitStringNl(tok, 2), // minus leading '##'
+                        GeoHashes.fromBitStringNl(tok, 2), // minus leading '##', truncates tail bits if over 60
                         ColumnType.geohashWithPrecision(len - 2));  // minus leading '##'
             } catch (NumericException e) {
             }
