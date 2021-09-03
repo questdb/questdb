@@ -394,8 +394,9 @@ public class GeoHashesTest {
 
     @Test
     public void testIsValidCharsOutOfBounds() {
-        Assert.assertTrue(GeoHashes.isValidChars("", 0));
-        Assert.assertTrue(GeoHashes.isValidChars("", 1));
+        Assert.assertFalse(GeoHashes.isValidChars("", 0));
+        Assert.assertFalse(GeoHashes.isValidChars("", 1));
+        Assert.assertFalse(GeoHashes.isValidChars("s", 1));
     }
 
     @Test
@@ -420,6 +421,13 @@ public class GeoHashesTest {
             sink.put('@');
             Assert.assertFalse(GeoHashes.isValidBits(sink, 0));
         }
+    }
+
+    @Test
+    public void testIsValidBitsOutOfBounds() {
+        Assert.assertFalse(GeoHashes.isValidBits("", 0));
+        Assert.assertFalse(GeoHashes.isValidBits("", 1));
+        Assert.assertFalse(GeoHashes.isValidBits("1", 1));
     }
 
     @Test

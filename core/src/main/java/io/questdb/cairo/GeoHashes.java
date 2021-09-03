@@ -200,24 +200,26 @@ public class GeoHashes {
 
     public static boolean isValidChars(CharSequence tok, int start) {
         int idx;
-        for (int i = start, n = tok.length(); i < n; i++) {
+        int len = tok.length();
+        for (int i = start; i < len; i++) {
             idx = tok.charAt(i);
             if (idx < 48 || idx > 122 || base32Indexes[idx - 48] == -1) {
                 return false;
             }
         }
-        return true;
+        return start < len;
     }
 
     public static boolean isValidBits(CharSequence tok, int start) {
         int idx;
-        for (int i = start, n = tok.length(); i < n; i++) {
+        int len = tok.length();
+        for (int i = start; i < len; i++) {
             idx = tok.charAt(i);
             if (idx < '0' || idx > '1') {
                 return false;
             }
         }
-        return true;
+        return start < len;
     }
 
     public static void fromStringToBits(final CharSequenceHashSet prefixes, int columnType, final DirectLongList prefixesBits) {
