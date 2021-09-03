@@ -187,37 +187,7 @@ public class GeoHashes {
         }
         throw NumericException.INSTANCE;
     }
-/*
-    public static void fromStringToBits(final CharSequenceHashSet prefixes, int columnType, final DirectLongList prefixesBits) {
-        prefixesBits.clear();
-        final int columnSize = ColumnType.sizeOf(columnType);
-        final int columnBits = GeoHashes.getBitsPrecision(columnType);
-        for (int i = 0, sz = prefixes.size(); i < sz; i++) {
-            try {
-                final CharSequence prefix = prefixes.get(i);
-                if (prefix == null || prefix.length() == 0) {
-                    continue;
-                }
-                final long hash = fromString(prefix, 0, prefix.length());
-                final int bits = 5 * prefix.length();
-                final int shift = columnBits - bits;
-                long norm = hash << shift;
-                long mask = bitmask(bits, shift);
-                mask |= 1L << (columnSize * 8 - 1); // set the most significant bit to ignore null from prefix matching
-                // if the prefix is more precise than hashes,
-                // exclude it from matching
-                if (bits > columnBits) {
-                    norm = 0L;
-                    mask = -1L;
-                }
-                prefixesBits.add(norm);
-                prefixesBits.add(mask);
-            } catch (NumericException e) {
-                // Skip invalid geo hashes
-            }
-        }
-    }
-*/
+
     public static void fromStringToBits(final CharSequenceHashSet prefixes, int columnType, final LongList prefixesBits) {
         prefixesBits.clear();
         for (int i = 0, sz = prefixes.size(); i < sz; i++) {
