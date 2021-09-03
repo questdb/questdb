@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.GeoHashFunction;
 import io.questdb.griffin.engine.functions.constants.GeoHashConstant;
 import io.questdb.std.IntList;
@@ -63,9 +64,8 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
 
         final Function lonArg = args.get(0);
         final Function latArg = args.get(1);
-
-        final boolean isLonConst = lonArg.isConstant() || lonArg.isRuntimeConstant();
-        final boolean isLatConst = latArg.isConstant() || latArg.isRuntimeConstant();
+        final boolean isLonConst = lonArg.isConstant();
+        final boolean isLatConst = latArg.isConstant();
 
         if (isLonConst && isLatConst) {
 
@@ -85,7 +85,7 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class FromCoordinatesFixedBitsFunction extends GeoHashFunction implements Function {
+    private static class FromCoordinatesFixedBitsFunction extends GeoHashFunction implements BinaryFunction {
         private final Function lon;
         private final Function lat;
         private final int bits;
@@ -125,6 +125,16 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
         @Override
         public long getGeoHashLong(Record rec) {
             return getLongValue(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return lat;
+        }
+
+        @Override
+        public Function getRight() {
+            return lon;
         }
     }
 }
