@@ -37,6 +37,7 @@ import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -4426,6 +4427,127 @@ nodejs code:
                 execSelectWithParam(select, 11);
                 TestUtils.assertEquals("11\n", sink);
 
+            }
+        });
+    }
+
+    @Test
+    public void testInsertBinaryBindVariable1() throws Exception {
+        testInsertBinaryBindVariable(true);
+    }
+
+    @Test
+    public void testInsertBinaryBindVariable2() throws Exception {
+        testInsertBinaryBindVariable(false);
+    }
+
+    private void testInsertBinaryBindVariable(boolean binaryProtocol) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table xyz (" +
+                            "a binary" +
+                            ")",
+                    sqlExecutionContext
+            );
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, binaryProtocol);
+                    final PreparedStatement insert = connection.prepareStatement(
+                            "insert into xyz values (?)"
+                    )
+            ) {
+                connection.setAutoCommit(false);
+                int totalCount = 10;
+                for (int i = 0; i < totalCount; i++) {
+                    insert.setBytes(1, new byte[]{1, 2, 3, 4});
+                    insert.execute();
+                }
+                connection.commit();
+
+                try (RecordCursorFactory factory = compiler.compile("xyz", sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final Record record = cursor.getRecord();
+                        int count = 0;
+                        while (cursor.hasNext()) {
+                            Assert.assertEquals(4, record.getBinLen(0));
+                            count++;
+                        }
+
+                        Assert.assertEquals(totalCount, count);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    @Ignore // TODO: support big binary parameter buffers (epic)
+    public void testInsertBinaryOver1Mb() throws Exception {
+        final int maxLength = 1024 * 1024;
+        testBinaryInsert(maxLength, false);
+    }
+
+    @Test
+    public void testInsertBinaryOver200KbNonBinaryProtocol() throws Exception {
+        final int maxLength = 200 * 1024;
+        testBinaryInsert(maxLength, false);
+    }
+
+    @Test
+    public void testInsertBinaryOver200KbBinaryProtocol() throws Exception {
+        final int maxLength = 200 * 1024;
+        testBinaryInsert(maxLength, true);
+    }
+
+    private void testBinaryInsert(int maxLength, boolean binaryProtocol) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table xyz (" +
+                            "a binary" +
+                            ")",
+                    sqlExecutionContext
+            );
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, binaryProtocol);
+                    final PreparedStatement insert = connection.prepareStatement(
+                            "insert into xyz values (?)"
+                    )
+            ) {
+                connection.setAutoCommit(false);
+                try (InputStream str = new InputStream() {
+                    int value = 0;
+                    @Override
+                    public int read() {
+                        if (maxLength == value) return  -1;
+                        return value++ % 255;
+                    }
+                }) {
+                    int totalCount = 1;
+                    for (int i = 0; i < totalCount; i++) {
+                        insert.setBinaryStream(1, str);
+                        insert.execute();
+                    }
+                    connection.commit();
+
+                    try (RecordCursorFactory factory = compiler.compile("xyz", sqlExecutionContext).getRecordCursorFactory()) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            final Record record = cursor.getRecord();
+                            int count = 0;
+                            while (cursor.hasNext()) {
+                                Assert.assertEquals(maxLength, record.getBinLen(0));
+                                BinarySequence bs = record.getBin(0);
+                                for(int i = 0; i < maxLength; i++) {
+                                    Assert.assertEquals(
+                                            i % 255,
+                                            bs.byteAt(i) & 0xff // Convert byte to unsigned int
+                                    );
+                                }
+                                count++;
+                            }
+
+                            Assert.assertEquals(totalCount, count);
+                        }
+                    }
+                }
             }
         });
     }

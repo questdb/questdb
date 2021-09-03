@@ -270,6 +270,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgNetRcvBufSize;
     private int pgNetSndBufSize;
     private int pgCharacterStoreCapacity;
+    private int pgBinaryParamsCapacity;
     private int pgCharacterStorePoolCapacity;
     private int pgConnectionPoolInitialCapacity;
     private String pgPassword;
@@ -518,6 +519,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgNetRcvBufSize = getIntSize(properties, env, "pg.net.recv.buf.size", -1);
                 this.pgNetSndBufSize = getIntSize(properties, env, "pg.net.send.buf.size", -1);
                 this.pgCharacterStoreCapacity = getInt(properties, env, "pg.character.store.capacity", 4096);
+                this.pgBinaryParamsCapacity = getInt(properties, env, "pg.binary.param.count.capacity", 2);
                 this.pgCharacterStorePoolCapacity = getInt(properties, env, "pg.character.store.pool.capacity", 64);
                 this.pgConnectionPoolInitialCapacity = getInt(properties, env, "pg.connection.pool.capacity", 64);
                 this.pgPassword = getString(properties, env, "pg.password", "quest");
@@ -2445,6 +2447,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropPGWireConfiguration implements PGWireConfiguration {
+
+        @Override
+        public int getBinParamCountCapacity() {
+            return pgBinaryParamsCapacity;
+        }
 
         @Override
         public int getCharacterStoreCapacity() {
