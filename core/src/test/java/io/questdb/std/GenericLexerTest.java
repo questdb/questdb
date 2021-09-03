@@ -24,7 +24,6 @@
 
 package io.questdb.std;
 
-import io.questdb.cairo.GeoHashes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.std.str.StringSink;
@@ -169,14 +168,80 @@ public class GenericLexerTest {
     }
 
     @Test
-    public void testBrokenSingleQuotedToken() {
+    public void testBrokenSingleQuotedToken1() {
         GenericLexer ts = new GenericLexer(64);
         ts.of("#1234'");
         Assert.assertEquals("#1234", ts.next().toString());
         Assert.assertEquals("'", ts.next().toString());
-        ts.of("'#123");
+
+        ts.of("#1234\"");
+        Assert.assertEquals("#1234", ts.next().toString());
+        Assert.assertEquals("\"", ts.next().toString());
+
+        ts.of("#1234`");
+        Assert.assertEquals("#1234", ts.next().toString());
+        Assert.assertEquals("`", ts.next().toString());
+    }
+
+    @Test
+    public void testBrokenSingleQuotedToken2() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("'#1234");
         Assert.assertEquals("'", ts.next().toString());
-        Assert.assertEquals("#123", ts.next().toString());
+        Assert.assertEquals("#1234", ts.next().toString());
+
+        ts.of("\"#1234");
+        Assert.assertEquals("\"", ts.next().toString());
+        Assert.assertEquals("#1234", ts.next().toString());
+
+        ts.of("`#1234");
+        Assert.assertEquals("`", ts.next().toString());
+        Assert.assertEquals("#1234", ts.next().toString());
+    }
+
+    @Test
+    public void testBrokenSingleQuotedToken3() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("#12'34");
+        Assert.assertEquals("#12", ts.next().toString());
+        Assert.assertEquals("'", ts.next().toString());
+        Assert.assertEquals("34", ts.next().toString());
+
+        ts.of("#12\"34");
+        Assert.assertEquals("#12", ts.next().toString());
+        Assert.assertEquals("\"", ts.next().toString());
+        Assert.assertEquals("34", ts.next().toString());
+
+        ts.of("#12`34");
+        Assert.assertEquals("#12", ts.next().toString());
+        Assert.assertEquals("`", ts.next().toString());
+        Assert.assertEquals("34", ts.next().toString());
+    }
+
+    @Test
+    public void testBrokenSingleQuotedToken4() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("'");
+        Assert.assertEquals("'", ts.next().toString());
+
+        ts.of("\"");
+        Assert.assertEquals("\"", ts.next().toString());
+
+        ts.of("`");
+        Assert.assertEquals("`", ts.next().toString());
+    }
+
+    @Test
+    public void testSingleQuotedToken4() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("''");
+        Assert.assertEquals("''", ts.next().toString());
+
+        ts.of("\"\"");
+        Assert.assertEquals("\"\"", ts.next().toString());
+
+        ts.of("``");
+        Assert.assertEquals("``", ts.next().toString());
     }
 
     @Test
@@ -227,6 +292,7 @@ public class GenericLexerTest {
         Assert.assertEquals(" ", ts.next().toString());
         Assert.assertNull(ts.peek());
         Assert.assertEquals("day-o", ts.next().toString());
+
         Assert.assertNull(ts.peek());
     }
 

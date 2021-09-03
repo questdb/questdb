@@ -237,7 +237,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         this._lo = this._hi = _pos;
 
         char term = 0;
-
+        int openTermIdx = -1;
         while (hasNext()) {
             char c = content.charAt(_pos++);
             CharSequence token;
@@ -246,12 +246,15 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
                     switch (c) {
                         case '\'':
                             term = '\'';
+                            openTermIdx = _pos - 1;
                             break;
                         case '"':
                             term = '"';
+                            openTermIdx = _pos - 1;
                             break;
                         case '`':
                             term = '`';
+                            openTermIdx = _pos - 1;
                             break;
                         default:
                             if ((token = token(c)) != null) {
@@ -290,14 +293,22 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
                     break;
             }
         }
-        if (term != 0) { // dangling terms
+        if (openTermIdx != -1) { // dangling terms
             if (_len == 1) {
                 _hi += 1; // emit term
             } else {
-                FloatingSequence termfs = csPool.next();
-                termfs.lo = _hi;
-                termfs.hi = _hi + 1;
-                next = termfs; // term is next
+                if (openTermIdx == _lo) { // term is at the start
+                    _hi = _lo + 1; // emit term
+                    _pos = _hi; // rewind pos
+                } else if (openTermIdx == _len - 1) { // term is at the end, high is right on term
+                    FloatingSequence termFs = csPool.next();
+                    termFs.lo = _hi;
+                    termFs.hi = _hi + 1;
+                    next = termFs; // emit term next
+                } else { // term is somewhere in between
+                    _hi = openTermIdx; // emit whatever comes before term
+                    _pos = openTermIdx; // rewind pos
+                }
             }
         }
         return last = flyweightSequence;
