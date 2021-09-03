@@ -593,6 +593,9 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(33554432L, configuration.getCairoConfiguration().getAppendPageSize());
 
             Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
+
+            // Pg wire
+            Assert.assertEquals(9, configuration.getPGWireConfiguration().getBinParamCountCapacity());
         }
     }
 

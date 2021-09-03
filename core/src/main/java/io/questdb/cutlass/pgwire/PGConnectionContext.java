@@ -157,6 +157,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private NamedStatementWrapper wrapper;
     private AssociativeCache<TypesAndSelect> typesAndSelectCache;
     private WeakAutoClosableObjectPool<TypesAndSelect> typesAndSelectPool;
+    private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     // this is a reference to types either from the context or named statement, where it is provided
     private IntList activeBindVariableTypes;
     private boolean sendParameterDescription;
@@ -205,6 +206,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.namedStatementMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
         this.pendingWriters = new CharSequenceObjHashMap<>(configuration.getPendingWritersCacheSize());
         this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
+        this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
     }
 
     public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
@@ -281,6 +283,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         namedPortalMap.clear();
         bindVariableService.clear();
         bindVariableTypes.clear();
+        binarySequenceParamsPool.clear();
         resumeProcessor = null;
         completed = true;
         clearCursorAndFactory();
@@ -403,6 +406,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             throw SqlException.$(0, "bad value for BOOLEAN parameter [index=").put(index).put(", valueLen=").put(valueLen).put(']');
         }
         bindVariableService.setBoolean(index, valueLen == 4);
+    }
+
+    public void setBinBindVariable(int index, long address, int valueLen) throws SqlException {
+        bindVariableService.setBin(index, this.binarySequenceParamsPool.next().of(address, valueLen));
     }
 
     public void setCharBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
@@ -969,6 +976,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                         break;
                     case X_B_PG_BOOL:
                         setBooleanBindVariable(j, valueLen);
+                        break;
+                    case X_B_PG_BYTEA:
+                        setBinBindVariable(j, lo, valueLen);
                         break;
                     default:
                         setStrBindVariable(j, lo, valueLen);
