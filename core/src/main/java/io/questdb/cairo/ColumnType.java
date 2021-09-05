@@ -79,7 +79,7 @@ public final class ColumnType {
     public static final short TYPES_SIZE = MAX + 1;
     private static final int[] TYPE_SIZE_POW2 = new int[TYPES_SIZE];
     private static final int[] TYPE_SIZE = new int[TYPES_SIZE];
-    public static final int MAX_BITS_LENGTH;
+    public static final int GEO_HASH_MAX_BITS_LENGTH;
     public static final int NO_OVERLOAD = 10000;
     static final int[] GEO_TYPE_SIZE_POW2;
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
@@ -214,7 +214,7 @@ public final class ColumnType {
     }
 
     public static int pow2SizeOfBits(int bits) {
-        assert bits <= MAX_BITS_LENGTH;
+        assert bits <= GEO_HASH_MAX_BITS_LENGTH;
         return GEO_TYPE_SIZE_POW2[bits];
     }
 
@@ -278,9 +278,9 @@ public final class ColumnType {
     }
 
     static {
-        MAX_BITS_LENGTH = 60;
-        GEO_TYPE_SIZE_POW2 = new int[MAX_BITS_LENGTH + 1];
-        for (int bits = 1; bits <= MAX_BITS_LENGTH; bits++) {
+        GEO_HASH_MAX_BITS_LENGTH = 60;
+        GEO_TYPE_SIZE_POW2 = new int[GEO_HASH_MAX_BITS_LENGTH + 1];
+        for (int bits = 1; bits <= GEO_HASH_MAX_BITS_LENGTH; bits++) {
             GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
         }
 
@@ -306,7 +306,7 @@ public final class ColumnType {
 
         StringSink sink = new StringSink();
 
-        for (int b = 1; b <= MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= GEO_HASH_MAX_BITS_LENGTH; b++) {
             sink.clear();
 
             if (b % 5 != 0) {

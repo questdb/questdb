@@ -73,7 +73,7 @@ public class GeoHashes {
     }
 
     public static long fromBitString(CharSequence bits) throws NumericException {
-        if (bits.length() > ColumnType.MAX_BITS_LENGTH) {
+        if (bits.length() > ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
             throw NumericException.INSTANCE;
         }
         long result = 0;
@@ -99,7 +99,7 @@ public class GeoHashes {
         if (lng < -180.0 || lng > 180.0) {
             throw NumericException.INSTANCE;
         }
-        assert bits > 0 && bits <= ColumnType.MAX_BITS_LENGTH;
+        assert bits > 0 && bits <= ColumnType.GEO_HASH_MAX_BITS_LENGTH;
         double minLat = -90, maxLat = 90;
         double minLng = -180, maxLng = 180;
         long result = 0;
@@ -227,7 +227,7 @@ public class GeoHashes {
     public static void appendBinaryStringUnsafe(long hash, int bits, CharSink sink) {
         // Below assertion can happen if there is corrupt metadata
         // which should not happen in production code since reader and writer check table metadata
-        assert bits > 0 && bits <= ColumnType.MAX_BITS_LENGTH;
+        assert bits > 0 && bits <= ColumnType.GEO_HASH_MAX_BITS_LENGTH;
         for (int i = bits - 1; i >= 0; --i) {
             sink.put(((hash >> i) & 1) == 1 ? '1' : '0');
         }

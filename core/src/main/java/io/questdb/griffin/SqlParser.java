@@ -1662,7 +1662,7 @@ public final class SqlParser {
                 throw SqlException.position(position)
                         .put("invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
         }
-        if (size < 1 || size > ColumnType.MAX_BITS_LENGTH) {
+        if (size < 1 || size > ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
             throw SqlException.position(position)
                     .put("invalid GEOHASH type precision range, mast be [1, 60] bits, provided=")
                     .put(size);

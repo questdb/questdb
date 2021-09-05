@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -38,22 +37,10 @@ import io.questdb.griffin.engine.functions.GeoIntFunction;
 import io.questdb.griffin.engine.functions.GeoLongFunction;
 import io.questdb.griffin.engine.functions.GeoShortFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
 public class RndGeoHashFunctionFactory implements FunctionFactory {
-
-    public static long nextGeoHash(Rnd rnd, int bits) {
-        double x = rnd.nextDouble() * 180.0 - 90.0;
-        double y = rnd.nextDouble() * 360.0 - 180.0;
-        try {
-            return GeoHashes.fromCoordinates(x, y, bits);
-        } catch (NumericException e) {
-            // Should never happen
-            return GeoHashes.NULL;
-        }
-    }
 
     @Override
     public String getSignature() {
@@ -67,7 +54,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
                                 CairoConfiguration configuration,
                                 SqlExecutionContext sqlExecutionContext) throws SqlException {
         int bits = args.getQuick(0).getInt(null);
-        if (bits < 1 || bits > ColumnType.MAX_BITS_LENGTH) {
+        if (bits < 1 || bits > ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
             throw SqlException.$(argPositions.getQuick(0), "precision must be in [1..60] range");
         }
         final int type = ColumnType.getGeoHashTypeWithBits(bits);
@@ -95,7 +82,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public byte getGeoByte(Record rec) {
-            return (byte) nextGeoHash(rnd, bits);
+            return (byte) rnd.nextGeoHash(bits);
         }
 
         @Override
@@ -116,7 +103,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public short getGeoShort(Record rec) {
-            return (short) nextGeoHash(rnd, bits);
+            return (short) rnd.nextGeoHash(bits);
         }
 
         @Override
@@ -137,7 +124,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public int getGeoInt(Record rec) {
-            return (int) nextGeoHash(rnd, bits);
+            return (int) rnd.nextGeoHash(bits);
         }
 
         @Override
@@ -147,7 +134,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public short getGeoShort(Record rec) {
-            return (byte) nextGeoHash(rnd, bits);
+            return (byte) rnd.nextGeoHash(bits);
         }
     }
 
@@ -163,7 +150,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public long getGeoLong(Record rec) {
-            return nextGeoHash(rnd, bits);
+            return rnd.nextGeoHash(bits);
         }
 
         @Override
@@ -173,7 +160,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public short getGeoShort(Record rec) {
-            return (byte) nextGeoHash(rnd, bits);
+            return (byte) rnd.nextGeoHash(bits);
         }
     }
 }

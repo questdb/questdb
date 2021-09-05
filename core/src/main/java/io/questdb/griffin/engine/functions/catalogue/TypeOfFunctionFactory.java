@@ -32,9 +32,15 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.ObjList;
 
+import static io.questdb.cairo.ColumnType.GEO_HASH_MAX_BITS_LENGTH;
+
 public class TypeOfFunctionFactory implements FunctionFactory {
+    static final Function NULL = new StrConstant("NULL");
+    static final IntObjHashMap<Function> TYPE_NAMES;
+
     @Override
     public String getSignature() {
         return "typeOf(V)";
@@ -51,33 +57,39 @@ public class TypeOfFunctionFactory implements FunctionFactory {
         if (args != null && args.size() == 1) {
             final Function arg = args.getQuick(0);
             final int argType = arg.getType();
-            return ColumnType.isNull(argType) ? NULL : TYPE_NAMES[arg.getType()];
+            return ColumnType.isNull(argType) ? NULL : TYPE_NAMES.get(arg.getType());
         }
         throw SqlException.$(position, "exactly one argument expected");
     }
 
-    static final Function NULL = new StrConstant("NULL");
-    static final Function[] TYPE_NAMES;
-
     static {
-        TYPE_NAMES = new Function[ColumnType.MAX + 1];
-        TYPE_NAMES[ColumnType.BOOLEAN] = new StrConstant(ColumnType.nameOf(ColumnType.BOOLEAN));
-        TYPE_NAMES[ColumnType.BYTE] = new StrConstant(ColumnType.nameOf(ColumnType.BYTE));
-        TYPE_NAMES[ColumnType.SHORT] = new StrConstant(ColumnType.nameOf(ColumnType.SHORT));
-        TYPE_NAMES[ColumnType.CHAR] = new StrConstant(ColumnType.nameOf(ColumnType.CHAR));
-        TYPE_NAMES[ColumnType.INT] = new StrConstant(ColumnType.nameOf(ColumnType.INT));
-        TYPE_NAMES[ColumnType.LONG] = new StrConstant(ColumnType.nameOf(ColumnType.LONG));
-        TYPE_NAMES[ColumnType.DATE] = new StrConstant(ColumnType.nameOf(ColumnType.DATE));
-        TYPE_NAMES[ColumnType.TIMESTAMP] = new StrConstant(ColumnType.nameOf(ColumnType.TIMESTAMP));
-        TYPE_NAMES[ColumnType.FLOAT] = new StrConstant(ColumnType.nameOf(ColumnType.FLOAT));
-        TYPE_NAMES[ColumnType.DOUBLE] = new StrConstant(ColumnType.nameOf(ColumnType.DOUBLE));
-        TYPE_NAMES[ColumnType.STRING] = new StrConstant(ColumnType.nameOf(ColumnType.STRING));
-        TYPE_NAMES[ColumnType.SYMBOL] = new StrConstant(ColumnType.nameOf(ColumnType.SYMBOL));
-        TYPE_NAMES[ColumnType.LONG256] = new StrConstant(ColumnType.nameOf(ColumnType.LONG256));
-        TYPE_NAMES[ColumnType.BINARY] = new StrConstant(ColumnType.nameOf(ColumnType.BINARY));
-        TYPE_NAMES[ColumnType.PARAMETER] = new StrConstant(ColumnType.nameOf(ColumnType.PARAMETER));
-        TYPE_NAMES[ColumnType.CURSOR] = new StrConstant(ColumnType.nameOf(ColumnType.CURSOR));
-        TYPE_NAMES[ColumnType.VAR_ARG] = new StrConstant(ColumnType.nameOf(ColumnType.VAR_ARG));
-        TYPE_NAMES[ColumnType.RECORD] = new StrConstant(ColumnType.nameOf(ColumnType.RECORD));
+        TYPE_NAMES = new IntObjHashMap<>();
+        TYPE_NAMES.put(ColumnType.BOOLEAN, new StrConstant(ColumnType.nameOf(ColumnType.BOOLEAN)));
+        TYPE_NAMES.put(ColumnType.BYTE, new StrConstant(ColumnType.nameOf(ColumnType.BYTE)));
+        TYPE_NAMES.put(ColumnType.SHORT, new StrConstant(ColumnType.nameOf(ColumnType.SHORT)));
+        TYPE_NAMES.put(ColumnType.CHAR, new StrConstant(ColumnType.nameOf(ColumnType.CHAR)));
+        TYPE_NAMES.put(ColumnType.INT, new StrConstant(ColumnType.nameOf(ColumnType.INT)));
+        TYPE_NAMES.put(ColumnType.LONG, new StrConstant(ColumnType.nameOf(ColumnType.LONG)));
+        TYPE_NAMES.put(ColumnType.DATE, new StrConstant(ColumnType.nameOf(ColumnType.DATE)));
+        TYPE_NAMES.put(ColumnType.TIMESTAMP, new StrConstant(ColumnType.nameOf(ColumnType.TIMESTAMP)));
+        TYPE_NAMES.put(ColumnType.FLOAT, new StrConstant(ColumnType.nameOf(ColumnType.FLOAT)));
+        TYPE_NAMES.put(ColumnType.DOUBLE, new StrConstant(ColumnType.nameOf(ColumnType.DOUBLE)));
+        TYPE_NAMES.put(ColumnType.STRING, new StrConstant(ColumnType.nameOf(ColumnType.STRING)));
+        TYPE_NAMES.put(ColumnType.SYMBOL, new StrConstant(ColumnType.nameOf(ColumnType.SYMBOL)));
+        TYPE_NAMES.put(ColumnType.LONG256, new StrConstant(ColumnType.nameOf(ColumnType.LONG256)));
+        TYPE_NAMES.put(ColumnType.BINARY, new StrConstant(ColumnType.nameOf(ColumnType.BINARY)));
+        TYPE_NAMES.put(ColumnType.PARAMETER, new StrConstant(ColumnType.nameOf(ColumnType.PARAMETER)));
+        TYPE_NAMES.put(ColumnType.CURSOR, new StrConstant(ColumnType.nameOf(ColumnType.CURSOR)));
+        TYPE_NAMES.put(ColumnType.VAR_ARG, new StrConstant(ColumnType.nameOf(ColumnType.VAR_ARG)));
+
+        TYPE_NAMES.put(ColumnType.GEOBYTE, new StrConstant("null(GEOBYTE)"));
+        TYPE_NAMES.put(ColumnType.GEOSHORT, new StrConstant("null(GEOSHORT)"));
+        TYPE_NAMES.put(ColumnType.GEOINT, new StrConstant("null(GEOINT)"));
+        TYPE_NAMES.put(ColumnType.GEOLONG, new StrConstant("null(GEOLONG)"));
+
+        for (int b = 1; b <= GEO_HASH_MAX_BITS_LENGTH; b++) {
+            final int type = ColumnType.getGeoHashTypeWithBits(b);
+            TYPE_NAMES.put(type, new StrConstant(ColumnType.nameOf(type)));
+        }
     }
 }

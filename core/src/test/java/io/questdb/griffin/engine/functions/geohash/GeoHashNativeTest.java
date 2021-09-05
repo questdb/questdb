@@ -43,7 +43,7 @@ public class GeoHashNativeTest {
     private static final StringConverter toBitString = GeoHashes::toBitString;
 
     public static int hashSize(long hashz) {
-        return (int) (hashz >>> ColumnType.MAX_BITS_LENGTH);
+        return (int) (hashz >>> ColumnType.GEO_HASH_MAX_BITS_LENGTH);
     }
 
     @Test

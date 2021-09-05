@@ -71,7 +71,7 @@ public class InsertNullGeoHashTest extends AbstractGriffinTest {
     private void assertGeoHashQueryForAllValidBitSizes(String queryExtra,
                                                        int expectedEmptyLines,
                                                        boolean supportsRandomAccess) throws Exception {
-        for (int b = 1; b <= ColumnType.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
             if (b > 1) {
                 setUp();
             }

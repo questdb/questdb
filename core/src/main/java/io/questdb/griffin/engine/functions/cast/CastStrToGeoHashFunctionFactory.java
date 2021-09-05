@@ -35,9 +35,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GeoByteFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.Constants;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 
-import static io.questdb.cairo.ColumnType.MAX_BITS_LENGTH;
+import static io.questdb.cairo.ColumnType.GEO_HASH_MAX_BITS_LENGTH;
 
 public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
     @Override
@@ -61,7 +63,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         if (value.isConstant()) {
             try {
                 final int bits = ColumnType.getGeoHashBits(geoType);
-                assert bits > 0 && bits < MAX_BITS_LENGTH + 1;
+                assert bits > 0 && bits < GEO_HASH_MAX_BITS_LENGTH + 1;
                 return Constants.getGeoHashConstantWithType(
                         getGeoHashImpl(value.getStr(null), argPosition, bits),
                         geoType
@@ -83,7 +85,9 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         }
         int actualBits = value.length() * 5;
         if (actualBits < typeBits) {
-            throw SqlException.$(position, "string is too short to cast to chosen GEOHASH precision");
+            throw SqlException.position(position)
+                    .put("string is too short to cast to chosen GEOHASH precision [len=").put(value.length())
+                    .put(", precision=").put(typeBits).put(']');
         }
         // Don't parse full string, it can be over 12 chars and result in overflow
         int parseChars = (typeBits - 1) / 5 + 1;
@@ -101,7 +105,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
             this.arg = arg;
             this.position = position;
             this.bitsPrecision = ColumnType.getGeoHashBits(geoType);
-            assert this.bitsPrecision > 0 && this.bitsPrecision < MAX_BITS_LENGTH + 1;
+            assert this.bitsPrecision > 0 && this.bitsPrecision < GEO_HASH_MAX_BITS_LENGTH + 1;
         }
 
         @Override
