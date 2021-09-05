@@ -81,7 +81,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
                 // both constants, we do not need to do null check
                 // null values across types are equal as it is
                 long hash2 = getGeoLong(type2p, geohash2, null);
-                return BooleanConstant.of(hash1 == GeoHashes.NULL || hash2 == GeoHashes.NULL || type1p == type2p && hash1 == hash2);
+                return BooleanConstant.of((type1p == type2p && hash1 == hash2) || (hash1 == GeoHashes.NULL && hash2 == GeoHashes.NULL));
             }
 
             if (hash1 == GeoHashes.NULL || type1p == type2p) {

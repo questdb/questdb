@@ -95,6 +95,18 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testCastEqNull() throws Exception {
+        assertMemoryLeak(() -> TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "select cast('x' as geohash(1c)) = null",
+                sink,
+                "column\n" +
+                        "false\n"
+        ));
+    }
+
+    @Test
     public void testCastMissingSize() {
         try {
             String castExpr = "cast('sp052w92' as geohash(c))";
