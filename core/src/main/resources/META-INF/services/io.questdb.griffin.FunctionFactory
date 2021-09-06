@@ -533,4 +533,7 @@ io.questdb.griffin.engine.functions.math.BitwiseNotIntFunctionFactory
 io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory
 io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory
 
+# geohash functions
+io.questdb.griffin.engine.functions.geohash.GeoHashFromCoordinatesFunctionFactory
+
 io.questdb.griffin.engine.functions.catalogue.TypeOfFunctionFactory
