@@ -29,6 +29,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.GeoHashFunction;
+import io.questdb.griffin.engine.functions.constants.GeoHashConstant;
 import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
@@ -1201,10 +1202,32 @@ final class WhereClauseParser implements Mutable {
                 throw SqlException.$(inArg.position, "GeoHash const function expected");
             }
         } else {
-            if (inArg.type != ExpressionNode.CONSTANT) {
+            final boolean isConstant = inArg.type == ExpressionNode.CONSTANT;
+            final int len = inArg.token.length();
+            final boolean isBitsPrefix = len > 2 && inArg.token.charAt(0) == '#' && inArg.token.charAt(1) == '#';
+            final boolean isCharsPrefix = len > 1 && inArg.token.charAt(0) == '#';
+
+            if (!(isConstant && (isBitsPrefix || isCharsPrefix))) {
                 throw SqlException.$(inArg.position, "GeoHash literal expected");
             }
-            GeoHashes.addNormalizedGeoPrefix(unquote(inArg.token), columnType, prefixes);
+
+            final int type;
+            final long hash;
+            if (isBitsPrefix) {
+                type = ColumnType.geohashWithPrecision(inArg.token.length() - 2);
+                hash = GeoHashes.fromBitStringNl(inArg.token, 2);
+            } else {
+                int sdd = GenericLexer.extractGeoHashSuffix(inArg.position, inArg.token);
+                int sddLen = Numbers.decodeLowShort(sdd);
+                int bits = Numbers.decodeHighShort(sdd);
+                hash = GeoHashes.fromStringTruncatingNl(inArg.token, 1, inArg.token.length() - sddLen, bits);
+                type = ColumnType.geohashWithPrecision(bits);
+            }
+            try {
+                GeoHashes.addNormalizedGeoPrefix(hash, type, columnType, prefixes);
+            } catch (NumericException e) {
+                throw SqlException.$(inArg.position, "GeoHash prefix precision mismatch");
+            }
         }
     }
 
