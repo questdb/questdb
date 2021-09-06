@@ -79,7 +79,7 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
                 throw SqlException.$(argPositions.getQuick(1), "latitude must be in [-90.0..90.0] range");
             }
 
-            return Constants.getGeoHashConstant(GeoHashes.fromCoordinatesUnsafe(lat, lon, bits), type);
+            return Constants.getGeoHashConstantWithType(GeoHashes.fromCoordinatesUnsafe(lat, lon, bits), type);
         } else {
             return new FromCoordinatesFixedBitsFunction(lonArg, latArg, bits);
         }
