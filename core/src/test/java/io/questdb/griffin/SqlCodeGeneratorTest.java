@@ -42,7 +42,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -1985,7 +1984,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore //TODO: unignore after make_geohash fn PR is resolved
     public void testLatestByAllIndexedGeoHash2cFn() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -2004,7 +2002,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore //TODO: unignore after make_geohash fn PR is resolved
     public void testLatestByAllIndexedGeoHashOutOfRangeFn() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -2049,7 +2046,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore //TODO: unignore after make_geohash fn PR is resolved
     public void testLatestByAllIndexedGeoHashFnNonConst() throws Exception {
         assertMemoryLeak(
                 () -> {
