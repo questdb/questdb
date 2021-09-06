@@ -1,0 +1,14 @@
+{
+	"dockerComposeFile": "../docker-compose.yml",
+	"service": "web-compo",
+	"workspaceFolder": "/usr/src",
+	"remote.extensionKind": {
+		"ms-azuretools.vscode-docker": "workspace",
+		"microsoft/vscode-eslint": "workspace",
+		"orta.vscode-jest": "workspace",
+		"ms-vscode.vscode-typescript-tslint-plugin": "workspace",
+		"bierner.lit-html": "workspace"
+		
+    },
+	"extensions": []
+}

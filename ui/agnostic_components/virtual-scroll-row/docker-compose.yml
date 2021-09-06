@@ -1,0 +1,42 @@
+version: "3.7"
+services:
+  web-compo: 
+    image: ${REPOSITORY_HOST}cliops/agnostic_component:2.0.0
+    build: 
+      context: .
+      dockerfile: ./Dockerfile
+    container_name: $TAG_NAME-build
+    environment: 
+      - TAG_NAME=$TAG_NAME
+    volumes: 
+      - type: bind
+        source: ./src
+        target: /usr/src/src
+      - type: bind
+        source: ./stories
+        target: /usr/src/stories
+      - type: bind
+        source: ./test
+        target: /usr/src/test
+      - type: bind
+        source: ./index.html
+        target: /usr/src/index.html
+      - type: bind
+        source: ./dist
+        target: /usr/src/dist
+      - type: bind
+        source: ./package.json
+        target: /usr/src/package.json
+    entrypoint: /bin/sh -c "while sleep 1000; do :; done"
+    ports:
+      - "8005:8000"
+      - "9879:9876"
+      - "9225:9222"
+    networks: 
+      - npm-registry
+networks: 
+  npm-registry:
+    external: true
+# volumes: 
+#   questdb_design-system-virtualScrollRow:
+#     name: questdb_design-system-virtualScrollRow
