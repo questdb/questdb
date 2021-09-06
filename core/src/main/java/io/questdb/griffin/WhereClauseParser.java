@@ -1236,7 +1236,7 @@ final class WhereClauseParser implements Mutable {
     }
 
     private boolean isGeoHashConstFunction(Function fn) {
-        return (fn instanceof GeoHashFunction) && (fn.isConstant() || fn.isRuntimeConstant());
+        return (fn instanceof GeoHashFunction) && fn.isConstant();
     }
 
     private ExpressionNode collapseWithinNodes(ExpressionNode node) {
