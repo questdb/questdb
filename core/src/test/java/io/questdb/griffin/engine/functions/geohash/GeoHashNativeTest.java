@@ -35,6 +35,7 @@ import org.junit.Test;
 
 import java.util.concurrent.ThreadLocalRandom;
 
+
 public class GeoHashNativeTest {
     static final double lat = 31.23;
     static final double lon = 121.473;
@@ -102,18 +103,17 @@ public class GeoHashNativeTest {
     }
 
     @Test
-    public void testFromStringToBits() throws NumericException {
+    public void testBuildNormalizedPrefixesAndMasks() throws NumericException {
         final int cap = 12;
         LongList bits = new LongList(cap * 2); // hash and mask
-        CharSequenceHashSet strh = new CharSequenceHashSet();
+        int columnType = ColumnType.geohashWithPrecision(5 * cap);
         for (int i = 0; i < cap; i++) {
             final int prec = (i % 3) + 3;
             final long h = rnd_geohash(prec);
-            sink.clear();
-            GeoHashes.toString(h, prec, sink);
-            strh.add(sink);
+            int type = ColumnType.geohashWithPrecision(5 * prec);
+            GeoHashes.addNormalizedGeoPrefix(h, type, columnType, bits);
         }
-        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap * 5), bits);
+
         for (int i = 0; i < bits.size() / 2; i += 2) {
             final long b = bits.get(i);
             final long m = bits.get(i + 1);
@@ -121,39 +121,20 @@ public class GeoHashNativeTest {
         }
     }
 
-    @Test
-    public void testFromStringToBitsInvalidNull() {
-        final int cap = 12;
-        LongList bits = new LongList(cap * 2); // hash and mask
-        CharSequenceHashSet strh = new CharSequenceHashSet();
-        strh.add("");
-        strh.add(null);
-        strh.add("$invalid");
-        strh.add("questdb.10");
-
-        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap * 5), bits);
-        Assert.assertEquals(0, bits.size());
-    }
 
     @Test
-    public void testFromStringToBitsSingle() {
-        final int cap = 12;
+    public void testPrefixPrecisionMismatch() throws NumericException {
+        final int cap = 1;
         LongList bits = new LongList(cap * 2); // hash and mask
-        CharSequenceHashSet strh = new CharSequenceHashSet();
-        strh.add("questdb");
+        final long h = rnd_geohash(5);
+        final long p = rnd_geohash(7);
 
-        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap * 5), bits);
-        Assert.assertEquals(2, bits.size());
-    }
-
-    @Test
-    public void testFromStringToBitsInvalidStrings() {
-        final int cap = 12;
-        LongList bits = new LongList(cap * 2); // hash and mask
-        CharSequenceHashSet strh = new CharSequenceHashSet();
-        strh.add("");
-        strh.add("a medium sized banana");
-        GeoHashes.fromStringToBits(strh, ColumnType.geohashWithPrecision(cap * 5), bits);
+        int pType = ColumnType.geohashWithPrecision(5 * 7);
+        int hType = ColumnType.geohashWithPrecision(5 * 5);
+        try {
+            GeoHashes.addNormalizedGeoPrefix(h, pType, hType, bits);
+        } catch (NumericException ignored) {
+        }
         Assert.assertEquals(0, bits.size());
     }
 

@@ -228,27 +228,6 @@ public class GeoHashes {
         return start < len;
     }
 
-    public static void fromStringToBits(final CharSequenceHashSet prefixes, int columnType, final LongList prefixesBits) {
-        prefixesBits.clear();
-        for (int i = 0, sz = prefixes.size(); i < sz; i++) {
-            try {
-                final CharSequence prefix = prefixes.get(i);
-                addNormalizedGeoPrefix(prefix, columnType, prefixesBits);
-            } catch (NumericException e) {
-                // Skip invalid geo hashes
-            }
-        }
-    }
-
-    public static void addNormalizedGeoPrefix(CharSequence hashToken, int columnType, final LongList prefixes) throws NumericException {
-        if(hashToken == null) {
-            throw NumericException.INSTANCE;
-        }
-        final long hash = GeoHashes.fromStringNl(hashToken, 0, hashToken.length());
-        final int prefixType = ColumnType.geohashWithPrecision(5 * hashToken.length()); //TODO: geohash literals
-        addNormalizedGeoPrefix(hash, prefixType, columnType, prefixes);
-    }
-
     public static void addNormalizedGeoPrefix(long hash, int prefixType, int columnType, final LongList prefixes) throws NumericException {
         final int bits = GeoHashes.getBitsPrecision(prefixType);
         final int columnSize = ColumnType.sizeOf(columnType);
