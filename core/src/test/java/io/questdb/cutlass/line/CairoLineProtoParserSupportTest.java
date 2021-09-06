@@ -191,6 +191,7 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
         Assert.assertEquals(ColumnType.SYMBOL, CairoLineProtoParserSupport.getValueType("oX"));
         Assert.assertEquals(ColumnType.SYMBOL, CairoLineProtoParserSupport.getValueType("0x"));
         Assert.assertEquals(ColumnType.SYMBOL, CairoLineProtoParserSupport.getValueType("a"));
+        Assert.assertEquals(ColumnType.SYMBOL, CairoLineProtoParserSupport.getValueType("i"));
         Assert.assertEquals(ColumnType.SYMBOL, CairoLineProtoParserSupport.getValueType("aflse"));
         Assert.assertEquals(ColumnType.SYMBOL, CairoLineProtoParserSupport.getValueType("aTTTT"));
         Assert.assertEquals(ColumnType.SYMBOL, CairoLineProtoParserSupport.getValueType("aFFF"));
@@ -226,7 +227,6 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
         Assert.assertEquals(ColumnType.LONG, CairoLineProtoParserSupport.getValueType("xi"));
         Assert.assertEquals(ColumnType.LONG, CairoLineProtoParserSupport.getValueType("oXi"));
         Assert.assertEquals(ColumnType.LONG, CairoLineProtoParserSupport.getValueType("0xi"));
-        Assert.assertEquals(ColumnType.LONG, CairoLineProtoParserSupport.getValueType("i"));
         Assert.assertEquals(ColumnType.DOUBLE, CairoLineProtoParserSupport.getValueType("123a4"));
         Assert.assertEquals(ColumnType.DOUBLE, CairoLineProtoParserSupport.getValueType("ox1"));
     }
