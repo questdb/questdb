@@ -59,12 +59,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
     public static long nextGeoHash(Rnd rnd, int bits) {
         double x = rnd.nextDouble() * 180.0 - 90.0;
         double y = rnd.nextDouble() * 360.0 - 180.0;
-        try {
-            return GeoHashes.fromCoordinates(x, y, bits);
-        } catch (NumericException e) {
-            // Should never happen
-            return GeoHashes.NULL;
-        }
+        return GeoHashes.fromCoordinatesUnsafe(x, y, bits);
     }
 
     private static class RndFunction extends GeoHashFunction implements Function {
