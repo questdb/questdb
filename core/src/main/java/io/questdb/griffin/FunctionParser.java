@@ -473,28 +473,31 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     SqlParser.parseGeoHashBits(position, 7, tok));
         }
 
-        if (len > 1 && tok.charAt(0) == 35) { // '#'
+        if (len > 1 && tok.charAt(0) == '#') {
 
-            // geohash from chars constant
-
-            try {
-                // optional '/dd', '/d' (max 3 chars, 1..60)
-                int sdd = GenericLexer.extractGeoHashSuffix(position, tok);
-                int sddLen = Numbers.decodeLowShort(sdd);
-                int bits = Numbers.decodeHighShort(sdd);
-                return GeoHashConstant.newInstance(
-                        GeoHashes.fromStringTruncatingNl(tok, 1, len - sddLen, bits),
-                        ColumnType.geohashWithPrecision(bits));
-            } catch (NumericException e) {
-            }
-
-            // geohash from binary constant
-
-            try {
-                return GeoHashConstant.newInstance(
-                        GeoHashes.fromBitStringNl(tok, 2), // minus leading '##', truncates tail bits if over 60
-                        ColumnType.geohashWithPrecision(len - 2));  // minus leading '##'
-            } catch (NumericException e) {
+            if (tok.charAt(1) != '#') {
+                // geohash from chars constant
+                try {
+                    // optional '/dd', '/d' (max 3 chars, 1..60)
+                    int sdd = ExpressionParser.extractGeoHashSuffix(position, tok);
+                    int sddLen = Numbers.decodeLowShort(sdd);
+                    int bits = Numbers.decodeHighShort(sdd);
+                    return Constants.getGeoHashConstant(
+                            GeoHashes.fromStringTruncatingNl(tok, 1, len - sddLen, bits),
+                            bits
+                    );
+                } catch (NumericException ignored) {
+                }
+            } else {
+                // geohash from binary constant
+                try {
+                    // minus leading '##', truncates tail bits if over 60
+                    return Constants.getGeoHashConstant(
+                            GeoHashes.fromBitStringNl(tok, 2),
+                            len - 2
+                    );
+                } catch (NumericException ignored) {
+                }
             }
         }
 

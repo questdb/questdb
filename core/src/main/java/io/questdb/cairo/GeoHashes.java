@@ -72,23 +72,23 @@ public class GeoHashes {
         return ((1L << count) - 1) << shift;
     }
 
+    public static long fromStringNl(CharSequence geohash, int start, int length) throws NumericException {
+        if (length <= 0 || geohash == null || geohash.length() == 0) {
+            return GeoHashes.NULL;
+        }
+        return fromString(geohash, start, start + Math.min(length, MAX_STRING_LENGTH));
+    }
+
     public static long fromBitStringNl(CharSequence bits, int start) throws NumericException {
         int len = bits.length();
         if (len - start <= 0) {
             return NULL;
         }
-        return fromBitString(bits, start, Math.min(bits.length(), MAX_BITS_LENGTH + start));
-    }
-
-    public static long fromBitString(CharSequence bits) throws NumericException {
-        if (bits.length() > ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
-            throw NumericException.INSTANCE;
-        }
-        return fromBitString(bits, start, Math.min(bits.length(), MAX_BITS_LENGTH + start));
+        return fromBitString(bits, start, Math.min(bits.length(), ColumnType.GEO_HASH_MAX_BITS_LENGTH + start));
     }
 
     public static long fromBitString(CharSequence bits, int start) throws NumericException {
-        return fromBitString(bits, start, Math.min(bits.length(), MAX_BITS_LENGTH + start));
+        return fromBitString(bits, start, Math.min(bits.length(),  ColumnType.GEO_HASH_MAX_BITS_LENGTH + start));
     }
 
     private static long fromBitString(CharSequence bits, int start, int limit) throws NumericException {
@@ -156,16 +156,16 @@ public class GeoHashes {
         return geohash;
     }
 
-    private static long appendChar(long geohash, char c) throws NumericException {
-        byte idx;
+    private static long appendChar(long hash, char c) throws NumericException {
         if (c >= 48 && c < 123) { // 123 = base32Indexes.length + 48
-            idx = base32Indexes[c - 48];
+            byte idx = base32Indexes[c - 48];
             if (idx >= 0) {
-                return (geohash << 5) | idx;
+                return (hash << 5) | idx;
             }
         }
-        return fromString(geohash, start, start + (Math.min(length, MAX_STRING_LENGTH)));
+        throw NumericException.INSTANCE;
     }
+
 
     public static boolean isValidChars(CharSequence tok, int start) {
         int idx;
@@ -234,21 +234,6 @@ public class GeoHashes {
     }
 
 
-    // TODO: technical debt, remove. Was going to be variable size geohash col
-    public static int hashSize(long hashz) {
-        return (int) (hashz >>> MAX_BITS_LENGTH);
-    }
-
-    // TODO: technical debt, remove. Was going to be variable size geohash col
-    public static long toHash(long hashz) {
-        return hashz & 0x0fffffffffffffffL;
-    }
-
-    // TODO: technical debt, remove. Was going to be variable size geohash col
-    public static long toHashWithSize(long hash, int length) {
-        return (((long) length) << 60L) + hash;
-    }
-
     public static long fromStringTruncatingNl(long lo, long hi, int bits) throws NumericException {
         if (lo == hi) {
             return NULL;
@@ -293,14 +278,6 @@ public class GeoHashes {
         }
     }
 
-    public static long toHash(long hashz) {
-        return hashz & 0x0fffffffffffffffL;
-    }
-
-    public static long toHashWithSize(long hash, int length) {
-        return (((long) length) << 60L) + hash;
-    }
-
     public static void appendChars(long hash, int chars, CharSink sink) {
         if (hash != NULL) {
             appendCharsUnsafe(hash, chars, sink);
@@ -314,15 +291,5 @@ public class GeoHashes {
         for (int i = chars - 1; i >= 0; --i) {
             sink.put(base32[(int) ((hash >> i * 5) & 0x1F)]);
         }
-    }
-
-    private static long appendChar(long hash, char c) throws NumericException {
-        if (c >= 48 && c < 123) { // 123 = base32Indexes.length + 48
-            byte idx = base32Indexes[c - 48];
-            if (idx >= 0) {
-                return (hash << 5) | idx;
-            }
-        }
-        throw NumericException.INSTANCE;
     }
 }

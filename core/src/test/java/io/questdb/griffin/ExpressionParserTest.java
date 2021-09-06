@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.std.Chars;
+import io.questdb.std.Numbers;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -39,6 +40,77 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testAllNotEqual() throws SqlException {
         x("ab<>all", "a <> all(b)");
         x("ab<>all", "a != all(b)");
+    }
+
+    @Test
+    public void testIsGeoHashBitsConstantValid() {
+        Assert.assertTrue(ExpressionParser.isGeoHashBitsConstant("##0"));
+        Assert.assertTrue(ExpressionParser.isGeoHashBitsConstant("##1"));
+        Assert.assertTrue(ExpressionParser.isGeoHashBitsConstant("##111111111100000000001111111111000000000011111111110000000000"));
+    }
+
+    @Test
+    public void testIsGeoHashBitsConstantNotValid() {
+        Assert.assertFalse(ExpressionParser.isGeoHashBitsConstant("#00110")); // missing '#'
+        Assert.assertFalse(ExpressionParser.isGeoHashBitsConstant("#0")); // missing '#'
+        Assert.assertFalse(ExpressionParser.isGeoHashBitsConstant("##")); // no actual bits
+        Assert.assertFalse(ExpressionParser.isGeoHashBitsConstant("##12")); // bad bit '2'
+        Assert.assertFalse(ExpressionParser.isGeoHashBitsConstant("##1111111111000000000011111111110000000000111111111100000000001")); // too long
+    }
+
+    @Test
+    public void testIsGeoHashCharsConstantValid() {
+        Assert.assertTrue(ExpressionParser.isGeoHashCharsConstant("#0"));
+        Assert.assertTrue(ExpressionParser.isGeoHashCharsConstant("#1"));
+        Assert.assertTrue(ExpressionParser.isGeoHashCharsConstant("#sp"));
+        Assert.assertTrue(ExpressionParser.isGeoHashCharsConstant("#sp052w92p1p8"));
+    }
+
+    @Test
+    public void testIsGeoHashCharsConstantNotValid() {
+        Assert.assertFalse(ExpressionParser.isGeoHashCharsConstant("#0/4")); // the method does not understand '/d', '/dd'
+        Assert.assertFalse(ExpressionParser.isGeoHashCharsConstant("#")); // no actual chars
+        Assert.assertFalse(ExpressionParser.isGeoHashCharsConstant("##1")); // bad char '#'
+        Assert.assertFalse(ExpressionParser.isGeoHashCharsConstant("#sp@sp")); // bad char '@'
+        Assert.assertFalse(ExpressionParser.isGeoHashCharsConstant("#sp052w92p1p88")); // too long, no truncation at this point, our precision is 60 bits
+    }
+
+    @Test
+    public void testExtractGeoHashBitsSuffixZero() {
+        Assert.assertThrows("", SqlException.class, () -> ExpressionParser.extractGeoHashSuffix(0, "#/0"));
+        Assert.assertThrows("", SqlException.class, () -> ExpressionParser.extractGeoHashSuffix(0, "#/00"));
+    }
+
+    @Test
+    public void testExtractGeoHashBitsSuffixValid() throws SqlException {
+        for (int bits = 1; bits < 10; bits++) {
+            Assert.assertEquals(
+                    Numbers.encodeLowHighShorts((short) 2, (short) bits),
+                    ExpressionParser.extractGeoHashSuffix(0, "#/" + bits)); // '/d'
+        }
+        for (int bits = 1; bits < 10; bits++) {
+            Assert.assertEquals(
+                    Numbers.encodeLowHighShorts((short) 3, (short) bits),
+                    ExpressionParser.extractGeoHashSuffix(0, "#/0" + bits)); // '/0d'
+        }
+        for (int bits = 10; bits <= 60; bits++) {
+            Assert.assertEquals(
+                    Numbers.encodeLowHighShorts((short) 3, (short) bits),
+                    ExpressionParser.extractGeoHashSuffix(0, "#/" + bits)); // '/dd'
+        }
+    }
+
+    @Test
+    public void testExtractGeoHashBitsSuffixNoSuffix() throws SqlException {
+        for (String tok : new String[]{"#", "#/", "#p", "#pp", "#ppp", "#0", "#01", "#001"}) {
+            Assert.assertEquals(
+                    Numbers.encodeLowHighShorts((short) 0, (short) (5 * (tok.length() - 1))),
+                    ExpressionParser.extractGeoHashSuffix(0, tok));
+        }
+        for (String tok : new String[]{"#/x", "#/1x", "#/x1", "#/xx", "#/-1", }) {
+            Assert.assertThrows("[0] invalid bits size for GEOHASH constant",
+                    SqlException.class, () -> ExpressionParser.extractGeoHashSuffix(0, tok));
+        }
     }
 
     @Test
@@ -482,7 +554,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGeoHashConstantNotValid() throws SqlException {
+    public void testGeoHashConstantNotValid() {
         assertFail("#sp052w92p1p8/", 13, "missing bits size for GEOHASH constant");
         assertFail("#sp052w92p1p8/x", 14, "missing bits size for GEOHASH constant");
         assertFail("#sp052w92p1p8/xx", 14, "missing bits size for GEOHASH constant");

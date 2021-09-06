@@ -623,6 +623,16 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.GEOBYTE:
                     asm.invokeInterface(rGetGeoByte, 1);
+                    if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL) {
+                        // truncate within the same storage type
+                        asm.i2l();
+                        asm.iconst(fromColumnType);
+                        asm.iconst(toColumnType);
+                        asm.invokeStatic(truncateGeoHashTypes);
+                        asm.l2i();
+                        asm.i2b();
+                        asm.invokeVirtual(wPutByte);
+                    }
                     asm.invokeVirtual(wPutByte);
                     break;
                 case ColumnType.GEOSHORT:
@@ -635,6 +645,14 @@ public class SqlCompiler implements Closeable {
                         asm.l2i();
                         asm.i2b();
                         asm.invokeVirtual(wPutByte);
+                    } else if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL) {
+                        asm.i2l();
+                        asm.iconst(fromColumnType);
+                        asm.iconst(toColumnType);
+                        asm.invokeStatic(truncateGeoHashTypes);
+                        asm.l2i();
+                        asm.i2s();
+                        asm.invokeVirtual(wPutShort);
                     } else {
                         asm.invokeVirtual(wPutShort);
                     }
@@ -661,6 +679,13 @@ public class SqlCompiler implements Closeable {
                             asm.invokeVirtual(wPutShort);
                             break;
                         default:
+                            if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL) {
+                                asm.i2l();
+                                asm.iconst(fromColumnType);
+                                asm.iconst(toColumnType);
+                                asm.invokeStatic(truncateGeoHashTypes);
+                                asm.l2i();
+                            }
                             asm.invokeVirtual(wPutInt);
                             break;
                     }
@@ -692,6 +717,11 @@ public class SqlCompiler implements Closeable {
                             asm.invokeVirtual(wPutInt);
                             break;
                         default:
+                            if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL) {
+                                asm.iconst(fromColumnType);
+                                asm.iconst(toColumnType);
+                                asm.invokeStatic(truncateGeoHashTypes);
+                            }
                             asm.invokeVirtual(wPutLong);
                             break;
                     }
@@ -736,7 +766,8 @@ public class SqlCompiler implements Closeable {
     public static boolean isAssignableFrom(int to, int from) {
         final int toTag = ColumnType.tagOf(to);
         final int fromTag = ColumnType.tagOf(from);
-        return (toTag == fromTag && ColumnType.getGeoHashBits(to) <= ColumnType.getGeoHashBits(from))
+        return (toTag == fromTag && (ColumnType.getGeoHashBits(to) <= ColumnType.getGeoHashBits(from)
+                || ColumnType.getGeoHashBits(from) == 0) /* to account for typed NULL assignment */)
                 || fromTag == ColumnType.NULL
                 || (fromTag >= ColumnType.BYTE
                 && toTag >= ColumnType.BYTE
@@ -2416,11 +2447,6 @@ public class SqlCompiler implements Closeable {
                     case ColumnType.GEOSHORT:
                     case ColumnType.GEOINT:
                     case ColumnType.GEOLONG:
-                        int columnBits = ColumnType.getGeoHashBits(columnType);
-                        int funcBits = ColumnType.getGeoHashBits(function.getType());
-                        if (funcBits < columnBits) {
-                            throw SqlException.$(functionPosition, "GEOHASH does not have enough precision");
-                        }
                         break;
                     case ColumnType.CHAR:
                         function = CHAR_TO_STR_FUNCTION_FACTORY.newInstance(function);

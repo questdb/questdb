@@ -1740,8 +1740,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "100011\n");
     }
 
-    // TODO: edge case both constants do fit in one byte, still the shift must occur
-    @Ignore(value = "SqlCompiler.assembleRecordToRowCopier is fubar, should truncate by bit shifting right 3x bits")
     @Test
     public void testInsertGeoHashByteSizedStorage4() throws Exception {
         testGeoHashWithBits("3b", "##100011",
@@ -1788,7 +1786,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "GEOHASH does not have enough precision");
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: GEOHASH(1c) -> GEOHASH(6b) [from=##10001, to=geohash]");
             }
         });
     }
@@ -1866,7 +1864,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "0000\n");
     }
 
-    private void testGeoHashWithBits(String columnSize, String geohash, String expected) throws Exception {
+    private void testGeoHashWithBits(String columnSize, String geoHash, String expected) throws Exception {
         assertMemoryLeak(() -> {
             assertQuery(
                     "geohash\n",
@@ -1877,7 +1875,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     true,
                     true
             );
-            executeInsert(String.format("insert into geohash values(%s)", geohash));
+            executeInsert(String.format("insert into geohash values(%s)", geoHash));
             assertSql("geohash", expected);
         });
     }
@@ -1955,7 +1953,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "GEOHASH does not have enough precision");
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: GEOHASH(2c) -> GEOHASH(11b) [from=#sp, to=geohash]");
             }
         });
     }
