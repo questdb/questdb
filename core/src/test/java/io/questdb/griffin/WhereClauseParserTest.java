@@ -277,9 +277,9 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testBetweenFuncArgument() throws Exception {
-        IntrinsicModel m = modelOf("dateadd(1, 'd', timestamp) between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z");
+        IntrinsicModel m = modelOf("dateadd(1, 'd', timestamp) between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'");
         Assert.assertFalse(m.hasIntervalFilters());
-        assertFilter(m, "'2014-01-02T12:30:00.000'2014-01-01T12:30:00.000Z'timestamp'd'1dateaddbetween");
+        assertFilter(m, "'2014-01-02T12:30:00.000Z''2014-01-01T12:30:00.000Z'timestamp'd'1dateaddbetween");
     }
 
     @Test
@@ -288,7 +288,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("invalidTimestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column: invalidTimestamp");
+            TestUtils.assertContains(e.getFlyweightMessage(), "dangling expression");
         }
     }
 

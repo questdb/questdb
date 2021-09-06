@@ -79,12 +79,21 @@ public class GeoHashes {
         return ((1L << count) - 1) << shift;
     }
 
-    public static long fromBitString(CharSequence bits) throws NumericException {
-        if (bits.length() > MAX_BITS_LENGTH) {
-            throw NumericException.INSTANCE;
+    public static long fromBitStringNl(CharSequence bits, int start) throws NumericException {
+        int len = bits.length();
+        if (len - start <= 0) {
+            return NULL;
         }
+        return fromBitString(bits, start, Math.min(bits.length(), MAX_BITS_LENGTH + start));
+    }
+
+    public static long fromBitString(CharSequence bits, int start) throws NumericException {
+        return fromBitString(bits, start, Math.min(bits.length(), MAX_BITS_LENGTH + start));
+    }
+
+    private static long fromBitString(CharSequence bits, int start, int limit) throws NumericException {
         long result = 0;
-        for (int i = 0, n = bits.length(); i < n; i++) {
+        for (int i = start; i < limit; i++) {
             switch (bits.charAt(i)) {
                 case '0':
                     result = result << 1;
@@ -185,13 +194,38 @@ public class GeoHashes {
     }
 
     private static long appendChar(long geohash, char c) throws NumericException {
+        byte idx;
         if (c >= 48 && c < 123) { // 123 = base32Indexes.length + 48
-            byte idx = base32Indexes[c - 48];
+            idx = base32Indexes[c - 48];
             if (idx >= 0) {
                 return (geohash << 5) | idx;
             }
         }
         throw NumericException.INSTANCE;
+    }
+
+    public static boolean isValidChars(CharSequence tok, int start) {
+        int idx;
+        int len = tok.length();
+        for (int i = start; i < len; i++) {
+            idx = tok.charAt(i);
+            if (idx < 48 || idx > 122 || base32Indexes[idx - 48] == -1) {
+                return false;
+            }
+        }
+        return start < len;
+    }
+
+    public static boolean isValidBits(CharSequence tok, int start) {
+        int idx;
+        int len = tok.length();
+        for (int i = start; i < len; i++) {
+            idx = tok.charAt(i);
+            if (idx < '0' || idx > '1') {
+                return false;
+            }
+        }
+        return start < len;
     }
 
     public static void fromStringToBits(final CharSequenceHashSet prefixes, int columnType, final DirectLongList prefixesBits) {
@@ -224,14 +258,17 @@ public class GeoHashes {
         }
     }
 
+    // TODO: technical debt, remove. Was going to be variable size geohash col
     public static int hashSize(long hashz) {
         return (int) (hashz >>> MAX_BITS_LENGTH);
     }
 
+    // TODO: technical debt, remove. Was going to be variable size geohash col
     public static long toHash(long hashz) {
         return hashz & 0x0fffffffffffffffL;
     }
 
+    // TODO: technical debt, remove. Was going to be variable size geohash col
     public static long toHashWithSize(long hash, int length) {
         return (((long) length) << 60L) + hash;
     }
