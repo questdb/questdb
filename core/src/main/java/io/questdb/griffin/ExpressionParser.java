@@ -319,6 +319,46 @@ class ExpressionParser {
                         }
                         break;
 
+                    case '#':
+                        if (GenericLexer.isGeoHashCharsConstant(tok)) { // e.g. #sp052w92p1p8
+                            thisBranch = BRANCH_CONSTANT;
+                            CharSequence geohashTok = GenericLexer.immutableOf(tok);
+                            // optional / bits '/dd', '/d'
+                            CharSequence slash = SqlUtil.fetchNext(lexer);
+                            if (slash == null || slash.charAt(0) != '/') {
+                                lexer.unparse();
+                                opStack.push(expressionNodePool.next().of(
+                                        ExpressionNode.CONSTANT,
+                                        geohashTok, // standard token, no suffix '/d', '/dd'
+                                        Integer.MIN_VALUE,
+                                        position));
+                                break;
+                            }
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok == null || !Chars.isOnlyDecimals(tok)) { // ranges are checked later by FunctionParser.createConstant
+                                throw SqlException.$(lexer.lastTokenPosition(), "missing bits size for GEOHASH constant");
+                            }
+                            opStack.push(expressionNodePool.next().of(
+                                    ExpressionNode.CONSTANT,
+                                    lexer.immutablePairOf(geohashTok, '/', tok), // token plus suffix '/d', '/dd', where d in [0..9]
+                                    Integer.MIN_VALUE,
+                                    position));
+                            break;
+                        }
+
+                        if (GenericLexer.isGeoHashBitsConstant(tok)) { // e.g. ##01110001
+                            thisBranch = BRANCH_CONSTANT;
+                            opStack.push(expressionNodePool.next().of(
+                                    ExpressionNode.CONSTANT,
+                                    GenericLexer.immutableOf(tok), // geohash bit literals do not allow suffix syntax
+                                    Integer.MIN_VALUE,
+                                    position));
+                            break;
+                        }
+
+                        processDefaultBranch = true;
+                        break;
+
                     case '(':
                         if (prevBranch == BRANCH_RIGHT_BRACE) {
                             throw SqlException.$(position, "not a method call");

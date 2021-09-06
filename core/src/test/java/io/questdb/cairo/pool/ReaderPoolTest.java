@@ -528,7 +528,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
     public void testLockBusyReader() throws Exception {
         final int readerCount = 5;
         final int threadCount = 2;
-        final int iterations = 1000;
+        final int iterations = 4000;
         Rnd dataRnd = new Rnd();
         StringSink sink = new StringSink();
 
