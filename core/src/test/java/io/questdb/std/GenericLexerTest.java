@@ -168,6 +168,83 @@ public class GenericLexerTest {
     }
 
     @Test
+    public void testBrokenSingleQuotedToken1() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("#1234'");
+        Assert.assertEquals("#1234", ts.next().toString());
+        Assert.assertEquals("'", ts.next().toString());
+
+        ts.of("#1234\"");
+        Assert.assertEquals("#1234", ts.next().toString());
+        Assert.assertEquals("\"", ts.next().toString());
+
+        ts.of("#1234`");
+        Assert.assertEquals("#1234", ts.next().toString());
+        Assert.assertEquals("`", ts.next().toString());
+    }
+
+    @Test
+    public void testBrokenSingleQuotedToken2() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("'#1234");
+        Assert.assertEquals("'", ts.next().toString());
+        Assert.assertEquals("#1234", ts.next().toString());
+
+        ts.of("\"#1234");
+        Assert.assertEquals("\"", ts.next().toString());
+        Assert.assertEquals("#1234", ts.next().toString());
+
+        ts.of("`#1234");
+        Assert.assertEquals("`", ts.next().toString());
+        Assert.assertEquals("#1234", ts.next().toString());
+    }
+
+    @Test
+    public void testBrokenSingleQuotedToken3() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("#12'34");
+        Assert.assertEquals("#12", ts.next().toString());
+        Assert.assertEquals("'", ts.next().toString());
+        Assert.assertEquals("34", ts.next().toString());
+
+        ts.of("#12\"34");
+        Assert.assertEquals("#12", ts.next().toString());
+        Assert.assertEquals("\"", ts.next().toString());
+        Assert.assertEquals("34", ts.next().toString());
+
+        ts.of("#12`34");
+        Assert.assertEquals("#12", ts.next().toString());
+        Assert.assertEquals("`", ts.next().toString());
+        Assert.assertEquals("34", ts.next().toString());
+    }
+
+    @Test
+    public void testBrokenSingleQuotedToken4() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("'");
+        Assert.assertEquals("'", ts.next().toString());
+
+        ts.of("\"");
+        Assert.assertEquals("\"", ts.next().toString());
+
+        ts.of("`");
+        Assert.assertEquals("`", ts.next().toString());
+    }
+
+    @Test
+    public void testSingleQuotedToken4() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("''");
+        Assert.assertEquals("''", ts.next().toString());
+
+        ts.of("\"\"");
+        Assert.assertEquals("\"\"", ts.next().toString());
+
+        ts.of("``");
+        Assert.assertEquals("``", ts.next().toString());
+    }
+
+    @Test
     public void testSymbolLookup() {
         GenericLexer ts = new GenericLexer(64);
         ts.defineSymbol("+");
@@ -215,6 +292,7 @@ public class GenericLexerTest {
         Assert.assertEquals(" ", ts.next().toString());
         Assert.assertNull(ts.peek());
         Assert.assertEquals("day-o", ts.next().toString());
+
         Assert.assertNull(ts.peek());
     }
 
@@ -351,5 +429,100 @@ public class GenericLexerTest {
         }
         pair.clear();
         Assert.assertEquals(pair.toString(), sink.toString());
+    }
+
+    @Test
+    public void testImmutablePairOf8() {
+        GenericLexer lex = new GenericLexer(64);
+        lex.defineSymbol("/");
+        String culprit = "#sp052w92p1p8/7";
+        lex.of(culprit);
+        CharSequence geohashTok = GenericLexer.immutableOf(lex.next());
+        lex.next(); // slash
+        CharSequence bitsTok = lex.next();
+        GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair)
+                lex.immutablePairOf(geohashTok, '/', bitsTok);
+        Assert.assertEquals(culprit, pair.toString());
+        StringSink sink = Misc.getThreadLocalBuilder();
+        for (int i = 0; i < pair.length(); i++) {
+            sink.put(pair.charAt(i));
+        }
+        pair.clear();
+        Assert.assertEquals(pair.toString(), sink.toString());
+    }
+
+    @Test
+    public void testIsGeoHashCharsConstantValid() {
+        Assert.assertTrue(GenericLexer.isGeoHashCharsConstant("#0"));
+        Assert.assertTrue(GenericLexer.isGeoHashCharsConstant("#1"));
+        Assert.assertTrue(GenericLexer.isGeoHashCharsConstant("#sp"));
+        Assert.assertTrue(GenericLexer.isGeoHashCharsConstant("#sp052w92p1p8"));
+    }
+
+    @Test
+    public void testIsGeoHashCharsConstantNotValid() {
+        Assert.assertFalse(GenericLexer.isGeoHashCharsConstant("#0/4")); // the method does not understand '/d', '/dd'
+        Assert.assertFalse(GenericLexer.isGeoHashCharsConstant("#")); // no actual chars
+        Assert.assertFalse(GenericLexer.isGeoHashCharsConstant("##1")); // bad char '#'
+        Assert.assertFalse(GenericLexer.isGeoHashCharsConstant("#sp@sp")); // bad char '@'
+        Assert.assertFalse(GenericLexer.isGeoHashCharsConstant("#sp052w92p1p88")); // too long, no truncation at this point, our precision is 60 bits
+    }
+
+    @Test
+    public void testIsGeoHashBitsConstantValid() {
+        Assert.assertTrue(GenericLexer.isGeoHashBitsConstant("##0"));
+        Assert.assertTrue(GenericLexer.isGeoHashBitsConstant("##1"));
+        Assert.assertTrue(GenericLexer.isGeoHashBitsConstant("##111111111100000000001111111111000000000011111111110000000000"));
+    }
+
+    @Test
+    public void testIsGeoHashBitsConstantNotValid() {
+        Assert.assertFalse(GenericLexer.isGeoHashBitsConstant("#00110")); // missing '#'
+        Assert.assertFalse(GenericLexer.isGeoHashBitsConstant("#0")); // missing '#'
+        Assert.assertFalse(GenericLexer.isGeoHashBitsConstant("##")); // no actual bits
+        Assert.assertFalse(GenericLexer.isGeoHashBitsConstant("##12")); // bad bit '2'
+        Assert.assertFalse(GenericLexer.isGeoHashBitsConstant("##1111111111000000000011111111110000000000111111111100000000001")); // too long
+    }
+
+    @Test
+    public void testExtractGeoHashBitsSuffixZero() {
+        Assert.assertThrows("", SqlException.class, () -> {
+            GenericLexer.extractGeoHashSuffix(0, "#/0");
+        });
+        Assert.assertThrows("", SqlException.class, () -> {
+            GenericLexer.extractGeoHashSuffix(0, "#/00");
+        });
+    }
+
+    @Test
+    public void testExtractGeoHashBitsSuffixValid() throws SqlException {
+        for (int bits = 1; bits < 10; bits++) {
+            Assert.assertEquals(
+                    Numbers.encodeLowHighShorts((short) 2, (short) bits),
+                    GenericLexer.extractGeoHashSuffix(0, "#/" + bits)); // '/d'
+        }
+        for (int bits = 1; bits < 10; bits++) {
+            Assert.assertEquals(
+                    Numbers.encodeLowHighShorts((short) 3, (short) bits),
+                    GenericLexer.extractGeoHashSuffix(0, "#/0" + bits)); // '/0d'
+        }
+        for (int bits = 10; bits <= 60; bits++) {
+            Assert.assertEquals(
+                    Numbers.encodeLowHighShorts((short) 3, (short) bits),
+                    GenericLexer.extractGeoHashSuffix(0, "#/" + bits)); // '/dd'
+        }
+    }
+
+    @Test
+    public void testExtractGeoHashBitsSuffixNoSuffix() throws SqlException {
+        for (String tok : new String[]{"#", "#/", "#p", "#pp", "#ppp", "#0", "#01", "#001"}) {
+            Assert.assertEquals(
+                    Numbers.encodeLowHighShorts((short) 0, (short) (5 * (tok.length() - 1))),
+                    GenericLexer.extractGeoHashSuffix(0, tok));
+        }
+        for (String tok : new String[]{"#/x", "#/1x", "#/x1", "#/xx", "#/-1", }) {
+            Assert.assertThrows("[0] invalid bits size for GEOHASH constant",
+                    SqlException.class, () -> GenericLexer.extractGeoHashSuffix(0, tok));
+        }
     }
 }

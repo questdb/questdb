@@ -30,15 +30,14 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -1721,56 +1720,321 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateAsSelectGeoHashByteSizedStorage1() throws Exception {
+    public void testInsertGeoHashByteSizedStorage1() throws Exception {
+        testGeoHashWithBits("1c", "'s'",
+                "geohash\n" +
+                        "s\n");
+    }
+
+    @Test
+    public void testInsertGeoHashByteSizedStorage2() throws Exception {
+        testGeoHashWithBits("4b", "cast('s' as geohash(4b))",
+                "geohash\n" +
+                        "1100\n");
+    }
+
+    @Test
+    public void testInsertGeoHashByteSizedStorage3() throws Exception {
+        testGeoHashWithBits("6b", "##100011",
+                "geohash\n" +
+                        "100011\n");
+    }
+
+    // TODO: edge case both constants do fit in one byte, still the shift must occur
+    @Ignore(value = "SqlCompiler.assembleRecordToRowCopier is fubar, should truncate by bit shifting right 3x bits")
+    @Test
+    public void testInsertGeoHashByteSizedStorage4() throws Exception {
+        testGeoHashWithBits("3b", "##100011",
+                "geohash\n" +
+                        "100\n");
+    }
+
+    @Test
+    public void testCreateAsSelectGeoHashBitsLiteralTooManyBits() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery(
                     "geohash\n",
                     "select geohash from geohash",
-                    "create table geohash (geohash geohash(1c))",
+                    "create table geohash (geohash geohash(6b))",
                     null,
                     true,
                     true,
                     true
             );
-            executeInsert("insert into geohash values('s')");
-            assertSql("geohash", "geohash\n" +
-                    "s\n");
+            try {
+                executeInsert("insert into geohash values(##1000111000111000111000111000111000111000111000110000110100101)");
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(27, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column: ##1000111000111000111000111000111000111000111000110000110100101");
+            }
         });
     }
 
     @Test
-    public void testCreateAsSelectGeoHashByteSizedStorage2() throws Exception {
+    public void testInsertGeoHashBitsLiteralTooFewBits() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery(
                     "geohash\n",
                     "select geohash from geohash",
-                    "create table geohash (geohash geohash(1c))",
+                    "create table geohash (geohash geohash(6b))",
                     null,
                     true,
                     true,
                     true
             );
-            executeInsert("insert into geohash values(cast('s' as string))");
-            assertSql("geohash", "geohash\n" +
-                    "s\n");
+            try {
+                executeInsert("insert into geohash values(##10001)");
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(27, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "GEOHASH does not have enough precision");
+            }
         });
     }
 
     @Test
-    public void testCreateAsSelectGeoHashByteSizedStorage3() throws Exception {
+    public void testInsertGeoHashBitsLiteralNotBits() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery(
                     "geohash\n",
                     "select geohash from geohash",
-                    "create table geohash (geohash geohash(1c))",
+                    "create table geohash (geohash geohash(5b))",
                     null,
                     true,
                     true,
                     true
             );
-            executeInsert("insert into geohash values(cast('s' as geohash(1c)))");
+            try {
+                executeInsert("insert into geohash values(##11211)");
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(27, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column: ##11211");
+            }
+        });
+    }
+
+    @Ignore(value = "assembleRecordToRowCopier is not truncating")
+    // TODO: assembleRecordToRowCopier is not truncating
+    @Test
+    public void testInsertGeoHashCharsLiteral() throws Exception {
+        testGeoHashWithBits("8c", "#sp052w92p1p8",
+                "geohash\n" +
+                        "sp052w92\n");
+    }
+
+    @Test
+    public void testInsertGeoHashCharsLiteralWithBits1() throws Exception {
+        testGeoHashWithBits("8c", "#sp052w92p1p8/40",
+                "geohash\n" +
+                        "sp052w92\n");
+    }
+
+    @Test
+    public void testInsertGeoHashCharsLiteralWithBits2() throws Exception {
+        testGeoHashWithBits("2b", "#0/2",
+                "geohash\n" +
+                        "00\n");
+    }
+
+    @Test
+    public void testInsertGeoHashCharsLiteralWithBits3() throws Exception {
+        testGeoHashWithBits("9b", "#100/9",
+                "geohash\n" +
+                        "000010000\n");
+    }
+
+    @Test
+    public void testInsertGeoHashCharsLiteralWithBits4() throws Exception {
+        testGeoHashWithBits("5b", "#1",
+                "geohash\n" +
+                        "1\n");
+    }
+
+    @Test
+    public void testInsertGeoHashCharsLiteralWithBits6() throws Exception {
+        testGeoHashWithBits("20b", "#1110",
+                "geohash\n" +
+                        "1110\n");
+    }
+
+    @Test
+    public void testInsertGeoHashCharsLiteralWithBits5() throws Exception {
+        testGeoHashWithBits("4b", "#1/4",
+                "geohash\n" +
+                        "0000\n");
+    }
+
+    private void testGeoHashWithBits(String columnSize, String geohash, String expected) throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery(
+                    "geohash\n",
+                    "select geohash from geohash",
+                    String.format("create table geohash (geohash geohash(%s))", columnSize),
+                    null,
+                    true,
+                    true,
+                    true
+            );
+            executeInsert(String.format("insert into geohash values(%s)", geohash));
+            assertSql("geohash", expected);
+        });
+    }
+
+    @Test
+    public void testCreateAsSelectGeoHashCharsLiteralWithWrongBits() throws Exception {
+        assertFailure(7, "Invalid column: #sp052w92p1p87", "select #sp052w92p1p87");
+        assertFailure(20, "missing bits size for GEOHASH constant", "select #sp052w92p1p8/");
+        assertFailure(22, "missing bits size for GEOHASH constant", "select #sp052w92p1p8/ R");
+        assertFailure(21, "missing bits size for GEOHASH constant", "select #sp052w92p1p8/0R");
+        assertFailure(21, "missing bits size for GEOHASH constant", "select #sp052w92p1p8/t");
+        assertFailure(21, "missing bits size for GEOHASH constant", "select #sp052w92p1p8/-1");
+        assertFailure(7, "invalid bits size for GEOHASH constant", "select #sp052w92p1p8/ 61");
+        assertFailure(7, "invalid constant: #sp052w92p1p8/011", "select #sp052w92p1p8/ 011");
+        assertFailure(7, "invalid constant: #sp052w92p1p8/045", "select #sp052w92p1p8/045");
+        assertFailure(7, "invalid constant: #sp/15", "select #sp/15"); // lacks precision
+        assertFailure(7, "Invalid column: #", "select #/0");
+        assertFailure(7, "invalid bits size for GEOHASH constant", "select #sp052w92p18/0");
+    }
+
+    @Test
+    public void testCreateAsSelectGeoHashCharsLiteralTruncating() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery(
+                    "geohash\n",
+                    "select geohash from geohash",
+                    "create table geohash (geohash geohash(6c))",
+                    null,
+                    true,
+                    true,
+                    true
+            );
+            executeInsert("insert into geohash values(#sp052w92p18)");
             assertSql("geohash", "geohash\n" +
-                    "s\n");
+                    "sp052w\n");
+        });
+    }
+
+    @Test
+    public void testCreateAsSelectGeoHashCharsLiteralTooManyChars() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery(
+                    "geohash\n",
+                    "select geohash from geohash",
+                    "create table geohash (geohash geohash(12c))",
+                    null,
+                    true,
+                    true,
+                    true
+            );
+            try {
+                executeInsert("insert into geohash values(#sp052w92p1p8889)");
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(27, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column: #sp052w92p1p8889");
+            }
+        });
+    }
+
+    @Test
+    public void testCreateAsSelectGeoHashCharsLiteralTooFewChars() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery(
+                    "geohash\n",
+                    "select geohash from geohash",
+                    "create table geohash (geohash geohash(11b))",
+                    null,
+                    true,
+                    true,
+                    true
+            );
+            try {
+                executeInsert("insert into geohash values(#sp)");
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(27, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "GEOHASH does not have enough precision");
+            }
+        });
+    }
+
+    @Test
+    public void testCreateAsSelectGeoHashCharsLiteralNotChars() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery(
+                    "geohash\n",
+                    "select geohash from geohash",
+                    "create table geohash (geohash geohash(5b))",
+                    null,
+                    true,
+                    true,
+                    true
+            );
+            try {
+                executeInsert("insert into geohash values(#sp@in)");
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(27, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column: #sp@in");
+            }
+        });
+    }
+
+    @Test
+    public void testGeoLiteralInvalid1() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select rnd_str('#1234', '#88484') as str from long_sequence(1000) )", sqlExecutionContext);
+            try {
+                compiler.compile("select * from x where str = #1234 '", sqlExecutionContext); // random char at the end
+                Assert.fail();
+            } catch (SqlException ex) {
+                // Add error test assertion
+                Assert.assertEquals("[34] dangling expression", ex.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testGeoLiteralInvalid2() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select rnd_str('#1234', '#88484') as str from long_sequence(1000) )", sqlExecutionContext);
+            try {
+                compiler.compile("select * from x where str = #1234'", sqlExecutionContext); // random char at the end
+                Assert.fail();
+            } catch (SqlException ex) {
+                // Add error test assertion
+                Assert.assertEquals("[33] dangling expression", ex.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testGeoLiteralAsColName() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select rnd_str('#1234', '#88484') as \"#0101a\" from long_sequence(5) )", sqlExecutionContext);
+            assertSql("select * from x where \"#0101a\" = '#1234'", "#0101a\n" +
+                    "#1234\n" +
+                    "#1234\n");
+        });
+    }
+
+    @Test
+    public void testGeoLiteralAsColName2() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select rnd_geohash(14) as \"#0101a\" from long_sequence(5) )", sqlExecutionContext);
+            assertSql("select * from x where #1234 = \"#0101a\"", "#0101a\n");
+        });
+    }
+
+    @Test
+    public void testGeoLiteralBinLength() throws Exception {
+        assertMemoryLeak(() -> {
+            StringSink bitString = Misc.getThreadLocalBuilder();
+            bitString.put(Chars.repeat("0", 59)).put('1');
+            assertSql("select ##" + bitString + " as geobits", "geobits\n" +
+                    "000000000001\n");
         });
     }
 
@@ -2984,26 +3248,26 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertAsSelectPersistentIOError() throws Exception {
-            AtomicBoolean inError = new AtomicBoolean(true);
+        AtomicBoolean inError = new AtomicBoolean(true);
 
-            FilesFacade ff = new FilesFacadeImpl() {
-                int pageCount = 0;
+        FilesFacade ff = new FilesFacadeImpl() {
+            int pageCount = 0;
 
-                @Override
-                public long getMapPageSize() {
-                    return getPageSize();
+            @Override
+            public long getMapPageSize() {
+                return getPageSize();
+            }
+
+            @Override
+            public long mmap(long fd, long len, long offset, int flags) {
+                if (inError.get() && pageCount++ > 12) {
+                    return -1;
                 }
+                return super.mmap(fd, len, offset, flags);
+            }
+        };
 
-                @Override
-                public long mmap(long fd, long len, long offset, int flags) {
-                    if (inError.get() && pageCount++ > 12) {
-                        return -1;
-                    }
-                    return super.mmap(fd, len, offset, flags);
-                }
-            };
-
-            assertInsertAsSelectIOError(inError, ff);
+        assertInsertAsSelectIOError(inError, ff);
     }
 
     @Test
@@ -3082,26 +3346,26 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertAsSelectTemporaryIOError() throws Exception {
-            AtomicBoolean inError = new AtomicBoolean(true);
+        AtomicBoolean inError = new AtomicBoolean(true);
 
-            FilesFacade ff = new FilesFacadeImpl() {
-                int pageCount = 0;
+        FilesFacade ff = new FilesFacadeImpl() {
+            int pageCount = 0;
 
-                @Override
-                public long getMapPageSize() {
-                    return getPageSize();
+            @Override
+            public long getMapPageSize() {
+                return getPageSize();
+            }
+
+            @Override
+            public long mmap(long fd, long len, long offset, int flags) {
+                if (inError.get() && pageCount++ == 13) {
+                    return -1;
                 }
+                return super.mmap(fd, len, offset, flags);
+            }
+        };
 
-                @Override
-                public long mmap(long fd, long len, long offset, int flags) {
-                    if (inError.get() && pageCount++ == 13) {
-                        return -1;
-                    }
-                    return super.mmap(fd, len, offset, flags);
-                }
-            };
-
-            assertInsertAsSelectIOError(inError, ff);
+        assertInsertAsSelectIOError(inError, ff);
     }
 
     @Test

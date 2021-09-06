@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.GeoHashes;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
@@ -59,12 +60,17 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     }
 
     public CharSequence immutablePairOf(CharSequence value0, CharSequence value1) {
+        return immutablePairOf(value0, FloatingSequencePair.NO_SEPARATOR, value1);
+    }
+
+    public CharSequence immutablePairOf(CharSequence value0, char separator, CharSequence value1) {
         if (!(value0 instanceof FloatingSequence && value1 instanceof InternalFloatingSequence)) {
             throw new UnsupportedOperationException("only pairs of floating sequences are allowed");
         }
         FloatingSequencePair seqPair = csPairPool.next();
         seqPair.cs0 = (FloatingSequence) value0;
         seqPair.cs1 = (FloatingSequence) immutableOf(value1);
+        seqPair.sep = separator;
         return seqPair;
     }
 
@@ -115,6 +121,50 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             return value.subSequence(1, value.length() - 1);
         }
         return immutableOf(value);
+    }
+
+    public static boolean isGeoHashCharsConstant(CharSequence tok) {
+        assert tok.charAt(0) == '#'; // called by ExpressionParser where this has been checked.
+        // the EP will eagerly try to detect '/dd' following the geohash token, and if so
+        // it will create a FloatingSequencePair with '/' as separator. At this point
+        // however, '/dd' does not exist, tok is just the potential geohash chars constant, with leading '#'
+        int len = tok.length();
+        if (len < 2 || len - 1 > GeoHashes.MAX_STRING_LENGTH) {
+            return false;
+        }
+        return GeoHashes.isValidChars(tok, 1);
+    }
+
+    public static boolean isGeoHashBitsConstant(CharSequence tok) {
+        assert tok.charAt(0) == '#'; // ^ ^, also suffix not allowed
+        int len = tok.length();
+        if (len < 3 || len - 2 > GeoHashes.MAX_BITS_LENGTH || tok.charAt(1) != 35) { // 2nd '#'
+            return false;
+        }
+        return GeoHashes.isValidBits(tok, 2);
+    }
+
+    public static int extractGeoHashSuffix(int position, CharSequence tok) throws SqlException {
+        assert tok.charAt(0) == '#'; // ^ ^
+        // EP has already checked that the 'd' in '/d', '/dd' are numeric [0..9]
+        int tokLen = tok.length();
+        if (tokLen > 1) {
+            if (tokLen >= 3 && tok.charAt(tokLen - 3) == '/') { // '/dd'
+                short bits = (short) (10 * tok.charAt(tokLen - 2) + tok.charAt(tokLen - 1) - 528); // 10 * 48 + 48
+                if (bits >= 1 && bits <= GeoHashes.MAX_BITS_LENGTH) {
+                    return Numbers.encodeLowHighShorts((short) 3, bits);
+                }
+                throw SqlException.$(position, "invalid bits size for GEOHASH constant: ").put(tok);
+            }
+            if (tok.charAt(tokLen - 2) == '/') { // '/d'
+                char du = tok.charAt(tokLen - 1);
+                if (du >= '1' && du <= '9') {
+                    return Numbers.encodeLowHighShorts((short) 2, (short) (du - 48));
+                }
+                throw SqlException.$(position, "invalid bits size for GEOHASH constant: ").put(tok);
+            }
+        }
+        return Numbers.encodeLowHighShorts((short) 0, (short) (5 * Math.max(tokLen - 1, 0))); // - 1 to exclude '#'
     }
 
     public final void defineSymbol(String token) {
@@ -187,7 +237,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         this._lo = this._hi = _pos;
 
         char term = 0;
-
+        int openTermIdx = -1;
         while (hasNext()) {
             char c = content.charAt(_pos++);
             CharSequence token;
@@ -196,12 +246,15 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
                     switch (c) {
                         case '\'':
                             term = '\'';
+                            openTermIdx = _pos - 1;
                             break;
                         case '"':
                             term = '"';
+                            openTermIdx = _pos - 1;
                             break;
                         case '`':
                             term = '`';
+                            openTermIdx = _pos - 1;
                             break;
                         default:
                             if ((token = token(c)) != null) {
@@ -238,6 +291,24 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
                     break;
                 default:
                     break;
+            }
+        }
+        if (openTermIdx != -1) { // dangling terms
+            if (_len == 1) {
+                _hi += 1; // emit term
+            } else {
+                if (openTermIdx == _lo) { // term is at the start
+                    _hi = _lo + 1; // emit term
+                    _pos = _hi; // rewind pos
+                } else if (openTermIdx == _len - 1) { // term is at the end, high is right on term
+                    FloatingSequence termFs = csPool.next();
+                    termFs.lo = _hi;
+                    termFs.hi = _hi + 1;
+                    next = termFs; // emit term next
+                } else { // term is somewhere in between
+                    _hi = openTermIdx; // emit whatever comes before term
+                    _pos = openTermIdx; // rewind pos
+                }
             }
         }
         return last = flyweightSequence;
@@ -409,22 +480,28 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         }
     }
 
-    public class FloatingSequencePair extends AbstractCharSequence implements Mutable {
+    public static class FloatingSequencePair extends AbstractCharSequence implements Mutable {
+        public static final char NO_SEPARATOR = (char) 0;
 
         FloatingSequence cs0;
         FloatingSequence cs1;
+        char sep = NO_SEPARATOR;
 
         @Override
         public int length() {
-            return cs0.length() + cs1.length();
+            return cs0.length() + cs1.length() + (sep != NO_SEPARATOR ? 1 : 0);
         }
 
         @Override
         public char charAt(int index) {
-            if (index >= 0 && index < length()) {
-                return index < cs0.length() ? cs0.charAt(index) : cs1.charAt(index - cs0.length());
+            int cs0Len = cs0.length();
+            if (index < cs0Len) {
+                return cs0.charAt(index);
             }
-            throw new IndexOutOfBoundsException();
+            if (sep == NO_SEPARATOR) {
+                return cs1.charAt(index - cs0Len);
+            }
+            return index == cs0Len ? sep : cs1.charAt(index - cs0Len - 1);
         }
 
         @Override
@@ -437,6 +514,9 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         public String toString() {
             final CharSink b = Misc.getThreadLocalBuilder();
             b.put(cs0);
+            if (sep != NO_SEPARATOR) {
+                b.put(sep);
+            }
             b.put(cs1);
             return b.toString();
         }

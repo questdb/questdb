@@ -70,6 +70,8 @@ public class PGOids {
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_TIMESTAMP = ((PG_TIMESTAMP >> 24) & 0xff) | ((PG_TIMESTAMP << 8) & 0xff0000) | ((PG_TIMESTAMP >> 8) & 0xff00) | ((PG_TIMESTAMP << 24) & 0xff000000);
     public static final int X_B_PG_TIMESTAMP = 1 | X_PG_TIMESTAMP;
+    public static final int X_PG_BYTEA = ((PG_BYTEA >> 24) & 0xff) | ((PG_BYTEA << 8) & 0xff0000) | ((PG_BYTEA >> 8) & 0xff00) | ((PG_BYTEA << 24) & 0xff000000);
+    public static final int X_B_PG_BYTEA = 1 | X_PG_BYTEA;
     public static final int PG_CATALOG_OID = 11;
     public static final int PG_CLASS_OID = 1259;
     public static final int PG_PUBLIC_OID = 2200;

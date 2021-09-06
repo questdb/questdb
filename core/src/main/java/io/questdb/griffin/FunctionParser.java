@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -465,14 +466,41 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             return Constants.getTypeConstant(columnType);
         }
 
-        // geohash?
+        // geohash type constant
+
         if (startsWithGeoHashKeyword(tok)) {
-            int bits = SqlParser.parseGeoHashBits(position, 7, tok);
-            return GeoHashTypeConstant.getInstanceByPrecision(bits);
+            return GeoHashTypeConstant.getInstanceByPrecision(
+                    SqlParser.parseGeoHashBits(position, 7, tok));
+        }
+
+        if (len > 1 && tok.charAt(0) == 35) { // '#'
+
+            // geohash from chars constant
+
+            try {
+                // optional '/dd', '/d' (max 3 chars, 1..60)
+                int sdd = GenericLexer.extractGeoHashSuffix(position, tok);
+                int sddLen = Numbers.decodeLowShort(sdd);
+                int bits = Numbers.decodeHighShort(sdd);
+                return GeoHashConstant.newInstance(
+                        GeoHashes.fromStringTruncatingNl(tok, 1, len - sddLen, bits),
+                        ColumnType.geohashWithPrecision(bits));
+            } catch (NumericException e) {
+            }
+
+            // geohash from binary constant
+
+            try {
+                return GeoHashConstant.newInstance(
+                        GeoHashes.fromBitStringNl(tok, 2), // minus leading '##', truncates tail bits if over 60
+                        ColumnType.geohashWithPrecision(len - 2));  // minus leading '##'
+            } catch (NumericException e) {
+            }
         }
 
         throw SqlException.position(position).put("invalid constant: ").put(tok);
     }
+
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
         return new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));

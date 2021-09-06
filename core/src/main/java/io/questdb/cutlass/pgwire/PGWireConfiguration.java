@@ -31,6 +31,8 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateLocale;
 
 public interface PGWireConfiguration extends WorkerPoolAwareConfiguration {
+    int getBinParamCountCapacity();
+
     int getCharacterStoreCapacity();
 
     int getCharacterStorePoolCapacity();
