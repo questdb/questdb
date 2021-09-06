@@ -1957,7 +1957,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tv\n",
-                            "select * from pos latest by uuid where hash within('f', 'z', 'v')",
+                            "select * from pos latest by uuid where hash within(#f, #z, #v)",
                             "time",
                             true,
                             true,
@@ -1975,7 +1975,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
-                            "select * from pos latest by uuid where hash within('f9', 'z3', 've')",
+                            "select * from pos latest by uuid where hash within(#f9, #z3, #ve)",
                             "time",
                             true,
                             true,
@@ -1994,7 +1994,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
-                            "select * from pos latest by uuid where hash within(make_geohash(-62, 53.4, 10), 'z3', 've')",
+                            "select * from pos latest by uuid where hash within(make_geohash(-62, 53.4, 10), #z3, #ve)",
                             "time",
                             true,
                             true,
@@ -2014,7 +2014,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                         "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                         "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                         "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
-                                "select * from pos latest by uuid where hash within(make_geohash(-620.0, 53.4, 10), 'z3', 've')",
+                                "select * from pos latest by uuid where hash within(make_geohash(-620.0, 53.4, 10), #z3, #ve)",
                                 "time",
                                 true,
                                 true,
@@ -2027,7 +2027,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestByAllIndexedGeoHashValueExpected() throws Exception {
+    public void testLatestByAllIndexedGeoHashLiteralExpected() throws Exception {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(2);
@@ -2036,14 +2036,14 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                         "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                         "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                         "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
-                                "select * from pos latest by uuid where hash within(',.!0', 'z3', 've')",
+                                "select * from pos latest by uuid where hash within('z3', #z3, #ve)",
                                 "time",
                                 true,
                                 true,
                                 true
                         );
                     } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash value expected");
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash literal expected");
                     }
                 });
     }
@@ -2067,7 +2067,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     );
                 try {
                     assertQuery("time\tuuid\thash\n",
-                            "select * from x latest by s where geo8 within(make_geohash(lon, lat, 40), 'z3', 've')",
+                            "select * from x latest by s where geo8 within(make_geohash(lon, lat, 40), #z3, #vegg)",
                             "ts",
                             true,
                             true,
@@ -2089,7 +2089,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf91t\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tvepe\n",
-                            "select * from pos latest by uuid where hash within('f91', 'z31w', 'vepe')",
+                            "select * from pos latest by uuid where hash within(#f91, #z31w, #vepe)",
                             "time",
                             true,
                             true,
@@ -2107,7 +2107,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf91t48s7\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tvepe7h62\n",
-                            "select * from pos latest by uuid where hash within('f91', 'z31w', 'vepe7h')",
+                            "select * from pos latest by uuid where hash within(#f91, #z31w, #vepe7h)",
                             "time",
                             true,
                             true,
@@ -2123,14 +2123,14 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     createGeoHashTable(2);
                     try {
                         assertQuery("",
-                                "select * from pos latest by uuid where hash within('f9', 'z3', 'vepe7h')",
+                                "select * from pos latest by uuid where hash within(#f9, #z3, #vepe7h)",
                                 "time",
                                 true,
                                 true,
                                 true
                         );
                     } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash value expected");
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "prefix precision mismatch");
                     }
                 });
     }
@@ -2142,7 +2142,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     createGeoHashTable(2);
                     try {
                         assertQuery("",
-                                "select * from pos latest by uuid where hash within('f9') or hash within('z3')",
+                                "select * from pos latest by uuid where hash within(#f9) or hash within(#z3)",
                                 "time",
                                 true,
                                 true,
@@ -2161,7 +2161,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     createGeoHashTable(2);
                     try {
                         assertQuery("",
-                                "select * from pos latest by uuid where uuid within('f9', 'z3')",
+                                "select * from pos latest by uuid where uuid within(#f9)",
                                 "time",
                                 true,
                                 true,
@@ -2180,7 +2180,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     createGeoHashTable(2);
                     try {
                         assertQuery("",
-                                "select * from pos latest by uuid where 'hash' within('f9', 'z3')",
+                                "select * from pos latest by uuid where 'hash' within(#f9)",
                                 "time",
                                 true,
                                 true,
@@ -2199,7 +2199,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     createGeoHashTable(2);
                     try {
                         assertQuery("",
-                                "select * from pos latest by uuid where hash within('f9', 'z3', null)",
+                                "select * from pos latest by uuid where hash within(#f9, #z3, null)",
                                 "time",
                                 true,
                                 true,
@@ -2220,7 +2220,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "time\tuuid\thash\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
                                     "2021-05-11T00:00:00.111000Z\tddd\tb\n",
-                            "select * from pos latest by uuid where time in '2021-05-11' and hash within ('z','b')",
+                            "select * from pos latest by uuid where time in '2021-05-11' and hash within (#z, #b)",
                             "time",
                             true,
                             true,
@@ -2238,7 +2238,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "time\tuuid\thash\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                     "2021-05-11T00:00:00.111000Z\tddd\tbc\n",
-                            "select * from pos latest by uuid where time in '2021-05-11' and hash within ('z','b')",
+                            "select * from pos latest by uuid where time in '2021-05-11' and hash within (#z, #b)",
                             "time",
                             true,
                             true,
@@ -2256,7 +2256,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "time\tuuid\thash\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
                                     "2021-05-11T00:00:00.111000Z\tddd\tbcnk\n",
-                            "select * from pos latest by uuid where time in '2021-05-11' and hash within ('z','b')",
+                            "select * from pos latest by uuid where time in '2021-05-11' and hash within (#z, #b)",
                             "time",
                             true,
                             true,
@@ -2273,7 +2273,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     assertQuery(
                             "time\tuuid\thash\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n",
-                            "select * from pos latest by uuid where time in '2021-05-11' and hash within ('z31','bbx')",
+                            "select * from pos latest by uuid where time in '2021-05-11' and hash within (#z31, #bbx)",
                             "time",
                             true,
                             true,
@@ -2282,6 +2282,65 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 });
     }
 
+    @Test
+    public void testLatestByAllIndexedGeoHashRnd6Bits() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createRndGeoHashBitsTable();
+                    assertQuery(
+                            "bits7\tts\n" +
+                                    "1111111\t1970-01-16T21:43:20.000000Z\n" +
+                                    "1111111\t1970-01-18T00:50:00.000000Z\n" +
+                                    "1111111\t1970-01-18T00:55:00.000000Z\n" +
+                                    "1111110\t1970-01-18T05:11:40.000000Z\n" +
+                                    "1111110\t1970-01-18T07:10:00.000000Z\n" +
+                                    "1111110\t1970-01-18T08:20:00.000000Z\n" +
+                                    "1111111\t1970-01-18T08:28:20.000000Z\n",
+                            "select bits7, ts from x latest by s where bits7 within(##111111)",
+                            "ts",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashRndLongBitsPrefix() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createRndGeoHashBitsTable();
+                    try {
+                        assertQuery("",
+                                "select * from x latest by s where bits3 within(##111111)",
+                                "ts",
+                                true,
+                                true,
+                                true
+                        );
+                    } catch (SqlException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "prefix precision mismatch");
+                    }
+
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashRndLongBitsMask() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createRndGeoHashBitsTable();
+                    assertQuery("i\ts\tts\tbits3\tbits7\tbits9\n" +
+                                    "9384\tYFFD\t1970-01-17T15:31:40.000000Z\t101\t1110000\t101111011\n" +
+                                    "9397\tMXUK\t1970-01-17T15:53:20.000000Z\t100\t1110001\t110001111\n",
+                            "select * from x latest by s where bits7 within(#wt/5)",//(##11100)",
+                            "ts",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
     @Test
     public void testLatestByAllIndexedGeoHashRnd1c() throws Exception {
         assertMemoryLeak(
@@ -2297,7 +2356,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "y\t1970-01-18T07:41:40.000000Z\n" +
                                     "y\t1970-01-18T08:18:20.000000Z\n" +
                                     "z\t1970-01-18T08:35:00.000000Z\n",
-                            "select geo1, ts from x latest by s where geo1 within('x', 'y', 'z')",
+                            "select geo1, ts from x latest by s where geo1 within(#x, #y, #z)",
                             "ts",
                             true,
                             true,
@@ -2324,7 +2383,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "yvh\t1970-01-18T06:55:00.000000Z\n" +
                                     "y1n\t1970-01-18T07:28:20.000000Z\n" +
                                     "zs4\t1970-01-18T08:03:20.000000Z\n",
-                            "select geo2, ts from x latest by s where geo2 within('x', 'y', 'z')",
+                            "select geo2, ts from x latest by s where geo2 within(#x, #y, #z)",
                             "ts",
                             true,
                             true,
@@ -2351,7 +2410,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "xxusm\t1970-01-18T07:55:00.000000Z\n" +
                                     "x1dse\t1970-01-18T08:18:20.000000Z\n" +
                                     "zmt6j\t1970-01-18T08:38:20.000000Z\n",
-                            "select geo4, ts from x latest by s where geo4 within('x', 'y', 'z')",
+                            "select geo4, ts from x latest by s where geo4 within(#x, #y, #z)",
                             "ts",
                             true,
                             true,
@@ -2372,7 +2431,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "ybsge\t1970-01-18T06:45:00.000000Z\n" +
                                     "z4t7w\t1970-01-18T07:45:00.000000Z\n" +
                                     "xxusm\t1970-01-18T07:55:00.000000Z\n",
-                            "select geo4, ts from x latest by s where geo4 within('xx', 'y', 'z4')",
+                            "select geo4, ts from x latest by s where geo4 within(#xx, #y, #z4)",
                             "ts",
                             true,
                             true,
@@ -2381,6 +2440,21 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 });
     }
 
+    private void createRndGeoHashBitsTable() throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol(113, 4, 4, 2) s," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_geohash(3) bits3," +
+                        " rnd_geohash(7) bits7," +
+                        " rnd_geohash(9) bits9" +
+                        " from long_sequence(10000)" +
+                        "), index(s) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+    }
     private void createRndGeoHashTable() throws SqlException {
         compiler.compile(
                 "create table x as (" +
