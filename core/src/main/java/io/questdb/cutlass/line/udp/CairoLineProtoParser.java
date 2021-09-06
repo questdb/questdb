@@ -323,7 +323,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     private void parseFieldValue(CachedCharSequence value, CharSequenceCache cache) {
-        int valueType = CairoLineProtoParserSupport.guessValueType(value);
+        int valueType = CairoLineProtoParserSupport.getValueType(value);
         if (valueType == ColumnType.UNDEFINED) {
             switchModeToSkipLine();
         } else {
@@ -333,7 +333,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
     @SuppressWarnings("unused")
     private void parseFieldValueNewTable(CachedCharSequence value, CharSequenceCache cache) {
-        int valueType = CairoLineProtoParserSupport.guessValueType(value);
+        int valueType = CairoLineProtoParserSupport.getValueType(value);
         if (valueType == ColumnType.UNDEFINED) {
             switchModeToSkipLine();
         } else {
