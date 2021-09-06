@@ -24,121 +24,23 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
 
+import io.questdb.cairo.*;
+import io.questdb.std.*;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoTestUtils;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableModel;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderRecordCursor;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
-import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.TableUpdateDetails;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.IODispatcher;
-import io.questdb.network.IOOperation;
-import io.questdb.network.IORequestProcessor;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.LPSZ;
 
-public class LineTcpConnectionContextTest extends AbstractCairoTest {
-    private final static Log LOG = LogFactory.getLog(LineTcpConnectionContextTest.class);
-    private static final int FD = 1_000_000;
-    private LineTcpConnectionContext context;
-    private LineTcpReceiverConfiguration lineTcpConfiguration;
-    private LineTcpMeasurementScheduler scheduler;
-    private boolean disconnected;
-    private String recvBuffer;
-    private int nWriterThreads;
-    private WorkerPool workerPool;
-    private int[] rebalanceLoadByThread;
-    private int rebalanceNLoadCheckCycles = 0;
-    private int rebalanceNRebalances = 0;
-    private long microSecondTicks;
-
-    @Before
-    public void before() {
-        NetworkFacade nf = new NetworkFacadeImpl() {
-            @Override
-            public int recv(long fd, long buffer, int bufferLen) {
-                Assert.assertEquals(FD, fd);
-                if (null == recvBuffer) {
-                    return -1;
-                }
-
-                byte[] bytes = recvBuffer.getBytes(StandardCharsets.UTF_8);
-                int n = 0;
-                while (n < bufferLen && n < bytes.length) {
-                    Unsafe.getUnsafe().putByte(buffer++, bytes[n++]);
-                }
-                recvBuffer = new String(bytes, n, bytes.length - n);
-                return n;
-            }
-        };
-        nWriterThreads = 2;
-        microSecondTicks = -1;
-        lineTcpConfiguration = new DefaultLineTcpReceiverConfiguration() {
-            @Override
-            public int getNetMsgBufferSize() {
-                return 512;
-            }
-
-            @Override
-            public int getMaxMeasurementSize() {
-                return 128;
-            }
-
-            @Override
-            public NetworkFacade getNetworkFacade() {
-                return nf;
-            }
-
-            @Override
-            public long getWriterIdleTimeout() {
-                return 150;
-            }
-
-            @Override
-            public MicrosecondClock getMicrosecondClock() {
-                return new MicrosecondClockImpl() {
-                    @Override
-                    public long getTicks() {
-                        if (microSecondTicks >= 0) {
-                            return microSecondTicks;
-                        }
-                        return super.getTicks();
-                    }
-                };
-            }
-        };
-    }
+public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testAddFieldColumn() throws Exception {
@@ -508,7 +410,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                             "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
                             "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
                     assertTable(expected, "weather");
-                }, null);
+                }, null, null);
     }
 
     @Test
@@ -539,7 +441,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     closeContext();
                     String expected = "location\ttemperature\tbroken\ttimestamp\n";
                     assertTable(expected, "weather");
-                }, null);
+                }, null, null);
     }
 
     @Test
@@ -547,8 +449,8 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         runInContext(() -> {
             try (
                     @SuppressWarnings("resource")
-            TableModel model = new TableModel(configuration, "t_ilp21",
-                    PartitionBy.NONE).col("event", ColumnType.SHORT).col("id", ColumnType.LONG256).col("ts", ColumnType.TIMESTAMP).col("float1", ColumnType.FLOAT).col("int1", ColumnType.INT)
+                    TableModel model = new TableModel(configuration, "t_ilp21",
+                            PartitionBy.NONE).col("event", ColumnType.SHORT).col("id", ColumnType.LONG256).col("ts", ColumnType.TIMESTAMP).col("float1", ColumnType.FLOAT).col("int1", ColumnType.INT)
                             .col("date1", ColumnType.DATE).col("byte1", ColumnType.BYTE).timestamp()) {
                 CairoTestUtils.create(model);
             }
@@ -571,8 +473,8 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         runInContext(() -> {
             try (
                     @SuppressWarnings("resource")
-            TableModel model = new TableModel(configuration, "t_ilp21",
-                    PartitionBy.NONE).col("l", ColumnType.LONG)) {
+                    TableModel model = new TableModel(configuration, "t_ilp21",
+                            PartitionBy.NONE).col("l", ColumnType.LONG)) {
                 CairoTestUtils.create(model);
             }
             microSecondTicks = 1465839830102800L;
@@ -865,15 +767,6 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMultiplTablesWithSingleWriterThread() throws Exception {
-        nWriterThreads = 1;
-        int nTables = 3;
-        int nIterations = 20_000;
-        testThreading(nTables, nIterations, null);
-        Assert.assertEquals(0, rebalanceNRebalances);
-    }
-
-    @Test
     public void testMultipleMeasurements1() throws Exception {
         runInContext(() -> {
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
@@ -1006,29 +899,6 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected, "weather");
         });
-    }
-
-    @Test
-    public void testThreadsWithUnbalancedLoad() throws Exception {
-        nWriterThreads = 3;
-        int nTables = 12;
-        int nIterations = 20_000;
-        double[] loadFactors = { 10, 10, 10, 20, 20, 20, 20, 20, 20, 30, 30, 60 };
-        testThreading(nTables, nIterations, loadFactors);
-
-        int maxLoad = Integer.MIN_VALUE;
-        int minLoad = Integer.MAX_VALUE;
-        for (int load : rebalanceLoadByThread) {
-            if (maxLoad < load) {
-                maxLoad = load;
-            }
-            if (minLoad > load) {
-                minLoad = load;
-            }
-        }
-        double loadRatio = (double) maxLoad / (double) minLoad;
-        LOG.info().$("testThreadsWithUnbalancedLoad final load ratio is ").$(loadRatio).$();
-        Assert.assertTrue(loadRatio < 1.05);
     }
 
     @Test
@@ -1184,12 +1054,6 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         }
     }
 
-    private void assertTable(CharSequence expected, CharSequence tableName) {
-        try (TableReader reader = new TableReader(configuration, tableName)) {
-            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
-        }
-    }
-
     private void assertTableCount(CharSequence tableName, int nExpectedRows, long maxExpectedTimestampNanos) {
         try (TableReader reader = new TableReader(configuration, tableName)) {
             Assert.assertEquals(maxExpectedTimestampNanos / 1000, reader.getMaxTimestamp());
@@ -1205,145 +1069,6 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             }
             Assert.assertEquals(nExpectedRows, nRows);
         }
-    }
-
-    private void closeContext() {
-        if (null != scheduler) {
-            workerPool.halt();
-            Assert.assertFalse(context.invalid());
-            Assert.assertEquals(FD, context.getFd());
-            context.close();
-            Assert.assertTrue(context.invalid());
-            Assert.assertEquals(-1, context.getFd());
-            context = null;
-            scheduler.close();
-            scheduler = null;
-        }
-    }
-
-    private void runInContext(Runnable r) throws Exception {
-        runInContext(r, null);
-    }
-
-    private void runInContext(Runnable r, Runnable onCommitNewEvent) throws Exception {
-        runInContext(null, r, onCommitNewEvent);
-    }
-
-    private void runInContext(FilesFacade ff, Runnable r, Runnable onCommitNewEvent) throws Exception {
-        assertMemoryLeak(ff, () -> {
-            setupContext(onCommitNewEvent);
-            try {
-                r.run();
-            } finally {
-                closeContext();
-            }
-        });
-    }
-
-    private void setupContext(Runnable onCommitNewEvent) {
-        workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-            private final int workerCount;
-            private final int[] affinityByThread;
-
-            @Override
-            public int[] getWorkerAffinity() {
-                return affinityByThread;
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-
-            @Override
-            public boolean haltOnError() {
-                return false;
-            }
-
-            {
-                workerCount = nWriterThreads;
-                affinityByThread = new int[workerCount];
-                Arrays.fill(affinityByThread, -1);
-            }
-        });
-
-        WorkerPool netIoWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
-            private final int[] affinityByThread = { -1 };
-
-            @Override
-            public boolean haltOnError() {
-                return true;
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return 1;
-            }
-
-            @Override
-            public int[] getWorkerAffinity() {
-                return affinityByThread;
-            }
-        });
-
-        scheduler = new LineTcpMeasurementScheduler(lineTcpConfiguration, engine, netIoWorkerPool, null, workerPool) {
-            @Override
-            boolean tryButCouldNotCommit(NetworkIOJob netIoJob, NewLineProtoParser protoParser, FloatingDirectCharSink charSink) {
-                if (null != onCommitNewEvent) {
-                    onCommitNewEvent.run();
-                }
-                return super.tryButCouldNotCommit(netIoJob, protoParser, charSink);
-            }
-
-            @Override
-            protected NetworkIOJob createNetworkIOJob(IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
-                Assert.assertEquals(0, workerId);
-                return netIoJob;
-            }
-        };
-        context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler);
-        disconnected = false;
-        recvBuffer = null;
-        IODispatcher<LineTcpConnectionContext> dispatcher = new IODispatcher<LineTcpConnectionContext>() {
-            @Override
-            public void close() {
-            }
-
-            @Override
-            public int getConnectionCount() {
-                return disconnected ? 0 : 1;
-            }
-
-            @Override
-            public void registerChannel(LineTcpConnectionContext context, int operation) {
-            }
-
-            @Override
-            public boolean processIOQueue(IORequestProcessor<LineTcpConnectionContext> processor) {
-                return false;
-            }
-
-            @Override
-            public void disconnect(LineTcpConnectionContext context, int reason) {
-                disconnected = true;
-            }
-
-            @Override
-            public boolean run(int workerId) {
-                return false;
-            }
-
-            @Override
-            public boolean isListening() {
-                return true;
-            }
-        };
-        Assert.assertNull(context.getDispatcher());
-        context.of(FD, dispatcher);
-        Assert.assertFalse(context.invalid());
-        Assert.assertEquals(FD, context.getFd());
-        Assert.assertEquals(dispatcher, context.getDispatcher());
-        workerPool.start(LOG);
     }
 
     private void testFragmentation(int breakPos) throws Exception {
@@ -1373,6 +1098,42 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
             assertTable(expected, "weather");
         });
+    }
+
+    private int[] rebalanceLoadByThread;
+    private int rebalanceNLoadCheckCycles = 0;
+    private int rebalanceNRebalances = 0;
+
+    @Test
+    public void testMultiplTablesWithSingleWriterThread() throws Exception {
+        nWriterThreads = 1;
+        int nTables = 3;
+        int nIterations = 20_000;
+        testThreading(nTables, nIterations, null);
+        Assert.assertEquals(0, rebalanceNRebalances);
+    }
+
+    @Test
+    public void testThreadsWithUnbalancedLoad() throws Exception {
+        nWriterThreads = 3;
+        int nTables = 12;
+        int nIterations = 20_000;
+        double[] loadFactors = {10, 10, 10, 20, 20, 20, 20, 20, 20, 30, 30, 60};
+        testThreading(nTables, nIterations, loadFactors);
+
+        int maxLoad = Integer.MIN_VALUE;
+        int minLoad = Integer.MAX_VALUE;
+        for (int load : rebalanceLoadByThread) {
+            if (maxLoad < load) {
+                maxLoad = load;
+            }
+            if (minLoad > load) {
+                minLoad = load;
+            }
+        }
+        double loadRatio = (double) maxLoad / (double) minLoad;
+        LOG.info().$("testThreadsWithUnbalancedLoad final load ratio is ").$(loadRatio).$();
+        Assert.assertTrue(loadRatio < 1.05);
     }
 
     private void testThreading(int nTables, int nIterations, double[] lf) throws Exception {
@@ -1429,89 +1190,21 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             rebalanceNRebalances = scheduler.getNRebalances();
             rebalanceLoadByThread = scheduler.getLoadByThread();
             closeContext();
-            LOG.info().$("Completed ").$(nTotalUpdates).$(" measurements with ").$(nTables).$(" measurement types processed by ").$(nWriterThreads).$(" threads. ")
-                    .$(rebalanceNLoadCheckCycles).$(" load checks lead to ").$(rebalanceNRebalances).$(" load rebalancing operations").$();
+            LOG.info().$("Completed ")
+                    .$(nTotalUpdates)
+                    .$(" measurements with ")
+                    .$(nTables)
+                    .$(" measurement types processed by ")
+                    .$(nWriterThreads)
+                    .$(" threads. ")
+                    .$(rebalanceNLoadCheckCycles)
+                    .$(" load checks lead to ")
+                    .$(rebalanceNRebalances)
+                    .$(" load rebalancing operations")
+                    .$();
             for (int nTable = 0; nTable < nTables; nTable++) {
                 assertTableCount("weather" + nTable, countByTable[nTable], maxTimestampByTable[nTable] - timestampIncrementInNanos);
             }
         });
     }
-
-    private void handleContextIO() {
-        switch (context.handleIO(netIoJob)) {
-            case NEEDS_READ:
-                context.getDispatcher().registerChannel(context, IOOperation.READ);
-                break;
-            case NEEDS_WRITE:
-                context.getDispatcher().registerChannel(context, IOOperation.WRITE);
-                break;
-            case NEEDS_DISCONNECT:
-                context.getDispatcher().disconnect(context, IODispatcher.DISCONNECT_REASON_PROTOCOL_VIOLATION);
-                break;
-            default:
-                break;
-        }
-    }
-
-    private void waitForIOCompletion() {
-        waitForIOCompletion(true);
-    }
-
-    private void waitForIOCompletion(boolean closeConnection) {
-        int maxIterations = 256;
-        // Guard against slow writers on disconnect
-        while (maxIterations-- > 0 && context.getDispatcher().getConnectionCount() > 0) {
-            if (null != recvBuffer && recvBuffer.length() == 0) {
-                if (!closeConnection) {
-                    break;
-                }
-                recvBuffer = null;
-            }
-            handleContextIO();
-            LockSupport.parkNanos(1_000_000);
-        }
-        Assert.assertTrue(maxIterations > 0);
-        Assert.assertTrue(disconnected || !closeConnection);
-        // Wait for last commit
-        try {
-            Thread.sleep(lineTcpConfiguration.getMaintenanceInterval() + 50);
-        } catch (InterruptedException ex) {
-            throw new RuntimeException(ex);
-        }
-    }
-
-    private final NetworkIOJob netIoJob = new NetworkIOJob() {
-        private final CharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
-        private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
-
-        @Override
-        public int getWorkerId() {
-            return 0;
-        }
-
-        @Override
-        public TableUpdateDetails getTableUpdateDetails(CharSequence tableName) {
-            return localTableUpdateDetailsByTableName.get(tableName);
-        }
-
-        @Override
-        public void addTableUpdateDetails(TableUpdateDetails tableUpdateDetails) {
-            localTableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
-        }
-
-        @Override
-        public boolean run(int workerId) {
-            Assert.fail("This is a mock job, not designed to run in a wroker pool");
-            return false;
-        }
-
-        @Override
-        public ObjList<SymbolCache> getUnusedSymbolCaches() {
-            return unusedSymbolCaches;
-        }
-
-        @Override
-        public void close() {
-        }
-    };
 }
