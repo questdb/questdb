@@ -48,6 +48,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     private final int[] workerAffinity = new int[]{-1};
 
     @Override
+    public int getBinParamCountCapacity() {
+        return 4;
+    }
+
+    @Override
     public int getCharacterStoreCapacity() {
         return 4096;
     }

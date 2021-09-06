@@ -792,7 +792,7 @@ public class SqlCompiler implements Closeable {
                 && toTag >= ColumnType.BYTE
                 && toTag <= ColumnType.DOUBLE
                 && fromTag < toTag)
-                || ((fromTag == ColumnType.STRING || fromTag == ColumnType.CHAR) && toTag == ColumnType.GEOHASH) // TODO: add b0101010101010101
+                || ((fromTag == ColumnType.STRING || fromTag == ColumnType.CHAR) && toTag == ColumnType.GEOHASH)
                 || (fromTag == ColumnType.STRING && toTag == ColumnType.SYMBOL)
                 || (fromTag == ColumnType.SYMBOL && toTag == ColumnType.STRING)
                 || (fromTag == ColumnType.CHAR && toTag == ColumnType.SYMBOL)
