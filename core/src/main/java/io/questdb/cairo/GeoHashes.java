@@ -108,14 +108,7 @@ public class GeoHashes {
         return result;
     }
 
-    public static long fromCoordinates(double lat, double lng, int bits) throws NumericException {
-        if (lat < -90.0 || lat > 90.0) {
-            throw NumericException.INSTANCE;
-        }
-        if (lng < -180.0 || lng > 180.0) {
-            throw NumericException.INSTANCE;
-        }
-        assert bits > 0 && bits <= MAX_BITS_LENGTH;
+    public static long fromCoordinatesUnsafe(double lat, double lng, int bits) {
         double minLat = -90, maxLat = 90;
         double minLng = -180, maxLng = 180;
         long result = 0;
@@ -141,6 +134,19 @@ public class GeoHashes {
             }
         }
         return result;
+    }
+
+    public static long fromCoordinates(double lat, double lng, int bits) throws NumericException {
+        if (lat < -90.0 || lat > 90.0) {
+            throw NumericException.INSTANCE;
+        }
+        if (lng < -180.0 || lng > 180.0) {
+            throw NumericException.INSTANCE;
+        }
+        if (bits < 0 || bits > MAX_BITS_LENGTH) {
+            throw NumericException.INSTANCE;
+        }
+        return fromCoordinatesUnsafe(lat, lng, bits);
     }
 
     public static long fromStringTruncatingNl(CharSequence hash, int start, int end, int bits) throws NumericException {

@@ -551,4 +551,57 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                             "questdb\t1234567\n");
         });
     }
+
+    @Test
+    public void testMakeGeoHashFromCoords() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql("select make_geohash(lon,lat,40) as h8c\n" +
+                            "from ( select \n" +
+                            "(rnd_double()*180.0 - 90.0) as lat,\n" +
+                            "(rnd_double()*360.0 - 180.0) as lon\n" +
+                            "from long_sequence(3))",
+                            "h8c\n" +
+                                    "jr1nj0dv\n" +
+                                    "29tdrk0h\n" +
+                                    "9su67p3e\n");
+        });
+    }
+
+    @Test
+    public void testMakeGeohashToDifferentColumnSize() throws Exception {
+        assertMemoryLeak(() -> {
+
+            compiler.compile("create table pos as ( " +
+                    " select" +
+                    "(rnd_double()*180.0 - 90.0) as lat, " +
+                    "(rnd_double()*360.0 - 180.0) as lon " +
+                    "from long_sequence(1))", sqlExecutionContext);
+
+            compiler.compile("create table tb1 as ( select" +
+                    " make_geohash(lon, lat, 5) as g1c, " +
+                    " make_geohash(lon, lat, 10) as g2c, " +
+                    " make_geohash(lon, lat, 20) as g4c, " +
+                    " make_geohash(lon, lat, 40) as g8c  " +
+                    " from pos)", sqlExecutionContext);
+
+            assertSql("select * from tb1",
+                    "g1c\tg2c\tg4c\tg8c\n" +
+                            "9\t9v\t9v1s\t9v1s8hm7\n");
+        });
+    }
+
+    @Test
+    public void testMakeGeoHashNullOnOutOfRange() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql("select make_geohash(lon, lat,40) as h8c\n" +
+                            "from ( select \n" +
+                            "(rnd_double()*180.0) as lat,\n" +
+                            "(rnd_double()*360.0) as lon\n" +
+                            "from long_sequence(3))",
+                    "h8c\n" +
+                            "\n" +
+                            "u9tdrk0h\n" +
+                            "\n");
+        });
+    }
 }
