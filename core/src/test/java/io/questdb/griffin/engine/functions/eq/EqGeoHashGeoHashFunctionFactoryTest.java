@@ -38,7 +38,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
@@ -299,7 +298,6 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testCastGeoHashToNullEqNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 "select cast(null as geohash(1c)) = null",

@@ -479,9 +479,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 // geohash from chars constant
                 try {
                     // optional '/dd', '/d' (max 3 chars, 1..60)
-                    int sdd = ExpressionParser.extractGeoHashSuffix(position, tok);
-                    int sddLen = Numbers.decodeLowShort(sdd);
-                    int bits = Numbers.decodeHighShort(sdd);
+                    final int sdd = ExpressionParser.extractGeoHashSuffix(position, tok);
+                    final int sddLen = Numbers.decodeLowShort(sdd);
+                    final int bits = Numbers.decodeHighShort(sdd);
                     return Constants.getGeoHashConstant(
                             GeoHashes.fromStringTruncatingNl(tok, 1, len - sddLen, bits),
                             bits
@@ -492,10 +492,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 // geohash from binary constant
                 try {
                     // minus leading '##', truncates tail bits if over 60
-                    return Constants.getGeoHashConstant(
-                            GeoHashes.fromBitStringNl(tok, 2),
-                            len - 2
-                    );
+                    int bits = len - 2;
+                    if (bits <= ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
+                        return Constants.getGeoHashConstant(
+                                GeoHashes.fromBitStringNl(tok, 2),
+                                bits
+                        );
+                    } else {
+                        throw NumericException.INSTANCE;
+                    }
                 } catch (NumericException ignored) {
                 }
             }

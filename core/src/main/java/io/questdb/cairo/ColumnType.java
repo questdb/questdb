@@ -68,13 +68,13 @@ public final class ColumnType {
     public static final short CURSOR = 20;
     public static final short VAR_ARG = 21;
     public static final short RECORD = 22;
+    // This type is not stored, it is used on function arguments to resolve overloads.
+    // We also build overload matrix, which logic relies on the fact GEOHASH value has to be
+    // inside the MAX type value.
+    public static final short GEOHASH = 23;
+    public static final short NULL = 24;
 
-    public static final short NULL = 23;
-
-    // Virtual storage types, only needed to flatten storage switch extension with GEOHASH column types
-    public static final short GEOHASH = 240;
-
-
+    // Overload matrix algo depends on the fact that MAX=NULL
     public static final short MAX = NULL;
     public static final short TYPES_SIZE = MAX + 1;
     private static final int[] TYPE_SIZE_POW2 = new int[TYPES_SIZE];
@@ -86,19 +86,25 @@ public final class ColumnType {
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     // For function overload the priority is taken from left to right
     private static final short[][] overloadPriority = {
-            /* 0 UNDEFINED */  {DOUBLE, FLOAT, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
-            /* 1  BOOLEAN  */, {}
-            /* 2  BYTE     */, {SHORT, INT, LONG, FLOAT, DOUBLE}
-            /* 3  SHORT    */, {INT, LONG, FLOAT, DOUBLE}
-            /* 4  CHAR     */, {STRING}
-            /* 5  INT      */, {LONG, DOUBLE, TIMESTAMP, DATE}
-            /* 6  LONG     */, {DOUBLE, TIMESTAMP, DATE}
-            /* 7  DATE     */, {TIMESTAMP, LONG}
-            /* 8  TIMESTAMP*/, {LONG}
-            /* 9  FLOAT    */, {DOUBLE}
-            /* 10  DOUBLE  */, {}
-            /* 11 STRING   */, {} // STRING can be cast to TIMESTAMP, but it's handled in a special way
-            /* 12 SYMBOL   */, {STRING}
+            /* 0 UNDEFINED  */  {DOUBLE, FLOAT, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
+            /* 1  BOOLEAN   */, {}
+            /* 2  BYTE      */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
+            /* 3  SHORT     */, {SHORT, INT, LONG, FLOAT, DOUBLE}
+            /* 4  CHAR      */, {CHAR, STRING}
+            /* 5  INT       */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE}
+            /* 6  LONG      */, {LONG, DOUBLE, TIMESTAMP, DATE}
+            /* 7  DATE      */, {DATE, TIMESTAMP, LONG}
+            /* 8  TIMESTAMP */, {TIMESTAMP, LONG}
+            /* 9  FLOAT     */, {FLOAT, DOUBLE}
+            /* 10 DOUBLE    */, {DOUBLE}
+            /* 11 STRING    */, {} // STRING can be cast to TIMESTAMP, but it's handled in a special way
+            /* 12 SYMBOL    */, {SYMBOL, STRING}
+            /* 13 LONG256   */, {LONG256}
+            /* 14 GEOBYTE   */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
+            /* 15 GEOSHORT  */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
+            /* 16 GEOINT    */, {GEOINT, GEOLONG, GEOHASH}
+            /* 17 GEOLONG   */, {GEOLONG, GEOHASH}
+            /* 18 BINARY    */, {BINARY}
     };
 
     private static final int OVERLOAD_MATRIX_SIZE = 32;
@@ -266,10 +272,17 @@ public final class ColumnType {
     static {
         overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE];
         for (short i = UNDEFINED; i < MAX; i++) {
+/*
+            Arrays.fill(overloadPriorityMatrix, OVERLOAD_MATRIX_SIZE * i, OVERLOAD_MATRIX_SIZE * i + MAX - 1, NO_OVERLOAD);
+            short []a = overloadPriority[i];
+            for (int j = 0, n = a.length; j < n; j++) {
+
+            }
+*/
             for (short j = BOOLEAN; j < MAX; j++) {
                 if (i < overloadPriority.length) {
                     int index = indexOf(overloadPriority[i], j);
-                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = index >= 0 ? index + 1 : NO_OVERLOAD;
+                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = index != -1 ? index : NO_OVERLOAD;
                 } else {
                     overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = NO_OVERLOAD;
                 }

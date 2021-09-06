@@ -104,10 +104,8 @@ class ExpressionParser {
     public static boolean isGeoHashBitsConstant(CharSequence tok) {
         assert tok.charAt(0) == '#'; // ^ ^, also suffix not allowed
         int len = tok.length();
-        if (len < 3 || len - 2 > ColumnType.GEO_HASH_MAX_BITS_LENGTH || tok.charAt(1) != 35) { // 2nd '#'
-            return false;
-        }
-        return GeoHashes.isValidBits(tok, 2);
+        // 2nd '#'
+        return len > 1 && tok.charAt(1) == '#';
     }
 
     public static boolean isGeoHashCharsConstant(CharSequence tok) {
@@ -115,11 +113,8 @@ class ExpressionParser {
         // the EP will eagerly try to detect '/dd' following the geohash token, and if so
         // it will create a FloatingSequencePair with '/' as separator. At this point
         // however, '/dd' does not exist, tok is just the potential geohash chars constant, with leading '#'
-        int len = tok.length();
-        if (len < 2 || len - 1 > GeoHashes.MAX_STRING_LENGTH) {
-            return false;
-        }
-        return GeoHashes.isValidChars(tok, 1);
+        final int len = tok.length();
+        return len <= 1 || tok.charAt(1) != '#';
     }
 
     private static SqlException missingArgs(int position) {

@@ -53,9 +53,6 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testIsGeoHashBitsConstantNotValid() {
         Assert.assertFalse(ExpressionParser.isGeoHashBitsConstant("#00110")); // missing '#'
         Assert.assertFalse(ExpressionParser.isGeoHashBitsConstant("#0")); // missing '#'
-        Assert.assertFalse(ExpressionParser.isGeoHashBitsConstant("##")); // no actual bits
-        Assert.assertFalse(ExpressionParser.isGeoHashBitsConstant("##12")); // bad bit '2'
-        Assert.assertFalse(ExpressionParser.isGeoHashBitsConstant("##1111111111000000000011111111110000000000111111111100000000001")); // too long
     }
 
     @Test
@@ -68,11 +65,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testIsGeoHashCharsConstantNotValid() {
-        Assert.assertFalse(ExpressionParser.isGeoHashCharsConstant("#0/4")); // the method does not understand '/d', '/dd'
-        Assert.assertFalse(ExpressionParser.isGeoHashCharsConstant("#")); // no actual chars
-        Assert.assertFalse(ExpressionParser.isGeoHashCharsConstant("##1")); // bad char '#'
-        Assert.assertFalse(ExpressionParser.isGeoHashCharsConstant("#sp@sp")); // bad char '@'
-        Assert.assertFalse(ExpressionParser.isGeoHashCharsConstant("#sp052w92p1p88")); // too long, no truncation at this point, our precision is 60 bits
+        Assert.assertFalse(ExpressionParser.isGeoHashCharsConstant("##"));
     }
 
     @Test
