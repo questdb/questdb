@@ -41,7 +41,8 @@ export interface VirtualScrollElement extends HTMLElement {
                 //if there is not enough instances of items, we add new ones
                 if(this.instances.length < numberInstance) {
                     for(let i = this.instances.length; i<numberInstance; i++){
-                        let instance = this.content;
+                        let instance = document.createElement(this.nameOfContainer);
+                        // let instance = this.content;
                         (instance as HTMLElement).style.position = "absolute";
                         this.appendChild(instance);
                         (instance as HTMLElement).style.transform = `translate3d(0, ${i*this.unitarySize.height}px, 0)`;

@@ -1,6 +1,6 @@
 import { LitElement, property } from "lit-element";
 import { Constructor } from "./Mixin.model";
-import { ContainerMixin } from "./ContainerMixin";
+// import { ContainerMixin } from "./ContainerMixin";
 
 // export const DomMixin = (Base:  typeof LitElement extends Constructor? typeof LitElement : typeof LitElement) => class DomMixin extends Base { 
     
@@ -12,6 +12,8 @@ export class DomMixin extends LitElement{
 
     @property({
         type: String,
+        reflect: true,
+        attribute: "name-of-container"
     })
     get nameOfContainer(): string {
         return this._nameOfContainer;

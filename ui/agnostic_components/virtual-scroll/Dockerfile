@@ -12,6 +12,6 @@ RUN groupadd --system chrome && useradd --system --create-home --gid chrome --gr
 COPY ./.yarnrc ${TARGETDIR}/.yarnrc
 RUN npm config set unsafe-perm true
 RUN npm i -g typescript es-dev-server mocha prettier eslint karma rollup rimraf
-COPY . $TARGETDIR
+# COPY . $TARGETDIR deprecated
 WORKDIR $TARGETDIR
 RUN yarn

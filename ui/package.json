@@ -25,6 +25,7 @@
     "@fortawesome/fontawesome-free": "5.13.0",
     "@popperjs/core": "2.4.2",
     "@questdb/sql-grammar": "1.0.7",
+    "@questdb_design-system/virtual-scroll": "0.0.1",
     "@types/react": "16.9.35",
     "@types/react-copy-to-clipboard": "5.0.0",
     "@types/react-dom": "16.9.8",

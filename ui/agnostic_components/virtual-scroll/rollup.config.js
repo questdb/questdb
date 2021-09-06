@@ -28,6 +28,7 @@ export default merge(baseConfig, {
     typescript()
   ],
   external: [
+    /@questdb_design-system/
   ]
 
   // alternatively, you can use your JS as entrypoint for rollup and

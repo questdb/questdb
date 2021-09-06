@@ -1,10 +1,9 @@
-import { LitElement, customElement, html, css, property, TemplateResult, CSSResultArray }  from 'lit-element';
+import { LitElement, customElement, html, css, property, TemplateResult, CSSResultArray, CSSResult }  from 'lit-element';
 import { VirtualBase } from './VirtualScrollBase';
 
 
 export class VirtualScroll extends VirtualBase {
-
-    static get styles(): CSSResultArray {
+    static get styles(): CSSResult|CSSResultArray {
     return [
         super.styles, 
         css`

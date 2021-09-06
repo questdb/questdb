@@ -52,6 +52,36 @@
         "dependency"
       ],
       "type": "npm-registry"
+    },
+    "virtual-scroll-row": {
+      "image": "cliops/agnostic_component@1.0.0",
+      "name": "virtual-scroll-row",
+      "cliopsVar": {
+        "name": "virtual-scroll-row",
+        "types": [
+          "webcomponent"
+        ],
+        "scope": "questdb_design-system"
+      },
+      "types": [
+        "webcomponent"
+      ],
+      "scope": "questdb_design-system"
+    },
+    "test-test": {
+      "image": "cliops/agnostic_component@1.0.0",
+      "name": "test-test",
+      "cliopsVar": {
+        "name": "test-test",
+        "types": [
+          "webcomponent"
+        ],
+        "scope": "cliops"
+      },
+      "types": [
+        "webcomponent"
+      ],
+      "scope": "cliops"
     }
   }
 }

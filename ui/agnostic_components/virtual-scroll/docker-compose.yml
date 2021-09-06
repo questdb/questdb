@@ -40,17 +40,32 @@ services:
         source: questdb-virtualScroll
         target: /usr/src/dist2vol
       - type: bind
+        source: ./.babelrc
+        target: /usr/src/.babelrc
+      - type: bind
+        source: ./script.ts
+        target: /usr/src/script.ts
+      - type: bind
         source: ./.npmrcremote
         target: /usr/src/.npmrc
       - type: bind
         source: ./package.json
         target: /usr/src/package.json
+      - type: bind
+        source: ./tsconfig.json
+        target: /usr/src/tsconfig.json
+      # - type: bind
+      #   source: ../virtual-scroll-row/package.json
+      #   target: /usr/src/node_modules/@questdb_design-system/virtual-scroll-row/package.json
+      # - type: bind
+      #   source: ../virtual-scroll-row/dist
+      #   target: /usr/src/node_modules/@questdb_design-system/virtual-scroll-row/dist
     # entrypoint: yarn build --watch
     entrypoint: /bin/sh -c "while sleep 1000; do :; done"
     ports:
-      - "8001:8000"
-      - "9877:9876"
-      - "9223:9222"
+      - "8002:8000"
+      - "9878:9876"
+      - "9224:9222"
     networks: 
       - npm-registry
 networks: 

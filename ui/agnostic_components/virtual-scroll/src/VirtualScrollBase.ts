@@ -1,9 +1,9 @@
-import { LitElement, property, css, CSSResultArray } from "lit-element";
+import { LitElement, property, css, CSSResultArray,CSSResult } from "lit-element";
 import { ScrollMixin } from "./behaviors/ScrollMixin";
 import { applyMixins } from "./behaviors/Mixin.model";
 import { InstanceMixin } from "./behaviors/InstanceMixin";
 import { DomMixin } from "./behaviors/DomMixin";
-import { ContainerMixin } from "./behaviors/ContainerMixin";
+// import { ContainerMixin } from "./behaviors/ContainerMixin";
 import { SizeMixin } from "./behaviors/SizeMixin";
 import { ItemsClass } from "./ItemsClass";
 
@@ -24,8 +24,21 @@ export class VirtualBase  extends ItemsClass {
         if (changedProperties.has('needScrollHeight')) this.needScrollChanged();
         if (changedProperties.has('deltaH')) this.deltaHChanged();
         if (changedProperties.has('deltaV')) this.deltaVChanged();
-        if (changedProperties.has('nameOfContainer')) this.observeNameContainerAndUnitarySize();
+        if (changedProperties.has('nameOfContainer')) this.computeHeightOfTemplate();
+        // if (changedProperties.has('nameOfContainer')) this.observeNameContainerAndUnitarySize();
         if (changedProperties.has('lastIndex')) this.lastIndexChanged(this.lastIndex,changedProperties.get('lastIndex'));
+    }
+
+    private computeHeightOfTemplate() {
+        const instance = document.createElement(this.nameOfContainer);
+        instance.style.position = "absolute";
+        instance.style.opacity = "0";
+        this.appendChild(instance);
+        setTimeout(() => {
+            this.unitarySize = instance.getBoundingClientRect();
+            this.removeChild(instance);
+        },0);
+
     }
 
     private needScrollChanged() {
@@ -33,8 +46,8 @@ export class VirtualBase  extends ItemsClass {
     }
 
     private observeNameContainerAndUnitarySize() {
-        if (!this.unitarySize || !this.nameOfContainer || !this.items) return;
-        this.templateForInstance = document.createElement(this.nameOfContainer);
+        if (!this.unitarySize || !this.nameOfContainer || !this.items) return;
+        // this.templateForInstance = document.createElement(this.nameOfContainer);
         this.height = this.setHeight();
         this.numberOfInstance = this.computeNumberOfInstance();
         this.itemsChanged(this.items);
@@ -90,7 +103,7 @@ export class VirtualBase  extends ItemsClass {
         this.removeEventListener('wheel', this.handleWheelBind);
     }
 
-    static get styles(): CSSResultArray {
+    static get styles(): CSSResult|CSSResultArray {
         return [css`
             #container{
                 width: inherit;
@@ -133,6 +146,6 @@ export class VirtualBase  extends ItemsClass {
     }
 }
 
-export interface VirtualBase extends InstanceMixin, ContainerMixin {}
+export interface VirtualBase extends InstanceMixin {}
 
-applyMixins(VirtualBase, [InstanceMixin, ScrollMixin, ContainerMixin, SizeMixin])
+applyMixins(VirtualBase, [InstanceMixin, ScrollMixin, SizeMixin])

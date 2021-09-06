@@ -1,1 +1,3 @@
-# registry=http://host.docker.internal:4873/
+network-timeout 6000000
+registry=http://host.docker.internal:4873/
+@questdb:registry=http://host.docker.internal:4873/

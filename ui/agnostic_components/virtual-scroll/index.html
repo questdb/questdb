@@ -17,14 +17,27 @@
       left: 0;
       font-family: sans-serif;
       background-color: #ededed;
+      display: flex;
+    }
+
+    virtual-scroll {
+      width: 400px;
+      height: 300px;
+    }
+
+    virtual-scroll-row {
+      height: 65px;
+      width: 150px;
     }
   </style>
   <title>virtualScroll</title>
 </head>
 <body>
-  <virtual-scroll></virtual-scroll>
+  <virtual-scroll name-of-container="virtual-scroll-row">
+  </virtual-scroll>
 
   <script type="module" src="./components/virtual-scroll/virtual-scroll.ts"></script>
+  <script  src="script.ts"></script>
 </body>
 
 </html>

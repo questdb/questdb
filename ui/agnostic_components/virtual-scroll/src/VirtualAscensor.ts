@@ -1,7 +1,6 @@
 // import { PolymerElement, html } from "@polymer/polymer/polymer-element";
 import { LitElement, html, css, customElement, property } from "lit-element";
 
-@customElement('virtual-ascensor')
 export class VirtualAscensor extends LitElement{
 
     @property({ type:Boolean, reflect: true, attribute: 'show-v' }) showV = false;
