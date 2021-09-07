@@ -37,7 +37,7 @@ stages:
             displayName: 'Start Agent'
             name: 'Start_Agent'
             inputs:
-              awsCredentials: 'marius-pipeline-test'
+              awsCredentials: 'ondemand-dev'
               regionName: 'eu-west-1'
               functionName: 'ondemand-pipeline'
               payload: |
