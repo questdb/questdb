@@ -2245,6 +2245,25 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByAllIndexedGeoHashWithinWrongCast() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    try {
+                        assertQuery("",
+                                "select * from pos latest by uuid where hash within(cast('f91t' as geohash(4c)), #z3, null)",
+                                "time",
+                                true,
+                                true,
+                                true
+                        );
+                    } catch (SqlException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "prefix precision mismatch");
+                    }
+                });
+    }
+
+    @Test
     public void testLatestByAllIndexedGeoHashTimeRange1c() throws Exception {
         assertMemoryLeak(
                 () -> {
