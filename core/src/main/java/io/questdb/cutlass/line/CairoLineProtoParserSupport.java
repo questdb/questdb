@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Numbers;
@@ -35,47 +36,6 @@ import io.questdb.std.NumericException;
 
 public class CairoLineProtoParserSupport {
     private final static Log LOG = LogFactory.getLog(CairoLineProtoParserSupport.class);
-
-    public static int getValueType(CharSequence token) {
-        int len = token.length();
-        if (len > 0) {
-            switch (token.charAt(len - 1)) {
-                case 'i':
-                    if (len > 1) {
-                        if (token.charAt(1) == 'x') {
-                            return ColumnType.LONG256;
-                        }
-                        return ColumnType.LONG;
-                    }
-                    return ColumnType.CHAR;
-                case 'e':
-                    // tru(e)
-                    // fals(e)
-                case 't':
-                case 'T':
-                    // t
-                    // T
-                case 'f':
-                case 'F':
-                    // f
-                    // F
-                    return ColumnType.BOOLEAN;
-                case '"':
-                    if (len < 2 || token.charAt(0) != '\"') {
-                        LOG.error().$("incorrectly quoted string: ").$(token).$();
-                        return ColumnType.UNDEFINED;
-                    }
-                    return ColumnType.STRING;
-                default:
-                    return ColumnType.DOUBLE;
-            }
-        }
-        return ColumnType.UNDEFINED;
-    }
-
-    public static boolean isTrue(CharSequence value) {
-        return (value.charAt(0) | 32) == 't';
-    }
 
     /**
      * Writes column value to table row. CharSequence value is interpreted depending on
@@ -139,11 +99,11 @@ public class CairoLineProtoParserSupport {
                     row.putDate(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                     break;
                 case ColumnType.LONG256:
-                    if (value.charAt(0) == '0' && value.charAt(1) == 'x') {
-                        row.putLong256(columnIndex, value, 2, value.length() - 1);
-                    } else {
-                        throw BadCastException.INSTANCE;
+                    int limit = value.length() - 1;
+                    if (value.charAt(limit) != 'i') {
+                        limit++;
                     }
+                    row.putLong256(columnIndex, value, 2, limit);
                     break;
                 case ColumnType.TIMESTAMP:
                     row.putTimestamp(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
@@ -211,5 +171,59 @@ public class CairoLineProtoParserSupport {
 
     public static class BadCastException extends Exception {
         public static final BadCastException INSTANCE = new BadCastException();
+    }
+
+    public static int getValueType(CharSequence token) {
+        // method called for inbound ilp messages on each value.
+        // returning UNDEFINED makes the whole line be skipped.
+        // the goal of this method is to guess the potential type
+        // and then it will be parsed accordingly by 'putValue'.
+        int len = token.length();
+        if (len > 0) {
+            char lastChar = token.charAt(len - 1); // see LineProtoSender.field methods
+            switch (lastChar) {
+                case 'i':
+                    if (len > 3 && token.charAt(0) == '0' && token.charAt(1) == 'x') {
+                        return ColumnType.LONG256;
+                    }
+                    return len == 1 ? ColumnType.SYMBOL : ColumnType.LONG;
+                case 'e':
+                case 'E':
+                    // tru(e)
+                    //  fals(e)
+                case 't':
+                case 'T':
+                    // t
+                    // T
+                case 'f':
+                case 'F':
+                    // f
+                    // F
+                    if (len == 1) {
+                        return lastChar != 'e' ? ColumnType.BOOLEAN : ColumnType.SYMBOL;
+                    }
+                    return SqlKeywords.isTrueKeyword(token) || SqlKeywords.isFalseKeyword(token) ?
+                            ColumnType.BOOLEAN : ColumnType.SYMBOL;
+                case '"':
+                    if (len < 2 || token.charAt(0) != '\"') {
+                        LOG.error().$("incorrectly quoted string: ").$(token).$();
+                        return ColumnType.UNDEFINED;
+                    }
+                    return ColumnType.STRING;
+                default:
+                    if (lastChar >= '0' && lastChar <= '9') {
+                        if (len > 2 && token.charAt(0) == '0' && token.charAt(1) == 'x') {
+                            return ColumnType.LONG256;
+                        }
+                        return ColumnType.DOUBLE;
+                    }
+                    return ColumnType.SYMBOL;
+            }
+        }
+        return ColumnType.UNDEFINED;
+    }
+
+    public static boolean isTrue(CharSequence value) {
+        return (value.charAt(0) | 32) == 't';
     }
 }
