@@ -90,4 +90,4 @@ stages:
             displayName: 'Check changed files'
       - template: templates/jobs.yml
         parameters:
-          SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
+          SOURCE_CODE_CHANGED_2: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
