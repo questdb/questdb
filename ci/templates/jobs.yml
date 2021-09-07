@@ -16,6 +16,17 @@ jobs:
     os: Linux
     jdk: "1.11"
   steps:
+  - bash: |
+      echo "SOURCE_CODE_CHANGED"
+      echo $(SOURCE_CODE_CHANGED)
+      echo MAVEN_CACHE_FOLDER
+      echo $(MAVEN_CACHE_FOLDER)
+      echo MAVEN_OPTS
+      echo $(MAVEN_OPTS)
+      echo jdk
+      echo $(jdk)
+    displayName: "DEBUG2"
+    condition: eq(variables['Agent.OS'], 'Linux')
   - template: steps.yml
 - job: mac
   displayName: "on mac"
