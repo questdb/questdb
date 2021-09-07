@@ -1,8 +1,3 @@
-variables:
-  SOURCE_CODE_CHANGED: "test" # $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
-  MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
-  MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m'
-
 jobs:
 - job: linux
   displayName: "on linux"
@@ -11,6 +6,9 @@ jobs:
     vmImage: "ubuntu-latest"
   timeoutInMinutes: 60
   variables:
+    SOURCE_CODE_CHANGED: "test" # $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
+    MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
+    MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m'
     os: Linux
     jdk: "1.11"
   steps:
@@ -33,6 +31,9 @@ jobs:
     vmImage: "macos-latest"
   timeoutInMinutes: 60
   variables:
+    SOURCE_CODE_CHANGED: "test" # $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
+    MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
+    MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m'
     os: macOS
     jdk: "1.11"
   steps:
@@ -44,6 +45,9 @@ jobs:
     vmImage: "windows-latest"
   timeoutInMinutes: 60
   variables:
+    SOURCE_CODE_CHANGED: "test" # $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
+    MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
+    MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m'
     os: Windows
     jdk: "1.11"
   steps:
@@ -55,6 +59,9 @@ jobs:
     vmImage: "ubuntu-latest"
   timeoutInMinutes: 60
   variables:
+    SOURCE_CODE_CHANGED: "test" # $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
+    MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
+    MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m'
     os: Linux
     jdk: "1.8"
   steps:
@@ -68,12 +75,10 @@ jobs:
     - Agent.Name -equals arm64-$(Build.BuildId)
   timeoutInMinutes: 60
   variables:
+    SOURCE_CODE_CHANGED: "test" # $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
+    MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
+    MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m'
     os: Linux
     jdk: "1.11"
   steps:
   - template: steps.yml
-
-
-
-            
-
