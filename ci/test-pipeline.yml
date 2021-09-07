@@ -51,15 +51,15 @@ stages:
             name: 'Display_Instance'
             displayName: 'Display Instance'
           - bash: |
-              echo "Starting agent... for pool arm64"
+              echo "Starting agent... for pool test-aws"
               az pipelines pool list
-              POOLID=$(az pipelines pool list | jq '.[]| select(.name == "arm64") | .id' -r)
+              POOLID=$(az pipelines pool list | jq '.[]| select(.name == "test-aws") | .id' -r)
               echo "poolid: $POOLID"
-              while [ "$(az pipelines agent list --pool-id $POOLID | jq '.[]| select(.name == "arm64-$(Build.BuildId)") | .enabled' -r)" != "true" ]
+              while [ "$(az pipelines agent list --pool-id $POOLID | jq '.[]| select(.name == "test-aws-$(Build.BuildId)") | .enabled' -r)" != "true" ]
               do
-                echo "Still waiting for agent arm64-$(Build.BuildId) ... "
+                echo "Still waiting for agent test-aws-$(Build.BuildId) ... "
                 echo "TEST"
-                az pipelines agent list --pool-id 10
+                az pipelines agent list --pool-id 11
                 sleep 3
               done
               echo "Agent found ..."
