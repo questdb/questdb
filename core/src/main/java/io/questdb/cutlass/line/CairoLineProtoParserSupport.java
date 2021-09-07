@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Numbers;
@@ -96,11 +97,11 @@ public class CairoLineProtoParserSupport {
                     row.putDate(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                     break;
                 case ColumnType.LONG256:
-                    if (value.charAt(0) == '0' && value.charAt(1) == 'x') {
-                        row.putLong256(columnIndex, value, 2, value.length() - 1);
-                    } else {
-                        throw BadCastException.INSTANCE;
+                    int limit = value.length() - 1;
+                    if (value.charAt(limit) != 'i') {
+                        limit++;
                     }
+                    row.putLong256(columnIndex, value, 2, limit);
                     break;
                 case ColumnType.TIMESTAMP:
                     row.putTimestamp(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
@@ -143,18 +144,21 @@ public class CairoLineProtoParserSupport {
     }
 
     public static int getValueType(CharSequence token) {
+        // method called for inbound ilp messages on each value.
+        // returning UNDEFINED makes the whole line be skipped.
+        // the goal of this method is to guess the potential type
+        // and then it will be parsed accordingly by 'putValue'.
         int len = token.length();
         if (len > 0) {
-            switch (token.charAt(len - 1)) {
+            char lastChar = token.charAt(len - 1); // see LineProtoSender.field methods
+            switch (lastChar) {
                 case 'i':
-                    if (len > 1) {
-                        if (token.charAt(1) == 'x') {
-                            return ColumnType.LONG256;
-                        }
-                        return ColumnType.LONG;
+                    if (len > 3 && token.charAt(0) == '0' && token.charAt(1) == 'x') {
+                        return ColumnType.LONG256;
                     }
-                    return ColumnType.CHAR;
+                    return len == 1 ? ColumnType.SYMBOL : ColumnType.LONG;
                 case 'e':
+                case 'E':
                     // tru(e)
                     //  fals(e)
                 case 't':
@@ -165,7 +169,11 @@ public class CairoLineProtoParserSupport {
                 case 'F':
                     // f
                     // F
-                    return ColumnType.BOOLEAN;
+                    if (len == 1) {
+                        return lastChar != 'e' ? ColumnType.BOOLEAN : ColumnType.SYMBOL;
+                    }
+                    return SqlKeywords.isTrueKeyword(token) || SqlKeywords.isFalseKeyword(token) ?
+                            ColumnType.BOOLEAN : ColumnType.SYMBOL;
                 case '"':
                     if (len < 2 || token.charAt(0) != '\"') {
                         LOG.error().$("incorrectly quoted string: ").$(token).$();
@@ -173,7 +181,13 @@ public class CairoLineProtoParserSupport {
                     }
                     return ColumnType.STRING;
                 default:
-                    return ColumnType.DOUBLE;
+                    if (lastChar >= '0' && lastChar <= '9') {
+                        if (len > 2 && token.charAt(0) == '0' && token.charAt(1) == 'x') {
+                            return ColumnType.LONG256;
+                        }
+                        return ColumnType.DOUBLE;
+                    }
+                    return ColumnType.SYMBOL;
             }
         }
         return ColumnType.UNDEFINED;
