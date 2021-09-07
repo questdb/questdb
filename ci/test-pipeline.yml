@@ -89,5 +89,3 @@ stages:
             name: check_changes
             displayName: 'Check changed files'
       - template: templates/jobs.yml
-        variables:
-          SOURCE_CODE_CHANGED: "test2_debug"
