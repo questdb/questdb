@@ -6,7 +6,7 @@ jobs:
     vmImage: "ubuntu-latest"
   timeoutInMinutes: 60
   variables:
-    SOURCE_CODE_CHANGED: "test" # $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
+    SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
     MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
     MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m'
     os: Linux
@@ -31,7 +31,7 @@ jobs:
     vmImage: "macos-latest"
   timeoutInMinutes: 60
   variables:
-    SOURCE_CODE_CHANGED: "test" # $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
+    SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
     MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
     MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m'
     os: macOS
@@ -45,7 +45,7 @@ jobs:
     vmImage: "windows-latest"
   timeoutInMinutes: 60
   variables:
-    SOURCE_CODE_CHANGED: "test" # $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
+    SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
     MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
     MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m'
     os: Windows
@@ -59,7 +59,7 @@ jobs:
     vmImage: "ubuntu-latest"
   timeoutInMinutes: 60
   variables:
-    SOURCE_CODE_CHANGED: "test" # $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
+    SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
     MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
     MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m'
     os: Linux
@@ -75,7 +75,7 @@ jobs:
     - Agent.Name -equals arm64-$(Build.BuildId)
   timeoutInMinutes: 60
   variables:
-    SOURCE_CODE_CHANGED: "test" # $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
+    SOURCE_CODE_CHANGED: "true" # $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
     MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
     MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m'
     os: Linux
