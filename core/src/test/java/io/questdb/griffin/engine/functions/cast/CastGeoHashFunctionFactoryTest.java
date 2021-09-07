@@ -103,7 +103,7 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
                 function = parseFunction(castExpr, metadata, functionParser);
                 Assert.assertTrue(castExpr, function.isConstant());
                 Assert.assertEquals(castExpr, b, GeoHashes.getBitsPrecision(function.getType()));
-                Assert.assertEquals(castExpr, fullGeohash >>> (geohashLen * 5 - b), function.getGeoHashLong(null));
+                Assert.assertEquals(castExpr, fullGeohash >>> (geohashLen * 5 - b), GeoHashes.getGeoLong(function.getType(), function, null));
             }
             if (function != null) { // just to remove the warning
                 assertGeoHashLongStrEquals(expectedGeohash, function);
@@ -214,7 +214,7 @@ public class CastGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
     private void assertGeoHashLongStrEquals(String expectedGeohash, Function function) {
         sink.clear();
         GeoHashes.toString(
-                function.getGeoHashLong(null),
+                GeoHashes.getGeoLong(function.getType(), function, null),
                 GeoHashes.getBitsPrecision(function.getType()) / 5,
                 sink);
         Assert.assertEquals(expectedGeohash, sink.toString());

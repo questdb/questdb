@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GeoHashFunction;
 
@@ -40,21 +41,26 @@ public class GeoHashConstant extends GeoHashFunction implements ConstantFunction
     }
 
     public byte getGeoHashByte(Record rec) {
+        assert GeoHashes.getBitsPrecision(type) < 8;
         return (byte)hash;
     }
 
     @Override
     public short getGeoHashShort(Record rec) {
+        assert GeoHashes.getBitsPrecision(type) >= 8 && GeoHashes.getBitsPrecision(type) < 16;
         return (short)hash;
     }
 
     @Override
     public int getGeoHashInt(Record rec) {
+        assert GeoHashes.getBitsPrecision(type) >= 16 && GeoHashes.getBitsPrecision(type) < 32;
         return (int)hash;
     }
 
     @Override
     public long getGeoHashLong(Record rec) {
+        assert GeoHashes.getBitsPrecision(type) >= 32;
         return hash;
     }
 }
+

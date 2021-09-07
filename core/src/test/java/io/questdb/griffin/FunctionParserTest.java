@@ -1536,16 +1536,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         try (Function f = parseFunction(expr, null, createFunctionParser())) {
             TestUtils.assertContains(f.getClass().getCanonicalName(), expectedFunctionClass);
             Assert.assertEquals(expectedType, f.getType());
-            switch (ColumnType.sizeOf(expectedType)) {
-                case 1:
-                    Assert.assertEquals(expectedValue, f.getGeoHashByte(null));
-                case 2:
-                    Assert.assertEquals(expectedValue, f.getGeoHashShort(null));
-                case 4:
-                    Assert.assertEquals(expectedValue, f.getGeoHashInt(null));
-                case 8:
-                    Assert.assertEquals(expectedValue, f.getGeoHashLong(null));
-            }
+            Assert.assertEquals(expectedValue, GeoHashes.getGeoLong(expectedType, f, null));
         }
     }
 
