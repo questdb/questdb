@@ -460,6 +460,22 @@ public final class TestUtils {
         assertEquals(expected, sink);
     }
 
+    public static CompiledQuery compileAlterTable(
+            SqlCompiler compiler,
+            CairoEngine engine,
+            String query,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+        AlterStatement alterStatement = cc.getAlterStatement();
+        if (alterStatement != null) {
+            try(TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), alterStatement.getTableName(), "alter table")) {
+                alterStatement.apply(writer);
+            }
+        }
+        return cc;
+    }
+
     public static void copyMimeTypes(String targetDir) throws IOException {
         try (InputStream stream = TestUtils.class.getResourceAsStream("/site/conf/mime.types")) {
             Assert.assertNotNull(stream);

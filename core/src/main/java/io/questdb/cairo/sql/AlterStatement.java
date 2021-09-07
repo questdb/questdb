@@ -22,23 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.cairo.sql;
 
-import io.questdb.cairo.TableReader;
-import org.junit.Assert;
-import org.junit.Test;
+import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.SqlException;
 
-public class TrickTableReloadTest extends AbstractGriffinTest {
-    @Test
-    public void testSymbolAddAndReaderReload() throws SqlException {
-        compiler.compile("create table x (a int, b int, ts timestamp) partition by DAY", sqlExecutionContext);
+public interface AlterStatement {
+    short DO_NOTHING = 1;
+    short ADD_COLUMN = 3;
+    short DROP_PARTITION = 4;
+    short ATTACH_PARTITION = 5;
+    short ADD_INDEX = 6;
+    short ADD_SYMBOL_CACHE = 7;
+    short REMOVE_SYMBOL_CACHE = 8;
+    short DROP_COLUMN = 9;
+    short RENAME_COLUMN = 10;
+    short SET_PARAM_MAX_UNCOMMITTED_ROWS = 11;
+    short SET_PARAM_COMMIT_LAG = 12;
 
-        engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing").close();
-        engine.releaseAllWriters();
-
-        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
-            compileAlterTable("alter table x add column y symbol", sqlExecutionContext);
-            Assert.assertTrue(reader.reload());
-        }
-    }
+    void apply(TableWriter tableWriter) throws SqlException;
+    CharSequence getTableName();
 }

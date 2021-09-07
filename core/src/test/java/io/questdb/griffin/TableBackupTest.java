@@ -45,6 +45,8 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.IOException;
 
+import static io.questdb.test.tools.TestUtils.compileAlterTable;
+
 public class TableBackupTest {
     private static final StringSink sink1 = new StringSink();
     private static final StringSink sink2 = new StringSink();
@@ -223,8 +225,8 @@ public class TableBackupTest {
                     " rnd_geohash(15) g2," +
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(2)) timestamp(ts)", mainSqlExecutionContext);
-            mainCompiler.compile("alter table tb1 add g4 geohash(30b)", mainSqlExecutionContext);
-            mainCompiler.compile("alter table tb1 add g8 geohash(32b)", mainSqlExecutionContext);
+            compileAlterTable(mainCompiler, mainEngine, "alter table tb1 add g4 geohash(30b)", mainSqlExecutionContext);
+            compileAlterTable(mainCompiler, mainEngine, "alter table tb1 add g8 geohash(32b)", mainSqlExecutionContext);
 
             mainCompiler.compile("insert into tb1 " +
                     " select " +

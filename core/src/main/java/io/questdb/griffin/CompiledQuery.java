@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.sql.AlterStatement;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
@@ -48,6 +49,8 @@ public interface CompiledQuery {
     InsertStatement getInsertStatement();
 
     TextLoader getTextLoader();
+
+    AlterStatement getAlterStatement();
 
     short getType();
 }

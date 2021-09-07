@@ -67,6 +67,7 @@ public class SqlCompiler implements Closeable {
     protected final CairoEngine engine;
     protected final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
     protected final CompiledQueryImpl compiledQuery = new CompiledQueryImpl();
+    protected final AlterTableImpl alterQuery;
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -108,6 +109,8 @@ public class SqlCompiler implements Closeable {
             }
         }
     };
+    private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
+    private LongList partitionList = new LongList();
 
     public SqlCompiler(CairoEngine engine) {
         this(engine, null);
@@ -133,6 +136,7 @@ public class SqlCompiler implements Closeable {
                                              FunctionFactory.class, FunctionFactory.class.getClassLoader()))
         );
         this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser);
+        this.alterQuery = new AlterTableImpl(configuration);
 
         // we have cyclical dependency here
         functionParser.setSqlCodeGenerator(codeGenerator);
@@ -865,7 +869,7 @@ public class SqlCompiler implements Closeable {
         return tok;
     }
 
-    private void alterSystemLockWriter(SqlExecutionContext executionContext) throws SqlException {
+    private CompiledQuery alterSystemLockWriter(SqlExecutionContext executionContext) throws SqlException {
         final int tableNamePosition = lexer.getPosition();
         CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
         tableExistsOrFail(tableNamePosition, tok, executionContext);
@@ -874,6 +878,7 @@ public class SqlCompiler implements Closeable {
             if (null != lockedReason) {
                 throw SqlException.$(tableNamePosition, "could not lock, busy [table=`").put(tok).put(", lockedReason=").put(lockedReason).put("`]");
             }
+            return compiledQuery.ofAlter(null);
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition)
                     .put(e.getFlyweightMessage())
@@ -881,12 +886,13 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void alterSystemUnlockWriter(SqlExecutionContext executionContext) throws SqlException {
+    private CompiledQuery alterSystemUnlockWriter(SqlExecutionContext executionContext) throws SqlException {
         final int tableNamePosition = lexer.getPosition();
         CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
         tableExistsOrFail(tableNamePosition, tok, executionContext);
         try {
             engine.unlockWriter(tok);
+            return compiledQuery.ofAlter(null);
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition)
                     .put(e.getFlyweightMessage())
@@ -900,38 +906,36 @@ public class SqlCompiler implements Closeable {
 
         if (SqlKeywords.isTableKeyword(tok)) {
             final int tableNamePosition = lexer.getPosition();
-
             tok = GenericLexer.unquote(expectToken(lexer, "table name"));
-
             tableExistsOrFail(tableNamePosition, tok, executionContext);
 
             CharSequence tableName = GenericLexer.immutableOf(tok);
-            try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), tableName, "alterTable")) {
-
+            try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName)) {
+                RecordMetadata tableMetadata = reader.getMetadata();
                 tok = expectToken(lexer, "'add', 'alter' or 'drop'");
 
                 if (SqlKeywords.isAddKeyword(tok)) {
-                    alterTableAddColumn(tableNamePosition, writer);
+                    return alterTableAddColumn(tableNamePosition, tableName, tableMetadata);
                 } else if (SqlKeywords.isDropKeyword(tok)) {
                     tok = expectToken(lexer, "'column' or 'partition'");
                     if (SqlKeywords.isColumnKeyword(tok)) {
-                        alterTableDropColumn(tableNamePosition, writer);
+                        return alterTableDropColumn(tableNamePosition, tableName, tableMetadata);
                     } else if (SqlKeywords.isPartitionKeyword(tok)) {
-                        alterTableDropOrAttachPartition(writer, PartitionAction.DROP, executionContext);
+                        return alterTableDropOrAttachPartition(reader, PartitionAction.DROP, executionContext);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                     }
                 } else if (SqlKeywords.isAttachKeyword(tok)) {
                     tok = expectToken(lexer, "'partition'");
                     if (SqlKeywords.isPartitionKeyword(tok)) {
-                        alterTableDropOrAttachPartition(writer, PartitionAction.ATTACH, executionContext);
+                        return alterTableDropOrAttachPartition(reader, PartitionAction.ATTACH, executionContext);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                     }
                 } else if (SqlKeywords.isRenameKeyword(tok)) {
                     tok = expectToken(lexer, "'column'");
                     if (SqlKeywords.isColumnKeyword(tok)) {
-                        alterTableRenameColumn(tableNamePosition, writer);
+                        return alterTableRenameColumn(tableNamePosition, tableName, tableMetadata);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' expected");
                     }
@@ -944,12 +948,12 @@ public class SqlCompiler implements Closeable {
                         tok = expectToken(lexer, "'add index' or 'cache' or 'nocache'");
                         if (SqlKeywords.isAddKeyword(tok)) {
                             expectKeyword(lexer, "index");
-                            alterTableColumnAddIndex(tableNamePosition, columnNameNamePosition, columnName, writer);
+                            return alterTableColumnAddIndex(tableNamePosition, tableName, columnNameNamePosition, columnName, tableMetadata);
                         } else {
                             if (SqlKeywords.isCacheKeyword(tok)) {
-                                alterTableColumnCacheFlag(tableNamePosition, columnName, writer, true);
+                                return alterTableColumnCacheFlag(tableNamePosition, tableName, columnName, tableMetadata, true);
                             } else if (SqlKeywords.isNoCacheKeyword(tok)) {
-                                alterTableColumnCacheFlag(tableNamePosition, columnName, writer, false);
+                                return alterTableColumnCacheFlag(tableNamePosition, tableName, columnName, tableMetadata, false);
                             } else {
                                 throw SqlException.$(lexer.lastTokenPosition(), "'cache' or 'nocache' expected");
                             }
@@ -967,7 +971,7 @@ public class SqlCompiler implements Closeable {
                         tok = expectToken(lexer, "'='");
                         if (tok.length() == 1 && tok.charAt(0) == '=') {
                             CharSequence value = GenericLexer.immutableOf(SqlUtil.fetchNext(lexer));
-                            alterTableSetParam(paramName, value, paramNameNamePosition, writer);
+                            return alterTableSetParam(paramName, value, paramNameNamePosition, tableName);
                         } else {
                             throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
                         }
@@ -988,13 +992,17 @@ public class SqlCompiler implements Closeable {
                 tok = expectToken(lexer, "'writer'");
 
                 if (SqlKeywords.isWriterKeyword(tok)) {
-                    alterSystemLockWriter(executionContext);
+                    return alterSystemLockWriter(executionContext);
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'writer' expected");
                 }
             } else if (SqlKeywords.isUnlockKeyword(tok)) {
                 tok = expectToken(lexer, "'writer'");
 
                 if (SqlKeywords.isWriterKeyword(tok)) {
-                    alterSystemUnlockWriter(executionContext);
+                    return alterSystemUnlockWriter(executionContext);
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'writer' expected");
                 }
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), "'lock' or 'unlock' expected");
@@ -1002,10 +1010,9 @@ public class SqlCompiler implements Closeable {
         } else {
             throw SqlException.$(lexer.lastTokenPosition(), "'table' or 'system' expected");
         }
-        return compiledQuery.ofAlter();
     }
 
-    private void alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, TableWriter writer) throws SqlException {
+    private CompiledQuery alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, CharSequence tableName) throws SqlException {
         if (isMaxUncommittedRowsParam(paramName)) {
             int maxUncommittedRows;
             try {
@@ -1016,19 +1023,19 @@ public class SqlCompiler implements Closeable {
             if (maxUncommittedRows < 0) {
                 throw SqlException.$(paramNameNamePosition, "maxUncommittedRows must be non negative");
             }
-            writer.setMetaMaxUncommittedRows(maxUncommittedRows);
+            return compiledQuery.ofAlter(alterQuery.ofSetParamUncommittedRows(tableName, maxUncommittedRows));
         } else if (isCommitLag(paramName)) {
             long commitLag = SqlUtil.expectMicros(value, paramNameNamePosition);
             if (commitLag < 0) {
                 throw SqlException.$(paramNameNamePosition, "commitLag must be non negative");
             }
-            writer.setMetaCommitLag(commitLag);
+            return compiledQuery.ofAlter(alterQuery.ofSetParamCommitLag(tableName, commitLag));
         } else {
             throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(paramName).put('\'');
         }
     }
 
-    private void alterTableAddColumn(int tableNamePosition, TableWriter writer) throws SqlException {
+    private CompiledQuery alterTableAddColumn(int tableNamePosition, CharSequence tableName, RecordMetadata tableMetadata) throws SqlException {
         // add columns to table
 
         CharSequence tok = SqlUtil.fetchNext(lexer);
@@ -1037,180 +1044,176 @@ public class SqlCompiler implements Closeable {
             lexer.unparse();
         }
 
-        do {
-            tok = expectToken(lexer, "'column' or column name");
+        tok = expectToken(lexer, "'column' or column name");
 
-            int index = writer.getMetadata().getColumnIndexQuiet(tok);
-            if (index != -1) {
-                throw SqlException.$(lexer.lastTokenPosition(), "column '").put(tok).put("' already exists");
-            }
+        int index = tableMetadata.getColumnIndexQuiet(tok);
+        if (index != -1) {
+            throw SqlException.$(lexer.lastTokenPosition(), "column '").put(tok).put("' already exists");
+        }
 
-            CharSequence columnName = GenericLexer.immutableOf(GenericLexer.unquote(tok));
+        CharSequence columnName = GenericLexer.immutableOf(GenericLexer.unquote(tok));
 
-            if (!TableUtils.isValidColumnName(columnName)) {
-                throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
-            }
+        if (!TableUtils.isValidColumnName(columnName)) {
+            throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
+        }
 
-            tok = expectToken(lexer, "column type");
+        tok = expectToken(lexer, "column type");
 
-            int type = ColumnType.tagOf(tok);
-            if (type == -1) {
-                throw SqlException.$(lexer.lastTokenPosition(), "invalid type");
-            }
+        int type = ColumnType.tagOf(tok);
+        if (type == -1) {
+            throw SqlException.$(lexer.lastTokenPosition(), "invalid type");
+        }
 
-            if (ColumnType.isGeoHash(type)) {
-                tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || tok.charAt(0) != '(') {
-                    throw SqlException.position(lexer.getPosition()).put("missing GEOHASH precision");
-                }
-
-                tok = SqlUtil.fetchNext(lexer);
-                if (tok != null && tok.charAt(0) != ')') {
-                    int geosizeBits = SqlParser.parseGeoHashSize(lexer.lastTokenPosition(), 0, tok);
-                    tok = SqlUtil.fetchNext(lexer);
-                    if (tok == null || tok.charAt(0) != ')') {
-                        if (tok != null) {
-                            throw SqlException.position(lexer.lastTokenPosition())
-                                    .put("invalid GEOHASH type literal, expected ')'")
-                                    .put(" found='").put(tok.charAt(0)).put("'");
-                        }
-                        throw SqlException.position(lexer.getPosition())
-                                .put("invalid GEOHASH type literal, expected ')'");
-                    }
-                    type = ColumnType.geohashWithPrecision(geosizeBits);
-                } else {
-                    throw SqlException.position(lexer.lastTokenPosition())
-                            .put("missing GEOHASH precision");
-                }
+        if (ColumnType.isGeoHash(type)) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || tok.charAt(0) != '(') {
+                throw SqlException.position(lexer.getPosition()).put("missing GEOHASH precision");
             }
 
             tok = SqlUtil.fetchNext(lexer);
-            final int indexValueBlockCapacity;
-            final boolean cache;
-            int symbolCapacity;
-            final boolean indexed;
-
-            if (ColumnType.isSymbol(type) && tok != null && !Chars.equals(tok, ',')) {
-
-                if (isCapacityKeyword(tok)) {
-                    tok = expectToken(lexer, "symbol capacity");
-
-                    final boolean negative;
-                    final int errorPos = lexer.lastTokenPosition();
-                    if (Chars.equals(tok, '-')) {
-                        negative = true;
-                        tok = expectToken(lexer, "symbol capacity");
-                    } else {
-                        negative = false;
+            if (tok != null && tok.charAt(0) != ')') {
+                int geosizeBits = SqlParser.parseGeoHashSize(lexer.lastTokenPosition(), 0, tok);
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || tok.charAt(0) != ')') {
+                    if (tok != null) {
+                        throw SqlException.position(lexer.lastTokenPosition())
+                                .put("invalid GEOHASH type literal, expected ')'")
+                                .put(" found='").put(tok.charAt(0)).put("'");
                     }
-
-                    try {
-                        symbolCapacity = Numbers.parseInt(tok);
-                    } catch (NumericException e) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
-                    }
-
-                    if (negative) {
-                        symbolCapacity = -symbolCapacity;
-                    }
-
-                    TableUtils.validateSymbolCapacity(errorPos, symbolCapacity);
-
-                    tok = SqlUtil.fetchNext(lexer);
-                } else {
-                    symbolCapacity = configuration.getDefaultSymbolCapacity();
+                    throw SqlException.position(lexer.getPosition())
+                            .put("invalid GEOHASH type literal, expected ')'");
                 }
-
-
-                if (Chars.equalsLowerCaseAsciiNc(tok, "cache")) {
-                    cache = true;
-                    tok = SqlUtil.fetchNext(lexer);
-                } else if (Chars.equalsLowerCaseAsciiNc(tok, "nocache")) {
-                    cache = false;
-                    tok = SqlUtil.fetchNext(lexer);
-                } else {
-                    cache = configuration.getDefaultSymbolCacheFlag();
-                }
-
-                TableUtils.validateSymbolCapacityCached(cache, symbolCapacity, lexer.lastTokenPosition());
-
-                indexed = Chars.equalsLowerCaseAsciiNc(tok, "index");
-                if (indexed) {
-                    tok = SqlUtil.fetchNext(lexer);
-                }
-
-                if (Chars.equalsLowerCaseAsciiNc(tok, "capacity")) {
-                    tok = expectToken(lexer, "symbol index capacity");
-
-                    try {
-                        indexValueBlockCapacity = Numbers.parseInt(tok);
-                    } catch (NumericException e) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
-                    }
-                    tok = SqlUtil.fetchNext(lexer);
-                } else {
-                    indexValueBlockCapacity = configuration.getIndexValueBlockSize();
-                }
+                type = ColumnType.geohashWithPrecision(geosizeBits);
             } else {
-
-                //ignoring `NULL` and `NOT NULL`
-                if (tok != null && SqlKeywords.isNotKeyword(tok)) {
-                    tok = SqlUtil.fetchNext(lexer);
-                }
-
-                if (tok != null && SqlKeywords.isNullKeyword(tok)) {
-                    tok = SqlUtil.fetchNext(lexer);
-                }
-
-                cache = configuration.getDefaultSymbolCacheFlag();
-                indexValueBlockCapacity = configuration.getIndexValueBlockSize();
-                symbolCapacity = configuration.getDefaultSymbolCapacity();
-                indexed = false;
+                throw SqlException.position(lexer.lastTokenPosition())
+                        .put("missing GEOHASH precision");
             }
-
-            try {
-                writer.addColumn(
-                        columnName,
-                        type,
-                        Numbers.ceilPow2(symbolCapacity),
-                        cache, indexed,
-                        Numbers.ceilPow2(indexValueBlockCapacity),
-                        false
-                );
-            } catch (CairoException e) {
-                LOG.error().$("Cannot add column '").$(writer.getTableName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, "could add column [error=").put(e.getFlyweightMessage())
-                        .put(", errno=").put(e.getErrno())
-                        .put(']');
-            }
-
-            if (tok == null) {
-                break;
-            }
-
-            if (!Chars.equals(tok, ',')) {
-                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
-            }
-
-        } while (true);
-    }
-
-    private void alterTableColumnAddIndex(int tableNamePosition, int columnNamePosition, CharSequence columnName, TableWriter w) throws SqlException {
-        try {
-            if (w.getMetadata().getColumnIndexQuiet(columnName) == -1) {
-                throw SqlException.invalidColumn(columnNamePosition, columnName);
-            }
-            w.addIndex(columnName, configuration.getIndexValueBlockSize());
-        } catch (CairoException e) {
-            throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage())
-                    .put("[errno=").put(e.getErrno()).put(']');
         }
+
+        tok = SqlUtil.fetchNext(lexer);
+        final int indexValueBlockCapacity;
+        final boolean cache;
+        int symbolCapacity;
+        final boolean indexed;
+
+        if (ColumnType.isSymbol(type) && tok != null && !Chars.equals(tok, ',')) {
+
+            if (isCapacityKeyword(tok)) {
+                tok = expectToken(lexer, "symbol capacity");
+
+                final boolean negative;
+                final int errorPos = lexer.lastTokenPosition();
+                if (Chars.equals(tok, '-')) {
+                    negative = true;
+                    tok = expectToken(lexer, "symbol capacity");
+                } else {
+                    negative = false;
+                }
+
+                try {
+                    symbolCapacity = Numbers.parseInt(tok);
+                } catch (NumericException e) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
+                }
+
+                if (negative) {
+                    symbolCapacity = -symbolCapacity;
+                }
+
+                TableUtils.validateSymbolCapacity(errorPos, symbolCapacity);
+
+                tok = SqlUtil.fetchNext(lexer);
+            } else {
+                symbolCapacity = configuration.getDefaultSymbolCapacity();
+            }
+
+
+            if (Chars.equalsLowerCaseAsciiNc(tok, "cache")) {
+                cache = true;
+                tok = SqlUtil.fetchNext(lexer);
+            } else if (Chars.equalsLowerCaseAsciiNc(tok, "nocache")) {
+                cache = false;
+                tok = SqlUtil.fetchNext(lexer);
+            } else {
+                cache = configuration.getDefaultSymbolCacheFlag();
+            }
+
+            TableUtils.validateSymbolCapacityCached(cache, symbolCapacity, lexer.lastTokenPosition());
+
+            indexed = Chars.equalsLowerCaseAsciiNc(tok, "index");
+            if (indexed) {
+                tok = SqlUtil.fetchNext(lexer);
+            }
+
+            if (Chars.equalsLowerCaseAsciiNc(tok, "capacity")) {
+                tok = expectToken(lexer, "symbol index capacity");
+
+                try {
+                    indexValueBlockCapacity = Numbers.parseInt(tok);
+                } catch (NumericException e) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
+                }
+                tok = SqlUtil.fetchNext(lexer);
+            } else {
+                indexValueBlockCapacity = configuration.getIndexValueBlockSize();
+            }
+        } else {
+
+            //ignoring `NULL` and `NOT NULL`
+            if (tok != null && SqlKeywords.isNotKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+            }
+
+            if (tok != null && SqlKeywords.isNullKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+            }
+
+            cache = configuration.getDefaultSymbolCacheFlag();
+            indexValueBlockCapacity = configuration.getIndexValueBlockSize();
+            symbolCapacity = configuration.getDefaultSymbolCapacity();
+            indexed = false;
+        }
+
+        alterQuery.ofAddColumn(
+                tableNamePosition,
+                tableName,
+                columnName,
+                type,
+                Numbers.ceilPow2(symbolCapacity),
+                cache,
+                indexed,
+                Numbers.ceilPow2(indexValueBlockCapacity)
+        );
+
+        if (tok != null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'EOF' expected");
+        }
+
+        return compiledQuery.ofAlter(alterQuery);
     }
 
-    private void alterTableColumnCacheFlag(int tableNamePosition, CharSequence columnName, TableWriter writer, boolean cache) throws SqlException {
-        try {
-            RecordMetadata metadata = writer.getMetadata();
+    private CompiledQuery alterTableColumnAddIndex(
+            int tableNamePosition,
+            CharSequence tableName,
+            int columnNamePosition,
+            CharSequence columnName,
+            RecordMetadata metadata
+    ) throws SqlException {
 
+        if (metadata.getColumnIndexQuiet(columnName) == -1) {
+            throw SqlException.invalidColumn(columnNamePosition, columnName);
+        }
+        return compiledQuery.ofAlter(alterQuery.ofAddIndex(tableNamePosition, tableName, columnName));
+    }
+
+    private CompiledQuery alterTableColumnCacheFlag(
+            int tableNamePosition,
+            CharSequence tableName,
+            CharSequence columnName,
+            RecordMetadata metadata,
+            boolean cache
+    ) throws SqlException {
+        try {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex == -1) {
                 throw SqlException.invalidColumn(lexer.lastTokenPosition(), columnName);
@@ -1220,58 +1223,65 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), "Invalid column type - Column should be of type symbol");
             }
 
-            writer.changeCacheFlag(columnIndex, cache);
+            if (metadata.isSymbolTableStatic(columnIndex) == cache) {
+                // Nothing to do.
+                return compiledQuery.ofAlter(null);
+            }
+
+            return cache ? compiledQuery.ofAlter(alterQuery.ofCacheSymbol(tableNamePosition, tableName, columnName))
+                    :  compiledQuery.ofAlter(alterQuery.ofRemoveCacheSymbol(tableNamePosition, tableName, columnName));
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage())
                     .put("[errno=").put(e.getErrno()).put(']');
         }
     }
 
-    private void alterTableDropColumn(int tableNamePosition, TableWriter writer) throws SqlException {
-        RecordMetadata metadata = writer.getMetadata();
+    private CompiledQuery alterTableDropColumn(int tableNamePosition, CharSequence tableName, RecordMetadata metadata) throws SqlException {
+        CharSequence tok = GenericLexer.unquote(expectToken(lexer, "column name"));
 
-        do {
-            CharSequence tok = GenericLexer.unquote(expectToken(lexer, "column name"));
+        if (metadata.getColumnIndexQuiet(tok) == -1) {
+            throw SqlException.invalidColumn(lexer.lastTokenPosition(), tok);
+        }
 
-            if (metadata.getColumnIndexQuiet(tok) == -1) {
-                throw SqlException.invalidColumn(lexer.lastTokenPosition(), tok);
-            }
+        CharSequence columnName = tok;
+        tok = SqlUtil.fetchNext(lexer);
 
-            try {
-                writer.removeColumn(tok);
-            } catch (CairoException e) {
-                LOG.error().$("cannot drop column '").$(writer.getTableName()).$('.').$(tok).$("'. Exception: ").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, "cannot drop column. Try again later [errno=").put(e.getErrno()).put(']');
-            }
-
-            tok = SqlUtil.fetchNext(lexer);
-
-            if (tok == null) {
-                break;
-            }
-
-            if (!Chars.equals(tok, ',')) {
-                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
-            }
-        } while (true);
+        if (tok != null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "EOF expected");
+        }
+        return compiledQuery.ofAlter(alterQuery.ofDropColumn(tableNamePosition, tableName, columnName));
     }
 
-    private void alterTableDropOrAttachPartition(TableWriter writer, int action, SqlExecutionContext executionContext)
+    private CompiledQuery alterTableDropOrAttachPartition(TableReader reader, int action, SqlExecutionContext executionContext)
             throws SqlException {
         final int pos = lexer.lastTokenPosition();
+        if (reader.getMetadata().getPartitionBy() == PartitionBy.NONE) {
+            throw SqlException.$(pos, "table is not partitioned");
+        }
+
+        CharSequence tableName = reader.getTableName();
         final CharSequence tok = expectToken(lexer, "'list' or 'where'");
         if (SqlKeywords.isListKeyword(tok)) {
-            alterTableDropOrAttachPartitionByList(writer, action);
+            return alterTableDropOrAttachPartitionByList(reader, pos, action);
         } else if (SqlKeywords.isWhereKeyword(tok)) {
+            if (action != PartitionAction.DROP) {
+                throw SqlException.$(pos, "WHERE clause can only be used with DROP PARTITION command");
+            }
             ExpressionNode expr = parser.expr(lexer, (QueryModel) null);
-            String designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
+            String designatedTimestampColumnName = null;
+            int tsIndex = reader.getMetadata().getTimestampIndex();
+            if (tsIndex >= 0) {
+                designatedTimestampColumnName = reader.getMetadata().getColumnName(tsIndex);
+            }
             if (designatedTimestampColumnName != null) {
                 GenericRecordMetadata metadata = new GenericRecordMetadata();
                 metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP, null));
                 Function function = functionParser.parseFunction(expr, metadata, currentExecutionContext);
                 if (function != null && ColumnType.isBoolean(function.getType())) {
                     function.init(null, executionContext);
-                    writer.removePartition(function, pos);
+                    partitionList.clear();
+                    filterPartitions(function, reader, partitionList);
+                    return compiledQuery.ofAlter(alterQuery.ofDropPartition(pos, tableName, partitionList));
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
                 }
@@ -1283,7 +1293,21 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void alterTableDropOrAttachPartitionByList(TableWriter writer, int action) throws SqlException {
+    public void filterPartitions(Function function, TableReader reader, LongList outList) throws SqlException {
+        // Iterate partitions in descending order so if folders are missing on disk
+        // removePartition does not fail to determine next minTimestamp
+        for (int i = reader.getPartitionCount() - 1; i > -1; i--) {
+            long partitionTimestamp = reader.getPartitionTimestampByIndex(i);
+            partitionFunctionRec.setTimestamp(partitionTimestamp);
+            if (function.getBool(partitionFunctionRec)) {
+                outList.add(partitionTimestamp);
+            }
+        }
+    }
+
+    private CompiledQuery alterTableDropOrAttachPartitionByList(TableReader reader, int pos, int action) throws SqlException {
+        partitionList.clear();
+        CharSequence tableName = reader.getTableName();
         do {
             CharSequence tok = expectToken(lexer, "partition name");
             if (Chars.equals(tok, ',')) {
@@ -1293,39 +1317,11 @@ public class SqlCompiler implements Closeable {
 
             final long timestamp;
             try {
-                timestamp = writer.partitionNameToTimestamp(unquoted);
-            } catch (CairoException e) {
-                throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage())
-                        .put("[errno=").put(e.getErrno()).put(']');
+                timestamp = IntervalUtils.parseFloorPartialDate(unquoted);
+            } catch (NumericException e) {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid timestamp format");
             }
-
-            switch (action) {
-                case PartitionAction.DROP:
-                    if (!writer.removePartition(timestamp)) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "could not remove partition '").put(unquoted).put('\'');
-                    }
-                    break;
-                case PartitionAction.ATTACH:
-                    int statusCode = writer.attachPartition(timestamp);
-                    switch (statusCode) {
-                        case StatusCode.OK:
-                            break;
-                        case StatusCode.CANNOT_ATTACH_MISSING_PARTITION:
-                            throw SqlException.$(lexer.lastTokenPosition(), "attach partition failed, folder '").put(unquoted).put("' does not exist");
-                        case StatusCode.TABLE_HAS_SYMBOLS:
-                            throw SqlException.$(lexer.lastTokenPosition(), "attaching partitions to tables with symbol columns not supported");
-                        case StatusCode.PARTITION_EMPTY:
-                            throw SqlException.$(lexer.lastTokenPosition(), "failed to attach partition '").put(unquoted).put("', data does not correspond to the partition folder or partition is empty");
-                        case StatusCode.PARTITION_ALREADY_ATTACHED:
-                            throw SqlException.$(lexer.lastTokenPosition(), "failed to attach partition '").put(unquoted).put("', partition already attached to the table");
-                        default:
-                            throw SqlException.$(lexer.lastTokenPosition(), "attach partition '").put(unquoted).put("', failed with error ").put(statusCode);
-                    }
-                    break;
-                default:
-                    throw SqlException.$(lexer.lastTokenPosition(), "unsupported partition action");
-            }
-
+            partitionList.add(timestamp);
             tok = SqlUtil.fetchNext(lexer);
 
             if (tok == null || Chars.equals(tok, ';')) {
@@ -1336,54 +1332,50 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
         } while (true);
+        if (action == PartitionAction.DROP) {
+            return compiledQuery.ofAlter(alterQuery.ofDropPartition(pos, tableName, partitionList));
+        } else if (action == PartitionAction.ATTACH) {
+            return compiledQuery.ofAlter(alterQuery.ofAttachPartition(pos, tableName, partitionList));
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "unsupported partition action");
+        }
     }
 
-    private void alterTableRenameColumn(int tableNamePosition, TableWriter writer) throws SqlException {
-        RecordMetadata metadata = writer.getMetadata();
+    private CompiledQuery alterTableRenameColumn(int tableNamePosition, CharSequence tableName, RecordMetadata metadata) throws SqlException {
+        CharSequence tok = GenericLexer.unquote(expectToken(lexer, "current column name"));
+        int columnIndex = metadata.getColumnIndexQuiet(tok);
+        if (columnIndex == -1) {
+            throw SqlException.invalidColumn(lexer.lastTokenPosition(), tok);
+        }
+        CharSequence existingName = GenericLexer.immutableOf(tok);
 
-        do {
-            CharSequence tok = GenericLexer.unquote(expectToken(lexer, "current column name"));
-            if (metadata.getColumnIndexQuiet(tok) == -1) {
-                throw SqlException.invalidColumn(lexer.lastTokenPosition(), tok);
-            }
-            CharSequence existingName = GenericLexer.immutableOf(tok);
+        tok = expectToken(lexer, "'to' expected");
+        if (!SqlKeywords.isToKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'to' expected'");
+        }
 
-            tok = expectToken(lexer, "'to' expected");
-            if (!SqlKeywords.isToKeyword(tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "'to' expected'");
-            }
+        tok = GenericLexer.unquote(expectToken(lexer, "new column name"));
+        if (Chars.equals(existingName, tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "new column name is identical to existing name");
+        }
 
-            tok = GenericLexer.unquote(expectToken(lexer, "new column name"));
-            if (Chars.equals(existingName, tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "new column name is identical to existing name");
-            }
+        if (metadata.getColumnIndexQuiet(tok) > -1) {
+            throw SqlException.$(lexer.lastTokenPosition(), " column already exists");
+        }
 
-            if (metadata.getColumnIndexQuiet(tok) > -1) {
-                throw SqlException.$(lexer.lastTokenPosition(), " column already exists");
-            }
+        if (!TableUtils.isValidColumnName(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
+        }
 
-            if (!TableUtils.isValidColumnName(tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
-            }
+        CharSequence newName = GenericLexer.immutableOf(tok);
+        alterQuery.ofRenameColumn(tableNamePosition, tableName, existingName, newName);
 
-            CharSequence newName = GenericLexer.immutableOf(tok);
-            try {
-                writer.renameColumn(existingName, newName);
-            } catch (CairoException e) {
-                LOG.error().$("cannot rename column '").$(writer.getTableName()).$('.').$(tok).$("'. Exception: ").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, "cannot rename column. Try again later [errno=").put(e.getErrno()).put(']');
-            }
+        tok = SqlUtil.fetchNext(lexer);
 
-            tok = SqlUtil.fetchNext(lexer);
-
-            if (tok == null) {
-                break;
-            }
-
-            if (!Chars.equals(tok, ',')) {
-                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
-            }
-        } while (true);
+        if (tok != null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "EOF expected");
+        }
+        return compiledQuery.ofAlter(alterQuery);
     }
 
     private void backupTable(@NotNull CharSequence tableName, @NotNull SqlExecutionContext executionContext) {
@@ -2674,5 +2666,18 @@ public class SqlCompiler implements Closeable {
         sqlControlSymbols.add("--");
         sqlControlSymbols.add("[");
         sqlControlSymbols.add("]");
+    }
+
+    private static class TimestampValueRecord implements Record {
+        private long value;
+
+        @Override
+        public long getTimestamp(int col) {
+            return value;
+        }
+
+        public void setTimestamp(long value) {
+            this.value = value;
+        }
     }
 }

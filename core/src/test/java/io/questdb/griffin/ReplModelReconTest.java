@@ -478,7 +478,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
 
             compiler.compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
 
-            compiler.compile("alter table x add column z double", sqlExecutionContext);
+            compileAlterTable("alter table x add column z double", sqlExecutionContext);
 
             try (
                     TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
@@ -724,12 +724,12 @@ public class ReplModelReconTest extends AbstractGriffinTest {
 
             compiler.compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
 
-            compiler.compile("alter table x drop column o", sqlExecutionContext);
+            compileAlterTable("alter table x drop column o", sqlExecutionContext);
 
             engine.releaseAllWriters();
             engine.releaseAllReaders();
 
-            compiler.compile("alter table x add column o long256", sqlExecutionContext);
+            compileAlterTable("alter table x add column o long256", sqlExecutionContext);
 
             try (
                     TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
@@ -777,7 +777,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
 
             compiler.compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
 
-            compiler.compile("alter table x drop column j", sqlExecutionContext);
+            compileAlterTable("alter table x drop column j", sqlExecutionContext);
 
             try (
                     TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
@@ -942,7 +942,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
 
         compiler.compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
 
-        compiler.compile("alter table x add column z double", sqlExecutionContext);
+        compileAlterTable("alter table x add column z double", sqlExecutionContext);
 
         compiler.compile("insert into x " +
                         "select" +

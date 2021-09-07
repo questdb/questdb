@@ -24,12 +24,15 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -274,6 +277,10 @@ public class TableReader implements Closeable, SymbolTableSource {
             return (-end - 2) / PARTITIONS_SLOT_SIZE;
         }
         return end / PARTITIONS_SLOT_SIZE;
+    }
+
+    public long getPartitionTimestampByIndex(int partitionIndex) {
+        return txFile.getPartitionTimestamp(partitionIndex);
     }
 
     public int getPartitionedBy() {
@@ -1387,5 +1394,4 @@ public class TableReader implements Closeable, SymbolTableSource {
         BitmapIndexReader forwardReader;
         long top;
     }
-
 }

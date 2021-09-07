@@ -164,7 +164,7 @@ public class SecurityTest extends AbstractGriffinTest {
             assertQuery("cust_id\tccy\tbalance\n1\tEUR\t140.6\n", "select * from balances", null, true, true);
 
             try {
-                compiler.compile("alter table balances add column newcol int", readOnlyExecutionContext);
+                compileAlterTable("alter table balances add column newcol int", readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));

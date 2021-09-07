@@ -1539,12 +1539,18 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             switch (ColumnType.sizeOf(expectedType)) {
                 case 1:
                     Assert.assertEquals(expectedValue, f.getGeoHashByte(null));
+                    break;
                 case 2:
                     Assert.assertEquals(expectedValue, f.getGeoHashShort(null));
+                    break;
                 case 4:
                     Assert.assertEquals(expectedValue, f.getGeoHashInt(null));
+                    break;
                 case 8:
                     Assert.assertEquals(expectedValue, f.getGeoHashLong(null));
+                    break;
+                default:
+                    Assert.fail("invalid type " + expectedType);
             }
         }
     }

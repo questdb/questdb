@@ -60,7 +60,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
                         }
                     }
 
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x alter column ik add index", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, compileAlterTable("alter table x alter column ik add index", sqlExecutionContext).getType());
 
                     try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                         Assert.assertNotNull(reader.getBitmapIndexReader(0, reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD));
@@ -108,14 +108,13 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
 
                 startBarrier.await();
                 try {
-                    compiler.compile("alter table x alter column ik add index", sqlExecutionContext);
+                    compileAlterTable("alter table x alter column ik add index", sqlExecutionContext);
                     Assert.fail();
                 } finally {
                     haltLatch.countDown();
                 }
-            } catch (SqlException e) {
-                Assert.assertEquals(12, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table 'x' could not be altered: [0]: table busy");
+            } catch (EntryUnavailableException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table busy");
             }
             Assert.assertTrue(allHaltLatch.await(2, TimeUnit.SECONDS));
         });

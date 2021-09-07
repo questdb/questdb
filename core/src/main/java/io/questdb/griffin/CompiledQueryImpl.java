@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.sql.AlterStatement;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
@@ -32,6 +33,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     private RecordCursorFactory recordCursorFactory;
     private InsertStatement insertStatement;
     private TextLoader textLoader;
+    private AlterStatement alterStatement;
     private short type;
 
     @Override
@@ -47,6 +49,11 @@ public class CompiledQueryImpl implements CompiledQuery {
     @Override
     public TextLoader getTextLoader() {
         return textLoader;
+    }
+
+    @Override
+    public AlterStatement getAlterStatement() {
+        return alterStatement;
     }
 
     @Override
@@ -68,8 +75,10 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
-    CompiledQuery ofAlter() {
-        return of(ALTER);
+    CompiledQuery ofAlter(AlterStatement statement) {
+        of(ALTER);
+        alterStatement = statement;
+        return this;
     }
 
     CompiledQuery ofCopyLocal() {

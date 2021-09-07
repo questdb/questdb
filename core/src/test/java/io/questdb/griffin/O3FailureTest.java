@@ -47,6 +47,8 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.test.tools.TestUtils.compileAlterTable;
+
 public class O3FailureTest extends AbstractO3Test {
 
     private final static AtomicInteger counter = new AtomicInteger(0);
@@ -1431,19 +1433,19 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext);
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v double", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v1 float", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v2 int", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v3 byte", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v4 short", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v5 boolean", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v6 date", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v7 timestamp", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v8 symbol", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v10 char", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v11 string", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v12 binary", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
                 "insert into x " +
@@ -1569,19 +1571,19 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext);
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v double", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v1 float", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v2 int", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v3 byte", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v4 short", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v5 boolean", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v6 date", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v7 timestamp", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v8 symbol", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v10 char", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v11 string", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v12 binary", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
                 "insert into x " +
@@ -1705,19 +1707,19 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext);
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v double", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v1 float", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v2 int", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v3 byte", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v4 short", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v5 boolean", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v6 date", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v7 timestamp", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v8 symbol", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v10 char", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v11 string", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v12 binary", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
                 "insert into x " +
@@ -1941,19 +1943,19 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext
         );
 
-        compiler.compile("alter table x add column v double", executionContext);
-        compiler.compile("alter table x add column v1 float", executionContext);
-        compiler.compile("alter table x add column v2 int", executionContext);
-        compiler.compile("alter table x add column v3 byte", executionContext);
-        compiler.compile("alter table x add column v4 short", executionContext);
-        compiler.compile("alter table x add column v5 boolean", executionContext);
-        compiler.compile("alter table x add column v6 date", executionContext);
-        compiler.compile("alter table x add column v7 timestamp", executionContext);
-        compiler.compile("alter table x add column v8 symbol", executionContext);
-        compiler.compile("alter table x add column v10 char", executionContext);
-        compiler.compile("alter table x add column v11 string", executionContext);
-        compiler.compile("alter table x add column v12 binary", executionContext);
-        compiler.compile("alter table x add column v9 long", executionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v double", executionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v1 float", executionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v2 int", executionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v3 byte", executionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v4 short", executionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v5 boolean", executionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v6 date", executionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v7 timestamp", executionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v8 symbol", executionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v10 char", executionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v11 string", executionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v12 binary", executionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v9 long", executionContext);
 
         compiler.compile(
                 "create table append as (" +
@@ -2043,19 +2045,19 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext);
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table x add column v8 symbol index", sqlExecutionContext);
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v double", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v1 float", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v2 int", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v3 byte", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v4 short", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v5 boolean", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v6 date", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v7 timestamp", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v8 symbol index", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v10 char", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v11 string", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v12 binary", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
                 "create table append as (" +
@@ -2144,19 +2146,19 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext);
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v double", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v1 float", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v2 int", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v3 byte", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v4 short", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v5 boolean", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v6 date", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v7 timestamp", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v8 symbol", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v10 char", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v11 string", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v12 binary", sqlExecutionContext);
+        compileAlterTable(compiler, engine, "alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
                 "insert into x " +

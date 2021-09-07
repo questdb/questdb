@@ -1119,6 +1119,24 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         );
     }
 
+    @NotNull
+    protected CompiledQuery compileAlterTable(String query) throws SqlException {
+        return compileAlterTable(
+                query,
+                sqlExecutionContext
+        );
+    }
+
+    @NotNull
+    protected CompiledQuery compileAlterTable(String query, SqlExecutionContext executionContext) throws SqlException {
+        return TestUtils.compileAlterTable(
+                compiler,
+                engine,
+                query,
+                executionContext
+        );
+    }
+
     protected void createPopulateTable(
             TableModel tableModel,
             int totalRows,

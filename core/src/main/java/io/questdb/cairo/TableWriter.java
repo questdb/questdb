@@ -43,10 +43,7 @@ import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.NativeLPSZ;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -121,7 +118,6 @@ public class TableWriter implements Closeable {
     private final ObjList<MemoryCARW> o3Columns;
     private final ObjList<MemoryCARW> o3Columns2;
     private final TableBlockWriter blockWriter;
-    private final TimestampValueRecord dropPartitionFunctionRec = new TimestampValueRecord();
     private final ObjList<O3CallbackTask> o3PendingCallbackTasks = new ObjList<>();
     private final O3ColumnUpdateMethod oooSortVarColumnRef = this::o3SortVarColumn;
     private final O3ColumnUpdateMethod oooSortFixColumnRef = this::o3SortFixColumn;
@@ -878,28 +874,11 @@ public class TableWriter implements Closeable {
         o3ErrorCount.incrementAndGet();
     }
 
-    public long partitionNameToTimestamp(CharSequence partitionName) {
+    public void partitionTimestampToName(long timestamp, CharSink sink) {
         if (partitionDirFmt == null) {
             throw CairoException.instance(0).put("table is not partitioned");
         }
-        try {
-            return partitionDirFmt.parse(partitionName, null);
-        } catch (NumericException e) {
-            final CairoException ee = CairoException.instance(0);
-            switch (partitionBy) {
-                case PartitionBy.DAY:
-                    ee.put("'YYYY-MM-DD'");
-                    break;
-                case PartitionBy.MONTH:
-                    ee.put("'YYYY-MM'");
-                    break;
-                default:
-                    ee.put("'YYYY'");
-                    break;
-            }
-            ee.put(" expected");
-            throw ee;
-        }
+        partitionDirFmt.format(timestamp, null, null, sink);
     }
 
     public void removeColumn(CharSequence name) {
@@ -1042,26 +1021,6 @@ public class TableWriter implements Closeable {
             return true;
         } finally {
             path.trimTo(rootLen);
-        }
-    }
-
-    public void removePartition(Function function, int posForError) throws SqlException {
-        if (partitionBy == PartitionBy.NONE) {
-            throw SqlException.$(posForError, "table is not partitioned");
-        }
-
-        if (txFile.getPartitionCount() == 0) {
-            throw SqlException.$(posForError, "table is empty");
-        } else {
-            // Drop partitions in descending order so if folders are missing on disk
-            // removePartition does not fail to determine next minTimestamp
-            for (int i = txFile.getPartitionCount() - 1; i > -1; i--) {
-                long partitionTimestamp = txFile.getPartitionTimestamp(i);
-                dropPartitionFunctionRec.setTimestamp(partitionTimestamp);
-                if (function.getBool(dropPartitionFunctionRec)) {
-                    removePartition(partitionTimestamp);
-                }
-            }
         }
     }
 
@@ -5232,19 +5191,6 @@ public class TableWriter implements Closeable {
         void putTimestamp(int columnIndex, long value);
 
         void putTimestamp(int columnIndex, CharSequence value);
-    }
-
-    static class TimestampValueRecord implements Record {
-        private long value;
-
-        @Override
-        public long getTimestamp(int col) {
-            return value;
-        }
-
-        public void setTimestamp(long value) {
-            this.value = value;
-        }
     }
 
     private class RowImpl implements Row {
