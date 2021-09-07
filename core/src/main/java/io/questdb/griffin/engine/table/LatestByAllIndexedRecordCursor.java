@@ -44,6 +44,7 @@ import io.questdb.tasks.LatestByTask;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
+    protected final DirectLongList prefixes;
     private final int columnIndex;
     private final int hashColumnIndex;
     private final int hashColumnType;
@@ -51,8 +52,6 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     protected long indexShift = 0;
     protected long aIndex;
     protected long aLimit;
-
-    protected final DirectLongList prefixes;
 
     public LatestByAllIndexedRecordCursor(
             int columnIndex,
@@ -90,7 +89,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     }
 
     @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException  {
+    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
         final MessageBus bus = executionContext.getMessageBus();
         assert bus != null;
 
@@ -105,7 +104,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         final int workerCount = executionContext.getWorkerCount();
 
         final long chunkSize = (keyCount + workerCount - 1) / workerCount;
-        final int taskCount = (int)((keyCount + chunkSize - 1) / chunkSize);
+        final int taskCount = (int) ((keyCount + chunkSize - 1) / chunkSize);
 
         final long argumentsAddress = LatestByArguments.allocateMemoryArray(taskCount);
         for (long i = 0; i < taskCount; ++i) {
@@ -157,7 +156,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
             }
 
             // -1 must be dead case here
-            final int hashesColumnSize = ColumnType.isGeoHash(hashColumnType) ? ColumnType.getPow2SizeOfGeoHashType(hashColumnType) : -1;
+            final int hashesColumnSize = ColumnType.isGeoHash(hashColumnType) ? getPow2SizeOfGeoHashType(hashColumnType) : -1;
 
             int queuedCount = 0;
             for (long i = 0; i < taskCount; ++i) {
@@ -238,6 +237,10 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         aLimit = rowCount;
         aIndex = indexShift;
         postProcessRows();
+    }
+
+    private static int getPow2SizeOfGeoHashType(int type) {
+        return 1 << ColumnType.pow2SizeOfBits(ColumnType.getGeoHashBits(type));
     }
 
     protected void postProcessRows() {

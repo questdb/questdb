@@ -121,20 +121,8 @@ public final class ColumnType {
 
     public static int getGeoHashTypeWithBits(int bits) {
         assert bits > 0;
-        switch (pow2SizeOfBits(bits)) {
-            case 0:
-                return (GEOBYTE & ~(0xFF << 8)) | (bits << 8);
-            case 1:
-                return (GEOSHORT & ~(0xFF << 8)) | (bits << 8);
-            case 2:
-                return (GEOINT & ~(0xFF << 8)) | (bits << 8);
-            default:
-                return (GEOLONG & ~(0xFF << 8)) | (bits << 8);
-        }
-    }
-
-    public static int getPow2SizeOfGeoHashType(int type) {
-        return 1 << pow2SizeOfBits(ColumnType.getGeoHashBits(type));
+        // this logic relies on GeoHash type value to be clustered together
+        return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
     }
 
     public static boolean isBinary(int columnType) {
@@ -162,8 +150,7 @@ public final class ColumnType {
     }
 
     public static boolean isGeoHash(int columnType) {
-        // todo: have dedicated bit for geohash type
-        return getGeoHashBits(columnType) != 0;
+        return (columnType & (1 << 16)) != 0;
     }
 
     public static boolean isInt(int columnType) {
@@ -260,6 +247,10 @@ public final class ColumnType {
         return truncateGeoHashBits(value, fromBits, toBits);
     }
 
+    private static int mkGeoHashType(int bits, short baseType) {
+        return (baseType & ~(0xFF << 8)) | (bits << 8) | (1 << 16); // bit 16 is GeoHash flag
+    }
+
     private static short indexOf(short[] list, short value) {
         for (short i = 0; i < list.length; i++) {
             if (list[i] == value) {
@@ -272,13 +263,6 @@ public final class ColumnType {
     static {
         overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE];
         for (short i = UNDEFINED; i < MAX; i++) {
-/*
-            Arrays.fill(overloadPriorityMatrix, OVERLOAD_MATRIX_SIZE * i, OVERLOAD_MATRIX_SIZE * i + MAX - 1, NO_OVERLOAD);
-            short []a = overloadPriority[i];
-            for (int j = 0, n = a.length; j < n; j++) {
-
-            }
-*/
             for (short j = BOOLEAN; j < MAX; j++) {
                 if (i < overloadPriority.length) {
                     int index = indexOf(overloadPriority[i], j);

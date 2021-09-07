@@ -96,66 +96,67 @@ public class GeoHashesTest {
 
     @Test
     public void testGeoHashTypeName() {
-        String expected = "GEOHASH(1b) -> 270 (1)\n" +
-                "GEOHASH(2b) -> 526 (2)\n" +
-                "GEOHASH(3b) -> 782 (3)\n" +
-                "GEOHASH(4b) -> 1038 (4)\n" +
-                "GEOHASH(1c) -> 1294 (5)\n" +
-                "GEOHASH(6b) -> 1550 (6)\n" +
-                "GEOHASH(7b) -> 1806 (7)\n" +
-                "GEOHASH(8b) -> 2063 (8)\n" +
-                "GEOHASH(9b) -> 2319 (9)\n" +
-                "GEOHASH(2c) -> 2575 (10)\n" +
-                "GEOHASH(11b) -> 2831 (11)\n" +
-                "GEOHASH(12b) -> 3087 (12)\n" +
-                "GEOHASH(13b) -> 3343 (13)\n" +
-                "GEOHASH(14b) -> 3599 (14)\n" +
-                "GEOHASH(3c) -> 3855 (15)\n" +
-                "GEOHASH(16b) -> 4112 (16)\n" +
-                "GEOHASH(17b) -> 4368 (17)\n" +
-                "GEOHASH(18b) -> 4624 (18)\n" +
-                "GEOHASH(19b) -> 4880 (19)\n" +
-                "GEOHASH(4c) -> 5136 (20)\n" +
-                "GEOHASH(21b) -> 5392 (21)\n" +
-                "GEOHASH(22b) -> 5648 (22)\n" +
-                "GEOHASH(23b) -> 5904 (23)\n" +
-                "GEOHASH(24b) -> 6160 (24)\n" +
-                "GEOHASH(5c) -> 6416 (25)\n" +
-                "GEOHASH(26b) -> 6672 (26)\n" +
-                "GEOHASH(27b) -> 6928 (27)\n" +
-                "GEOHASH(28b) -> 7184 (28)\n" +
-                "GEOHASH(29b) -> 7440 (29)\n" +
-                "GEOHASH(6c) -> 7696 (30)\n" +
-                "GEOHASH(31b) -> 7952 (31)\n" +
-                "GEOHASH(32b) -> 8209 (32)\n" +
-                "GEOHASH(33b) -> 8465 (33)\n" +
-                "GEOHASH(34b) -> 8721 (34)\n" +
-                "GEOHASH(7c) -> 8977 (35)\n" +
-                "GEOHASH(36b) -> 9233 (36)\n" +
-                "GEOHASH(37b) -> 9489 (37)\n" +
-                "GEOHASH(38b) -> 9745 (38)\n" +
-                "GEOHASH(39b) -> 10001 (39)\n" +
-                "GEOHASH(8c) -> 10257 (40)\n" +
-                "GEOHASH(41b) -> 10513 (41)\n" +
-                "GEOHASH(42b) -> 10769 (42)\n" +
-                "GEOHASH(43b) -> 11025 (43)\n" +
-                "GEOHASH(44b) -> 11281 (44)\n" +
-                "GEOHASH(9c) -> 11537 (45)\n" +
-                "GEOHASH(46b) -> 11793 (46)\n" +
-                "GEOHASH(47b) -> 12049 (47)\n" +
-                "GEOHASH(48b) -> 12305 (48)\n" +
-                "GEOHASH(49b) -> 12561 (49)\n" +
-                "GEOHASH(10c) -> 12817 (50)\n" +
-                "GEOHASH(51b) -> 13073 (51)\n" +
-                "GEOHASH(52b) -> 13329 (52)\n" +
-                "GEOHASH(53b) -> 13585 (53)\n" +
-                "GEOHASH(54b) -> 13841 (54)\n" +
-                "GEOHASH(11c) -> 14097 (55)\n" +
-                "GEOHASH(56b) -> 14353 (56)\n" +
-                "GEOHASH(57b) -> 14609 (57)\n" +
-                "GEOHASH(58b) -> 14865 (58)\n" +
-                "GEOHASH(59b) -> 15121 (59)\n" +
-                "GEOHASH(12c) -> 15377 (60)\n";
+        String expected = "GEOHASH(1b) -> 65806 (1)\n" +
+                "GEOHASH(2b) -> 66062 (2)\n" +
+                "GEOHASH(3b) -> 66318 (3)\n" +
+                "GEOHASH(4b) -> 66574 (4)\n" +
+                "GEOHASH(1c) -> 66830 (5)\n" +
+                "GEOHASH(6b) -> 67086 (6)\n" +
+                "GEOHASH(7b) -> 67342 (7)\n" +
+                "GEOHASH(8b) -> 67599 (8)\n" +
+                "GEOHASH(9b) -> 67855 (9)\n" +
+                "GEOHASH(2c) -> 68111 (10)\n" +
+                "GEOHASH(11b) -> 68367 (11)\n" +
+                "GEOHASH(12b) -> 68623 (12)\n" +
+                "GEOHASH(13b) -> 68879 (13)\n" +
+                "GEOHASH(14b) -> 69135 (14)\n" +
+                "GEOHASH(3c) -> 69391 (15)\n" +
+                "GEOHASH(16b) -> 69648 (16)\n" +
+                "GEOHASH(17b) -> 69904 (17)\n" +
+                "GEOHASH(18b) -> 70160 (18)\n" +
+                "GEOHASH(19b) -> 70416 (19)\n" +
+                "GEOHASH(4c) -> 70672 (20)\n" +
+                "GEOHASH(21b) -> 70928 (21)\n" +
+                "GEOHASH(22b) -> 71184 (22)\n" +
+                "GEOHASH(23b) -> 71440 (23)\n" +
+                "GEOHASH(24b) -> 71696 (24)\n" +
+                "GEOHASH(5c) -> 71952 (25)\n" +
+                "GEOHASH(26b) -> 72208 (26)\n" +
+                "GEOHASH(27b) -> 72464 (27)\n" +
+                "GEOHASH(28b) -> 72720 (28)\n" +
+                "GEOHASH(29b) -> 72976 (29)\n" +
+                "GEOHASH(6c) -> 73232 (30)\n" +
+                "GEOHASH(31b) -> 73488 (31)\n" +
+                "GEOHASH(32b) -> 73745 (32)\n" +
+                "GEOHASH(33b) -> 74001 (33)\n" +
+                "GEOHASH(34b) -> 74257 (34)\n" +
+                "GEOHASH(7c) -> 74513 (35)\n" +
+                "GEOHASH(36b) -> 74769 (36)\n" +
+                "GEOHASH(37b) -> 75025 (37)\n" +
+                "GEOHASH(38b) -> 75281 (38)\n" +
+                "GEOHASH(39b) -> 75537 (39)\n" +
+                "GEOHASH(8c) -> 75793 (40)\n" +
+                "GEOHASH(41b) -> 76049 (41)\n" +
+                "GEOHASH(42b) -> 76305 (42)\n" +
+                "GEOHASH(43b) -> 76561 (43)\n" +
+                "GEOHASH(44b) -> 76817 (44)\n" +
+                "GEOHASH(9c) -> 77073 (45)\n" +
+                "GEOHASH(46b) -> 77329 (46)\n" +
+                "GEOHASH(47b) -> 77585 (47)\n" +
+                "GEOHASH(48b) -> 77841 (48)\n" +
+                "GEOHASH(49b) -> 78097 (49)\n" +
+                "GEOHASH(10c) -> 78353 (50)\n" +
+                "GEOHASH(51b) -> 78609 (51)\n" +
+                "GEOHASH(52b) -> 78865 (52)\n" +
+                "GEOHASH(53b) -> 79121 (53)\n" +
+                "GEOHASH(54b) -> 79377 (54)\n" +
+                "GEOHASH(11c) -> 79633 (55)\n" +
+                "GEOHASH(56b) -> 79889 (56)\n" +
+                "GEOHASH(57b) -> 80145 (57)\n" +
+                "GEOHASH(58b) -> 80401 (58)\n" +
+                "GEOHASH(59b) -> 80657 (59)\n" +
+                "GEOHASH(12c) -> 80913 (60)\n";
+
         StringSink everything = new StringSink();
         for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
             int type = ColumnType.getGeoHashTypeWithBits(b);
@@ -244,8 +245,7 @@ public class GeoHashesTest {
                 Assert.fail();
             } catch (StringIndexOutOfBoundsException fail) {
                 Assert.fail();
-            } catch (NumericException success) {
-                Assert.assertEquals(null, success.getMessage());
+            } catch (NumericException ignored) {
             }
             return null;
         });
