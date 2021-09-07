@@ -1160,19 +1160,11 @@ final class WhereClauseParser implements Mutable {
 
             if (c == 1) {
                 ExpressionNode inArg = node.rhs;
-                try {
-                    processArgument(inArg, metadata, functionParser, executionContext, hashColumnType, prefixes);
-                } catch (NumericException e) {
-                    throw SqlException.$(inArg.position, "GeoHash value expected");
-                }
+                processArgument(inArg, metadata, functionParser, executionContext, hashColumnType, prefixes);
             } else {
                 for (c--; c > -1; c--) {
                     ExpressionNode inArg = node.args.getQuick(c);
-                    try {
-                        processArgument(inArg, metadata, functionParser, executionContext, hashColumnType, prefixes);
-                    } catch (NumericException e) {
-                        throw SqlException.$(inArg.position, "GeoHash value expected");
-                    }
+                    processArgument(inArg, metadata, functionParser, executionContext, hashColumnType, prefixes);
                 }
             }
             return true;
@@ -1188,7 +1180,7 @@ final class WhereClauseParser implements Mutable {
             SqlExecutionContext executionContext,
             int columnType,
             LongList prefixes
-    ) throws SqlException, NumericException {
+    ) throws SqlException {
         if(isNull(inArg)) {
             throw SqlException.$(inArg.position, "GeoHash value expected");
         }
@@ -1197,7 +1189,11 @@ final class WhereClauseParser implements Mutable {
             if (isGeoHashConstFunction(f)) {
                 final int fnType = f.getType();
                 final long hash = GeoHashes.getGeoLong(fnType, f, null);
-                GeoHashes.addNormalizedGeoPrefix(hash, fnType, columnType, prefixes);
+                try {
+                    GeoHashes.addNormalizedGeoPrefix(hash, fnType, columnType, prefixes);
+                } catch (NumericException e) {
+                    throw SqlException.$(inArg.position, "GeoHash prefix precision mismatch");
+                }
             } else {
                 throw SqlException.$(inArg.position, "GeoHash const function expected");
             }
@@ -1213,15 +1209,20 @@ final class WhereClauseParser implements Mutable {
 
             final int type;
             final long hash;
-            if (isBitsPrefix) {
-                type = ColumnType.geohashWithPrecision(inArg.token.length() - 2);
-                hash = GeoHashes.fromBitStringNl(inArg.token, 2);
-            } else {
-                int sdd = GenericLexer.extractGeoHashSuffix(inArg.position, inArg.token);
-                int sddLen = Numbers.decodeLowShort(sdd);
-                int bits = Numbers.decodeHighShort(sdd);
-                hash = GeoHashes.fromStringTruncatingNl(inArg.token, 1, inArg.token.length() - sddLen, bits);
-                type = ColumnType.geohashWithPrecision(bits);
+            try {
+                if (isBitsPrefix) {
+                    type = ColumnType.geohashWithPrecision(inArg.token.length() - 2);
+                    hash = GeoHashes.fromBitStringNl(inArg.token, 2);
+                } else {
+                    int sdd = GenericLexer.extractGeoHashSuffix(inArg.position, inArg.token);
+                    int sddLen = Numbers.decodeLowShort(sdd);
+                    int bits = Numbers.decodeHighShort(sdd);
+                    hash = GeoHashes.fromStringTruncatingNl(inArg.token, 1, inArg.token.length() - sddLen, bits);
+                    type = ColumnType.geohashWithPrecision(bits);
+                }
+            } catch(NumericException e) {
+                // possible dead code. ExpressionParser did validation before
+                throw SqlException.$(inArg.position, "GeoHash literal expected");
             }
             try {
                 GeoHashes.addNormalizedGeoPrefix(hash, type, columnType, prefixes);
