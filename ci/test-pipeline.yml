@@ -25,7 +25,7 @@ stages:
               echo "buildno: $(Build.BuildId)"
               echo ${AZURE_DEVOPS_CLI_PAT} | az devops login
             env:
-              AZURE_DEVOPS_CLI_PAT: $(AZURE_DEVOPS_CLI_PAT)
+              AZURE_DEVOPS_CLI_PAT: $(System.AccessToken)
             displayName: 'Login Azure DevOps Extension'
           - bash: |
               sudo apt-get update
