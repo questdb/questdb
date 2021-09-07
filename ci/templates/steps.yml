@@ -3,6 +3,17 @@ steps:
     fetchDepth: 1
     lfs: false
     submodules: false
+  - bash: |
+      echo "SOURCE_CODE_CHANGED"
+      echo $(SOURCE_CODE_CHANGED)
+      echo MAVEN_CACHE_FOLDER
+      echo $(MAVEN_CACHE_FOLDER)
+      echo MAVEN_OPTS
+      echo $(MAVEN_OPTS)
+      echo jdk
+      echo $(jdk)
+    displayName: "DEBUG"
+    condition: eq(variables['Agent.OS'], 'Linux')
   - bash: sudo sysctl -w fs.file-max=500000
     displayName: "Increase file count on Linux"
     condition: eq(variables['Agent.OS'], 'Linux')
