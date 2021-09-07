@@ -74,7 +74,7 @@ public final class ColumnType {
     public static final short GEOHASH = 23;
     public static final short NULL = 24;
 
-    // Overload matrix algo depends on the fact that MAX=NULL
+    // Overload matrix algo depends on the fact that MAX == NULL
     public static final short MAX = NULL;
     public static final short TYPES_SIZE = MAX + 1;
     private static final int[] TYPE_SIZE_POW2 = new int[TYPES_SIZE];
@@ -87,7 +87,7 @@ public final class ColumnType {
     // For function overload the priority is taken from left to right
     private static final short[][] overloadPriority = {
             /* 0 UNDEFINED  */  {DOUBLE, FLOAT, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
-            /* 1  BOOLEAN   */, {}
+            /* 1  BOOLEAN   */, {BOOLEAN}
             /* 2  BYTE      */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
             /* 3  SHORT     */, {SHORT, INT, LONG, FLOAT, DOUBLE}
             /* 4  CHAR      */, {CHAR, STRING}
@@ -107,9 +107,11 @@ public final class ColumnType {
             /* 18 BINARY    */, {BINARY}
     };
 
+    // this value has to be larger than MAX type and be power of 2
     private static final int OVERLOAD_MATRIX_SIZE = 32;
     private static final int[] overloadPriorityMatrix;
-    private static final int DESIGNATED_TIMESTAMP_BIT = 8;
+    private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
+    private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
     private static final int BITS_OFFSET = 8;
 
     private ColumnType() {
@@ -141,8 +143,8 @@ public final class ColumnType {
         return columnType == CURSOR;
     }
 
-    public static boolean isDesignatedTimestamp(int tsType) {
-        return ((tsType >> DESIGNATED_TIMESTAMP_BIT) & 1) == 1;
+    public static boolean isDesignatedTimestamp(int type) {
+        return (type & TYPE_FLAG_DESIGNATED_TIMESTAMP) != 0;
     }
 
     public static boolean isDouble(int columnType) {
@@ -150,7 +152,7 @@ public final class ColumnType {
     }
 
     public static boolean isGeoHash(int columnType) {
-        return (columnType & (1 << 16)) != 0;
+        return (columnType & TYPE_FLAG_GEO_HASH) != 0;
     }
 
     public static boolean isInt(int columnType) {
@@ -213,9 +215,9 @@ public final class ColumnType {
 
     public static int setDesignatedTimestampBit(int tsType, boolean designated) {
         if (designated) {
-            return tsType | 1 << DESIGNATED_TIMESTAMP_BIT;
+            return tsType | TYPE_FLAG_DESIGNATED_TIMESTAMP;
         } else {
-            return tsType & ~(1 << DESIGNATED_TIMESTAMP_BIT);
+            return tsType & ~(TYPE_FLAG_DESIGNATED_TIMESTAMP);
         }
     }
 
@@ -248,7 +250,7 @@ public final class ColumnType {
     }
 
     private static int mkGeoHashType(int bits, short baseType) {
-        return (baseType & ~(0xFF << 8)) | (bits << 8) | (1 << 16); // bit 16 is GeoHash flag
+        return (baseType & ~(0xFF << BITS_OFFSET)) | (bits << BITS_OFFSET) | TYPE_FLAG_GEO_HASH; // bit 16 is GeoHash flag
     }
 
     private static short indexOf(short[] list, short value) {
