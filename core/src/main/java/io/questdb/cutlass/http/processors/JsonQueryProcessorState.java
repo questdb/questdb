@@ -308,22 +308,22 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private static void putGeoHashStringByteValue(HttpChunkedResponseSocket socket, Record rec, int col, int bitFlags) {
-        byte l = rec.getGeoHashByte(col);
+        byte l = rec.getGeoByte(col);
         putGeoHashStringValue(socket, l, bitFlags);
     }
 
     private static void putGeoHashStringShortValue(HttpChunkedResponseSocket socket, Record rec, int col, int bitFlags) {
-        short l = rec.getGeoHashShort(col);
+        short l = rec.getGeoShort(col);
         putGeoHashStringValue(socket, l, bitFlags);
     }
 
     private static void putGeoHashStringIntValue(HttpChunkedResponseSocket socket, Record rec, int col, int bitFlags) {
-        int l = rec.getGeoHashInt(col);
+        int l = rec.getGeoInt(col);
         putGeoHashStringValue(socket, l, bitFlags);
     }
 
     private static void putGeoHashStringLongValue(HttpChunkedResponseSocket socket, Record rec, int col, int bitFlags) {
-        long l = rec.getGeoHashLong(col);
+        long l = rec.getGeoLong(col);
         putGeoHashStringValue(socket, l, bitFlags);
     }
 

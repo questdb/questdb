@@ -1853,6 +1853,106 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateAsSelectCharToGeoHash() throws Exception {
+        assertQuery(
+                "geohash\n",
+                "select geohash from geohash",
+                "create table geohash (geohash geohash(1c))",
+                null,
+                "insert into geohash " +
+                        "select cast(rnd_str('q','u','e','o','l') as char) from long_sequence(10)",
+                "geohash\n" +
+                        "q\n" +
+                        "\n" +
+                        "\n" +
+                        "u\n" +
+                        "u\n" +
+                        "\n" +
+                        "e\n" +
+                        "u\n" +
+                        "u\n" +
+                        "\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testCreateAsSelectCharToNarrowGeoByte() throws Exception {
+        assertQuery(
+                "geohash\n",
+                "select geohash from geohash",
+                "create table geohash (geohash geohash(4b))",
+                null,
+                "insert into geohash " +
+                        "select cast(rnd_str('q','u','e','o','l') as char) from long_sequence(10)",
+                "geohash\n" +
+                        "1011\n" +
+                        "\n" +
+                        "\n" +
+                        "1101\n" +
+                        "1101\n" +
+                        "\n" +
+                        "0110\n" +
+                        "1101\n" +
+                        "1101\n" +
+                        "\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testCreateAsSelectCharToGeoShort() throws Exception {
+        assertFailure(
+                "insert into geohash " +
+                        "select cast(rnd_str('q','u','e','o','l') as char) from long_sequence(10)",
+                "create table geohash (geohash geohash(2c))",
+                27,
+                "inconvertible types: CHAR -> GEOHASH(2c) [from=cast, to=geohash]"
+        );
+    }
+
+    @Test
+    public void testCreateAsSelectCharToGeoWiderByte() throws Exception {
+        assertFailure(
+                "insert into geohash " +
+                        "select cast(rnd_str('q','u','e','o','l') as char) from long_sequence(10)",
+                "create table geohash (geohash geohash(6b))",
+                27,
+                "inconvertible types: CHAR -> GEOHASH(6b) [from=cast, to=geohash]"
+        );
+    }
+
+    @Test
+    public void testCreateAsSelectGeoHashByteSizedStorage5() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "geohash\n",
+                "select geohash from geohash",
+                "create table geohash (geohash geohash(1c))",
+                null,
+                "insert into geohash " +
+                        "select rnd_str('q','u','e','o','l') from long_sequence(10)",
+                "geohash\n" +
+                        "q\n" +
+                        "\n" +
+                        "\n" +
+                        "u\n" +
+                        "u\n" +
+                        "\n" +
+                        "e\n" +
+                        "u\n" +
+                        "u\n" +
+                        "\n",
+                true,
+                true,
+                true
+        ));
+    }
+
+    @Test
     public void testCreateAsSelectGeoHashCharsLiteralNotChars() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery(

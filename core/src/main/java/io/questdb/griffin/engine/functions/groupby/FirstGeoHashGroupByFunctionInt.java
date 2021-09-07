@@ -86,7 +86,7 @@ class FirstGeoHashGroupByFunctionInt extends GeoByteFunction implements GroupByF
 
     @Override
     public int getGeoInt(Record rec) {
-        return rec.getGeoHashInt(this.valueIndex);
+        return rec.getGeoInt(this.valueIndex);
     }
 
     @Override

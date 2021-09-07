@@ -805,22 +805,22 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void putGeoHashStringByteValue(Record rec, int col, int bitFlags) {
-        byte l = rec.getGeoHashByte(col);
+        byte l = rec.getGeoByte(col);
         putGeoHashStringValue(l, bitFlags);
     }
 
     private void putGeoHashStringShortValue(Record rec, int col, int bitFlags) {
-        short l = rec.getGeoHashShort(col);
+        short l = rec.getGeoShort(col);
         putGeoHashStringValue(l, bitFlags);
     }
 
     private void putGeoHashStringIntValue(Record rec, int col, int bitFlags) {
-        int l = rec.getGeoHashInt(col);
+        int l = rec.getGeoInt(col);
         putGeoHashStringValue(l, bitFlags);
     }
 
     private void putGeoHashStringLongValue(Record rec, int col, int bitFlags) {
-        long l = rec.getGeoHashLong(col);
+        long l = rec.getGeoLong(col);
         putGeoHashStringValue(l, bitFlags);
     }
 

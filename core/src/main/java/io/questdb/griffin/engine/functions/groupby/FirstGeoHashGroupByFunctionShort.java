@@ -86,7 +86,7 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
 
     @Override
     public short getGeoShort(Record rec) {
-        return rec.getGeoHashShort(this.valueIndex);
+        return rec.getGeoShort(this.valueIndex);
     }
 
     @Override

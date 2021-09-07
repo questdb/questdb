@@ -94,10 +94,10 @@ public class InsertTest extends AbstractGriffinTest {
                 final TableReaderRecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
-                    Assert.assertEquals(rnd.nextGeoHashByte(6), record.getGeoHashByte(0));
-                    Assert.assertEquals(rnd.nextGeoHashShort(12), record.getGeoHashShort(1));
-                    Assert.assertEquals(ColumnType.truncateGeoHashBits(rnd.nextGeoHashInt(29), 29, 27), record.getGeoHashInt(2));
-                    Assert.assertEquals(rnd.nextGeoHashLong(44), record.getGeoHashLong(3));
+                    Assert.assertEquals(rnd.nextGeoHashByte(6), record.getGeoByte(0));
+                    Assert.assertEquals(rnd.nextGeoHashShort(12), record.getGeoShort(1));
+                    Assert.assertEquals(ColumnType.truncateGeoHashBits(rnd.nextGeoHashInt(29), 29, 27), record.getGeoInt(2));
+                    Assert.assertEquals(rnd.nextGeoHashLong(44), record.getGeoLong(3));
                 }
             }
         });

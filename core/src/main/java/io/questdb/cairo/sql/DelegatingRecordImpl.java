@@ -146,22 +146,22 @@ public class DelegatingRecordImpl implements Record {
     }
 
     @Override
-    public byte getGeoHashByte(int col) {
-        return base.getGeoHashByte(col);
+    public byte getGeoByte(int col) {
+        return base.getGeoByte(col);
     }
 
     @Override
-    public short getGeoHashShort(int col) {
-        return base.getGeoHashShort(col);
+    public short getGeoShort(int col) {
+        return base.getGeoShort(col);
     }
 
     @Override
-    public int getGeoHashInt(int col) {
-        return base.getGeoHashInt(col);
+    public int getGeoInt(int col) {
+        return base.getGeoInt(col);
     }
 
     @Override
-    public long getGeoHashLong(int col) {
-        return base.getGeoHashLong(col);
+    public long getGeoLong(int col) {
+        return base.getGeoLong(col);
     }
 }

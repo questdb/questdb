@@ -172,6 +172,12 @@ public class GeoHashes {
         throw NumericException.INSTANCE;
     }
 
+    public static byte encodeChar(char c) throws NumericException {
+        if (c >= 48 && c < 123) { // 123 = base32Indexes.length + 48
+            return base32Indexes[c - 48];
+        }
+        return BYTE_NULL;
+    }
 
     public static boolean isValidChars(CharSequence tok, int start) {
         int idx;
@@ -269,7 +275,7 @@ public class GeoHashes {
         }
     }
 
-    public static void toBitString(long hash, int bits, CharSink sink) {
+    public static void appendBinary(long hash, int bits, CharSink sink) {
         if (hash != NULL) {
             appendBinaryStringUnsafe(hash, bits, sink);
         }

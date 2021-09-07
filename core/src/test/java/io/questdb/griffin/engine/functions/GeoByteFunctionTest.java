@@ -50,7 +50,7 @@ public class GeoByteFunctionTest extends AbstractGriffinTest {
         Assert.assertEquals(5, ColumnType.getGeoHashBits(function.getType()));
 
         sink.clear();
-        GeoHashes.toBitString(function.getGeoByte(null), ColumnType.getGeoHashBits(function.getType()), sink);
+        GeoHashes.appendBinary(function.getGeoByte(null), ColumnType.getGeoHashBits(function.getType()), sink);
         TestUtils.assertEquals("11101", sink);
 
         final int truncatedHash = (int) ColumnType.truncateGeoHashTypes(
@@ -59,7 +59,7 @@ public class GeoByteFunctionTest extends AbstractGriffinTest {
                 ColumnType.getGeoHashTypeWithBits(3)
         );
         sink.clear();
-        GeoHashes.toBitString(truncatedHash, 3, sink);
+        GeoHashes.appendBinary(truncatedHash, 3, sink);
         TestUtils.assertEquals("111", sink);
     }
 

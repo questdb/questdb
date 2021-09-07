@@ -621,23 +621,23 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             }
 
             @Override
-            public byte getGeoHashByte(int col) {
-                return currentRecord.getGeoHashByte(col);
+            public byte getGeoByte(int col) {
+                return currentRecord.getGeoByte(col);
             }
 
             @Override
-            public short getGeoHashShort(int col) {
-                return currentRecord.getGeoHashShort(col);
+            public short getGeoShort(int col) {
+                return currentRecord.getGeoShort(col);
             }
 
             @Override
-            public int getGeoHashInt(int col) {
-                return currentRecord.getGeoHashInt(col);
+            public int getGeoInt(int col) {
+                return currentRecord.getGeoInt(col);
             }
 
             @Override
-            public long getGeoHashLong(int col) {
-                return currentRecord.getGeoHashLong(col);
+            public long getGeoLong(int col) {
+                return currentRecord.getGeoLong(col);
             }
 
             public void of(long index) {
@@ -661,7 +661,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
-                public byte getGeoHashByte(int col) {
+                public byte getGeoByte(int col) {
                     return Unsafe.getUnsafe().getByte(address + ((long) col << 3));
                 }
 
@@ -686,7 +686,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
-                public int getGeoHashInt(int col) {
+                public int getGeoInt(int col) {
                     return Unsafe.getUnsafe().getInt(address + ((long) col << 3));
                 }
 
@@ -696,7 +696,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
-                public long getGeoHashLong(int col) {
+                public long getGeoLong(int col) {
                     return Unsafe.getUnsafe().getLong(address + ((long) col << 3));
                 }
 
@@ -706,7 +706,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
-                public short getGeoHashShort(int col) {
+                public short getGeoShort(int col) {
                     return Unsafe.getUnsafe().getShort(address + ((long) col << 3));
                 }
 
@@ -820,7 +820,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
-                public byte getGeoHashByte(int col) {
+                public byte getGeoByte(int col) {
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
                         return Unsafe.getUnsafe().getByte(pageAddress + getRowId(firstLastIndexByCol[col]));
@@ -830,7 +830,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
-                public short getGeoHashShort(int col) {
+                public short getGeoShort(int col) {
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
                         return Unsafe.getUnsafe().getShort(pageAddress + (getRowId(firstLastIndexByCol[col]) << 1));
@@ -840,7 +840,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
-                public int getGeoHashInt(int col) {
+                public int getGeoInt(int col) {
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
                         return Unsafe.getUnsafe().getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) << 2));
@@ -850,7 +850,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
-                public long getGeoHashLong(int col) {
+                public long getGeoLong(int col) {
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
                         return Unsafe.getUnsafe().getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));

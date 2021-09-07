@@ -156,19 +156,19 @@ public class RecordCursorPrinter {
                 sink.put(r.getLong(i));
                 break;
             case ColumnType.GEOBYTE:
-                putGeoHash(r.getGeoHashByte(i), ColumnType.getGeoHashBits(columnType), sink);
+                putGeoHash(r.getGeoByte(i), ColumnType.getGeoHashBits(columnType), sink);
                 break;
             case ColumnType.GEOSHORT:
-                putGeoHash(r.getGeoHashShort(i), ColumnType.getGeoHashBits(columnType), sink);
+                putGeoHash(r.getGeoShort(i), ColumnType.getGeoHashBits(columnType), sink);
                 break;
             case ColumnType.GEOINT:
-                putGeoHash(r.getGeoHashInt(i), ColumnType.getGeoHashBits(columnType), sink);
+                putGeoHash(r.getGeoInt(i), ColumnType.getGeoHashBits(columnType), sink);
                 break;
             case ColumnType.GEOLONG:
                 if (ColumnType.getGeoHashBits(columnType) > 60) {
                     System.out.println("ok");
                 }
-                putGeoHash(r.getGeoHashLong(i), ColumnType.getGeoHashBits(columnType), sink);
+                putGeoHash(r.getGeoLong(i), ColumnType.getGeoHashBits(columnType), sink);
                 break;
             case ColumnType.BYTE:
                 sink.put(r.getByte(i));

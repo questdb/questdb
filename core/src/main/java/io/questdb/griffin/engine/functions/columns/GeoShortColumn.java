@@ -37,6 +37,6 @@ public class GeoShortColumn extends GeoShortFunction {
 
     @Override
     public short getGeoShort(Record rec) {
-        return rec.getGeoHashShort(columnIndex);
+        return rec.getGeoShort(columnIndex);
     }
 }

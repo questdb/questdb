@@ -207,17 +207,17 @@ public class SqlCompiler implements Closeable {
         int interfaceClassIndex = asm.poolClass(RecordToRowCopier.class);
 
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
-        int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoHashInt", "(I)I");
+        int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
         int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
-        int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoHashLong", "(I)J");
+        int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
         int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
         int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
         //
         int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
-        int rGetGeoByte = asm.poolInterfaceMethod(Record.class, "getGeoHashByte", "(I)B");
+        int rGetGeoByte = asm.poolInterfaceMethod(Record.class, "getGeoByte", "(I)B");
         int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
-        int rGetGeoShort = asm.poolInterfaceMethod(Record.class, "getGeoHashShort", "(I)S");
+        int rGetGeoShort = asm.poolInterfaceMethod(Record.class, "getGeoShort", "(I)S");
         int rGetChar = asm.poolInterfaceMethod(Record.class, "getChar", "(I)C");
         int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
         int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
@@ -240,11 +240,13 @@ public class SqlCompiler implements Closeable {
         int wPutSym = asm.poolMethod(TableWriter.Row.class, "putSym", "(ILjava/lang/CharSequence;)V");
         int wPutSymChar = asm.poolMethod(TableWriter.Row.class, "putSym", "(IC)V");
         int wPutStr = asm.poolMethod(TableWriter.Row.class, "putStr", "(ILjava/lang/CharSequence;)V");
+        int wPutGeoStr = asm.poolMethod(TableWriter.Row.class, "putGeoStr", "(ILjava/lang/CharSequence;)V");
         int wPutTimestampStr = asm.poolMethod(TableWriter.Row.class, "putTimestamp", "(ILjava/lang/CharSequence;)V");
         int wPutStrChar = asm.poolMethod(TableWriter.Row.class, "putStr", "(IC)V");
         int wPutChar = asm.poolMethod(TableWriter.Row.class, "putChar", "(IC)V");
         int wPutBin = asm.poolMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
         int truncateGeoHashTypes = asm.poolMethod(ColumnType.class, "truncateGeoHashTypes", "(JII)J");
+        int encodeCharAsGeoByte = asm.poolMethod(GeoHashes.class, "encodeChar", "(C)B");
 
         int copyNameIndex = asm.poolUtf8("copy");
         int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;)V");
@@ -586,6 +588,18 @@ public class SqlCompiler implements Closeable {
                         case ColumnType.SYMBOL:
                             asm.invokeVirtual(wPutSymChar);
                             break;
+                        case ColumnType.GEOBYTE:
+                            asm.invokeStatic(encodeCharAsGeoByte);
+                            if (ColumnType.getGeoHashBits(toColumnType) < 5) {
+                                asm.i2l();
+                                asm.iconst(ColumnType.getGeoHashTypeWithBits(5));
+                                asm.iconst(toColumnType);
+                                asm.invokeStatic(truncateGeoHashTypes);
+                                asm.l2i();
+                                asm.i2b();
+                            }
+                            asm.invokeVirtual(wPutByte);
+                            break;
                         default:
                             asm.invokeVirtual(wPutChar);
                             break;
@@ -607,6 +621,12 @@ public class SqlCompiler implements Closeable {
                             break;
                         case ColumnType.TIMESTAMP:
                             asm.invokeVirtual(wPutTimestampStr);
+                            break;
+                        case ColumnType.GEOBYTE:
+                        case ColumnType.GEOSHORT:
+                        case ColumnType.GEOINT:
+                        case ColumnType.GEOLONG:
+                            asm.invokeVirtual(wPutGeoStr);
                             break;
                         default:
                             asm.invokeVirtual(wPutStr);
@@ -772,18 +792,17 @@ public class SqlCompiler implements Closeable {
                 && toTag >= ColumnType.BYTE
                 && toTag <= ColumnType.DOUBLE
                 && fromTag < toTag)
-                // todo: test this
-                || ((fromTag == ColumnType.STRING || fromTag == ColumnType.CHAR) && toTag == ColumnType.GEOBYTE)
-                || ((fromTag == ColumnType.STRING || fromTag == ColumnType.CHAR) && toTag == ColumnType.GEOSHORT)
-                || ((fromTag == ColumnType.STRING || fromTag == ColumnType.CHAR) && toTag == ColumnType.GEOINT)
-                || ((fromTag == ColumnType.STRING || fromTag == ColumnType.CHAR) && toTag == ColumnType.GEOLONG)
+                || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOBYTE)
+                || (fromTag == ColumnType.CHAR && toTag == ColumnType.GEOBYTE && ColumnType.getGeoHashBits(to) < 6)
+                || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOSHORT)
+                || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOINT)
+                || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOLONG)
                 || (fromTag == ColumnType.GEOLONG && toTag == ColumnType.GEOINT)
                 || (fromTag == ColumnType.GEOLONG && toTag == ColumnType.GEOSHORT)
                 || (fromTag == ColumnType.GEOLONG && toTag == ColumnType.GEOBYTE)
                 || (fromTag == ColumnType.GEOINT && toTag == ColumnType.GEOSHORT)
                 || (fromTag == ColumnType.GEOINT && toTag == ColumnType.GEOBYTE)
                 || (fromTag == ColumnType.GEOSHORT && toTag == ColumnType.GEOBYTE)
-
                 || (fromTag == ColumnType.STRING && toTag == ColumnType.SYMBOL)
                 || (fromTag == ColumnType.SYMBOL && toTag == ColumnType.STRING)
                 || (fromTag == ColumnType.CHAR && toTag == ColumnType.SYMBOL)

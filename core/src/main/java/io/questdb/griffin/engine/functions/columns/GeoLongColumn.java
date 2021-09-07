@@ -37,6 +37,6 @@ public class GeoLongColumn extends GeoLongFunction {
 
     @Override
     public long getGeoLong(Record rec) {
-        return rec.getGeoHashLong(columnIndex);
+        return rec.getGeoLong(columnIndex);
     }
 }

@@ -76,7 +76,7 @@ public class FirstGeoHashGroupByFunctionByte extends GeoByteFunction implements 
 
     @Override
     public byte getGeoByte(Record rec) {
-        return rec.getGeoHashByte(this.valueIndex);
+        return rec.getGeoByte(this.valueIndex);
     }
 
     @Override

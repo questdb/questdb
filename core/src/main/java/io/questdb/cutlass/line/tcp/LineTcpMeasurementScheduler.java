@@ -795,28 +795,28 @@ class LineTcpMeasurementScheduler implements Closeable {
                         case NewLineProtoParser.ENTITY_TYPE_GEOLONG: {
                             long geohash = Unsafe.getUnsafe().getLong(bufPos);
                             bufPos += Long.BYTES;
-                            row.putGeoHashLong(colIndex, geohash);
+                            row.putLong(colIndex, geohash);
                             break;
                         }
 
                         case NewLineProtoParser.ENTITY_TYPE_GEOINT: {
                             int geohash = Unsafe.getUnsafe().getInt(bufPos);
                             bufPos += Integer.BYTES;
-                            row.putGeoHashInt(colIndex, geohash);
+                            row.putInt(colIndex, geohash);
                             break;
                         }
 
                         case NewLineProtoParser.ENTITY_TYPE_GEOSHORT: {
                             short geohash = Unsafe.getUnsafe().getShort(bufPos);
                             bufPos += Short.BYTES;
-                            row.putGeoHashShort(colIndex, geohash);
+                            row.putShort(colIndex, geohash);
                             break;
                         }
 
                         case NewLineProtoParser.ENTITY_TYPE_GEOBYTE: {
                             byte geohash = Unsafe.getUnsafe().getByte(bufPos);
                             bufPos += Byte.BYTES;
-                            row.putGeoHashByte(colIndex, geohash);
+                            row.putByte(colIndex, geohash);
                             break;
                         }
 

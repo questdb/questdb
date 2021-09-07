@@ -4765,6 +4765,37 @@ public class TableWriter implements Closeable {
             notNull(index);
         }
 
+        public void putGeoStr(int index, CharSequence hash) {
+            long val;
+            final int type = metadata.getColumnType(index);
+            if (hash != null) {
+                final int hashLen = hash.length();
+                final int typeBits = ColumnType.getGeoHashBits(type);
+                final int charsRequired = (typeBits - 1) / 5 + 1;
+                if (hashLen < charsRequired) {
+                    val = GeoHashes.NULL;
+                } else {
+                    try {
+                        val = ColumnType.truncateGeoHashBits(
+                                GeoHashes.fromString(hash, 0, charsRequired),
+                                charsRequired * 5,
+                                typeBits
+                        );
+                    } catch (NumericException e) {
+                        val = GeoHashes.NULL;
+                    }
+                }
+            } else {
+                val = GeoHashes.NULL;
+            }
+            putGeoHash0(index, val, type);
+        }
+
+        public void putGeoHash(int index, long value) {
+            int type = metadata.getColumnType(index);
+            putGeoHash0(index, value, type);
+        }
+
         public void putInt(int index, int value) {
             getPrimaryColumn(index).putInt(value);
             notNull(index);
@@ -4845,8 +4876,19 @@ public class TableWriter implements Closeable {
             putTimestamp(index, l);
         }
 
-        public void putGeoHash(int index, long value) {
-            int type = metadata.getColumnType(index);
+        private MemoryA getPrimaryColumn(int columnIndex) {
+            return activeColumns.getQuick(getPrimaryColumnIndex(columnIndex));
+        }
+
+        private MemoryA getSecondaryColumn(int columnIndex) {
+            return activeColumns.getQuick(getSecondaryColumnIndex(columnIndex));
+        }
+
+        private void notNull(int index) {
+            refs.setQuick(index, masterRef);
+        }
+
+        private void putGeoHash0(int index, long value, int type) {
             final MemoryA primaryColumn = getPrimaryColumn(index);
             switch (ColumnType.tagOf(type)) {
                 case ColumnType.GEOBYTE:
@@ -4863,38 +4905,6 @@ public class TableWriter implements Closeable {
                     break;
             }
             notNull(index);
-        }
-
-        public void putGeoHashByte(int index, byte value) {
-            getPrimaryColumn(index).putByte(value);
-            notNull(index);
-        }
-
-        public void putGeoHashShort(int index, short value) {
-            getPrimaryColumn(index).putShort(value);
-            notNull(index);
-        }
-
-        public void putGeoHashInt(int index, int value) {
-            getPrimaryColumn(index).putInt(value);
-            notNull(index);
-        }
-
-        public void putGeoHashLong(int index, long value) {
-            getPrimaryColumn(index).putLong(value);
-            notNull(index);
-        }
-
-        private MemoryA getPrimaryColumn(int columnIndex) {
-            return activeColumns.getQuick(getPrimaryColumnIndex(columnIndex));
-        }
-
-        private MemoryA getSecondaryColumn(int columnIndex) {
-            return activeColumns.getQuick(getSecondaryColumnIndex(columnIndex));
-        }
-
-        private void notNull(int index) {
-            refs.setQuick(index, masterRef);
         }
     }
 

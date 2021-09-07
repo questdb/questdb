@@ -133,7 +133,7 @@ public final class TestUtils {
                             Assert.assertEquals(r.getInt(i), l.getInt(i));
                             break;
                         case ColumnType.GEOINT:
-                            Assert.assertEquals(r.getGeoHashInt(i), l.getGeoHashInt(i));
+                            Assert.assertEquals(r.getGeoInt(i), l.getGeoInt(i));
                             break;
                         case ColumnType.STRING:
                             TestUtils.assertEquals(r.getStr(i), l.getStr(i));
@@ -148,16 +148,16 @@ public final class TestUtils {
                             Assert.assertEquals(r.getChar(i), l.getChar(i));
                             break;
                         case ColumnType.GEOSHORT:
-                            Assert.assertEquals(r.getGeoHashShort(i), l.getGeoHashShort(i));
+                            Assert.assertEquals(r.getGeoShort(i), l.getGeoShort(i));
                             break;
                         case ColumnType.LONG:
                             Assert.assertEquals(r.getLong(i), l.getLong(i));
                             break;
                         case ColumnType.GEOLONG:
-                            Assert.assertEquals(r.getGeoHashLong(i), l.getGeoHashLong(i));
+                            Assert.assertEquals(r.getGeoLong(i), l.getGeoLong(i));
                             break;
                         case ColumnType.GEOBYTE:
-                            Assert.assertEquals(r.getGeoHashByte(i), l.getGeoHashByte(i));
+                            Assert.assertEquals(r.getGeoByte(i), l.getGeoByte(i));
                             break;
                         case ColumnType.BYTE:
                             Assert.assertEquals(r.getByte(i), l.getByte(i));

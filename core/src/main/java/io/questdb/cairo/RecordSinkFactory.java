@@ -49,16 +49,16 @@ public class RecordSinkFactory {
         final int interfaceClassIndex = asm.poolClass(RecordSink.class);
 
         final int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
-        final int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoHashInt", "(I)I");
+        final int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
         final int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
-        final int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoHashLong", "(I)J");
+        final int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
         final int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
         final int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         final int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
         final int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
-        final int rGetGeoByte = asm.poolInterfaceMethod(Record.class, "getGeoHashByte", "(I)B");
+        final int rGetGeoByte = asm.poolInterfaceMethod(Record.class, "getGeoByte", "(I)B");
         final int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
-        final int rGetGeoShort = asm.poolInterfaceMethod(Record.class, "getGeoHashShort", "(I)S");
+        final int rGetGeoShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
         final int rGetChar = asm.poolInterfaceMethod(Record.class, "getChar", "(I)C");
         final int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
         final int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");

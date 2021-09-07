@@ -601,7 +601,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public int getGeoHashInt(int col) {
+            public int getGeoInt(int col) {
                 return (int) getLong(col);
             }
         };

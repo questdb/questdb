@@ -40,7 +40,7 @@ public class GeoHashNativeTest {
     static final double lon = 121.473;
     static final StringSink sink = new StringSink();
     private static final StringConverter toString = GeoHashes::appendChars;
-    private static final StringConverter toBitString = GeoHashes::toBitString;
+    private static final StringConverter toBitString = GeoHashes::appendBinary;
 
     @Test
     public void testBitmask() {
@@ -279,8 +279,8 @@ public class GeoHashNativeTest {
         boolean assertsEnable = false;
         assert assertsEnable = true; // Test only when assertions enabled
         if (assertsEnable) {
-            Assert.assertThrows(AssertionError.class, () -> GeoHashes.toBitString(-0, 0, sink));
-            Assert.assertThrows(AssertionError.class, () -> GeoHashes.toBitString(-31, 0, sink));
+            Assert.assertThrows(AssertionError.class, () -> GeoHashes.appendBinary(-0, 0, sink));
+            Assert.assertThrows(AssertionError.class, () -> GeoHashes.appendBinary(-31, 0, sink));
         }
     }
 

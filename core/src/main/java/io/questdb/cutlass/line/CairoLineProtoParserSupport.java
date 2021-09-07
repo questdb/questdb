@@ -50,7 +50,7 @@ public class CairoLineProtoParserSupport {
                     return ColumnType.CHAR;
                 case 'e':
                     // tru(e)
-                    //  fals(e)
+                    // fals(e)
                 case 't':
                 case 'T':
                     // t
@@ -152,7 +152,7 @@ public class CairoLineProtoParserSupport {
                     row.putChar(columnIndex, value.length() == 2 ? (char) 0 : value.charAt(1)); // skip quotes
                     break;
                 case ColumnType.GEOBYTE:
-                    row.putGeoHashByte(
+                    row.putByte(
                             columnIndex,  // skip quotes
                             (byte) GeoHashes.fromStringTruncatingNl(
                                     value,
@@ -163,7 +163,7 @@ public class CairoLineProtoParserSupport {
                     );
                     break;
                 case ColumnType.GEOSHORT:
-                    row.putGeoHashShort(
+                    row.putShort(
                             columnIndex,
                             (short) GeoHashes.fromStringTruncatingNl(
                                     value,
@@ -174,7 +174,7 @@ public class CairoLineProtoParserSupport {
                     );
                     break;
                 case ColumnType.GEOINT:
-                    row.putGeoHashInt(
+                    row.putInt(
                             columnIndex,
                             (int) GeoHashes.fromStringTruncatingNl(
                                     value,
@@ -185,7 +185,7 @@ public class CairoLineProtoParserSupport {
                     );
                     break;
                 case ColumnType.GEOLONG:
-                    row.putGeoHashLong(
+                    row.putLong(
                             columnIndex,
                             GeoHashes.fromStringTruncatingNl(
                                     value,
