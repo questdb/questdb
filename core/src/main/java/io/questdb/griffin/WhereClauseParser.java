@@ -1196,7 +1196,7 @@ final class WhereClauseParser implements Mutable {
             Function f = functionParser.parseFunction(inArg, metadata, executionContext);
             if (isGeoHashConstFunction(f)) {
                 final int fnType = f.getType();
-                final long hash = f.getGeoHashLong(null);
+                final long hash = GeoHashes.getGeoLong(fnType, f, null);
                 GeoHashes.addNormalizedGeoPrefix(hash, fnType, columnType, prefixes);
             } else {
                 throw SqlException.$(inArg.position, "GeoHash const function expected");
