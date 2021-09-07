@@ -2150,6 +2150,25 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByAllIndexedGeoHashWithinEmpty() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    try {
+                        assertQuery("",
+                                "select * from pos latest by uuid where hash within()",
+                                "time",
+                                true,
+                                true,
+                                true
+                        );
+                    } catch (SqlException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "Too few arguments for 'within'");
+                    }
+                });
+    }
+
+    @Test
     public void testLatestByAllIndexedGeoHashWithinOr() throws Exception {
         assertMemoryLeak(
                 () -> {
