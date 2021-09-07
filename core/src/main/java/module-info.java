@@ -444,6 +444,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.SumLongGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.KSumDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.NSumDoubleGroupByFunctionFactory,
+//                  'lag' group by function
+            io.questdb.griffin.engine.functions.groupby.LagLongGroupByFunctionFactory,
 //                  'last' group by function
             io.questdb.griffin.engine.functions.groupby.LastDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastFloatGroupByFunctionFactory,
