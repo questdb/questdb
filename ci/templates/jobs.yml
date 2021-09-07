@@ -4,6 +4,8 @@ jobs:
   pool:
     name: "Azure Pipelines"
     vmImage: "ubuntu-latest"
+  dependsOn:
+  - CheckChanges
   timeoutInMinutes: 60
   variables:
     SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
@@ -29,6 +31,8 @@ jobs:
   pool:
     name: "Azure Pipelines"
     vmImage: "macos-latest"
+  dependsOn:
+  - CheckChanges
   timeoutInMinutes: 60
   variables:
     SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
@@ -43,6 +47,8 @@ jobs:
   pool:
     name: "Azure Pipelines"
     vmImage: "windows-latest"
+  dependsOn:
+  - CheckChanges
   timeoutInMinutes: 60
   variables:
     SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
@@ -57,6 +63,8 @@ jobs:
   pool:
     name: "Azure Pipelines"
     vmImage: "ubuntu-latest"
+  dependsOn:
+  - CheckChanges
   timeoutInMinutes: 60
   variables:
     SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
@@ -73,6 +81,8 @@ jobs:
     vmImage:
     demands:
     - Agent.Name -equals arm64-$(Build.BuildId)
+  dependsOn:
+  - CheckChanges
   timeoutInMinutes: 60
   variables:
     SOURCE_CODE_CHANGED: "true" # $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
