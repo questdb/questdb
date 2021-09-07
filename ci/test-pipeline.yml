@@ -89,3 +89,5 @@ stages:
             name: check_changes
             displayName: 'Check changed files'
       - template: templates/jobs.yml
+        parameters:
+          SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
