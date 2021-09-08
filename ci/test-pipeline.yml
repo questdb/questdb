@@ -25,12 +25,8 @@ stages:
               echo "buildno: $(Build.BuildId)"
               echo ${AZURE_DEVOPS_CLI_PAT} | az devops login
             env:
-              AZURE_DEVOPS_CLI_PAT: $(AZURE_DEVOPS_CLI_PAT)
+              AZURE_DEVOPS_CLI_PAT: $(System.AccessToken)
             displayName: 'Login Azure DevOps Extension'
-          - bash: |
-              sudo apt-get update
-              sudo apt-get install jq
-            displayName: 'Install dependecies'
           - bash: az devops configure --defaults organization=$(System.TeamFoundationCollectionUri) project=$(System.TeamProject) --use-git-aliases true
             displayName: 'Set default Azure DevOps organization and project'
           - task: LambdaInvokeFunction@1
