@@ -28,8 +28,8 @@
     "peerDependencies": {
     },
     "devDependencies": {
-      "@questdb/virtual-scroll-row":"0.0.3",
-      "@questdb_design-system/virtual-scroll-row":"0.0.3",
+      "@questdb/virtual-scroll-row":"0.0.4",
+      "@questdb_design-system/virtual-scroll-row":"0.0.4",
       "eslint": "^6.1.0",
       "@open-wc/eslint-config": "^2.0.0",
       "prettier": "^2.0.4",

@@ -1,29 +1,20 @@
 {
-  "name": "@questdb_design-system/virtual-scroll-row",
-    "version": "0.0.4",
-    "description": "Webcomponent virtualScroll following open-wc recommendations",
-    "author": "",
-    "license": "MIT",
-    "main": "dist/virtual-scroll-row.js",
-    "types": "components/virtual-scroll-row",
-    "publishConfig": {
-      "access": "public"
-    },
-    "files": [
-      "dist/*",
-      "components/*"
-    ],
-    "scripts": {
-      "lint": "eslint --ext .ts,.html . --ignore-path .gitignore && prettier \"**/*.ts\" --check --ignore-path .gitignore",
-      "format": "eslint --ext .ts,.html . --fix --ignore-path .gitignore && prettier \"**/*.ts\" --write --ignore-path .gitignore",
-      "test": "tsc && wtr --coverage",
-      "test:watch": "tsc && concurrently -k -r \"tsc --watch --preserveWatchOutput\" \"wtr --watch\"",
-      "storybook": "tsc && npm run analyze -- --exclude dist && concurrently -k -r \"tsc --watch --preserveWatchOutput\" \"wds -c .storybook/server.mjs\"",
-      "storybook:build": "tsc && npm run analyze -- --exclude dist && build-storybook",
-      "build": "rimraf dist/* && tsc && rollup -c rollup.config.js && npm run analyze -- --exclude dist",
-      "start:build": "web-dev-server --root-dir dist --app-index index.html --open",
-      "analyze": "cem analyze --litelement",
-      "start": "tsc && concurrently -k -r \"tsc --watch --preserveWatchOutput\" \"wds\""
+  "name": "my-component",
+  "description": "Webcomponent my-component following open-wc recommendations",
+  "license": "MIT",
+  "author": "my-component",
+  "version": "0.0.3",
+  "scripts": {
+    "lint": "eslint --ext .ts,.html . --ignore-path .gitignore && prettier \"**/*.ts\" --check --ignore-path .gitignore",
+    "format": "eslint --ext .ts,.html . --fix --ignore-path .gitignore && prettier \"**/*.ts\" --write --ignore-path .gitignore",
+    "test": "tsc && wtr --coverage",
+    "test:watch": "tsc && concurrently -k -r \"tsc --watch --preserveWatchOutput\" \"wtr --watch\"",
+    "storybook": "tsc && npm run analyze -- --exclude dist && concurrently -k -r \"tsc --watch --preserveWatchOutput\" \"wds -c .storybook/server.mjs\"",
+    "storybook:build": "tsc && npm run analyze -- --exclude dist && build-storybook",
+    "build": "rimraf dist && tsc && rollup -c rollup.config.js && npm run analyze -- --exclude dist",
+    "start:build": "web-dev-server --root-dir dist --app-index index.html --open",
+    "analyze": "cem analyze --litelement",
+    "start": "tsc && concurrently -k -r \"tsc --watch --preserveWatchOutput\" \"wds\"",
   },
   "dependencies": {
     "lit": "^2.0.0-rc.3"

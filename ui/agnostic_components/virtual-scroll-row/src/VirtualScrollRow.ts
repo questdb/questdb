@@ -9,10 +9,10 @@ export class VirtualScrollRow extends LitElement {
 
     @property({
         type: Object
-    }) item = {info: ""}
+    }) item = {index: ""}
 
-    get info(): string {
-        return this.item.info;
+    get indexItem(): string {
+        return this.item.index||"";
     }
 
     static get styles() {

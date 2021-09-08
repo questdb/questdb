@@ -25,6 +25,9 @@ services:
         source: ./dist
         target: /usr/src/dist
       - type: bind
+        source: ./rollup.config.js
+        target: /usr/src/rollup.config.js
+      - type: bind
         source: ./package.json
         target: /usr/src/package.json
     entrypoint: /bin/sh -c "while sleep 1000; do :; done"
