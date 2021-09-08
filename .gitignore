@@ -21,3 +21,4 @@ core/CMakeCache.txt
 **/.classpath
 **/build
 **/CMakeFiles
+.envrc

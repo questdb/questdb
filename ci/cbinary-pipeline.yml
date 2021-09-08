@@ -1,0 +1,202 @@
+trigger: none
+
+variables:
+  OS_MAPPING: none
+  Windows_NT-X86: windows 
+  Darwin-X64: osx
+  Darwin-ARM: armosx 
+  Linux-ARM: armlinux
+  Linux-X64: linux
+
+stages:
+  - stage: BuildBinaries
+    displayName: "Building C++ binaries"
+    jobs:
+      - job: RunOn
+        displayName: "on"
+        strategy:
+          matrix:
+            linux:
+              imageName: "ubuntu-latest"
+              poolName: "Azure Pipelines"
+              os: Linux
+              jdk: "1.11"
+              generator: "CodeBlocks - Unix Makefiles"
+            mac:
+              imageName: "macos-latest"
+              poolName: "Azure Pipelines"
+              os: macOS
+              jdk: "1.11"
+              generator: "CodeBlocks - Unix Makefiles"       
+
+        pool:
+          name: $(poolName)
+          vmImage: $(imageName)
+        timeoutInMinutes: 60
+        steps:
+          - checkout: self
+            fetchDepth: 1
+            lfs: false
+            submodules: false
+          - bash: sudo sysctl -w fs.file-max=500000
+            condition: eq(variables['Agent.OS'], 'Linux')
+            displayName: "Increase file count on Linux"
+
+          - bash: |
+              echo "##vso[task.setvariable variable=OS_MAPPING]$(Linux-X64)"
+              sudo apt-get install -y nasm g++-10-aarch64-linux-gnu gcc-10-aarch64-linux-gnu gcc-mingw-w64
+            condition: and(eq(variables['Agent.OS'], 'Linux'), eq(variables['Agent.OSArchitecture'], 'x64'))
+            displayName: "Install NASM for Linux x64"
+          - bash: |
+              echo "##vso[task.setvariable variable=OS_MAPPING]$(Darwin-X64)"
+              brew install nasm
+            displayName: "Install NASM Mac"
+            condition: eq(variables['Agent.OS'], 'Darwin')
+          
+          - task: CMake@1
+            inputs:
+              workingDirectory: core
+              cmakeArgs: -G "$(generator)" -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+            displayName: "Genearting Makefiles for: $(generator)"
+
+          - task: CMake@1
+            inputs:
+              workingDirectory: core
+              cmakeArgs: --build cmake-build-release --config Release
+            displayName: "Build source-code $(Agent.OS)"
+
+
+          - task: CMake@1
+            inputs:
+              workingDirectory: core
+              cmakeArgs: -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake -DCMAKE_EXECUTABLE_SUFFIX=-10 -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release
+            displayName: "Build source-code Linux arm"
+            condition: eq(variables['Agent.OS'], 'Linux')
+
+          - task: CMake@1
+            inputs:
+              workingDirectory: core
+              cmakeArgs: -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/windows-x86_64.cmake -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release
+            displayName: "Build source-code for Windows"
+            condition: eq(variables['Agent.OS'], 'Linux')
+
+          - task: S3Upload@1
+            inputs:
+              awsCredentials: "ondemand-dev"
+              regionName: "eu-west-1"
+              bucketName: "questdb-releases"
+              sourceFolder: "core/src/main/resources/io/questdb/bin/$(OS_MAPPING)/"
+              globExpressions: |
+                *.so
+                *.dylib 
+                *.dll
+              targetFolder: "releases/c_binaries/$(Build.BuildId)/$(OS_MAPPING)"
+              filesAcl: 'bucket-owner-full-control'
+            displayName: "Upload binaries to S3 $(Agent.OS)"
+
+          - task: S3Upload@1
+            inputs:
+              awsCredentials: "ondemand-dev"
+              regionName: "eu-west-1"
+              bucketName: "questdb-releases"
+              sourceFolder: "core/src/main/resources/io/questdb/bin/windows/"
+              globExpressions: |
+                *.so
+                *.dylib 
+                *.dll
+              targetFolder: "releases/c_binaries/$(Build.BuildId)/windows"
+              filesAcl: 'bucket-owner-full-control'
+            displayName: "Upload binaries to S3 for cross-compiled windows"
+            condition: eq(variables['Agent.OS'], 'Linux')
+
+          - task: S3Upload@1
+            inputs:
+              awsCredentials: "ondemand-dev"
+              regionName: "eu-west-1"
+              bucketName: "questdb-releases"
+              sourceFolder: "core/src/main/resources/io/questdb/bin/armlinux/"
+              globExpressions: |
+                *.so
+                *.dylib 
+                *.dll
+              targetFolder: "releases/c_binaries/$(Build.BuildId)/armlinux"
+              filesAcl: 'bucket-owner-full-control'
+            displayName: "Upload binaries to S3 for cross-compiled armlinux"
+            condition: eq(variables['Agent.OS'], 'Linux')
+
+          - task: PublishBuildArtifacts@1
+            inputs:
+              pathToPublish: ./core/src/main/resources/io/questdb/bin
+            displayName: "Publish c++ artifacts" 
+  69  core/Makefile 
+Viewed
+@@ -0,0 +1,69 @@
+.DEFAULT_GOAL := get_cbinaries
+SHELL = bash
+
+export AWS_REGION           ?= eu-west-1
+export AZURE_DEVOPS_EXT_PAT ?= none
+
+BUCKET_NAME 		?= questdb-releases
+BUCKET_PATH			?= releases/c_binaries
+DEFAULT_BINARY_PATH ?= ./src/main/resources/io/questdb/bin
+DEVOPS_ORG			?= https://dev.azure.com/questdb
+DEVOPS_PROJECT		?= questdb
+AZ_PIPELINE_ID      ?= 6
+
+aws   ?= aws
+az    ?= az
+jq    ?= jq
+git   ?= git
+
+ifeq (, $(shell which aws))
+$(error "No aws cli in $(PATH)")
+endif
+
+ifeq (, $(shell which az))
+$(error "No az cli in $(PATH)")
+endif
+
+ifeq (, $(shell which jq))
+$(error "No jq in $(PATH)")
+endif
+
+get_cbinaries: az_login az_trigger_pipeline
+
+az_login:
+	@ $(az) devops configure --defaults organization=$(DEVOPS_ORG) project=$(DEVOPS_PROJECT) --use-git-aliases true
+
+az_trigger_pipeline: GIT_ID?=$(shell $(git) rev-parse --short HEAD)
+az_trigger_pipeline: GIT_BRANCH?=$(shell $(git) symbolic-ref -q --short HEAD || git describe --tags --exact-match)
+az_trigger_pipeline:
+	$(eval pipeline_id := $(shell $(az) pipelines run --detect true  --id $(AZ_PIPELINE_ID) --branch $(GIT_BRANCH) --output json --only-show-errors | $(jq) -r '.id') )
+	@ echo "Build branch: $(GIT_BRANCH) - commit: $(GIT_ID)"
+	@ echo "link: https://dev.azure.com/questdb/questdb/_build/results?buildId=$(pipeline_id)"
+	@ $(MAKE) wait ID=$(pipeline_id)
+	@ $(MAKE) s3_download_cbinaries ID=$(pipeline_id)
+
+s3_download_cbinaries: ID=$(ID)
+s3_download_cbinaries:
+	@ echo "Updating local binaries"
+	$(aws) s3 sync s3://$(BUCKET_NAME)/$(BUCKET_PATH)/$(ID) $(DEFAULT_BINARY_PATH)
+
+az_download_cbinaries: ID=$(ID)
+az_download_cbinaries:
+	@ echo "Updating local binaries"
+	$(az) pipelines runs artifact download --detect true --artifact-name drop --path $(DEFAULT_BINARY_PATH) --run-id $(ID)
+
+wait: WAIT_TIMEOUT:=1200
+wait: ID=$(ID)
+wait:
+	$(eval timeout := $(shell echo "`date +%s` + $(WAIT_TIMEOUT)" | bc ))
+	@ echo Waiting for pipeline to be completed
+	@ while [ "`date +%s`" -le "$(timeout)" ]; do \
+		status="`$(az) pipelines build show --project=$(DEVOPS_PROJECT) --id $(ID) --detect true --organization $(DEVOPS_ORG) | $(jq) -r '.status'`"; \
+		if [ "$$status" == "completed" ]; then \
+			exit 0 || echo "Pipeline completed with id $(ID)"; \
+		fi; \
+		echo -n "."; \
+		sleep 5; \
+	done; \
+	echo "ERROR timeout $(WAIT_TIMEOUT)sec"; \
+	exit 1 
