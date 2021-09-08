@@ -43,7 +43,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGeohashDowncast() throws Exception {
+    public void testGeoHashDowncast() throws Exception {
         assertMemoryLeak(() -> assertSql("select cast(cast('questdb' as geohash(7c)) as geohash(6c)) from long_sequence(1)\n" +
                         "UNION ALL\n" +
                         "select cast('questdb' as geohash(6c)) from long_sequence(1)",
@@ -53,14 +53,14 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGeohashDowncastNull() throws Exception {
+    public void testGeoHashDowncastNull() throws Exception {
         assertMemoryLeak(() -> assertSql("select cast(cast(NULL as geohash(7c)) as geohash(6c)) from long_sequence(1)",
                 "cast\n" +
                         "\n"));
     }
 
     @Test
-    public void testGeohashDowncastSameSize() throws Exception {
+    public void testGeoHashDowncastSameSize() throws Exception {
         assertMemoryLeak(() -> assertSql("select cast(cast('questdb' as geohash(7c)) as geohash(35b)) from long_sequence(1)",
                 "cast\n" +
                         "questdb\n"));
@@ -68,7 +68,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
 
 
     @Test
-    public void testGeohashUpcast() throws Exception {
+    public void testGeoHashUpcast() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 compiler.compile("select cast(cast('questdb' as geohash(6c)) as geohash(7c)) from long_sequence(1)", sqlExecutionContext);
@@ -80,7 +80,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertGeohashTooFewChars() throws Exception {
+    public void testInsertGeoHashTooFewChars() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(time timestamp, uuid symbol, hash8 geohash(8c))", sqlExecutionContext);
             try {
@@ -93,7 +93,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDynamicGeohashPrecisionTrim() throws Exception {
+    public void testDynamicGeoHashPrecisionTrim() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(" +
                     "time timestamp, " +
@@ -111,7 +111,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGeohashReadAllCharLengths() throws Exception {
+    public void testGeoHashReadAllCharLengths() throws Exception {
         assertMemoryLeak(() -> {
             for (int l = 12; l > 0; l--) {
                 String tableName = "pos" + l;
@@ -126,7 +126,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterTableAddGeohashColumn() throws Exception {
+    public void testAlterTableAddGeoHashColumn() throws Exception {
         assertMemoryLeak(() -> {
             for (int l = 12; l > 0; l--) {
                 String tableName = "pos" + l;
@@ -141,7 +141,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterTableAddGeohashBitsColumn() throws Exception {
+    public void testAlterTableAddGeoHashBitsColumn() throws Exception {
         assertMemoryLeak(() -> {
             for (int l = ColumnType.GEO_HASH_MAX_BITS_LENGTH; l > 0; l--) {
                 String tableName = "pos" + l;
@@ -158,7 +158,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterTableAddGeohashBitsColumnInvlidSyntax() throws Exception {
+    public void testAlterTableAddGeoHashBitsColumnInvlidSyntax() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(x long)", sqlExecutionContext);
             try {
@@ -172,7 +172,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterTableAddGeohashBitsColumnInvlidSyntax2() throws Exception {
+    public void testAlterTableAddGeoHashBitsColumnInvlidSyntax2() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(x long)", sqlExecutionContext);
             try {
@@ -185,7 +185,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterTableAddGeohashBitsColumnInvlidSyntax22() throws Exception {
+    public void testAlterTableAddGeoHashBitsColumnInvlidSyntax22() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(x long)", sqlExecutionContext);
             try {
@@ -198,7 +198,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterTableAddGeohashBitsColumnInvlidSyntax3() throws Exception {
+    public void testAlterTableAddGeoHashBitsColumnInvlidSyntax3() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(x long)", sqlExecutionContext);
             try {
@@ -212,7 +212,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterTableAddGeohashBitsColumnInvlidSyntax4() throws Exception {
+    public void testAlterTableAddGeoHashBitsColumnInvlidSyntax4() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(x long)", sqlExecutionContext);
             try {
@@ -226,7 +226,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterTableAddGeohashBitsColumnInvlidSyntax5() throws Exception {
+    public void testAlterTableAddGeoHashBitsColumnInvlidSyntax5() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(x long)", sqlExecutionContext);
             try {
@@ -240,7 +240,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInvalidGeohashRnd() throws Exception {
+    public void testInvalidGeoHashRnd() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 assertSql("select rnd_geohash(0) from long_sequence(1)", "");
@@ -252,7 +252,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInvalidGeohashRnd2() throws Exception {
+    public void testInvalidGeoHashRnd2() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 assertSql("select rnd_geohash(61) from long_sequence(1)", "");
@@ -264,7 +264,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGeohashJoinTest() throws Exception {
+    public void testGeoHashJoinTest() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table t1 as (select " +
                     "rnd_geohash(20) geo4," +
@@ -285,7 +285,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGeohashJoinOnGeohash() throws Exception {
+    public void testGeoHashJoinOnGeoHash() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table t1 as (select " +
                     "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
@@ -314,7 +314,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGeohashJoinOnGeohash2() throws Exception {
+    public void testGeoHashJoinOnGeoHash2() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table t1 as (select " +
                     "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
@@ -378,7 +378,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDistinctGeohashJoin() throws Exception {
+    public void testDistinctGeoHashJoin() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table t1 as (select " +
                     "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
@@ -515,7 +515,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGeohashEqualsTest() throws Exception {
+    public void testGeoHashEqualsTest() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table t1 as (select " +
                     "cast(rnd_str('questdb', '1234567') as geohash(7c)) geo4, " +
@@ -530,7 +530,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGeohashNotEqualsTest() throws Exception {
+    public void testGeoHashNotEqualsTest() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table t1 as (select " +
                     "cast(rnd_str('questdb', '1234567') as geohash(7c)) geo4, " +
@@ -544,7 +544,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGeohashNotEqualsNullTest() throws Exception {
+    public void testGeoHashNotEqualsNullTest() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table t1 as (select " +
                     "cast(rnd_str('questdb', '1234567') as geohash(7c)) geo4, " +
@@ -560,7 +560,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGeohashSimpleGroupBy() throws Exception {
+    public void testGeoHashSimpleGroupBy() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table t1 as (select " +
                     "cast(rnd_str('questdb', '1234567') as geohash(7c)) geo4, " +
@@ -575,21 +575,19 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
 
     @Test
     public void testMakeGeoHashFromCoords() throws Exception {
-        assertMemoryLeak(() -> {
-            assertSql("select make_geohash(lon,lat,40) as h8c\n" +
-                            "from ( select \n" +
-                            "(rnd_double()*180.0 - 90.0) as lat,\n" +
-                            "(rnd_double()*360.0 - 180.0) as lon\n" +
-                            "from long_sequence(3))",
-                            "h8c\n" +
-                                    "jr1nj0dv\n" +
-                                    "29tdrk0h\n" +
-                                    "9su67p3e\n");
-        });
+        assertMemoryLeak(() -> assertSql("select make_geohash(lon,lat,40) as h8c\n" +
+                        "from ( select \n" +
+                        "(rnd_double()*180.0 - 90.0) as lat,\n" +
+                        "(rnd_double()*360.0 - 180.0) as lon\n" +
+                        "from long_sequence(3))",
+                        "h8c\n" +
+                                "jr1nj0dv\n" +
+                                "29tdrk0h\n" +
+                                "9su67p3e\n"));
     }
 
     @Test
-    public void testMakeGeohashToDifferentColumnSize() throws Exception {
+    public void testMakeGeoHashToDifferentColumnSize() throws Exception {
         assertMemoryLeak(() -> {
 
             compiler.compile("create table pos as ( " +
@@ -613,16 +611,14 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
 
     @Test
     public void testMakeGeoHashNullOnOutOfRange() throws Exception {
-        assertMemoryLeak(() -> {
-            assertSql("select make_geohash(lon, lat,40) as h8c\n" +
-                            "from ( select \n" +
-                            "(rnd_double()*180.0) as lat,\n" +
-                            "(rnd_double()*360.0) as lon\n" +
-                            "from long_sequence(3))",
-                    "h8c\n" +
-                            "\n" +
-                            "u9tdrk0h\n" +
-                            "\n");
-        });
+        assertMemoryLeak(() -> assertSql("select make_geohash(lon, lat,40) as h8c\n" +
+                        "from ( select \n" +
+                        "(rnd_double()*180.0) as lat,\n" +
+                        "(rnd_double()*360.0) as lon\n" +
+                        "from long_sequence(3))",
+                "h8c\n" +
+                        "\n" +
+                        "u9tdrk0h\n" +
+                        "\n"));
     }
 }

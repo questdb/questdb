@@ -47,6 +47,8 @@ public final class Os {
     private Os() {
     }
 
+    public static native long compareAndSwap(long mem, long oldValue, long newValue);
+
     public static native long currentTimeMicros();
 
     public static native long currentTimeNanos();
@@ -75,8 +77,6 @@ public final class Os {
             }
         }
     }
-
-    public static native long compareAndSwap(long mem, long oldValue, long newValue);
 
     public static int forkExecPid(long forkExecT) {
         return Unsafe.getUnsafe().getInt(forkExecT + 8);
@@ -124,6 +124,19 @@ public final class Os {
             return 0;
         }
         return setCurrentThreadAffinity0(cpu);
+    }
+
+    public static void sleep(long millis) {
+        final long t = System.currentTimeMillis();
+        long deadline = millis;
+        while (deadline > 0) {
+            try {
+                Thread.sleep(deadline);
+                break;
+            } catch (InterruptedException e) {
+                deadline = System.currentTimeMillis() - t;
+            }
+        }
     }
 
     private static native int setCurrentThreadAffinity0(int cpu);

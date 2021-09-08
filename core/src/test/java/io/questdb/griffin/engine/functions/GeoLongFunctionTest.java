@@ -46,28 +46,12 @@ public class GeoLongFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testSimple() {
-        Assert.assertEquals(116, function.getGeoByte(null));
-        Assert.assertEquals(29730, function.getGeoShort(null));
-        Assert.assertEquals(1948437118, function.getGeoInt(null));
         Assert.assertEquals(997599804458L, function.getGeoLong(null));
         Assert.assertEquals(40, ColumnType.getGeoHashBits(function.getType()));
 
         sink.clear();
         GeoHashes.appendBinary(function.getGeoLong(null), ColumnType.getGeoHashBits(function.getType()), sink);
         TestUtils.assertEquals("1110100001000101100101001111110000101010", sink);
-
-        sink.clear();
-        // we encode as 32 bit here to check that first bit is 0
-        GeoHashes.appendBinary(function.getGeoInt(null), 32, sink);
-        TestUtils.assertEquals("01110100001000101100101001111110", sink);
-
-        sink.clear();
-        GeoHashes.appendBinary(function.getGeoShort(null), 15, sink);
-        TestUtils.assertEquals("111010000100010", sink);
-
-        sink.clear();
-        GeoHashes.appendBinary(function.getGeoByte(null), 7, sink);
-        TestUtils.assertEquals("1110100", sink);
 
         final int truncatedHash = (int) ColumnType.truncateGeoHashTypes(
                 function.getGeoLong(null),

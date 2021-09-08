@@ -264,6 +264,7 @@ public final class ColumnType {
 
     static {
         overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE];
+        // todo: try with i <= MAX and j <= MAX
         for (short i = UNDEFINED; i < MAX; i++) {
             for (short j = BOOLEAN; j < MAX; j++) {
                 if (i < overloadPriority.length) {

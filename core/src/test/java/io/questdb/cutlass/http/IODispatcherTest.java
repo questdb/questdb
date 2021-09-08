@@ -2682,7 +2682,7 @@ public class IODispatcherTest {
                                     sent += n;
                                 }
 
-                                Thread.sleep(1);
+                                Os.sleep(1);
 
                                 NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
                                 long t = System.currentTimeMillis();
@@ -4215,7 +4215,6 @@ public class IODispatcherTest {
                     }
                 });
 
-                final AtomicBoolean clientClosed = new AtomicBoolean(false);
                 final int minClientReceivedBytesBeforeDisconnect = 180;
                 final AtomicLong refClientFd = new AtomicLong(-1);
                 HttpClientStateListener clientStateListener = new HttpClientStateListener() {
@@ -4234,7 +4233,6 @@ public class IODispatcherTest {
                             if (fd != -1) {
                                 refClientFd.set(-1);
                                 nf.close(fd);
-                                clientClosed.set(true);
                             }
                         }
                     }
@@ -4733,41 +4731,38 @@ public class IODispatcherTest {
             final AtomicInteger nConnected = new AtomicInteger();
             final LongHashSet serverConnectedFds = new LongHashSet();
             final LongHashSet clientActiveFds = new LongHashSet();
-            IOContextFactory<IOContext> contextFactory = new IOContextFactory<IOContext>() {
-                @Override
-                public IOContext newInstance(long fd, IODispatcher<IOContext> dispatcher) {
-                    LOG.info().$(fd).$(" connected").$();
-                    serverConnectedFds.add(fd);
-                    nConnected.incrementAndGet();
-                    return new IOContext() {
-                        @Override
-                        public boolean invalid() {
-                            return !serverConnectedFds.contains(fd);
-                        }
+            IOContextFactory<IOContext> contextFactory = (fd, dispatcher) -> {
+                LOG.info().$(fd).$(" connected").$();
+                serverConnectedFds.add(fd);
+                nConnected.incrementAndGet();
+                return new IOContext() {
+                    @Override
+                    public boolean invalid() {
+                        return !serverConnectedFds.contains(fd);
+                    }
 
-                        @Override
-                        public long getFd() {
-                            return fd;
-                        }
+                    @Override
+                    public long getFd() {
+                        return fd;
+                    }
 
-                        @Override
-                        public IODispatcher<?> getDispatcher() {
-                            return dispatcher;
-                        }
+                    @Override
+                    public IODispatcher<?> getDispatcher() {
+                        return dispatcher;
+                    }
 
-                        @Override
-                        public void close() {
-                            LOG.info().$(fd).$(" disconnected").$();
-                            serverConnectedFds.remove(fd);
-                        }
-                    };
-                }
+                    @Override
+                    public void close() {
+                        LOG.info().$(fd).$(" disconnected").$();
+                        serverConnectedFds.remove(fd);
+                    }
+                };
             };
             final String request = "\n";
             long mem = TestUtils.toMemory(request);
 
             final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
-            Thread serverThread = null;
+            Thread serverThread;
             final CountDownLatch serverLatch = new CountDownLatch(1);
             try (IODispatcher<IOContext> dispatcher = IODispatchers.create(configuration, contextFactory)) {
                 serverThread = new Thread("test-io-dispatcher") {
@@ -4775,31 +4770,28 @@ public class IODispatcherTest {
                     public void run() {
                         long smem = Unsafe.malloc(1);
                         try {
-                            IORequestProcessor<IOContext> requestProcessor = new IORequestProcessor<IOContext>() {
-                                @Override
-                                public void onRequest(int operation, IOContext context) {
-                                    long fd = context.getFd();
-                                    int rc;
-                                    switch (operation) {
-                                        case IOOperation.READ:
-                                            rc = Net.recv(fd, smem, 1);
-                                            if (rc == 1) {
-                                                dispatcher.registerChannel(context, IOOperation.WRITE);
-                                            } else {
-                                                dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
-                                            }
-                                            break;
-                                        case IOOperation.WRITE:
-                                            rc = Net.send(fd, smem, 1);
-                                            if (rc == 1) {
-                                                dispatcher.registerChannel(context, IOOperation.READ);
-                                            } else {
-                                                dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
-                                            }
-                                            break;
-                                        default:
+                            IORequestProcessor<IOContext> requestProcessor = (operation, context) -> {
+                                long fd = context.getFd();
+                                int rc;
+                                switch (operation) {
+                                    case IOOperation.READ:
+                                        rc = Net.recv(fd, smem, 1);
+                                        if (rc == 1) {
+                                            dispatcher.registerChannel(context, IOOperation.WRITE);
+                                        } else {
                                             dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
-                                    }
+                                        }
+                                        break;
+                                    case IOOperation.WRITE:
+                                        rc = Net.send(fd, smem, 1);
+                                        if (rc == 1) {
+                                            dispatcher.registerChannel(context, IOOperation.READ);
+                                        } else {
+                                            dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                        }
+                                        break;
+                                    default:
+                                        dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
                                 }
                             };
                             do {
@@ -6108,7 +6100,7 @@ public class IODispatcherTest {
                         try {
                             int part1 = len / 2;
                             Assert.assertEquals(part1, Net.send(fd, buffer, part1));
-                            Thread.sleep(1000);
+                            Os.sleep(1000);
                             Assert.assertEquals(len - part1, Net.send(fd, buffer + part1, len - part1));
                         } finally {
                             Unsafe.free(buffer, len);

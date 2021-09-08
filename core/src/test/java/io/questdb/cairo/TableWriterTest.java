@@ -55,7 +55,7 @@ public class TableWriterTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(TableWriterTest.class);
 
     @Test
-    public void TestSelectPartitionDirFmt() {
+    public void testSelectPartitionDirFmt() {
         Assert.assertNull(TableWriter.selectPartitionDirFmt(PartitionBy.NONE));
         sink.clear();
         DateFormat fmt = TableWriter.selectPartitionDirFmt(PartitionBy.DAY);

@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 
 public abstract class GeoLongFunction extends AbstractGeoHashFunction {
@@ -35,28 +34,16 @@ public abstract class GeoLongFunction extends AbstractGeoHashFunction {
 
     @Override
     public byte getGeoByte(Record rec) {
-        return (byte) ColumnType.truncateGeoHashBits(
-                getGeoLong(rec),
-                ColumnType.getGeoHashBits(type),
-                Byte.SIZE - 1
-        );
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public short getGeoShort(Record rec) {
-        return (short) ColumnType.truncateGeoHashBits(
-                getGeoLong(rec),
-                ColumnType.getGeoHashBits(type),
-                Short.SIZE - 1
-        );
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getGeoInt(Record rec) {
-        return (int) ColumnType.truncateGeoHashBits(
-                getGeoLong(rec),
-                ColumnType.getGeoHashBits(type),
-                Integer.SIZE - 1
-        );
+        throw new UnsupportedOperationException();
     }
 }

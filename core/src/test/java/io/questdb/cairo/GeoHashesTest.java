@@ -95,6 +95,16 @@ public class GeoHashesTest {
     }
 
     @Test
+    public void testEncodeChar() {
+//        Assert.assertEquals(18, GeoHashes.encodeChar('k'));
+//        Assert.assertEquals(GeoHashes.BYTE_NULL, GeoHashes.encodeChar('o'));
+//        Assert.assertEquals(GeoHashes.BYTE_NULL, GeoHashes.encodeChar((char) 0x1FF));
+//        Assert.assertEquals(GeoHashes.BYTE_NULL, GeoHashes.encodeChar('ó'));
+        Assert.assertEquals(GeoHashes.BYTE_NULL, GeoHashes.encodeChar('㤴'));
+
+    }
+
+    @Test
     public void testGeoHashTypeName() {
         String expected = "GEOHASH(1b) -> 65806 (1)\n" +
                 "GEOHASH(2b) -> 66062 (2)\n" +
@@ -355,7 +365,7 @@ public class GeoHashesTest {
         }
         for (int i = 0; i < 15000; i++) {
             char ch = (char) rnd.nextPositiveInt();
-            Assert.assertEquals(base32Chars.contains(ch), GeoHashes.isValidChars("" + ch, 0));
+            Assert.assertEquals("dis one: "+ch, base32Chars.contains(ch), GeoHashes.isValidChars("" + ch, 0));
         }
     }
 

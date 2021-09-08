@@ -98,9 +98,6 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
         Function function = parseFunction("cast(null as GeOhAsH(60b))", metadata, functionParser);
         Assert.assertTrue(function.isConstant());
         Assert.assertEquals(ColumnType.GEOLONG, function.getType());
-        Assert.assertEquals(GeoHashes.BYTE_NULL, function.getGeoByte(null));
-        Assert.assertEquals(GeoHashes.SHORT_NULL, function.getGeoShort(null));
-        Assert.assertEquals(GeoHashes.INT_NULL, function.getGeoInt(null));
         Assert.assertEquals(GeoHashes.NULL, function.getGeoLong(null));
     }
 
@@ -117,7 +114,6 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
         Function function = parseFunction("cast(null as GeOhAsH(8b))", metadata, functionParser);
         Assert.assertTrue(function.isConstant());
         Assert.assertEquals(ColumnType.GEOSHORT, function.getType());
-        Assert.assertEquals(GeoHashes.NULL, function.getGeoByte(null));
         Assert.assertEquals(GeoHashes.NULL, function.getGeoShort(null));
     }
 

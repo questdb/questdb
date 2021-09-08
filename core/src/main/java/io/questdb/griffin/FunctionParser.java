@@ -474,10 +474,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
 
         if (len > 1 && tok.charAt(0) == '#') {
-
-            if (tok.charAt(1) != '#') {
-                // geohash from chars constant
-                try {
+            try {
+                if (tok.charAt(1) != '#') {
+                    // geohash from chars constant
                     // optional '/dd', '/d' (max 3 chars, 1..60)
                     final int sdd = ExpressionParser.extractGeoHashSuffix(position, tok);
                     final int sddLen = Numbers.decodeLowShort(sdd);
@@ -486,11 +485,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                             GeoHashes.fromStringTruncatingNl(tok, 1, len - sddLen, bits),
                             bits
                     );
-                } catch (NumericException ignored) {
-                }
-            } else {
-                // geohash from binary constant
-                try {
+                } else {
+                    // geohash from binary constant
                     // minus leading '##', truncates tail bits if over 60
                     int bits = len - 2;
                     if (bits <= ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
@@ -498,11 +494,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                                 GeoHashes.fromBitStringNl(tok, 2),
                                 bits
                         );
-                    } else {
-                        throw NumericException.INSTANCE;
                     }
-                } catch (NumericException ignored) {
                 }
+            } catch (NumericException ignored) {
             }
         }
 

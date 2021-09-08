@@ -165,9 +165,6 @@ public class RecordCursorPrinter {
                 putGeoHash(r.getGeoInt(i), ColumnType.getGeoHashBits(columnType), sink);
                 break;
             case ColumnType.GEOLONG:
-                if (ColumnType.getGeoHashBits(columnType) > 60) {
-                    System.out.println("ok");
-                }
                 putGeoHash(r.getGeoLong(i), ColumnType.getGeoHashBits(columnType), sink);
                 break;
             case ColumnType.BYTE:

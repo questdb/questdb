@@ -24,8 +24,6 @@
 
 package io.questdb.std;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;

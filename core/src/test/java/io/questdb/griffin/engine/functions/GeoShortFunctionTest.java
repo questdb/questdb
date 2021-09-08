@@ -56,13 +56,8 @@ public class GeoShortFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testSimple() {
-        Assert.assertEquals(116, function.getGeoByte(null));
         Assert.assertEquals(929, function.getGeoShort(null));
         Assert.assertEquals(10, ColumnType.getGeoHashBits(function.getType()));
-
-        sink.clear();
-        GeoHashes.appendBinary(function.getGeoByte(null), 7, sink);
-        TestUtils.assertEquals("1110100", sink);
 
         sink.clear();
         GeoHashes.appendBinary(function.getGeoShort(null), 10, sink);

@@ -40,6 +40,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -2923,7 +2924,7 @@ nodejs code:
                 }
 
                 // we need to let server process disconnect and release writer
-                Thread.sleep(2000);
+                Os.sleep(2000);
 
                 try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xyz", "testing")) {
                     w.commit();

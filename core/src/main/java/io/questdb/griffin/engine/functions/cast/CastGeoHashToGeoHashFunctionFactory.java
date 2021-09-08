@@ -74,7 +74,7 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         // check if this is a null of different bit count
-        if (value.isConstant() && value.getGeoByte(null) == GeoHashes.NULL) {
+        if (value.isConstant() && GeoHashes.getGeoLong(value.getType(), value, null) == GeoHashes.NULL) {
             return Constants.getNullConstant(targetType);
         }
 
