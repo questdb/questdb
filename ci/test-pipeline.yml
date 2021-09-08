@@ -60,7 +60,7 @@ stages:
 
   - stage: RunTestsBranches
     displayName: "Running tests"
-    condition: and(succeeded(), eq(variables['System.PullRequest.IsFork'], 'false'))
+    condition: or(succeeded(), eq(variables['System.PullRequest.IsFork'], 'true'))
     jobs:
       - job: CheckChanges
         displayName: 'Check changes'
