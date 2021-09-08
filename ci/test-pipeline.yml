@@ -27,69 +27,61 @@ stages:
             env:
               AZURE_DEVOPS_CLI_PAT: $(System.AccessToken)
             displayName: 'Login Azure DevOps Extension'
-          - bash: |
-              sudo apt-get update
-              sudo apt-get install jq
-            displayName: 'Install dependecies'
           - bash: az devops configure --defaults organization=$(System.TeamFoundationCollectionUri) project=$(System.TeamProject) --use-git-aliases true
             displayName: 'Set default Azure DevOps organization and project'
-          # - task: LambdaInvokeFunction@1
-          #   displayName: 'Start Agent'
-          #   name: 'Start_Agent'
-          #   inputs:
-          #     awsCredentials: 'ondemand-dev'
-          #     regionName: 'eu-west-1'
-          #     functionName: 'ondemand-pipeline'
-          #     payload: |
-          #       {
-          #         "pool": "arm64",
-          #         "buildid": "$(Build.BuildId)"
-          #       }
-          #     outputVariable: 'functionResult'
+          - task: LambdaInvokeFunction@1
+            displayName: 'Start Agent'
+            name: 'Start_Agent'
+            inputs:
+              awsCredentials: 'ondemand-dev'
+              regionName: 'eu-west-1'
+              functionName: 'ondemand-pipeline'
+              payload: |
+                {
+                  "pool": "arm64",
+                  "buildid": "$(Build.BuildId)"
+                }
+              outputVariable: 'functionResult'
           - bash: |
               echo "Instance: $(functionResult)"
             name: 'Display_Instance'
             displayName: 'Display Instance'
           - bash: |
               echo "Starting agent... for pool test-aws"
-              az pipelines pool list
               POOLID=$(az pipelines pool list | jq '.[]| select(.name == "test-aws") | .id' -r)
-              echo "poolid: $POOLID"
               while [ "$(az pipelines agent list --pool-id $POOLID | jq '.[]| select(.name == "test-aws-$(Build.BuildId)") | .enabled' -r)" != "true" ]
               do
                 echo "Still waiting for agent test-aws-$(Build.BuildId) ... "
-                echo "TEST"
-                az pipelines agent list --pool-id 11
                 sleep 3
               done
               echo "Agent found ..."
             name: 'Check_agent'
             displayName: 'Check agent'
-  # - stage: RunTestsBranches
-  #   displayName: "Running tests"
-  #   jobs:
-  #     - job: CheckChanges
-  #       displayName: 'Check changes'
-  #       pool:
-  #         vmImage: "ubuntu-latest"
-  #       steps:
-  #         - checkout: none
-  #         - bash: |
-  #             if [ -z "$PR_ID" ]
-  #             then
-  #               # No PR - cannot detect changed files, default to true
-  #               echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
-  #             else
-  #               CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PR_ID/files -s  | grep -oP 'filename": "core/*\/\K[^.]+')
-  #               if [ -z "$CHANGED_CORE_FILES" ]
-  #                 then
-  #                   echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]false"
-  #                 else
-  #                   echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
-  #               fi
-  #             fi
-  #           env:
-  #             PR_ID: $(System.PullRequest.PullRequestNumber)
-  #           name: check_changes
-  #           displayName: 'Check changed files'
-  #     - template: templates/jobs.yml
+  - stage: RunTestsBranches
+    displayName: "Running tests"
+    jobs:
+      - job: CheckChanges
+        displayName: 'Check changes'
+        pool:
+          vmImage: "ubuntu-latest"
+        steps:
+          - checkout: none
+          - bash: |
+              if [ -z "$PR_ID" ]
+              then
+                # No PR - cannot detect changed files, default to true
+                echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
+              else
+                CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PR_ID/files -s  | grep -oP 'filename": "core/*\/\K[^.]+')
+                if [ -z "$CHANGED_CORE_FILES" ]
+                  then
+                    echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]false"
+                  else
+                    echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
+                fi
+              fi
+            env:
+              PR_ID: $(System.PullRequest.PullRequestNumber)
+            name: check_changes
+            displayName: 'Check changed files'
+      - template: templates/jobs.yml
