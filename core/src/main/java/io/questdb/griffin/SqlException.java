@@ -27,14 +27,17 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Sinkable;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.ThreadLocal;
 
 public class SqlException extends Exception implements Sinkable, FlyweightMessageContainer {
     private static final ThreadLocal<SqlException> tlException = new ThreadLocal<>(SqlException::new);
     private final StringSink message = new StringSink();
     private int position;
+
+    private SqlException() {
+    }
 
     public static SqlException $(int position, CharSequence message) {
         return position(position).put(message);
@@ -44,29 +47,6 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return position(position).put("Ambiguous column name");
     }
 
-    public static SqlException invalidColumn(int position, CharSequence column) {
-        return position(position).put("Invalid column: ").put(column);
-    }
-
-    public static SqlException last() {
-        return tlException.get();
-    }
-
-    public static SqlException invalidDate(int position) {
-        return position(position).put("Invalid date");
-    }
-
-    public static SqlException position(int position) {
-        SqlException ex = new SqlException();
-        ex.message.clear();
-        ex.position = position;
-        return ex;
-    }
-
-    public static SqlException unexpectedToken(int position, CharSequence token) {
-        return position(position).put("unexpected token: ").put(token);
-    }
-
     public static SqlException inconvertibleTypes(int position, int fromType, CharSequence fromName, int toType, CharSequence toName) {
         return $(position, "inconvertible types: ")
                 .put(ColumnType.nameOf(fromType))
@@ -74,6 +54,25 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
                 .put(ColumnType.nameOf(toType))
                 .put(" [from=").put(fromName)
                 .put(", to=").put(toName).put(']');
+    }
+
+    public static SqlException invalidColumn(int position, CharSequence column) {
+        return position(position).put("Invalid column: ").put(column);
+    }
+
+    public static SqlException invalidDate(int position) {
+        return position(position).put("Invalid date");
+    }
+
+    public static SqlException position(int position) {
+        SqlException ex = tlException.get();
+        ex.message.clear();
+        ex.position = position;
+        return ex;
+    }
+
+    public static SqlException unexpectedToken(int position, CharSequence token) {
+        return position(position).put("unexpected token: ").put(token);
     }
 
     @Override

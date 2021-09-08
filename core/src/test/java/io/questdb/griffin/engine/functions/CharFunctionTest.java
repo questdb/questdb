@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -33,12 +34,40 @@ import org.junit.Test;
 public class CharFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
+    private final static char value = 0x34;
     private static final CharFunction function = new CharFunction() {
         @Override
         public char getChar(Record rec) {
-            return 0x34;
+            return value;
         }
     };
+
+    private static final CharFunction zeroFunc = new CharFunction() {
+        @Override
+        public char getChar(Record rec) {
+            return 0;
+        }
+    };
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoByte() {
+        function.getGeoByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoInt() {
+        function.getGeoInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoLong() {
+        function.getGeoLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoShort() {
+        function.getGeoShort(null);
+    }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
@@ -65,9 +94,34 @@ public class CharFunctionTest {
         function.getDate(null);
     }
 
+    @Test
+    public void testGetDouble() {
+        Assert.assertEquals(value, function.getDouble(null), 0.0001);
+    }
+
+    @Test
+    public void testGetFloat() {
+        Assert.assertEquals(value, function.getFloat(null), 0.0001);
+    }
+
+    @Test
+    public void testGetInt() {
+        Assert.assertEquals(value, function.getInt(null));
+    }
+
+    @Test
+    public void testGetLong() {
+        Assert.assertEquals(value, function.getLong(null));
+    }
+
     @Test(expected = UnsupportedOperationException.class)
     public void testGetRecordCursorFactory() {
         function.getRecordCursorFactory();
+    }
+
+    @Test
+    public void testGetShort() {
+        Assert.assertEquals(value, function.getShort(null));
     }
 
     @Test
@@ -92,14 +146,31 @@ public class CharFunctionTest {
         Assert.assertEquals(1, function.getStrLen(null));
     }
 
+    @Test
+    public void testGetStrZ() {
+        Assert.assertNull(zeroFunc.getStr(null));
+    }
+
+    @Test
+    public void testGetStrZ2() {
+        StringSink sink = new StringSink();
+        zeroFunc.getStr(null, sink);
+        TestUtils.assertEquals("", sink);
+    }
+
+    @Test
+    public void testGetStrZLen() {
+        Assert.assertEquals(TableUtils.NULL_LEN, zeroFunc.getStrLen(null));
+    }
+
     @Test(expected = UnsupportedOperationException.class)
     public void testGetSym() {
         function.getSymbol(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testTimestamp() {
-        function.getTimestamp(null);
+    public void testGetSymbolB() {
+        function.getSymbolB(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -118,22 +189,7 @@ public class CharFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHash() {
-        function.getGeoHashLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashInt() {
-        function.getGeoHashInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashByte() {
-        function.getGeoHashByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashShor() {
-        function.getGeoHashShort(null);
+    public void testTimestamp() {
+        function.getTimestamp(null);
     }
 }

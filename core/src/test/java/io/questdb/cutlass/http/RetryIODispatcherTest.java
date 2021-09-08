@@ -31,9 +31,9 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.ServerDisconnectException;
+import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.ComparisonFailure;
@@ -390,7 +390,7 @@ public class RetryIODispatcherTest {
                             return;
                         } catch (ComparisonFailure e) {
                             if (i < 9) {
-                                Thread.sleep(50);
+                                Os.sleep(50);
                             } else {
                                 throw e;
                             }
@@ -635,7 +635,7 @@ public class RetryIODispatcherTest {
                                 // insert one record
                                 // await nothing
                                 try {
-                                    Thread.sleep(threadI * 5);
+                                    Os.sleep(threadI * 5);
                                     String request = "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(" + threadI +
                                             "%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" + SendAndReceiveRequestBuilder.RequestHeaders;
                                     long fd = new SendAndReceiveRequestBuilder().connectAndSendRequest(request);
@@ -678,7 +678,7 @@ public class RetryIODispatcherTest {
                             return;
                         } catch (ComparisonFailure e) {
                             if (i < waitCount - 1) {
-                                Thread.sleep(50);
+                                Os.sleep(50);
                             } else {
                                 throw e;
                             }
@@ -797,14 +797,14 @@ public class RetryIODispatcherTest {
     }
 
     @NotNull
-    private TableWriter lockWriter(CairoEngine engine, String tableName) throws InterruptedException {
+    private TableWriter lockWriter(CairoEngine engine, String tableName) {
         TableWriter writer = null;
         for (int i = 0; i < 10; i++) {
             try {
                 writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing");
                 break;
             } catch (EntryUnavailableException e) {
-                Thread.sleep(10);
+                Os.sleep(10);
             }
         }
 

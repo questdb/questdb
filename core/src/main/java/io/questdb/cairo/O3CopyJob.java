@@ -838,20 +838,24 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 break;
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
+            case ColumnType.GEOBYTE:
                 copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 0);
                 break;
             case ColumnType.CHAR:
             case ColumnType.SHORT:
+            case ColumnType.GEOSHORT:
                 copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 1);
                 break;
             case ColumnType.INT:
             case ColumnType.FLOAT:
             case ColumnType.SYMBOL:
+            case ColumnType.GEOINT:
                 copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 2);
                 break;
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.DOUBLE:
+            case ColumnType.GEOLONG:
                 copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 3);
                 break;
             case ColumnType.TIMESTAMP:
@@ -864,10 +868,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 break;
             case ColumnType.LONG256:
                 copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 5);
-                break;
-            case ColumnType.GEOHASH:
-                final int pow2SizeOf = ColumnType.pow2SizeOf(columnType);
-                copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, pow2SizeOf);
                 break;
             default:
                 // we have exhausted all supported types in "case" clauses
@@ -923,7 +923,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarOffset
     ) {
         final long rowCount = srcOooHi - srcOooLo + 1 + srcDataHi - srcDataLo + 1;
-        switch (ColumnType.storageTag(columnType)) {
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
             case ColumnType.GEOBYTE:

@@ -28,11 +28,40 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 public final class Constants {
     private static final ObjList<ConstantFunction> nullConstants = new ObjList<>();
     private static final ObjList<ConstantFunction> geoNullConstants = new ObjList<>();
     private static final ObjList<TypeConstant> typeConstants = new ObjList<>();
+
+    public static ConstantFunction getGeoHashConstant(long hash, int bits) {
+        final int type = ColumnType.getGeoHashTypeWithBits(bits);
+        return getGeoHashConstantWithType(hash, type);
+    }
+
+    public static ConstantFunction getNullConstant(int columnType) {
+        return nullConstants.getQuick(ColumnType.tagOf(columnType));
+    }
+
+    public static TypeConstant getTypeConstant(int columnType) {
+        // GEOHASH takes a different path, no need to extract tag
+        return typeConstants.getQuick(columnType);
+    }
+
+    @NotNull
+    public static ConstantFunction getGeoHashConstantWithType(long hash, int type) {
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.GEOBYTE:
+                return new GeoByteConstant((byte) hash, type);
+            case ColumnType.GEOSHORT:
+                return new GeoShortConstant((short) hash, type);
+            case ColumnType.GEOINT:
+                return new GeoIntConstant((int) hash, type);
+            default:
+                return new GeoLongConstant(hash, type);
+        }
+    }
 
     static {
         nullConstants.extendAndSet(ColumnType.INT, IntConstant.NULL);
@@ -49,11 +78,10 @@ public final class Constants {
         nullConstants.extendAndSet(ColumnType.FLOAT, FloatConstant.NULL);
         nullConstants.extendAndSet(ColumnType.BINARY, NullBinConstant.INSTANCE);
         nullConstants.extendAndSet(ColumnType.LONG256, Long256NullConstant.INSTANCE);
-
-        for(int b = 0; b < GeoHashes.MAX_BITS_LENGTH; b++) {
-            int type = ColumnType.geohashWithPrecision(b + 1);
-            geoNullConstants.extendAndSet(b, GeoHashConstant.newInstance(GeoHashes.NULL, type));
-        }
+        nullConstants.extendAndSet(ColumnType.GEOBYTE, GeoByteConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.GEOSHORT, GeoShortConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.GEOINT, GeoIntConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.GEOLONG, GeoLongConstant.NULL);
 
         typeConstants.extendAndSet(ColumnType.INT, IntTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.STRING, StrTypeConstant.INSTANCE);
@@ -69,21 +97,9 @@ public final class Constants {
         typeConstants.extendAndSet(ColumnType.FLOAT, FloatTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.BINARY, BinTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.LONG256, Long256TypeConstant.INSTANCE);
-        // GEOHASH has 60 type constants
-    }
 
-    public static ConstantFunction getNullConstant(int columnType) {
-        if (columnType < nullConstants.size()) {
-            return nullConstants.getQuick(columnType);
-        } else if (ColumnType.tagOf(columnType) == ColumnType.GEOHASH) {
-            int bitsPrecision = GeoHashes.getBitsPrecision(columnType);
-            return geoNullConstants.getQuick(bitsPrecision - 1);
+        for (int b = 1; b < ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
+            geoNullConstants.extendAndSet(b, getGeoHashConstant(GeoHashes.NULL, b));
         }
-        throw new UnsupportedOperationException();
-    }
-
-    public static TypeConstant getTypeConstant(int columnType) {
-        // GEOHASH takes a different path, no need to extract tag
-        return typeConstants.getQuick(columnType);
     }
 }

@@ -38,6 +38,12 @@ public class ShowTablesTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testShowStandardConformingStrings() throws Exception {
+        assertMemoryLeak(() -> assertQuery("standard_conforming_strings\n" +
+                "on\n", "show standard_conforming_strings", null, null, false, false, true));
+    }
+
+    @Test
     public void testShowTablesWithDrop() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
@@ -123,17 +129,13 @@ public class ShowTablesTest extends AbstractGriffinTest {
 
     @Test
     public void testShowTimeZone() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery(
-                    "TimeZone\nUTC\n",
-                    "show time zone", null, false, sqlExecutionContext, false, true);
-        });
+        assertMemoryLeak(() -> assertQuery(
+                "TimeZone\nUTC\n",
+                "show time zone", null, false, sqlExecutionContext, false, true));
     }
 
     @Test
     public void testShowTimeZoneWrongSyntax() throws Exception {
-        assertMemoryLeak(() -> {
-            assertFailure("show time", null, 5, "expected 'tables', 'columns' or 'time zone'");
-        });
+        assertMemoryLeak(() -> assertFailure("show time", null, 5, "expected 'tables', 'columns' or 'time zone'"));
     }
 }

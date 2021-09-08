@@ -222,35 +222,35 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public byte getGeoHashByte(int col) {
+    public byte getGeoByte(int col) {
         if (col < split) {
-            return master.getGeoHashByte(col);
+            return master.getGeoByte(col);
         }
-        return slave.getGeoHashByte(col - split);
+        return slave.getGeoByte(col - split);
     }
 
     @Override
-    public short getGeoHashShort(int col) {
+    public short getGeoShort(int col) {
         if (col < split) {
-            return master.getGeoHashShort(col);
+            return master.getGeoShort(col);
         }
-        return slave.getGeoHashShort(col - split);
+        return slave.getGeoShort(col - split);
     }
 
     @Override
-    public int getGeoHashInt(int col) {
+    public int getGeoInt(int col) {
         if (col < split) {
-            return master.getGeoHashInt(col);
+            return master.getGeoInt(col);
         }
-        return slave.getGeoHashInt(col - split);
+        return slave.getGeoInt(col - split);
     }
 
     @Override
-    public long getGeoHashLong(int col) {
+    public long getGeoLong(int col) {
         if (col < split) {
-            return master.getGeoHashLong(col);
+            return master.getGeoLong(col);
         }
-        return slave.getGeoHashLong(col - split);
+        return slave.getGeoLong(col - split);
     }
 
     void of(Record master, Record slave) {

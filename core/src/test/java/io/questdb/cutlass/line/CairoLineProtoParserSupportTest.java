@@ -241,7 +241,7 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
                     try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
                         CairoTestUtils.create(model
                                 .col(targetColumnName, columnType)
-                                .col(locationColumnName, ColumnType.geohashWithPrecision(geohashColumnBits))
+                                .col(locationColumnName, ColumnType.getGeoHashTypeWithBits(geohashColumnBits))
                                 .timestamp());
                     }
                     receiver.start();

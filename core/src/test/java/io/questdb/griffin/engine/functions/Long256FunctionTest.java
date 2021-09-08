@@ -37,6 +37,10 @@ public class Long256FunctionTest {
 
     private static final Long256Function function = new Long256Function() {
         @Override
+        public void getLong256(Record rec, CharSink sink) {
+        }
+
+        @Override
         public Long256 getLong256A(Record rec) {
             return Long256Impl.NULL_LONG256;
         }
@@ -45,11 +49,32 @@ public class Long256FunctionTest {
         public Long256 getLong256B(Record rec) {
             return Long256Impl.NULL_LONG256;
         }
-
-        @Override
-        public void getLong256(Record rec, CharSink sink) {
-        }
     };
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testChar() {
+        function.getChar(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoByte() {
+        function.getGeoByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoInt() {
+        function.getGeoInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoLong() {
+        function.getGeoLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoShort() {
+        function.getGeoShort(null);
+    }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
@@ -132,32 +157,12 @@ public class Long256FunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetSymbolB() {
+        function.getSymbolB(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testTimestamp() {
         function.getTimestamp(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testChar() {
-        function.getChar(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHash() {
-        function.getGeoHashLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashInt() {
-        function.getGeoHashInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashByte() {
-        function.getGeoHashByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashShor() {
-        function.getGeoHashShort(null);
     }
 }

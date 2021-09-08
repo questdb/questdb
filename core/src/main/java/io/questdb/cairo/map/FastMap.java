@@ -118,28 +118,29 @@ public class FastMap implements Map {
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.BYTE:
                     case ColumnType.BOOLEAN:
+                    case ColumnType.GEOBYTE:
                         offset++;
                         break;
                     case ColumnType.SHORT:
                     case ColumnType.CHAR:
+                    case ColumnType.GEOSHORT:
                         offset += 2;
                         break;
                     case ColumnType.INT:
                     case ColumnType.FLOAT:
                     case ColumnType.SYMBOL:
+                    case ColumnType.GEOINT:
                         offset += 4;
                         break;
                     case ColumnType.LONG:
                     case ColumnType.DOUBLE:
                     case ColumnType.DATE:
                     case ColumnType.TIMESTAMP:
+                    case ColumnType.GEOLONG:
                         offset += 8;
                         break;
                     case ColumnType.LONG256:
                         offset += Long256.BYTES;
-                        break;
-                    case ColumnType.GEOHASH:
-                        offset += GeoHashes.sizeOf(columnType);
                         break;
                     default:
                         close();

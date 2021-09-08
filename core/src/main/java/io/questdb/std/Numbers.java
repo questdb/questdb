@@ -84,7 +84,7 @@ public final class Numbers {
             return;
         }
 
-        if (f != f) {
+        if (Float.isNaN(f)) {
             sink.put("NaN");
             return;
         }
