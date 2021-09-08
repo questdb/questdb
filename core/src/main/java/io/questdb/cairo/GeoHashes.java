@@ -49,12 +49,6 @@ public class GeoHashes {
     public static final int MAX_STRING_LENGTH = 12;
     // we fill this array with BYTE_NULL (-1)
     static final byte[] base32Indexes = {
-            -1, -1, -1, -1, -1, -1, -1, -1,
-            -1, -1, -1, -1, -1, -1, -1, -1,
-            -1, -1, -1, -1, -1, -1, -1, -1,
-            -1, -1, -1, -1, -1, -1, -1, -1,
-            -1, -1, -1, -1, -1, -1, -1, -1,
-            -1, -1, -1, -1, -1, -1, -1, -1,
             0, 1, 2, 3, 4, 5, 6, 7,         // 30-37, '0'..'7'
             8, 9, -1, -1, -1, -1, -1, -1,   // 38-2F, '8','9'
             -1, -1, 10, 11, 12, 13, 14, 15, // 40-47, 'B'..'G'
@@ -110,14 +104,8 @@ public class GeoHashes {
     }
 
     public static byte encodeChar(char c) {
-        // high 8 bits of the char are converted into a sign bit
-        // which is then converted into all bits set or none bits set
-        // this mast is finally applied to the byte we're encoding
-        final int mask1 = (Integer.numberOfLeadingZeros(c >> 8) - 32);
-        // copy the highest bit of the byte across all bits
-        final int mask2 = c >>> 7 << 31;
-        final int mask = ~(mask1 | mask2) >> 31;
-        return base32Indexes[c & 0x7f & mask];
+        // element at index 11 is -1
+        return base32Indexes[c > 47 && c < 123 ? c - 48 : 11];
     }
 
     public static long fromBitString(CharSequence bits, int start) throws NumericException {
