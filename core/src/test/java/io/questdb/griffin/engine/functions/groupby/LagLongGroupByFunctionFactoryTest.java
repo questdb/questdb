@@ -84,7 +84,6 @@ public class LagLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
         );
     }
 
-
     @Test
     public void testLagSampleBy1h() throws Exception {
         // TODO: something is broken, the lag function is being called 7 times

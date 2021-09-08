@@ -96,6 +96,7 @@ public class LagLongGroupByFunction extends LongFunction implements GroupByFunct
         }
 
         void reset(MapValue mapValue) {
+            System.out.printf("RESET INVOKED%n");
             this.mapValue = mapValue;
             Arrays.fill(buf, defaultValue);
             this.nextValIdx = 0;
