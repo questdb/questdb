@@ -13,7 +13,7 @@ variables:
 stages:
   - stage: StartBuildAgent
     displayName: "Start Building Agent"
-    condition: always()
+    condition: eq(variables['System.PullRequest.IsFork'], 'false')
     jobs:
       - job: StartArmAgent
         displayName: 'Start ARM Agent'
@@ -39,9 +39,7 @@ stages:
               payload: |
                 {
                   "pool": "arm64",
-                  "buildid": "$(Build.BuildId)",
-                  "instancetype": "c6g.2xlarge",
-                  "shutdownflag": "noshutdown"
+                  "buildid": "$(Build.BuildId)"
                 }
               outputVariable: 'functionResult'
           - bash: |
@@ -59,8 +57,10 @@ stages:
               echo "Agent found ..."
             name: 'Check_agent'
             displayName: 'Check agent'
+
   - stage: RunTestsBranches
     displayName: "Running tests"
+    condition: or(succeeded(), eq(variables['System.PullRequest.IsFork'], 'true'))
     jobs:
       - job: CheckChanges
         displayName: 'Check changes'

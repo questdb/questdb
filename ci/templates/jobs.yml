@@ -73,6 +73,7 @@ jobs:
   dependsOn:
   - CheckChanges
   timeoutInMinutes: 60
+  condition: eq(variables['System.PullRequest.IsFork'], 'false')
   variables:
     SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
     MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
