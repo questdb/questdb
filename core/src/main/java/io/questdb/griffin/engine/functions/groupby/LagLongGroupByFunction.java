@@ -72,7 +72,6 @@ public class LagLongGroupByFunction extends LongFunction implements GroupByFunct
 
     @Override
     public void setNull(MapValue mapValue) {
-        // TODO: check when this is called and procure a test
         throw new UnsupportedOperationException();
     }
 

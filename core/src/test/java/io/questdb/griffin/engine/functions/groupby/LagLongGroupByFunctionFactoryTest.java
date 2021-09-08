@@ -35,28 +35,19 @@ import org.junit.Test;
 
 public class LagLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
+    private static final String CREATE_TABLE_STMT = "create table tab as (" +
+            "select " +
+            "  timestamp_sequence(\n" +
+            "            to_timestamp('2021-07-05T22:37:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
+            "            780000000) as ts, " +
+            "  rnd_str('aaa', 'bbb', 'ccc', 'ddd', null) as name, " +
+            "  rnd_long(0, 20, 1) as value " +
+            "from long_sequence(20)" +
+            ") timestamp(ts) partition by DAY";
+
     @Before
     public void setUp3() {
         SharedRandom.RANDOM.set(new Rnd());
-    }
-
-    @Test
-    public void testLongRingBuffer() {
-        final long[] sequence = {1, 2, 6, 9, 7, 11, 15, 2, 0};
-        long defaultValue = 0;
-        for (int offset = 1; offset < 12; offset++) {
-            LagLongGroupByFunction f = new LagLongGroupByFunction(NullConstant.NULL, offset, 0);
-            f.cache.reset(new SimpleMapValue(1));
-            for (int i = 0; i < sequence.length; i++) {
-                f.cache.putLong(sequence[i]);
-            }
-            int resultOffset = sequence.length - offset - 1;
-            if (resultOffset < 0) {
-                Assert.assertEquals(defaultValue, f.cache.getLong());
-            } else {
-                Assert.assertEquals(sequence[resultOffset], f.cache.getLong());
-            }
-        }
     }
 
     @Test
@@ -85,15 +76,7 @@ public class LagLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "2021-07-06T02:44:00.000000Z\tccc\t2\n",
 
                 "select * from tab",
-                "create table tab as (" +
-                        "select " +
-                        "  timestamp_sequence(\n" +
-                        "            to_timestamp('2021-07-05T22:37:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
-                        "            780000000) as ts, " +
-                        "  rnd_str('aaa', 'bbb', 'ccc', 'ddd', null) as name, " +
-                        "  rnd_long(0, 20, 1) as value " +
-                        "from long_sequence(20)" +
-                        ") timestamp(ts) partition by DAY",
+                CREATE_TABLE_STMT,
                 "ts",
                 true,
                 true,
@@ -105,32 +88,6 @@ public class LagLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testLagSampleBy1h() throws Exception {
         // TODO: something is broken, the lag function is being called 7 times
-        // groups:
-        // "ts\tname\tvalue\n"
-        // "2021-07-05T22:37:00.000000Z\taaa\t3\n"
-        // "2021-07-05T22:50:00.000000Z\tbbb\tNaN\n"
-        // "2021-07-05T23:03:00.000000Z\t\t12\n"
-        // "2021-07-05T23:16:00.000000Z\tbbb\t8\n"
-        // "2021-07-05T23:29:00.000000Z\tccc\t18\n"
-        //
-        // "2021-07-05T23:42:00.000000Z\tbbb\t11\n"
-        // "2021-07-05T23:55:00.000000Z\tccc\t5\n"
-        // "2021-07-06T00:08:00.000000Z\tccc\tNaN\n"
-        // "2021-07-06T00:21:00.000000Z\t\t14\n"
-        // "2021-07-06T00:34:00.000000Z\taaa\t4\n"
-        //
-        // "2021-07-06T00:47:00.000000Z\taaa\t4\n"
-        // "2021-07-06T01:00:00.000000Z\tbbb\t8\n"
-        // "2021-07-06T01:13:00.000000Z\tddd\t17\n"
-        // "2021-07-06T01:26:00.000000Z\tddd\t4\n"
-        //
-        // "2021-07-06T01:39:00.000000Z\taaa\t17\n"
-        // "2021-07-06T01:52:00.000000Z\taaa\tNaN\n"
-        // "2021-07-06T02:05:00.000000Z\t\tNaN\n"
-        // "2021-07-06T02:18:00.000000Z\tbbb\t20\n"
-        // "2021-07-06T02:31:00.000000Z\tccc\t15\n"
-        //
-        // "2021-07-06T02:44:00.000000Z\tccc\t2\n"
         assertQuery(
                 "lag\n" +
                         "8\n" +
@@ -138,16 +95,8 @@ public class LagLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "17\n" +
                         "20\n" +
                         "NaN\n",
-                "select lag(value) from tab sample by 1h",
-                "create table tab as (" +
-                        "select " +
-                        "  timestamp_sequence(\n" +
-                        "            to_timestamp('2021-07-05T22:37:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
-                        "            780000000) as ts, " +
-                        "  rnd_str('aaa', 'bbb', 'ccc', 'ddd', null) as name, " +
-                        "  rnd_long(0, 20, 1) as value " +
-                        "from long_sequence(20)" +
-                        ") timestamp(ts) partition by DAY",
+                "select lag(value, 1) from tab sample by 1h",
+                CREATE_TABLE_STMT,
                 null,
                 false,
                 true,
@@ -157,21 +106,71 @@ public class LagLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLag2SampleBy1h() throws Exception {
+        assertQuery(
+                "lag\n" +
+                        "12\n" +
+                        "NaN\n" +
+                        "8\n" +
+                        "NaN\n" +
+                        "NaN\n",
+                "select lag(value, 2, null) from tab sample by 1h",
+                CREATE_TABLE_STMT,
+                null,
+                false,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLag4SampleBy1h() throws Exception {
+        assertQuery(
+                "lag\n" +
+                        "3\n" +
+                        "11\n" +
+                        "NaN\n" +
+                        "17\n" +
+                        "NaN\n",
+                "select lag(value, 4) from tab sample by 1h",
+                CREATE_TABLE_STMT,
+                null,
+                false,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLag6SampleBy1h() throws Exception {
+        assertQuery(
+                "lag\n" +
+                        "78\n" +
+                        "78\n" +
+                        "78\n" +
+                        "78\n" +
+                        "78\n",
+                "select lag(value, 6, 78) from tab sample by 1h",
+                CREATE_TABLE_STMT,
+                null,
+                false,
+                true,
+                true,
+                true
+        );
+    }
+
+
+    @Test
     public void testLagSampleBy1d() throws Exception {
         // TODO: something is broken, the lag function is being called 7 times
         assertQuery(
                 "lag\n" +
                         "15\n",
                 "select lag(value) from tab sample by 1d",
-                "create table tab as (" +
-                        "select " +
-                        "  timestamp_sequence(\n" +
-                        "            to_timestamp('2021-07-05T22:37:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
-                        "            780000000) as ts, " +
-                        "  rnd_str('aaa', 'bbb', 'ccc', 'ddd', null) as name, " +
-                        "  rnd_long(0, 20, 1) as value " +
-                        "from long_sequence(20)" +
-                        ") timestamp(ts) partition by DAY",
+                CREATE_TABLE_STMT,
                 null,
                 false,
                 true,
@@ -182,40 +181,6 @@ public class LagLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testLagSampleBy20m() throws Exception {
-        // TODO: something is broken, the lag function is being called 7 times
-        // "ts\tname\tvalue\n"
-        // "2021-07-05T22:37:00.000000Z\taaa\t3\n"
-        // "2021-07-05T22:50:00.000000Z\tbbb\tNaN\n"
-        //
-        // "2021-07-05T23:03:00.000000Z\t\t12\n"
-        // "2021-07-05T23:16:00.000000Z\tbbb\t8\n"
-        //
-        // "2021-07-05T23:29:00.000000Z\tccc\t18\n"
-        //
-        // "2021-07-05T23:42:00.000000Z\tbbb\t11\n"
-        // "2021-07-05T23:55:00.000000Z\tccc\t5\n"
-        //
-        // "2021-07-06T00:08:00.000000Z\tccc\tNaN\n"
-        //
-        // "2021-07-06T00:21:00.000000Z\t\t14\n"
-        // "2021-07-06T00:34:00.000000Z\taaa\t4\n"
-        //
-        // "2021-07-06T00:47:00.000000Z\taaa\t4\n"
-        //
-        // "2021-07-06T01:00:00.000000Z\tbbb\t8\n"
-        // "2021-07-06T01:13:00.000000Z\tddd\t17\n"
-        //
-        // "2021-07-06T01:26:00.000000Z\tddd\t4\n"
-        //
-        // "2021-07-06T01:39:00.000000Z\taaa\t17\n"
-        // "2021-07-06T01:52:00.000000Z\taaa\tNaN\n"
-        //
-        // "2021-07-06T02:05:00.000000Z\t\tNaN\n"
-        //
-        // "2021-07-06T02:18:00.000000Z\tbbb\t20\n"
-        // "2021-07-06T02:31:00.000000Z\tccc\t15\n"
-        //
-        // "2021-07-06T02:44:00.000000Z\tccc\t2\n"
         assertQuery(
                 "lag\n" +
                         "3\n" +
@@ -231,21 +196,94 @@ public class LagLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "NaN\n" +
                         "20\n" +
                         "NaN\n",
-                "select lag(value) from tab sample by 20m",
-                "create table tab as (" +
-                        "select " +
-                        "  timestamp_sequence(\n" +
-                        "            to_timestamp('2021-07-05T22:37:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
-                        "            780000000) as ts, " +
-                        "  rnd_str('aaa', 'bbb', 'ccc', 'ddd', null) as name, " +
-                        "  rnd_long(0, 20, 1) as value " +
-                        "from long_sequence(20)" +
-                        ") timestamp(ts) partition by DAY",
+                "select lag(value, 1) from tab sample by 20m",
+                CREATE_TABLE_STMT,
                 null,
                 false,
                 true,
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testLagSampleBy100ms() throws Exception {
+        assertQuery(
+                "lag\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n" +
+                        "0\n",
+                "select lag(value, 1, 0) from tab sample by 100T",
+                CREATE_TABLE_STMT,
+                null,
+                false,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLagEmptyTable() throws Exception {
+        assertQuery(
+                "lag\n",
+                "select lag(value, 6, 78) from tab sample by 1d",
+                "create table tab (ts timestamp, name string, value long) timestamp(ts) partition by DAY",
+                null,
+                false,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testExcessiveArgs() throws Exception {
+        assertFailure("select lag(value, 1, 0, 2) from tab sample by 100T",
+                CREATE_TABLE_STMT, 7, "excessive arguments, up to three are expected");
+
+    }
+
+    @Test
+    public void testOffsetZero() throws Exception {
+        assertFailure("select lag(value, 0) from tab",
+                CREATE_TABLE_STMT, 7, "offset must be greater than 0");
+
+    }
+
+    @Test
+    public void testLongRingBuffer() {
+        final long[] sequence = {1, 2, 6, 9, 7, 11, 15, 2, 0};
+        long defaultValue = 0;
+        for (int offset = 1; offset < 12; offset++) {
+            LagLongGroupByFunction f = new LagLongGroupByFunction(NullConstant.NULL, offset, 0);
+            f.cache.reset(new SimpleMapValue(1));
+            for (int i = 0; i < sequence.length; i++) {
+                f.cache.putLong(sequence[i]);
+            }
+            int resultOffset = sequence.length - offset - 1;
+            if (resultOffset < 0) {
+                Assert.assertEquals(defaultValue, f.cache.getLong());
+            } else {
+                Assert.assertEquals(sequence[resultOffset], f.cache.getLong());
+            }
+        }
     }
 }

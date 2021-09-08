@@ -27,16 +27,16 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LagLongGroupByFunctionFactory implements FunctionFactory {
-    // TODO: missing two factories, "lag(Li)", "lag(Lil)" for calls lag(L[i[l]])
     @Override
     public String getSignature() {
-        return "lag(L)";
+        return "lag(Lv)";
     }
 
     @Override
@@ -49,13 +49,26 @@ public class LagLongGroupByFunctionFactory implements FunctionFactory {
                                 ObjList<Function> args,
                                 IntList argPositions,
                                 CairoConfiguration configuration,
-                                SqlExecutionContext sqlExecutionContext) {
-        Function colName = args.getQuick(0); // ^ ^
-        int offset = 1; //args.getQuick(1).getInt(null);
-        if (offset < 1) {
-            throw new IllegalArgumentException("offset must be greater than 0");
+                                SqlExecutionContext sqlExecutionContext) throws SqlException {
+        Function colName = args.getQuick(0);
+        int offset = 1;
+        long defaultValue = Numbers.LONG_NaN;
+        switch (args.size()) {
+            case 1:
+                break;
+            case  2:
+                offset = args.getQuick(1).getInt(null);
+                break;
+            case 3:
+                offset = args.getQuick(1).getInt(null);
+                defaultValue = args.getQuick(2).getLong(null);
+                break;
+            default:
+                throw SqlException.$(position, "excessive arguments, up to three are expected");
         }
-        long defaultValue = Numbers.LONG_NaN; // args.getQuick(2).getLong(null);
+        if (offset < 1) {
+            throw SqlException.$(position, "offset must be greater than 0");
+        }
         return new LagLongGroupByFunction(colName, offset, defaultValue);
     }
 }
