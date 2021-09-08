@@ -27,8 +27,10 @@ stages:
             env:
               AZURE_DEVOPS_CLI_PAT: $(System.AccessToken)
             displayName: 'Login Azure DevOps Extension'
+            condition: eq(variables['System.PullRequest.IsFork'], 'false')
           - bash: az devops configure --defaults organization=$(System.TeamFoundationCollectionUri) project=$(System.TeamProject) --use-git-aliases true
             displayName: 'Set default Azure DevOps organization and project'
+            condition: eq(variables['System.PullRequest.IsFork'], 'false')
           - task: LambdaInvokeFunction@1
             displayName: 'Start Agent'
             name: 'Start_Agent'
@@ -57,6 +59,14 @@ stages:
               echo "Agent found ..."
             name: 'Check_agent'
             displayName: 'Check agent'
+            condition: eq(variables['System.PullRequest.IsFork'], 'false')
+          - bash: |
+              echo "Sleeping ..."
+              sleep 180
+            name: "wait_for_agent"
+            displayName: 'Wait for agent'
+            condition: eq(variables['System.PullRequest.IsFork'], 'true')
+
   - stage: RunTestsBranches
     displayName: "Running tests"
     jobs:
