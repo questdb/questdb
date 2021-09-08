@@ -130,7 +130,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
             for (int l = 12; l > 0; l--) {
                 String tableName = "pos" + l;
                 compiler.compile(String.format("create table %s(x long)", tableName), sqlExecutionContext);
-                compiler.compile(String.format("alter table %s add hash geohash(%sc)", tableName, l), sqlExecutionContext);
+                compile(String.format("alter table %s add hash geohash(%sc)", tableName, l), sqlExecutionContext);
                 assertSql("show columns from " + tableName, "" +
                         "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
                         "x\tLONG\tfalse\t0\tfalse\t0\tfalse\n" +
@@ -145,7 +145,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
             for (int l = GeoHashes.MAX_BITS_LENGTH; l > 0; l--) {
                 String tableName = "pos" + l;
                 compiler.compile(String.format("create table %s(x long)", tableName), sqlExecutionContext);
-                compiler.compile(String.format("alter table %s add hash geohash(%sb)", tableName, l), sqlExecutionContext);
+                compile(String.format("alter table %s add hash geohash(%sb)", tableName, l), sqlExecutionContext);
 
                 String columnType = l % 5 == 0 ? (l / 5) + "c" : l + "b";
                 assertSql("show columns from " + tableName, "" +
@@ -161,7 +161,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(x long)", sqlExecutionContext);
             try {
-                compileAlterTable("alter table pos add hash geohash(1)", sqlExecutionContext);
+                compile("alter table pos add hash geohash(1)", sqlExecutionContext);
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(),
                         "invalid GEOHASH size, must be number followed by 'C' or 'B' character");
@@ -175,7 +175,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(x long)", sqlExecutionContext);
             try {
-                compileAlterTable("alter table pos add hash geohash", sqlExecutionContext);
+                compile("alter table pos add hash geohash", sqlExecutionContext);
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "missing GEOHASH precision");
                 Assert.assertEquals("alter table pos add hash geohash".length(), e.getPosition());
@@ -188,7 +188,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(x long)", sqlExecutionContext);
             try {
-                compileAlterTable("alter table pos add hash geohash()", sqlExecutionContext);
+                compile("alter table pos add hash geohash()", sqlExecutionContext);
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "missing GEOHASH precision");
                 Assert.assertEquals("alter table pos add hash geohash(".length(), e.getPosition());
@@ -201,7 +201,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(x long)", sqlExecutionContext);
             try {
-                compileAlterTable("alter table pos add hash geohash(11)", sqlExecutionContext);
+                compile("alter table pos add hash geohash(11)", sqlExecutionContext);
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(),
                         "invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
@@ -215,7 +215,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(x long)", sqlExecutionContext);
             try {
-                compileAlterTable("alter table pos add hash geohash(11c 1)", sqlExecutionContext);
+                compile("alter table pos add hash geohash(11c 1)", sqlExecutionContext);
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(),
                         "invalid GEOHASH type literal, expected ')' found='1'");
@@ -229,7 +229,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(x long)", sqlExecutionContext);
             try {
-                compileAlterTable("alter table pos add hash geohash(11c", sqlExecutionContext);
+                compile("alter table pos add hash geohash(11c", sqlExecutionContext);
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(),
                         "invalid GEOHASH type literal, expected ')'");
@@ -353,10 +353,10 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                     "timestamp_sequence(0, 1000000) ts " +
                     "from long_sequence(2))", sqlExecutionContext);
 
-            compileAlterTable("alter table t1 add a1 geohash(1c)", sqlExecutionContext);
-            compileAlterTable("alter table t1 add a2 geohash(2c)", sqlExecutionContext);
-            compileAlterTable("alter table t1 add a4 geohash(4c)", sqlExecutionContext);
-            compileAlterTable("alter table t1 add a8 geohash(8c)", sqlExecutionContext);
+            compile("alter table t1 add a1 geohash(1c)", sqlExecutionContext);
+            compile("alter table t1 add a2 geohash(2c)", sqlExecutionContext);
+            compile("alter table t1 add a4 geohash(4c)", sqlExecutionContext);
+            compile("alter table t1 add a8 geohash(8c)", sqlExecutionContext);
 
             compiler.compile("insert into t1 select x," +
                     "timestamp_sequence(0, 1000000) ts," +

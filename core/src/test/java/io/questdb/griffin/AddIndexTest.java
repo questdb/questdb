@@ -51,10 +51,10 @@ public class AddIndexTest extends AbstractGriffinTest {
                             ") timestamp(ts) partition by DAY",
                     sqlExecutionContext
             );
-            compileAlterTable("alter table trades alter column sym add index", sqlExecutionContext);
+            compile("alter table trades alter column sym add index", sqlExecutionContext);
 
             try {
-                compileAlterTable("alter table trades alter column sym add index", sqlExecutionContext);
+                compile("alter table trades alter column sym add index", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());

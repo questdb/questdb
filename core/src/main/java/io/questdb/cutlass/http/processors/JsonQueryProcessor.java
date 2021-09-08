@@ -26,10 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
 import io.questdb.Telemetry;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoError;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
@@ -95,7 +92,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.SELECT, this::executeNewSelect);
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
         this.queryExecutors.extendAndSet(CompiledQuery.TRUNCATE, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.ALTER, sendConfirmation);
+        this.queryExecutors.extendAndSet(CompiledQuery.ALTER, this::executeAlterTable);
         this.queryExecutors.extendAndSet(CompiledQuery.REPAIR, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.SET, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.DROP, sendConfirmation);
@@ -338,6 +335,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         internalError(socket, e.getFlyweightMessage(), e, state);
         socket.shutdownWrite();
+    }
+
+    private void executeAlterTable(
+            JsonQueryProcessorState state,
+            CompiledQuery cc,
+            CharSequence keepAliveHeader
+    ) throws PeerIsSlowToReadException, PeerDisconnectedException, SqlException {
+        compiler.executeAlterCommand(cc, sqlExecutionContext);
+        sendConfirmation(state, cc, keepAliveHeader);
     }
 
     private void executeInsert(

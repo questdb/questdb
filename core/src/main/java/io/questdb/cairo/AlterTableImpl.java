@@ -29,13 +29,10 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.LongList;
-import io.questdb.std.Numbers;
-import io.questdb.std.Sinkable;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
-public class AlterTableImpl implements AlterStatement {
+public class AlterTableImpl implements AlterStatement, Mutable {
     private final static Log LOG = LogFactory.getLog(AlterTableImpl.class);
     private final int indexValueBlockSize;
     private short command;
@@ -45,9 +42,9 @@ public class AlterTableImpl implements AlterStatement {
     private int intParam2;
     private int intParam3;
     private int tableNamePosition;
-    private LongList partitionList;
+    private LongList partitionList = new LongList();
     private CharSequence newName;
-    private ExceptionSinkAdapter exceptionSinkAdapter = new ExceptionSinkAdapter();
+    private final ExceptionSinkAdapter exceptionSinkAdapter = new ExceptionSinkAdapter();
 
     public AlterTableImpl(final CairoConfiguration configuration) {
         indexValueBlockSize = configuration.getIndexValueBlockSize();
@@ -120,6 +117,12 @@ public class AlterTableImpl implements AlterStatement {
     }
 
     @Override
+    public void clear() {
+        command = DO_NOTHING;
+        partitionList.clear();
+    }
+
+    @Override
     public CharSequence getTableName() {
         return tableName;
     }
@@ -138,10 +141,6 @@ public class AlterTableImpl implements AlterStatement {
 
     public LongList getPartitionList() {
         return partitionList;
-    }
-
-    public void setPartitionList(LongList partitionList) {
-        this.partitionList = partitionList;
     }
 
     public void ofAddColumn(
@@ -170,7 +169,7 @@ public class AlterTableImpl implements AlterStatement {
         return this;
     }
 
-    public AlterStatement ofAttachPartition(int tableNamePosition, CharSequence tableName, LongList partitionList) {
+    public AlterStatement ofAttachPartition(int tableNamePosition, CharSequence tableName) {
         this.command = ATTACH_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
@@ -194,7 +193,7 @@ public class AlterTableImpl implements AlterStatement {
         return this;
     }
 
-    public AlterStatement ofDropPartition(int tableNamePosition, CharSequence tableName, LongList partitionList) {
+    public AlterStatement ofDropPartition(int tableNamePosition, CharSequence tableName) {
         this.command = DROP_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
@@ -211,7 +210,7 @@ public class AlterTableImpl implements AlterStatement {
     }
 
     public AlterTableImpl ofRenameColumn(int tableNamePosition, CharSequence tableName, CharSequence oldName, CharSequence newName) {
-        this.command = DROP_COLUMN;
+        this.command = RENAME_COLUMN;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.columnName = oldName;
@@ -331,7 +330,11 @@ public class AlterTableImpl implements AlterStatement {
         for (int i = 0, n = partitionList.size(); i < n; i++) {
             long partitionTimestamp = partitionList.getQuick(i);
             try {
-                tableWriter.removePartition(partitionTimestamp);
+                if (!tableWriter.removePartition(partitionTimestamp)) {
+                    throw putPartitionName(SqlException.$(tableNamePosition, "could not remove partition '"),
+                                    tableWriter.getPartitionBy(),
+                                    partitionTimestamp).put('\'');
+                }
             } catch (CairoException e) {
                 LOG.error().$("failed to drop partition [table=").$(tableName)
                         .$(",ts=").$ts(partitionTimestamp)

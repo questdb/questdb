@@ -481,7 +481,7 @@ public class TruncateTest extends AbstractGriffinTest {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
                 }
 
-                compileAlterTable("alter table y drop column symbol1", sqlExecutionContext);
+                compile("alter table y drop column symbol1", sqlExecutionContext);
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);

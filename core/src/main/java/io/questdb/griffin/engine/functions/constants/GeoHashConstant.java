@@ -41,25 +41,21 @@ public class GeoHashConstant extends GeoHashFunction implements ConstantFunction
     }
 
     public byte getGeoHashByte(Record rec) {
-        assert ColumnType.sizeOf(type) == 1;
         return (byte)hash;
     }
 
     @Override
     public short getGeoHashShort(Record rec) {
-        assert ColumnType.sizeOf(type) == 2;
         return (short)hash;
     }
 
     @Override
     public int getGeoHashInt(Record rec) {
-        assert ColumnType.sizeOf(type) == 4;
         return (int)hash;
     }
 
     @Override
     public long getGeoHashLong(Record rec) {
-        assert ColumnType.sizeOf(type) == 8;
         return hash;
     }
 }

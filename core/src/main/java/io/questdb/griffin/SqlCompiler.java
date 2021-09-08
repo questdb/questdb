@@ -110,7 +110,6 @@ public class SqlCompiler implements Closeable {
         }
     };
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
-    private LongList partitionList = new LongList();
 
     public SqlCompiler(CairoEngine engine) {
         this(engine, null);
@@ -835,6 +834,15 @@ public class SqlCompiler implements Closeable {
         return executor.execute(executionContext);
     }
 
+    public void executeAlterCommand(@NotNull CompiledQuery compiledQuery, @NotNull SqlExecutionContext executionContext) throws SqlException {
+        AlterStatement alterStatement = compiledQuery.getAlterStatement();
+        if (alterStatement != null) {
+            try(TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), alterStatement.getTableName(), "Alter table statement")) {
+                alterStatement.apply(writer);
+            }
+        }
+    }
+
     public CairoEngine getEngine() {
         return engine;
     }
@@ -910,7 +918,7 @@ public class SqlCompiler implements Closeable {
             tableExistsOrFail(tableNamePosition, tok, executionContext);
 
             CharSequence tableName = GenericLexer.immutableOf(tok);
-            try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName)) {
+            try (TableReader reader = getAlterTableReader(executionContext, tableName)) {
                 RecordMetadata tableMetadata = reader.getMetadata();
                 tok = expectToken(lexer, "'add', 'alter' or 'drop'");
 
@@ -983,7 +991,7 @@ public class SqlCompiler implements Closeable {
                 }
             } catch (CairoException e) {
                 LOG.info().$("could not alter table [table=").$(tableName).$(", ex=").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, "table '").put(tableName).put("' could not be altered: ").put(e);
+                throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tableName).put("' could not be altered: ").put(e);
             }
         } else if (SqlKeywords.isSystemKeyword(tok)) {
             tok = expectToken(lexer, "'lock' or 'unlock'");
@@ -1009,6 +1017,27 @@ public class SqlCompiler implements Closeable {
             }
         } else {
             throw SqlException.$(lexer.lastTokenPosition(), "'table' or 'system' expected");
+        }
+    }
+
+    private TableReader getAlterTableReader(SqlExecutionContext executionContext, CharSequence tableName) {
+        try {
+            return engine.getReader(executionContext.getCairoSecurityContext(), tableName);
+        } catch (CairoException ex) {
+            // Cannot open reader on existing table is pretty bad
+            LOG.error().$("error opening reader for alter table statement [table=").$(tableName).$(",error=").$(ex.getMessage()).I$();
+            // In some messed states, for example after _meta file swap failure Reader cannot be opened
+            // but writer can be
+            // Opening writer fixes the table mess
+            try(TableWriter ignored = engine.getWriter(executionContext.getCairoSecurityContext(), tableName, "alter table statement")) {
+                return engine.getReader(executionContext.getCairoSecurityContext(), tableName);
+            } catch (EntryUnavailableException wrOpEx) {
+                // This is fine, writer is busy. Throw back origin error
+                throw ex;
+            } catch (Throwable th) {
+                LOG.error().$("error preliminary opening writer for alter table statement [table=").$(tableName).$(",error=").$(ex.getMessage()).I$();
+                throw ex;
+            }
         }
     }
 
@@ -1279,9 +1308,8 @@ public class SqlCompiler implements Closeable {
                 Function function = functionParser.parseFunction(expr, metadata, currentExecutionContext);
                 if (function != null && ColumnType.isBoolean(function.getType())) {
                     function.init(null, executionContext);
-                    partitionList.clear();
-                    filterPartitions(function, reader, partitionList);
-                    return compiledQuery.ofAlter(alterQuery.ofDropPartition(pos, tableName, partitionList));
+                    filterPartitions(function, reader, alterQuery.getPartitionList());
+                    return compiledQuery.ofAlter(alterQuery.ofDropPartition(pos, tableName));
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
                 }
@@ -1306,6 +1334,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery alterTableDropOrAttachPartitionByList(TableReader reader, int pos, int action) throws SqlException {
+        LongList partitionList = alterQuery.getPartitionList();
         partitionList.clear();
         CharSequence tableName = reader.getTableName();
         do {
@@ -1316,11 +1345,8 @@ public class SqlCompiler implements Closeable {
             final CharSequence unquoted = GenericLexer.unquote(tok);
 
             final long timestamp;
-            try {
-                timestamp = IntervalUtils.parseFloorPartialDate(unquoted);
-            } catch (NumericException e) {
-                throw SqlException.$(lexer.lastTokenPosition(), "invalid timestamp format");
-            }
+            timestamp = parsePartitionNameToTimestamp(unquoted, reader.getPartitionedBy());
+
             partitionList.add(timestamp);
             tok = SqlUtil.fetchNext(lexer);
 
@@ -1332,13 +1358,40 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
         } while (true);
+
         if (action == PartitionAction.DROP) {
-            return compiledQuery.ofAlter(alterQuery.ofDropPartition(pos, tableName, partitionList));
+            return compiledQuery.ofAlter(alterQuery.ofDropPartition(pos, tableName));
         } else if (action == PartitionAction.ATTACH) {
-            return compiledQuery.ofAlter(alterQuery.ofAttachPartition(pos, tableName, partitionList));
+            return compiledQuery.ofAlter(alterQuery.ofAttachPartition(pos, tableName));
         } else {
             throw SqlException.$(lexer.lastTokenPosition(), "unsupported partition action");
         }
+    }
+
+    private long parsePartitionNameToTimestamp(CharSequence text, int partitionBy) {
+        try {
+            if (partitionBy == PartitionBy.YEAR && text.length() == 4
+                    || partitionBy == PartitionBy.MONTH && text.length() == 7
+                    || partitionBy == PartitionBy.DAY && text.length() == 10) {
+                return IntervalUtils.parseFloorPartialDate(text);
+            }
+        } catch (NumericException e) {
+        }
+        // Invalid value
+        final CairoException ee = CairoException.instance(0);
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                ee.put("'YYYY-MM-DD'");
+                break;
+            case PartitionBy.MONTH:
+                ee.put("'YYYY-MM'");
+                break;
+            default:
+                ee.put("'YYYY'");
+                break;
+        }
+        ee.put(" expected");
+        throw ee;
     }
 
     private CompiledQuery alterTableRenameColumn(int tableNamePosition, CharSequence tableName, RecordMetadata metadata) throws SqlException {
@@ -1439,6 +1492,7 @@ public class SqlCompiler implements Closeable {
         queryModelPool.clear();
         optimiser.clear();
         parser.clear();
+        alterQuery.clear();
     }
 
     private void cloneMetaData(CharSequence tableName, CharSequence backupRoot, int mkDirMode, TableReader reader) {

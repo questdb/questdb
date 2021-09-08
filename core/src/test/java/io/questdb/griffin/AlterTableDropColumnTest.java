@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -83,14 +84,13 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
 
                 startBarrier.await();
                 try {
-                    compileAlterTable("alter table x drop column ik", sqlExecutionContext);
+                    compile("alter table x drop column ik", sqlExecutionContext);
                     Assert.fail();
                 } finally {
                     haltLatch.countDown();
                 }
-            } catch (SqlException e) {
-                Assert.assertEquals(12, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table 'x' could not be altered: [0]: table busy");
+            } catch (EntryUnavailableException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table busy");
             }
 
             Assert.assertTrue(allHaltLatch.await(2, TimeUnit.SECONDS));
@@ -114,7 +114,7 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
                     try {
                         createX();
 
-                        Assert.assertEquals(ALTER, compileAlterTable("alter table x drop column e, m", sqlExecutionContext).getType());
+                        Assert.assertEquals(ALTER, compile("alter table x drop column e, m", sqlExecutionContext).getType());
 
                         String expected = "{\"columnCount\":14,\"columns\":[{\"index\":0,\"name\":\"i\",\"type\":\"INT\"},{\"index\":1,\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"amt\",\"type\":\"DOUBLE\"},{\"index\":3,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"index\":4,\"name\":\"b\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"c\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"d\",\"type\":\"DOUBLE\"},{\"index\":7,\"name\":\"f\",\"type\":\"SHORT\"},{\"index\":8,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":9,\"name\":\"ik\",\"type\":\"SYMBOL\"},{\"index\":10,\"name\":\"j\",\"type\":\"LONG\"},{\"index\":11,\"name\":\"k\",\"type\":\"TIMESTAMP\"},{\"index\":12,\"name\":\"l\",\"type\":\"BYTE\"},{\"index\":13,\"name\":\"n\",\"type\":\"STRING\"}],\"timestampIndex\":3}";
 

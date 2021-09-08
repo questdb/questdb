@@ -147,7 +147,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
-                compiler.compile(ddl, sqlExecutionContext);
+                compile(ddl, sqlExecutionContext);
             }
             CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
             RecordCursorFactory factory = cc.getRecordCursorFactory();
@@ -160,7 +160,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 assertVariableColumns(factory, checkSameStr);
 
                 if (ddl2 != null) {
-                    compiler.compile(ddl2, sqlExecutionContext);
+                    compile(ddl2, sqlExecutionContext);
 
                     int count = 3;
                     while (count > 0) {
@@ -586,7 +586,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             assertVariableColumns(factory, checkSameStr);
 
             if (ddl2 != null) {
-                compiler.compile(ddl2, sqlExecutionContext);
+                compile(ddl2, sqlExecutionContext);
 
                 int count = 3;
                 while (count > 0) {
@@ -619,7 +619,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                                             boolean sizeCanBeVariable) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
-                compiler.compile(ddl, sqlExecutionContext);
+                compile(ddl, sqlExecutionContext);
             }
             printSqlResult(
                     expected,
@@ -870,10 +870,10 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 if (ddl != null) {
-                    compiler.compile(ddl, sqlExecutionContext);
+                    compile(ddl, sqlExecutionContext);
                 }
                 try {
-                    compiler.compile(query, sqlExecutionContext);
+                    compile(query, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
                     Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
@@ -1120,16 +1120,16 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     @NotNull
-    protected CompiledQuery compileAlterTable(String query) throws SqlException {
-        return compileAlterTable(
+    protected static CompiledQuery compile(CharSequence query) throws SqlException {
+        return compile(
                 query,
                 sqlExecutionContext
         );
     }
 
     @NotNull
-    protected CompiledQuery compileAlterTable(String query, SqlExecutionContext executionContext) throws SqlException {
-        return TestUtils.compileAlterTable(
+    protected static CompiledQuery compile(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+        return TestUtils.compileAndExecute(
                 compiler,
                 engine,
                 query,

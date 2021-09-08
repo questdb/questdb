@@ -24,10 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -127,11 +124,14 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
 
     private void tryAddColumn(SqlCompiler compiler, SqlExecutionContext executionContext, CharSequence columnDetails) {
         try {
-            compiler.compile(
-                    "ALTER TABLE " + configTableName + " ADD COLUMN " + columnDetails + ")",
+            CompiledQuery cc = compiler.compile(
+                    "ALTER TABLE " + configTableName + " ADD COLUMN " + columnDetails,
                     executionContext);
+            compiler.executeAlterCommand(cc, executionContext);
+        } catch (EntryUnavailableException e) {
+            LOG.info().$("Failed to alter telemetry table, writer is busy [table=").$(configTableName).I$();
         } catch (SqlException ex) {
-            // Ignore
+            LOG.info().$("Failed to alter telemetry table [table=").$(configTableName).$(",error=").$(ex.getFlyweightMessage()).I$();
         }
     }
 

@@ -152,7 +152,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                 String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '2020-01-01'";
                 try {
-                    compileAlterTable(alterCommand, sqlExecutionContext);
+                    compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
                     Assert.assertEquals("[23] attach partition failed, folder '2020-01-01' does not exist", e.getMessage());
@@ -172,7 +172,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '2020-01-01'";
 
                 try {
-                    compileAlterTable(alterCommand, sqlExecutionContext);
+                    compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
                     Assert.assertEquals("[23] attach partition failed, folder '2020-01-01' does not exist", e.getMessage());
@@ -202,7 +202,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 copyPartitionToBackup(src.getName(), "2020-01-01", dst.getName(), "2020-01-02");
                 try {
                     String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '2020-01-02'";
-                    compileAlterTable(alterCommand, sqlExecutionContext);
+                    compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (io.questdb.griffin.SqlException e) {
                     TestUtils.assertContains(e.getMessage(), "failed to attach partition '2020-01-02', data does not correspond to the partition folder or partition is empty");
@@ -405,7 +405,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '2020-01-09'";
 
                 try {
-                    compileAlterTable(alterCommand, sqlExecutionContext);
+                    compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
                     Assert.assertEquals("[23] failed to attach partition '2020-01-09', partition already attached to the table", e.getMessage());
@@ -577,7 +577,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
 
             // Alter table
-            compileAlterTable(alterCommand, sqlExecutionContext);
+            compile(alterCommand, sqlExecutionContext);
 
             // Assert existing reader reloads new partition
             Assert.assertTrue(tableReader.reload());

@@ -72,7 +72,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                             "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(5)" +
                             ") TIMESTAMP (ts);",
                     sqlExecutionContext);
-            compiler.compile("ALTER TABLE source ADD COLUMN str STRING",
+            compile("ALTER TABLE source ADD COLUMN str STRING",
                     sqlExecutionContext);
             CharSequence expected = select("SELECT * FROM source");
             runReplicationTests(expected, "(ts TIMESTAMP, l LONG, str STRING) TIMESTAMP(ts)", 2);
@@ -86,7 +86,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                             "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(5)" +
                             ") TIMESTAMP (ts);",
                     sqlExecutionContext);
-            compiler.compile("ALTER TABLE source ADD COLUMN str STRING",
+            compile("ALTER TABLE source ADD COLUMN str STRING",
                     sqlExecutionContext);
             compiler.compile("INSERT INTO source(ts, l, str) " +
                             "SELECT" +
@@ -108,7 +108,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                             "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(200)" +
                             ") TIMESTAMP (ts) PARTITION BY DAY;",
                     sqlExecutionContext);
-            compiler.compile("ALTER TABLE source ADD COLUMN str STRING",
+            compile("ALTER TABLE source ADD COLUMN str STRING",
                     sqlExecutionContext);
             compiler.compile("INSERT INTO source(ts, l, str) " +
                             "SELECT" +

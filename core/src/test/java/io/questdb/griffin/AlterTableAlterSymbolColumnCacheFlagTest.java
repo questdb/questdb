@@ -219,7 +219,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
         assertMemoryLeak(() -> {
             try {
                 createX();
-                compileAlterTable(sql);
+                compile(sql);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());

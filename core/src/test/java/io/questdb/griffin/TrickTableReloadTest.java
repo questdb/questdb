@@ -37,7 +37,7 @@ public class TrickTableReloadTest extends AbstractGriffinTest {
         engine.releaseAllWriters();
 
         try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
-            compileAlterTable("alter table x add column y symbol", sqlExecutionContext);
+            compile("alter table x add column y symbol", sqlExecutionContext);
             Assert.assertTrue(reader.reload());
         }
     }

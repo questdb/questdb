@@ -35,7 +35,6 @@ import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.ReplMemoryLogCAImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
