@@ -179,11 +179,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     public boolean isCursor(CharSequence token) {
-        return functionFactoryCache.isCursor(token);
+        return token != null && functionFactoryCache.isCursor(token);
     }
 
     public boolean isGroupBy(CharSequence token) {
-        return functionFactoryCache.isGroupBy(token);
+        return token != null && functionFactoryCache.isGroupBy(token);
     }
 
     public boolean isRuntimeConstant(CharSequence token) {
