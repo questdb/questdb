@@ -96,6 +96,35 @@ public class TimestampsTest {
     }
 
     @Test
+    public void testCeilMI() throws Exception {
+        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.108872Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilMI(micros));
+        TestUtils.assertEquals("2021-09-09T22:44:59.999Z", sink);
+    }
+
+    @Test
+    public void testCeilMS() throws Exception {
+        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.108872Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilMS(micros));
+        // TODO: is this correct or should yield .109Z ?
+        TestUtils.assertEquals("2021-09-09T22:44:56.108Z", sink);
+    }
+
+    @Test
+    public void testCeilSS() throws Exception {
+        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.789Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilSS(micros));
+        TestUtils.assertEquals("2021-09-09T22:44:56.999Z", sink);
+    }
+
+    @Test
+    public void testCeilHH() throws Exception {
+        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.789Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilHH(micros));
+        TestUtils.assertEquals("2021-09-09T22:59:59.999Z", sink);
+    }
+
+    @Test
     public void testCeilDD() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilDD(micros));
@@ -147,6 +176,27 @@ public class TimestampsTest {
                         TimestampFormatUtils.parseTimestamp("2017-07-24T23:45:51.045Z")
                 )
         );
+    }
+
+    @Test
+    public void testFloorMI() throws Exception {
+        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.784123Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorMI(micros));
+        TestUtils.assertEquals("2021-09-09T22:44:00.000Z", sink);
+    }
+
+    @Test
+    public void testFloorMS() throws Exception {
+        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.784123Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorMS(micros));
+        TestUtils.assertEquals("2021-09-09T22:44:56.784Z", sink);
+    }
+
+    @Test
+    public void testFloorSS() throws Exception {
+        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.789Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorSS(micros));
+        TestUtils.assertEquals("2021-09-09T22:44:56.000Z", sink);
     }
 
     @Test
