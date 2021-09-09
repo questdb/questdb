@@ -184,7 +184,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult("count\n" +
                             "147\n", "2020");
 
-                    Assert.assertEquals(ALTER, compile("alter table x drop partition where timestamp > 0", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, compile("alter table x drop partition where timestamp > 0 ", sqlExecutionContext).getType());
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";

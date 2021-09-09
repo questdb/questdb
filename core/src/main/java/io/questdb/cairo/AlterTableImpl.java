@@ -24,26 +24,21 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.AlterStatement;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
-public class AlterTableImpl implements AlterStatement, Mutable {
+public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnStatement, AlterStatementRenameColumnStatement, AlterStatementDropColumnStatement, Mutable {
     private final static Log LOG = LogFactory.getLog(AlterTableImpl.class);
     private final int indexValueBlockSize;
     private short command;
     private CharSequence tableName;
-    private CharSequence columnName;
-    private int intParam1;
-    private int intParam2;
-    private int intParam3;
     private int tableNamePosition;
-    private LongList partitionList = new LongList();
-    private CharSequence newName;
+    private final LongList partitionList = new LongList();
+    private final ObjList<CharSequence> nameList = new ObjList<>();
     private final ExceptionSinkAdapter exceptionSinkAdapter = new ExceptionSinkAdapter();
 
     public AlterTableImpl(final CairoConfiguration configuration) {
@@ -108,17 +103,12 @@ public class AlterTableImpl implements AlterStatement, Mutable {
                     .put("] ")
                     .put(e2.getFlyweightMessage());
         }
-//        catch (Throwable th) {
-//            throw SqlException.$(tableNamePosition, "table '")
-//                    .put(tableName)
-//                    .put("' could not be altered: ")
-//                    .put(th.getMessage());
-//        }
     }
 
     @Override
     public void clear() {
         command = DO_NOTHING;
+        nameList.clear();
         partitionList.clear();
     }
 
@@ -143,29 +133,32 @@ public class AlterTableImpl implements AlterStatement, Mutable {
         return partitionList;
     }
 
-    public void ofAddColumn(
+    public AlterStatementAddColumnStatement ofAddColumn(
             int tableNamePosition,
-            CharSequence tableName,
-            CharSequence columnName,
-            int type,
-            int symbolCapacity,
-            boolean cache,
-            boolean indexed,
-            int indexValueBlockCapacity) {
+            CharSequence tableName
+    ) {
         this.command = ADD_COLUMN;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
-        this.columnName = columnName;
-        this.intParam1 = type;
-        this.intParam2 = cache ? symbolCapacity : - symbolCapacity;
-        this.intParam3 = indexed ? indexValueBlockCapacity : -indexValueBlockCapacity;
+        return this;
+    }
+
+    @Override
+    public AlterStatementAddColumnStatement ofAddColumn(CharSequence columnName, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity) {
+        this.nameList.add(columnName);
+        this.partitionList.add(type);
+        this.partitionList.add(symbolCapacity);
+        this.partitionList.add(cache ? 1 : -1);
+        this.partitionList.add(indexed ? 1 : -1);
+        this.partitionList.add(indexValueBlockCapacity);
+        return this;
     }
 
     public AlterStatement ofAddIndex(int tableNamePosition, CharSequence tableName, CharSequence columnName) {
         this.command = ADD_INDEX;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
-        this.columnName = columnName;
+        this.nameList.add(columnName);
         return this;
     }
 
@@ -173,7 +166,6 @@ public class AlterTableImpl implements AlterStatement, Mutable {
         this.command = ATTACH_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
-        this.partitionList = partitionList;
         return this;
     }
 
@@ -181,15 +173,27 @@ public class AlterTableImpl implements AlterStatement, Mutable {
         this.command = ADD_SYMBOL_CACHE;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
-        this.columnName = columnName;
+        this.nameList.add(columnName);
         return this;
     }
 
-    public AlterStatement ofDropColumn(int tableNamePosition, CharSequence tableName, CharSequence columnName) {
+    @Override
+    public AlterStatementRenameColumnStatement ofRenameColumn(CharSequence columnName, CharSequence newName) {
+        this.nameList.add(columnName);
+        this.nameList.add(newName);
+        return null;
+    }
+
+    @Override
+    public AlterStatementDropColumnStatement ofDropColumn(CharSequence columnName) {
+        this.nameList.add(columnName);
+        return this;
+    }
+
+    public AlterStatementDropColumnStatement ofDropColumn(int tableNamePosition, CharSequence tableName) {
         this.command = DROP_COLUMN;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
-        this.columnName = columnName;
         return this;
     }
 
@@ -197,7 +201,6 @@ public class AlterTableImpl implements AlterStatement, Mutable {
         this.command = DROP_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
-        this.partitionList = partitionList;
         return this;
     }
 
@@ -205,54 +208,61 @@ public class AlterTableImpl implements AlterStatement, Mutable {
         this.command = REMOVE_SYMBOL_CACHE;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
-        this.columnName = columnName;
+        this.nameList.add(columnName);
         return this;
     }
 
-    public AlterTableImpl ofRenameColumn(int tableNamePosition, CharSequence tableName, CharSequence oldName, CharSequence newName) {
+    public AlterStatementRenameColumnStatement ofRenameColumn(int tableNamePosition, CharSequence tableName) {
         this.command = RENAME_COLUMN;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
-        this.columnName = oldName;
-        this.newName = newName;
         return this;
     }
 
     public AlterStatement ofSetParamCommitLag(CharSequence tableName, long commitLag) {
         this.command = SET_PARAM_COMMIT_LAG;
         this.tableName = tableName;
-        this.intParam1 = Numbers.decodeHighInt(commitLag);
-        this.intParam2 = Numbers.decodeLowInt(commitLag);
+        this.partitionList.add(commitLag);
         return this;
     }
 
     public AlterStatement ofSetParamUncommittedRows(CharSequence tableName, int maxUncommittedRows) {
         this.command = SET_PARAM_MAX_UNCOMMITTED_ROWS;
         this.tableName = tableName;
-        this.intParam1 = maxUncommittedRows;
+        this.partitionList.add(maxUncommittedRows);
         return this;
     }
 
     private void applyAddColumn(TableWriter tableWriter) throws SqlException {
-        try {
-            tableWriter.addColumn(
-                    columnName,
-                    intParam1,
-                    Math.abs(intParam2),
-                    intParam2 >= 0,
-                    intParam3 >= 0,
-                    Math.abs(intParam3),
-                    false
-            );
-        } catch (CairoException e) {
-            LOG.error().$("Cannot add column '").$(tableWriter.getTableName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
-            throw SqlException.$(tableNamePosition, "could add column [error=").put(e.getFlyweightMessage())
-                    .put(", errno=").put(e.getErrno())
-                    .put(']');
+        int lParam = 0;
+        for(int i = 0, n = nameList.size(); i < n; i++) {
+            CharSequence columnName = nameList.get(i);
+            int type = (int) partitionList.get(lParam++);
+            int symbolCapacity = (int) partitionList.get(lParam++);
+            boolean symbolCacheFlag = partitionList.get(lParam++) > 0;
+            boolean isIndexed = partitionList.get(lParam++) > 0;
+            int indexValueBlockCapacity = (int) partitionList.get(lParam++);
+            try {
+                tableWriter.addColumn(
+                        columnName,
+                        type,
+                        symbolCapacity,
+                        symbolCacheFlag,
+                        isIndexed,
+                        indexValueBlockCapacity,
+                        false
+                );
+            } catch (CairoException e) {
+                LOG.error().$("Cannot add column '").$(tableWriter.getTableName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
+                throw SqlException.$(tableNamePosition, "could add column [error=").put(e.getFlyweightMessage())
+                        .put(", errno=").put(e.getErrno())
+                        .put(']');
+            }
         }
     }
 
     private void applyAddIndex(TableWriter tableWriter) throws SqlException {
+        CharSequence columnName = nameList.get(0);
         try {
             tableWriter.addIndex(columnName, indexValueBlockSize);
         } catch (CairoException e) {
@@ -314,15 +324,18 @@ public class AlterTableImpl implements AlterStatement, Mutable {
     }
 
     private void applyDropColumn(TableWriter writer) throws SqlException {
-        RecordMetadata metadata = writer.getMetadata();
-        if (metadata.getColumnIndexQuiet(columnName) == -1) {
-            throw SqlException.invalidColumn(tableNamePosition, columnName);
-        }
-        try {
-            writer.removeColumn(columnName);
-        } catch (CairoException e) {
-            LOG.error().$("cannot drop column '").$(writer.getTableName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
-            throw SqlException.$(tableNamePosition, "cannot drop column. Try again later [errno=").put(e.getErrno()).put(']');
+        for(int i = 0, n = nameList.size(); i < n; i++) {
+            CharSequence columnName = nameList.get(i);
+            RecordMetadata metadata = writer.getMetadata();
+            if (metadata.getColumnIndexQuiet(columnName) == -1) {
+                throw SqlException.invalidColumn(tableNamePosition, columnName);
+            }
+            try {
+                writer.removeColumn(columnName);
+            } catch (CairoException e) {
+                LOG.error().$("cannot drop column '").$(writer.getTableName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
+                throw SqlException.$(tableNamePosition, "cannot drop column. Try again later [errno=").put(e.getErrno()).put(']');
+            }
         }
     }
 
@@ -348,28 +361,33 @@ public class AlterTableImpl implements AlterStatement, Mutable {
     }
 
     private void applyParamCommitLag(TableWriter tableWriter) {
-        int hi = Numbers.decodeLowInt(this.intParam1);
-        int low = Numbers.decodeLowInt(this.intParam2);
-        long commitLag = Numbers.encodeLowHighInts(low, hi);
+        long commitLag = partitionList.get(0);
         tableWriter.setMetaCommitLag(commitLag);
     }
 
     private void applyParamUncommittedRows(TableWriter tableWriter) {
-        tableWriter.setMetaMaxUncommittedRows(this.intParam1);
+        int maxUncommittedRows = (int) partitionList.get(0);
+        tableWriter.setMetaMaxUncommittedRows(maxUncommittedRows);
     }
 
     private void applyRenameColumn(TableWriter writer) throws SqlException {
         // To not store 2 var len fields, store only new name as CharSequence
         // and index of existing column store as
-        try {
-            writer.renameColumn(columnName, newName);
-        } catch (CairoException e) {
-            LOG.error().$("cannot rename column '").$(writer.getTableName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
-            throw SqlException.$(tableNamePosition, "cannot rename column. Try again later [errno=").put(e.getErrno()).put(']');
+        int i = 0, n = nameList.size();
+        while (i < n) {
+            CharSequence columnName = nameList.get(i++);
+            CharSequence newName = nameList.get(i++);
+            try {
+                writer.renameColumn(columnName, newName);
+            } catch (CairoException e) {
+                LOG.error().$("cannot rename column '").$(writer.getTableName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
+                throw SqlException.$(tableNamePosition, "cannot rename column. Try again later [errno=").put(e.getErrno()).put(']');
+            }
         }
     }
 
     private void applySetSymbolCache(TableWriter tableWriter, boolean isCacheOn) throws SqlException {
+        CharSequence columnName = nameList.get(0);
         int columnIndex = tableWriter.getMetadata().getColumnIndexQuiet(columnName);
         if (columnIndex == -1) {
             throw SqlException.invalidColumn(tableNamePosition, columnName);

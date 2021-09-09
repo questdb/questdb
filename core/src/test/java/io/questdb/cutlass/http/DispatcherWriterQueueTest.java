@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.mp.SOCountDownLatch;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -59,7 +60,7 @@ public class DispatcherWriterQueueTest {
     }
 
     @Test
-    public void testImportsHeaderIsNotFullyReceivedIntoReceiveBuffer() throws Exception {
+    public void testAlterTableWhenWriterBusyAndTicking() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
                 .withWorkerCount(1)

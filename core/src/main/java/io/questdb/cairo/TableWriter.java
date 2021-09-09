@@ -873,13 +873,6 @@ public class TableWriter implements Closeable {
         o3ErrorCount.incrementAndGet();
     }
 
-    public void partitionTimestampToName(long timestamp, CharSink sink) {
-        if (partitionDirFmt == null) {
-            throw CairoException.instance(0).put("table is not partitioned");
-        }
-        partitionDirFmt.format(timestamp, null, null, sink);
-    }
-
     public void removeColumn(CharSequence name) {
 
         checkDistressed();
