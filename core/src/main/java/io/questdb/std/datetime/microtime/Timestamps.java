@@ -177,20 +177,15 @@ final public class Timestamps {
         boolean l;
         return yearMicros(y = getYear(micros), l = isLeapYear(y))
                 + monthOfYearMicros(m = getMonthOfYear(micros, y, l), l)
-                + (getDayOfMonth(micros, y, m, l) - 1) * DAY_MICROS
-                + 23 * HOUR_MICROS
-                + 59 * MINUTE_MICROS
-                + 59 * SECOND_MICROS
-                + 999999L
-                ;
+                + (getDayOfMonth(micros, y, m, l)) * DAY_MICROS ;
     }
 
     public static long ceilHH(long micros) {
-        return floorHH(micros) + HOUR_MICROS - 1;
+        return floorHH(micros) + HOUR_MICROS;
     }
 
     public static long ceilMI(long micros) {
-        return floorMI(micros) + MINUTE_MICROS - 1;
+        return floorMI(micros) + MINUTE_MICROS;
     }
 
     public static long ceilMM(long micros) {
@@ -198,16 +193,11 @@ final public class Timestamps {
         boolean l;
         return yearMicros(y = getYear(micros), l = isLeapYear(y))
                 + monthOfYearMicros(m = getMonthOfYear(micros, y, l), l)
-                + (getDaysPerMonth(m, l) - 1) * DAY_MICROS
-                + 23 * HOUR_MICROS
-                + 59 * MINUTE_MICROS
-                + 59 * SECOND_MICROS
-                + 999999L
-                ;
+                + (getDaysPerMonth(m, l)) * DAY_MICROS;
     }
 
     public static long ceilSS(long micros) {
-        return floorSS(micros) + SECOND_MICROS - 1;
+        return floorSS(micros) + SECOND_MICROS;
     }
 
     public static long ceilYYYY(long micros) {
@@ -215,11 +205,7 @@ final public class Timestamps {
         boolean l;
         return yearMicros(y = getYear(micros), l = isLeapYear(y))
                 + monthOfYearMicros(12, l)
-                + (DAYS_PER_MONTH[11] - 1) * DAY_MICROS
-                + 23 * HOUR_MICROS
-                + 59 * MINUTE_MICROS
-                + 59 * SECOND_MICROS
-                + 999999L;
+                + (DAYS_PER_MONTH[11]) * DAY_MICROS;
     }
 
     public static long endOfYear(int year) {
@@ -254,7 +240,7 @@ final public class Timestamps {
     }
 
     public static long ceilMS(long micros) {
-        return floorMS(micros) + MILLI_MICROS - 1;
+        return floorMS(micros) + MILLI_MICROS;
     }
 
     public static long floorYYYY(long micros) {

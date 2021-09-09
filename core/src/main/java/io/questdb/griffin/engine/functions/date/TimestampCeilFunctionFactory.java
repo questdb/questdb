@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
@@ -47,39 +46,28 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final Function kind = args.getQuick(0);
-        final CharSequence kindStr = kind.getStr(null);
 
-        if (kindStr != null) {
-            if (SqlKeywords.isDay(kindStr)) {
+        final char c = kind.getChar(null);
+        switch (c) {
+            case 'd':
                 return new TimestampCeilDDFunction(args.getQuick(1));
-            }
-
-            if (SqlKeywords.isMonth(kindStr)) {
+            case 'M':
                 return new TimestampCeilMMFunction(args.getQuick(1));
-            }
-
-            if (SqlKeywords.isYear(kindStr)) {
+            case 'y':
                 return new TimestampCeilYYYYFunction(args.getQuick(1));
-            }
-
-            if (SqlKeywords.isHourKeyword(kindStr)) {
+            case 'h':
                 return new TimestampCeilHHFunction(args.getQuick(1));
-            }
-
-            if (SqlKeywords.isMinuteKeyword(kindStr)) {
+            case 'm':
                 return new TimestampCeilMIFunction(args.getQuick(1));
-            }
-
-            if (SqlKeywords.isSecondKeyword(kindStr)) {
+            case 's':
                 return new TimestampCeilSSFunction(args.getQuick(1));
-            }
-
-            if (SqlKeywords.isMilliKeyword(kindStr)) {
+            case 'T':
                 return new TimestampCeilMSFunction(args.getQuick(1));
-            }
+            case 0:
+                throw SqlException.position(argPositions.getQuick(0)).put("invalid kind 'null'");
+            default:
+                throw SqlException.position(argPositions.getQuick(0)).put("invalid kind '").put(c).put('\'');
         }
-
-        throw SqlException.position(argPositions.getQuick(0)).put("invalid kind '").put(kindStr).put('\'');
     }
 
     private abstract static class AbstractTimestampCeilFunction extends TimestampFunction implements UnaryFunction {

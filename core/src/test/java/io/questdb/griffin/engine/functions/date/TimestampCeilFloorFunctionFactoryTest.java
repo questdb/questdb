@@ -41,26 +41,26 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                         ")\n" +
                         "select\n" +
                         "  ts\n" +
-                        "  , timestamp_ceil('milli', ts) c_milli\n" +
-                        "  , timestamp_ceil('second', ts) c_second\n" +
-                        "  , timestamp_ceil('minute', ts) c_minute\n" +
-                        "  , timestamp_ceil('hour', ts) c_hour\n" +
-                        "  , timestamp_ceil('day', ts) c_day\n" +
-                        "  , timestamp_ceil('month', ts) c_month\n" +
-                        "  , timestamp_ceil('year', ts) c_year\n" +
-                        "  , timestamp_ceil('year', null) c_null\n" +
-                        "  , timestamp_floor('milli', ts) f_milli\n" +
-                        "  , timestamp_floor('second', ts) f_second\n" +
-                        "  , timestamp_floor('minute', ts) f_minute\n" +
-                        "  , timestamp_floor('hour', ts) f_hour\n" +
-                        "  , timestamp_floor('day', ts) f_day\n" +
-                        "  , timestamp_floor('month', ts) f_month\n" +
-                        "  , timestamp_floor('year', ts) f_year\n" +
-                        "  , timestamp_floor('year', null) f_null\n" +
+                        "  , timestamp_ceil('T', ts) c_milli\n" +
+                        "  , timestamp_ceil('s', ts) c_second\n" +
+                        "  , timestamp_ceil('m', ts) c_minute\n" +
+                        "  , timestamp_ceil('h', ts) c_hour\n" +
+                        "  , timestamp_ceil('d', ts) c_day\n" +
+                        "  , timestamp_ceil('M', ts) c_month\n" +
+                        "  , timestamp_ceil('y', ts) c_year\n" +
+                        "  , timestamp_ceil('y', null) c_null\n" +
+                        "  , timestamp_floor('T', ts) f_milli\n" +
+                        "  , timestamp_floor('s', ts) f_second\n" +
+                        "  , timestamp_floor('m', ts) f_minute\n" +
+                        "  , timestamp_floor('h', ts) f_hour\n" +
+                        "  , timestamp_floor('d', ts) f_day\n" +
+                        "  , timestamp_floor('M', ts) f_month\n" +
+                        "  , timestamp_floor('y', ts) f_year\n" +
+                        "  , timestamp_floor('y', null) f_null\n" +
                         "  from t\n",
                 sink,
                 "ts\tc_milli\tc_second\tc_minute\tc_hour\tc_day\tc_month\tc_year\tc_null\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_month\tf_year\tf_null\n" +
-                        "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.862999Z\t2016-02-10T16:18:22.999999Z\t2016-02-10T16:18:59.999999Z\t2016-02-10T16:59:59.999999Z\t2016-02-10T23:59:59.999999Z\t2016-02-29T23:59:59.999999Z\t2016-12-31T23:59:59.999999Z\t\t2016-02-10T16:18:22.862000Z\t2016-02-10T16:18:22.000000Z\t2016-02-10T16:18:00.000000Z\t2016-02-10T16:00:00.000000Z\t2016-02-10T00:00:00.000000Z\t2016-02-01T00:00:00.000000Z\t2016-01-01T00:00:00.000000Z\t\n"
+                        "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.863000Z\t2016-02-10T16:18:23.000000Z\t2016-02-10T16:19:00.000000Z\t2016-02-10T17:00:00.000000Z\t2016-02-11T00:00:00.000000Z\t2016-03-01T00:00:00.000000Z\t2017-01-01T00:00:00.000000Z\t\t2016-02-10T16:18:22.862000Z\t2016-02-10T16:18:22.000000Z\t2016-02-10T16:18:00.000000Z\t2016-02-10T16:00:00.000000Z\t2016-02-10T00:00:00.000000Z\t2016-02-01T00:00:00.000000Z\t2016-01-01T00:00:00.000000Z\t\n"
         ));
     }
 
@@ -75,7 +75,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid kind ''", e.getFlyweightMessage());
+                TestUtils.assertContains("invalid kind 'null'", e.getFlyweightMessage());
             }
         });
     }
@@ -85,13 +85,13 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try {
                 compiler.compile(
-                        "select timestamp_floor('hello', null)",
+                        "select timestamp_floor('z', null)",
                         sqlExecutionContext
                 );
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid kind 'hello'", e.getFlyweightMessage());
+                TestUtils.assertContains("invalid kind 'z'", e.getFlyweightMessage());
             }
         });
     }
@@ -107,7 +107,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
-                TestUtils.assertContains("invalid kind ''", e.getFlyweightMessage());
+                TestUtils.assertContains("invalid kind 'null'", e.getFlyweightMessage());
             }
         });
     }
@@ -117,13 +117,13 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try {
                 compiler.compile(
-                        "select timestamp_ceil('hello', null)",
+                        "select timestamp_ceil('o', null)",
                         sqlExecutionContext
                 );
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
-                TestUtils.assertContains("invalid kind 'hello'", e.getFlyweightMessage());
+                TestUtils.assertContains("invalid kind 'o'", e.getFlyweightMessage());
             }
         });
     }
