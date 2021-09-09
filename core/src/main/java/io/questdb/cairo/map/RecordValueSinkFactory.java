@@ -41,15 +41,15 @@ public class RecordValueSinkFactory {
         int interfaceClassIndex = asm.poolClass(RecordValueSink.class);
 
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
-        int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoHashInt", "(I)I");
+        int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
         int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
-        int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoHashLong", "(I)J");
+        int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
         int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
         int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
-        int rGetGeoByte = asm.poolInterfaceMethod(Record.class, "getGeoHashByte", "(I)B");
+        int rGetGeoByte = asm.poolInterfaceMethod(Record.class, "getGeoByte", "(I)B");
         int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
-        int rGetGeoShort = asm.poolInterfaceMethod(Record.class, "getGeoHashShort", "(I)S");
+        int rGetGeoShort = asm.poolInterfaceMethod(Record.class, "getGeoShort", "(I)S");
         int rGetChar = asm.poolInterfaceMethod(Record.class, "getChar", "(I)C");
         int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
         int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
@@ -89,7 +89,7 @@ public class RecordValueSinkFactory {
             asm.iconst(index);
 
             int columnType = columnTypes.getColumnType(index);
-            switch (ColumnType.storageTag(columnType)) {
+            switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.INT:
                 case ColumnType.SYMBOL:
                     asm.invokeInterface(rGetInt, 1);

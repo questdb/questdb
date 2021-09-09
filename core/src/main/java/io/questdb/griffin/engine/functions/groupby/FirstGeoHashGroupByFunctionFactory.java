@@ -47,15 +47,15 @@ public class FirstGeoHashGroupByFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function function = args.getQuick(0);
         int type = function.getType();
-        switch (ColumnType.sizeOf(type)) {
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.GEOBYTE:
+                return new FirstGeoHashGroupByFunctionByte(type, function);
+            case ColumnType.GEOSHORT:
+                return new FirstGeoHashGroupByFunctionShort(type, function);
+            case ColumnType.GEOINT:
+                return new FirstGeoHashGroupByFunctionInt(type, function);
             default:
                 return new FirstGeoHashGroupByFunctionLong(type, function);
-            case Integer.BYTES:
-                return new FirstGeoHashGroupByFunctionInt(type, function);
-            case Short.BYTES:
-                return new FirstGeoHashGroupByFunctionShort(type, function);
-            case Byte.BYTES:
-                return new FirstGeoHashGroupByFunctionByte(type, function);
         }
     }
 }

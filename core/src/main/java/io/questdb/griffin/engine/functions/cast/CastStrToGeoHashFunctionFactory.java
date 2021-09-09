@@ -25,18 +25,21 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.GeoHashFunction;
+import io.questdb.griffin.engine.functions.GeoByteFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.GeoHashConstant;
-import io.questdb.std.*;
+import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.std.IntList;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 
-import static io.questdb.cairo.GeoHashes.MAX_BITS_LENGTH;
+import static io.questdb.cairo.ColumnType.GEO_HASH_MAX_BITS_LENGTH;
 
 public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
     @Override
@@ -59,12 +62,13 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
     public Function newInstance(int argPosition, int geoType, Function value) throws SqlException {
         if (value.isConstant()) {
             try {
-                int bitsPrecision = GeoHashes.getBitsPrecision(geoType);
-                assert bitsPrecision > 0 && bitsPrecision < MAX_BITS_LENGTH + 1;
-                return GeoHashConstant.newInstance(
-                        getGeoHashImpl(value.getStr(null), argPosition, bitsPrecision),
+                final int bits = ColumnType.getGeoHashBits(geoType);
+                assert bits > 0 && bits < GEO_HASH_MAX_BITS_LENGTH + 1;
+                return Constants.getGeoHashConstantWithType(
+                        getGeoHashImpl(value.getStr(null), argPosition, bits),
                         geoType
                 );
+
             } catch (NumericException e) {
                 // throw SqlException if string literal is invalid geohash
                 // runtime parsing errors will result in NULL geohash
@@ -74,13 +78,16 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         return new Func(geoType, value, argPosition);
     }
 
+    // todo: consolidate
     private static long getGeoHashImpl(CharSequence value, int position, int typeBits) throws SqlException, NumericException {
         if (value == null || value.length() == 0) {
             return GeoHashes.NULL;
         }
         int actualBits = value.length() * 5;
         if (actualBits < typeBits) {
-            throw SqlException.$(position, "string is too short to cast to chosen GEOHASH precision");
+            throw SqlException.position(position)
+                    .put("string is too short to cast to chosen GEOHASH precision [len=").put(value.length())
+                    .put(", precision=").put(typeBits).put(']');
         }
         // Don't parse full string, it can be over 12 chars and result in overflow
         int parseChars = (typeBits - 1) / 5 + 1;
@@ -88,7 +95,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         return lvalue >>> (parseChars * 5 - typeBits);
     }
 
-    public static class Func extends GeoHashFunction implements UnaryFunction {
+    public static class Func extends GeoByteFunction implements UnaryFunction {
         private final Function arg;
         private final int position;
         private final int bitsPrecision;
@@ -97,8 +104,8 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
             super(geoType);
             this.arg = arg;
             this.position = position;
-            this.bitsPrecision = GeoHashes.getBitsPrecision(geoType);
-            assert this.bitsPrecision > 0 && this.bitsPrecision < MAX_BITS_LENGTH + 1;
+            this.bitsPrecision = ColumnType.getGeoHashBits(geoType);
+            assert this.bitsPrecision > 0 && this.bitsPrecision < GEO_HASH_MAX_BITS_LENGTH + 1;
         }
 
         @Override
@@ -107,25 +114,25 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public byte getGeoHashByte(Record rec) {
+        public byte getGeoByte(Record rec) {
             assert bitsPrecision < 8;
             return (byte) getGeoHashLong0(rec);
         }
 
         @Override
-        public short getGeoHashShort(Record rec) {
+        public short getGeoShort(Record rec) {
             assert bitsPrecision >= 8 && bitsPrecision < 16;
             return (short) getGeoHashLong0(rec);
         }
 
         @Override
-        public int getGeoHashInt(Record rec) {
+        public int getGeoInt(Record rec) {
             assert bitsPrecision >= 16 && bitsPrecision < 32;
             return (int) getGeoHashLong0(rec);
         }
 
         @Override
-        public long getGeoHashLong(Record rec) {
+        public long getGeoLong(Record rec) {
             assert bitsPrecision >= 32;
             return getGeoHashLong0(rec);
         }

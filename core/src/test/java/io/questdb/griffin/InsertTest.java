@@ -44,6 +44,63 @@ public class InsertTest extends AbstractGriffinTest {
     @Before
     public void setUp3() {
         SharedRandom.RANDOM.set(new Rnd());
+        bindVariableService.clear();
+    }
+
+    @Test
+    public void testGeoHash() throws Exception {
+        final TimestampFunction timestampFunction = new TimestampFunction() {
+            private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+
+            @Override
+            public long getTimestamp() {
+                return last = last + 100000L * 30 * 12;
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            try (TableModel model = CairoTestUtils.getGeoHashTypesModelWithNewTypes(configuration, PartitionBy.YEAR)) {
+                CairoTestUtils.createTable(model);
+            }
+            Rnd rnd = new Rnd();
+
+            final String sql;
+            sql = "insert into allgeo values (" +
+                    "$1, " +
+                    "$2, " +
+                    "$3, " +
+                    "$4, " +
+                    "$5)";
+
+
+            final CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
+            InsertStatement insert = cq.getInsertStatement();
+            try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
+                for (int i = 0; i < 10_000; i++) {
+                    bindVariableService.setGeoHash(0, rnd.nextGeoHashByte(6), ColumnType.getGeoHashTypeWithBits(6));
+                    bindVariableService.setGeoHash(1, rnd.nextGeoHashShort(12), ColumnType.getGeoHashTypeWithBits(12));
+                    // truncate this one, target column is 27 bit
+                    bindVariableService.setGeoHash(2, rnd.nextGeoHashInt(29), ColumnType.getGeoHashTypeWithBits(29));
+                    bindVariableService.setGeoHash(3, rnd.nextGeoHashLong(44), ColumnType.getGeoHashTypeWithBits(44));
+                    bindVariableService.setTimestamp(4, timestampFunction.getTimestamp());
+                    method.execute();
+                }
+                method.commit();
+            }
+
+            rnd.reset();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "allgeo")) {
+                final TableReaderRecordCursor cursor = reader.getCursor();
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    Assert.assertEquals(rnd.nextGeoHashByte(6), record.getGeoByte(0));
+                    Assert.assertEquals(rnd.nextGeoHashShort(12), record.getGeoShort(1));
+                    Assert.assertEquals(ColumnType.truncateGeoHashBits(rnd.nextGeoHashInt(29), 29, 27), record.getGeoInt(2));
+                    Assert.assertEquals(rnd.nextGeoHashLong(44), record.getGeoLong(3));
+                }
+            }
+        });
     }
 
     @Test
@@ -182,6 +239,29 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertAsSelectISODateStringToDesignatedTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.000000Z\n";
+
+        assertInsertTimestamp(
+                expected,
+                "insert into tab select 1, '2021-01-03'",
+                null,
+                false
+        );
+    }
+
+    @Test
+    public void testInsertAsSelectNumberStringToDesignatedTimestampColumn() throws Exception {
+        assertInsertTimestamp(
+                "Invalid timestamp: 123456",
+                "insert into tab select 1, '123456'",
+                "io.questdb.cairo.CairoException",
+                false
+        );
+    }
+
+    @Test
     public void testInsertContextSwitch() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
@@ -256,6 +336,94 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertISODateStringToDesignatedTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.000000Z\n";
+
+        assertInsertTimestamp(
+                expected,
+                "insert into tab values (1, '2021-01-03')",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertISOMicroStringTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.000000Z\n";
+
+        assertInsertTimestamp(
+                expected,
+                "insert into tab values (1, '2021-01-03T00:00:00.000000Z')",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertISOMicroStringTimestampColumnNoTimezone() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.000000Z\n";
+
+        assertInsertTimestamp(
+                expected,
+                "insert into tab values (1, '2021-01-03T00:00:00.000000')",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertISOMilliWithTzDateStringTimestampColum2() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:30:00.000000Z\n";
+
+        assertInsertTimestamp(
+                expected,
+                "insert into tab values (1, '2021-01-03T02:00:00-01:30')",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertISOMilliWithTzDateStringTimestampColumFails() throws Exception {
+        assertInsertTimestamp(
+                "Invalid timestamp",
+                "insert into tab values (1, '2021-01-03T02:00:00-:30')",
+                "io.questdb.cairo.CairoException",
+                true
+        );
+    }
+
+    @Test
+    public void testInsertISOMilliWithTzDateStringTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T01:00:00.000000Z\n";
+
+        assertInsertTimestamp(
+                expected,
+                "insert into tab values (1, '2021-01-03T00:00:00+01')",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertISOSecondsDateStringTimestampColumn() throws Exception {
+        final String expected = "seq\tts\n" +
+                "1\t2021-01-03T00:00:00.000000Z\n";
+
+        assertInsertTimestamp(
+                expected,
+                "insert into tab values (1, '2021-01-03T00:00:00Z')",
+                null,
+                true
+        );
+    }
+
+    @Test
     public void testInsertImplicitTimestampPos1() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("CREATE TABLE TS (timestamp TIMESTAMP, field STRING, value DOUBLE) TIMESTAMP(timestamp)", sqlExecutionContext);
@@ -286,6 +454,16 @@ public class InsertTest extends AbstractGriffinTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
             }
         });
+    }
+
+    @Test
+    public void testInsertInvalidDateStringTimestampColumn() throws Exception {
+        assertInsertTimestamp(
+                "Invalid timestamp: 2021-23-03T00:00:00Z",
+                "insert into tab values (1, '2021-23-03T00:00:00Z')",
+                "io.questdb.cairo.CairoException",
+                true
+        );
     }
 
     @Test
@@ -556,127 +734,6 @@ public class InsertTest extends AbstractGriffinTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: STRING -> TIMESTAMP");
             }
         });
-    }
-
-    @Test
-    public void testInsertAsSelectISODateStringToDesignatedTimestampColumn() throws Exception {
-        final String expected = "seq\tts\n" +
-                "1\t2021-01-03T00:00:00.000000Z\n";
-
-        assertInsertTimestamp(
-                expected,
-                "insert into tab select 1, '2021-01-03'",
-                null,
-                false
-        );
-    }
-
-    @Test
-    public void testInsertAsSelectNumberStringToDesignatedTimestampColumn() throws Exception {
-        assertInsertTimestamp(
-                "Invalid timestamp: 123456",
-                "insert into tab select 1, '123456'",
-                "io.questdb.cairo.CairoException",
-                false
-        );
-    }
-
-    @Test
-    public void testInsertISODateStringToDesignatedTimestampColumn() throws Exception {
-        final String expected = "seq\tts\n" +
-                "1\t2021-01-03T00:00:00.000000Z\n";
-
-        assertInsertTimestamp(
-                expected,
-                "insert into tab values (1, '2021-01-03')",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testInsertISOSecondsDateStringTimestampColumn() throws Exception {
-        final String expected = "seq\tts\n" +
-                "1\t2021-01-03T00:00:00.000000Z\n";
-
-        assertInsertTimestamp(
-                expected,
-                "insert into tab values (1, '2021-01-03T00:00:00Z')",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testInsertISOMilliWithTzDateStringTimestampColumn() throws Exception {
-        final String expected = "seq\tts\n" +
-                "1\t2021-01-03T01:00:00.000000Z\n";
-
-        assertInsertTimestamp(
-                expected,
-                "insert into tab values (1, '2021-01-03T00:00:00+01')",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testInsertISOMilliWithTzDateStringTimestampColum2() throws Exception {
-        final String expected = "seq\tts\n" +
-                "1\t2021-01-03T00:30:00.000000Z\n";
-
-        assertInsertTimestamp(
-                expected,
-                "insert into tab values (1, '2021-01-03T02:00:00-01:30')",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testInsertISOMilliWithTzDateStringTimestampColumFails() throws Exception {
-        assertInsertTimestamp(
-                "Invalid timestamp",
-                "insert into tab values (1, '2021-01-03T02:00:00-:30')",
-                "io.questdb.cairo.CairoException",
-                true
-        );
-    }
-
-    @Test
-    public void testInsertISOMicroStringTimestampColumn() throws Exception {
-        final String expected = "seq\tts\n" +
-                "1\t2021-01-03T00:00:00.000000Z\n";
-
-        assertInsertTimestamp(
-                expected,
-                "insert into tab values (1, '2021-01-03T00:00:00.000000Z')",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testInsertISOMicroStringTimestampColumnNoTimezone() throws Exception {
-        final String expected = "seq\tts\n" +
-                "1\t2021-01-03T00:00:00.000000Z\n";
-
-        assertInsertTimestamp(
-                expected,
-                "insert into tab values (1, '2021-01-03T00:00:00.000000')",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testInsertInvalidDateStringTimestampColumn() throws Exception {
-        assertInsertTimestamp(
-                "Invalid timestamp: 2021-23-03T00:00:00Z",
-                "insert into tab values (1, '2021-23-03T00:00:00Z')",
-                "io.questdb.cairo.CairoException",
-                true
-        );
     }
 
     private void assertInsertTimestamp(String expected, String ddl2, String exceptionType, boolean commitInsert) throws Exception {

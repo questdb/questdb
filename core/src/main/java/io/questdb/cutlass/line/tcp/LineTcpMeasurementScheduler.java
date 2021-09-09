@@ -795,28 +795,28 @@ class LineTcpMeasurementScheduler implements Closeable {
                         case NewLineProtoParser.ENTITY_TYPE_GEOLONG: {
                             long geohash = Unsafe.getUnsafe().getLong(bufPos);
                             bufPos += Long.BYTES;
-                            row.putGeoHashLong(colIndex, geohash);
+                            row.putLong(colIndex, geohash);
                             break;
                         }
 
                         case NewLineProtoParser.ENTITY_TYPE_GEOINT: {
                             int geohash = Unsafe.getUnsafe().getInt(bufPos);
                             bufPos += Integer.BYTES;
-                            row.putGeoHashInt(colIndex, geohash);
+                            row.putInt(colIndex, geohash);
                             break;
                         }
 
                         case NewLineProtoParser.ENTITY_TYPE_GEOSHORT: {
                             short geohash = Unsafe.getUnsafe().getShort(bufPos);
                             bufPos += Short.BYTES;
-                            row.putGeoHashShort(colIndex, geohash);
+                            row.putShort(colIndex, geohash);
                             break;
                         }
 
                         case NewLineProtoParser.ENTITY_TYPE_GEOBYTE: {
                             byte geohash = Unsafe.getUnsafe().getByte(bufPos);
                             bufPos += Byte.BYTES;
-                            row.putGeoHashByte(colIndex, geohash);
+                            row.putByte(colIndex, geohash);
                             break;
                         }
 
@@ -1037,14 +1037,16 @@ class LineTcpMeasurementScheduler implements Closeable {
                     geohashBitsSizeByColIdx.add(0); // first value is for cols indexed with -1
                     for (int n = 0, sz = metadata.getColumnCount(); n < sz; n++) {
                         columnIndexByName.put(metadata.getColumnName(n), n);
-                        int colType = metadata.getColumnType(n);
-                        if (!ColumnType.isGeoHash(colType)) {
+                        final int colType = metadata.getColumnType(n);
+                        final int geoHashBits = ColumnType.getGeoHashBits(colType);
+                        if (geoHashBits == 0) {
                             geohashBitsSizeByColIdx.add(0);
                         } else {
                             geohashBitsSizeByColIdx.add(
                                     Numbers.encodeLowHighShorts(
-                                            (short) GeoHashes.getBitsPrecision(colType),
-                                            (short) ColumnType.storageTag(colType)));
+                                            (short) geoHashBits,
+                                            ColumnType.tagOf(colType))
+                            );
                         }
                     }
                     return colIndex;
@@ -1475,9 +1477,9 @@ class LineTcpMeasurementScheduler implements Closeable {
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_STRING] = ColumnType.STRING;
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_BOOLEAN] = ColumnType.BOOLEAN;
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_LONG256] = ColumnType.LONG256;
-        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOBYTE] = ColumnType.geohashWithPrecision(8);
-        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOSHORT] = ColumnType.geohashWithPrecision(16);
-        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOINT] = ColumnType.geohashWithPrecision(32);
-        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOLONG] = ColumnType.geohashWithPrecision(60);
+        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOBYTE] = ColumnType.getGeoHashTypeWithBits(8);
+        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOSHORT] = ColumnType.getGeoHashTypeWithBits(16);
+        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOINT] = ColumnType.getGeoHashTypeWithBits(32);
+        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOLONG] = ColumnType.getGeoHashTypeWithBits(60);
     }
 }

@@ -30,7 +30,7 @@ import org.junit.Test;
 public class LineTcpInsertByteGeoHashTest extends LineTcpInsertGeoHashTest {
     @Test
     public void testInsertMissingGeoHashHasNoEffect() throws Exception {
-        for (int b = 5; b <= GeoHashes.MAX_BITS_LENGTH; b += 5) {
+        for (int b = 5; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b += 5) {
             if (b > 5) {
                 setUp();
             }

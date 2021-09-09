@@ -376,39 +376,34 @@ public class NewLineProtoParser implements Closeable {
                             integerValue = Numbers.parseLong(charSeq);
                             type = ENTITY_TYPE_INTEGER;
                         } else {
-                            if (valueLen < 4 || value.charAt(0) != '0') {
+                            if (valueLen > 3 && value.charAt(0) == '0') {
+                                value.decHi();
+                                type = ENTITY_TYPE_LONG256;
+                            } else {
                                 return false;
                             }
-                            value.of(value.getLo(), value.getHi() - 1);
-                            type = ENTITY_TYPE_LONG256;
                         }
                         return true;
-                    case 'e': {
+                    case 'e':
                         // tru(e)
                         // fals(e)
-                        byte b = value.byteAt(0);
-                        booleanValue = b == 't' || b == 'T';
-                        type = ENTITY_TYPE_BOOLEAN;
-                        return true;
-                    }
+                        lastByte = value.byteAt(0);
+                        // fall through
                     case 't':
                     case 'T':
-                        // t
-                        // T
-                        booleanValue = true;
-                        type = ENTITY_TYPE_BOOLEAN;
-                        return true;
                     case 'f':
                     case 'F':
                         // f
                         // F
-                        booleanValue = false;
+                        // t
+                        // T
+                        booleanValue = (lastByte | 32) == 't';
                         type = ENTITY_TYPE_BOOLEAN;
                         return true;
                     case '"': {
                         byte b = value.byteAt(0);
                         if (valueLen > 1 && b == '"') {
-                            value.of(value.getLo() + 1, value.getHi() - 1);
+                            value.squeeze();
                             type = ENTITY_TYPE_STRING;
                             return true;
                         }

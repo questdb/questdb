@@ -40,6 +40,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -2923,7 +2924,7 @@ nodejs code:
                 }
 
                 // we need to let server process disconnect and release writer
-                Thread.sleep(2000);
+                Os.sleep(2000);
 
                 try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xyz", "testing")) {
                     w.commit();
@@ -3913,10 +3914,10 @@ nodejs code:
 //                            Assert.assertEquals((byte)GeoHashes.fromBitString("0"), record.getGeoHashByte(0));
 //                            Assert.assertEquals((byte)GeoHashes.fromBitString("01"), record.getGeoHashByte(1));
 //                            Assert.assertEquals((byte)GeoHashes.fromBitString("010"), record.getGeoHashByte(2));
-                            Assert.assertEquals(GeoHashes.fromString("x" ,0, 1), record.getGeoHashByte(3));
-                            Assert.assertEquals(GeoHashes.fromString("xy" ,0,2), record.getGeoHashShort(4));
-                            Assert.assertEquals(GeoHashes.fromString("xyzw" ,0, 4), record.getGeoHashInt(5));
-                            Assert.assertEquals(GeoHashes.fromString("xyzwzvxq" ,0, 8), record.getGeoHashLong(6));
+                            Assert.assertEquals(GeoHashes.fromString("x" ,0, 1), record.getGeoByte(3));
+                            Assert.assertEquals(GeoHashes.fromString("xy" ,0,2), record.getGeoShort(4));
+                            Assert.assertEquals(GeoHashes.fromString("xyzw" ,0, 4), record.getGeoInt(5));
+                            Assert.assertEquals(GeoHashes.fromString("xyzwzvxq" ,0, 8), record.getGeoLong(6));
                             count++;
                         }
 

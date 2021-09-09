@@ -75,7 +75,7 @@ public class NetTest {
         }).start();
 
         barrier.await();
-        Thread.sleep(500);
+        Os.sleep(500);
         Net.abortAccept(fileDescriptor.get());
         Assert.assertTrue(haltLatch.await(2, TimeUnit.SECONDS));
     }
@@ -110,10 +110,10 @@ public class NetTest {
         new Thread(() -> {
             try {
                 barrier.await();
-                long clientfd = Net.accept(fd);
-                Net.appendIP4(sink, Net.getPeerIP(clientfd));
-                Net.configureNoLinger(clientfd);
-                Net.close(clientfd);
+                long clientFd = Net.accept(fd);
+                Net.appendIP4(sink, Net.getPeerIP(clientFd));
+                Net.configureNoLinger(clientFd);
+                Net.close(clientFd);
             } catch (Exception e) {
                 threadFailed.set(true);
                 e.printStackTrace();
@@ -132,7 +132,7 @@ public class NetTest {
             if (sockFd >= 0) {
                 break;
             }
-            Thread.sleep(5);
+            Os.sleep(5);
         }
         Assert.assertEquals(0, sockFd);
         Assert.assertTrue(haltLatch.await(10, TimeUnit.SECONDS));
@@ -255,11 +255,11 @@ public class NetTest {
     }
 
     @Test
-    public void testReusePort() throws InterruptedException {
+    public void testReusePort() {
         long fd1 = Net.socketUdp();
         try {
             bindSocket(fd1);
-            Thread.sleep(1000L);
+            Os.sleep(1000L);
             long fd2 = Net.socketUdp();
             try {
                 bindSocket(fd2);

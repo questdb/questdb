@@ -383,25 +383,25 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         @Override
-        public byte getGeoHashByte(int col) {
+        public byte getGeoByte(int col) {
             // No column tops, return byte from mem.
             return mem.getByte(fixedWithColumnOffset(col));
         }
 
         @Override
-        public short getGeoHashShort(int col) {
+        public short getGeoShort(int col) {
             // No column tops, return short from mem.
             return mem.getShort(fixedWithColumnOffset(col));
         }
 
         @Override
-        public int getGeoHashInt(int col) {
+        public int getGeoInt(int col) {
             // No column tops, return int from mem.
             return mem.getInt(fixedWithColumnOffset(col));
         }
 
         @Override
-        public long getGeoHashLong(int col) {
+        public long getGeoLong(int col) {
             // No column tops, return long from mem.
             return mem.getLong(fixedWithColumnOffset(col));
         }

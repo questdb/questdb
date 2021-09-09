@@ -55,6 +55,28 @@ public class TableWriterTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(TableWriterTest.class);
 
     @Test
+    public void testSelectPartitionDirFmt() {
+        Assert.assertNull(TableWriter.selectPartitionDirFmt(PartitionBy.NONE));
+        sink.clear();
+        DateFormat fmt = TableWriter.selectPartitionDirFmt(PartitionBy.DAY);
+        Assert.assertNotNull(fmt);
+        fmt.format(0, DateFormatUtils.enLocale, "Z", sink);
+        Assert.assertEquals("1970-01-01", sink.toString());
+
+        sink.clear();
+        fmt = TableWriter.selectPartitionDirFmt(PartitionBy.MONTH);
+        Assert.assertNotNull(fmt);
+        fmt.format(0, DateFormatUtils.enLocale, "Z", sink);
+        Assert.assertEquals("1970-01", sink.toString());
+
+        sink.clear();
+        fmt = TableWriter.selectPartitionDirFmt(PartitionBy.YEAR);
+        Assert.assertNotNull(fmt);
+        fmt.format(0, DateFormatUtils.enLocale, "Z", sink);
+        Assert.assertEquals("1970", sink.toString());
+    }
+
+    @Test
     public void tesFrequentCommit() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 100000;
@@ -1670,6 +1692,75 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGeoHashAsStringVanilla() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoStr("g9", 10, 489));
+    }
+
+    @Test
+    public void testGeoHashAsStringLongerThanType() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoStr("g912j", 15, 15649));
+    }
+
+    @Test
+    public void testGeoHashAsStringLongerThanTypeUneven() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoStr("g912j", 11, 978));
+    }
+
+    @Test
+    public void testGeoHashAsStringShorterThanType() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoStr("g912j", 44, GeoHashes.NULL));
+    }
+
+    @Test
+    public void testGeoHashAsStringInvalid() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoStr("ooo", 15, GeoHashes.NULL));
+    }
+
+    @Test
+    public void testGeoHashAsStringNull() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoStr(null, 15, GeoHashes.NULL));
+    }
+
+    private void assertGeoStr(String hash, int tableBits, long expected) {
+        final String tableName = "geo1";
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
+            model.col("g", ColumnType.getGeoHashTypeWithBits(tableBits));
+            CairoTestUtils.createTable(model);
+        }
+
+        try (TableWriter writer = new TableWriter(configuration, tableName)) {
+            TableWriter.Row r = writer.newRow();
+            r.putGeoStr(0, hash);
+            r.append();
+            writer.commit();
+        }
+
+        try (TableReader r = new TableReader(configuration, tableName)) {
+            final RecordCursor cursor = r.getCursor();
+            final Record record = cursor.getRecord();
+            final int type = r.getMetadata().getColumnType(0);
+            Assert.assertTrue(cursor.hasNext());
+            final long actual;
+
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.GEOBYTE:
+                    actual = record.getGeoByte(0);
+                    break;
+                case ColumnType.GEOSHORT:
+                    actual = record.getGeoShort(0);
+                    break;
+                case ColumnType.GEOINT:
+                    actual = record.getGeoInt(0);
+                    break;
+                default:
+                    actual = record.getGeoLong(0);
+                    break;
+            }
+            Assert.assertEquals(expected, actual);
+        }
+    }
+
+    @Test
     public void testGetColumnIndex() {
         CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
         try (TableWriter writer = new TableWriter(configuration, "all")) {
@@ -2415,16 +2506,12 @@ public class TableWriterTest extends AbstractCairoTest {
             ts = populateProducts(writer, rnd, ts, N, increment);
             writer.commit();
 
-            long timestampAfterCommit = ts;
-
             populateProducts(writer, rnd, ts, N, increment);
 
             Assert.assertEquals(2 * N, writer.size());
             writer.rollback();
 
             Assert.assertTrue(ff.removeAttempted);
-
-            ts = timestampAfterCommit;
 
             // make sure row rollback works after rollback
             writer.newRow(ts).cancel();
@@ -2470,16 +2557,12 @@ public class TableWriterTest extends AbstractCairoTest {
             ts = populateProducts(writer, rnd, ts, N, increment);
             writer.commit();
 
-            long timestampAfterCommit = ts;
-
             populateProducts(writer, rnd, ts, N, increment);
 
             Assert.assertEquals(2 * N, writer.size());
             writer.rollback();
 
             Assert.assertTrue(ff.removeAttempted);
-
-            ts = timestampAfterCommit;
 
             // make sure row rollback works after rollback
             writer.newRow(ts).cancel();
@@ -2682,23 +2765,19 @@ public class TableWriterTest extends AbstractCairoTest {
         testSymbolCacheFlag(false);
     }
 
-    @Test
-    public void TestSelectPartitionDirFmt() {
-        Assert.assertNull(TableWriter.selectPartitionDirFmt(PartitionBy.NONE));
-        sink.clear();
-        TableWriter.selectPartitionDirFmt(PartitionBy.DAY)
-                .format(0, DateFormatUtils.enLocale, "Z", sink);
-        Assert.assertEquals("1970-01-01", sink.toString());
-
-        sink.clear();
-        TableWriter.selectPartitionDirFmt(PartitionBy.MONTH)
-                .format(0, DateFormatUtils.enLocale, "Z", sink);
-        Assert.assertEquals("1970-01", sink.toString());
-
-        sink.clear();
-        TableWriter.selectPartitionDirFmt(PartitionBy.YEAR)
-                .format(0, DateFormatUtils.enLocale, "Z", sink);
-        Assert.assertEquals("1970", sink.toString());
+    private static long populateRow(TableWriter writer, Rnd rnd, long ts, long increment) {
+        TableWriter.Row r = writer.newRow(ts += increment);
+        r.putInt(0, rnd.nextPositiveInt());  // productId
+        r.putStr(1, rnd.nextString(7)); // productName
+        r.putSym(2, rnd.nextString(4)); // supplier
+        r.putSym(3, rnd.nextString(11)); // category
+        r.putDouble(4, rnd.nextDouble()); // price
+        r.putByte(5, rnd.nextGeoHashByte(5)); // locationByte
+        r.putShort(6, rnd.nextGeoHashShort(15)); // locationShort
+        r.putInt(7, rnd.nextGeoHashInt(30)); // locationInt
+        r.putLong(8, rnd.nextGeoHashLong(60)); // locationLong
+        r.append();
+        return ts;
     }
 
     private long append10KNoSupplier(long ts, Rnd rnd, TableWriter writer) {
@@ -2811,10 +2890,10 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("supplier", ColumnType.SYMBOL).symbolCapacity(N)
                 .col("category", ColumnType.SYMBOL).symbolCapacity(N).indexed(true, 256)
                 .col("price", ColumnType.DOUBLE)
-                .col("locationByte", ColumnType.geohashWithPrecision(5))
-                .col("locationShort", ColumnType.geohashWithPrecision(15))
-                .col("locationInt", ColumnType.geohashWithPrecision(30))
-                .col("locationLong", ColumnType.geohashWithPrecision(60))
+                .col("locationByte", ColumnType.getGeoHashTypeWithBits(5))
+                .col("locationShort", ColumnType.getGeoHashTypeWithBits(15))
+                .col("locationInt", ColumnType.getGeoHashTypeWithBits(30))
+                .col("locationLong", ColumnType.getGeoHashTypeWithBits(60))
                 .timestamp()) {
             CairoTestUtils.create(model);
         }
@@ -2865,21 +2944,6 @@ public class TableWriterTest extends AbstractCairoTest {
         for (int i = 0; i < count; i++) {
             ts = populateRow(writer, rnd, ts, increment);
         }
-        return ts;
-    }
-
-    private static long populateRow(TableWriter writer, Rnd rnd, long ts, long increment) {
-        TableWriter.Row r = writer.newRow(ts += increment);
-        r.putInt(0, rnd.nextPositiveInt());  // productId
-        r.putStr(1, rnd.nextString(7)); // productName
-        r.putSym(2, rnd.nextString(4)); // supplier
-        r.putSym(3, rnd.nextString(11)); // category
-        r.putDouble(4, rnd.nextDouble()); // price
-        r.putGeoHashByte(5, rnd.nextGeoHashByte(5)); // locationByte
-        r.putGeoHashShort(6, rnd.nextGeoHashShort(15)); // locationShort
-        r.putGeoHashInt(7, rnd.nextGeoHashInt(30)); // locationInt
-        r.putGeoHashLong(8, rnd.nextGeoHashLong(60)); // locationLong
-        r.append();
         return ts;
     }
 
@@ -3495,8 +3559,6 @@ public class TableWriterTest extends AbstractCairoTest {
             ts = populateProducts(writer, rnd, ts, N / 2, increment);
             writer.commit();
 
-            long timestampAfterCommit = ts;
-
             populateProducts(writer, rnd, ts, N / 2, increment);
 
             Assert.assertEquals(N, writer.size());
@@ -3504,8 +3566,6 @@ public class TableWriterTest extends AbstractCairoTest {
             Assert.assertEquals(N / 2, writer.size());
             writer.rollback();
             Assert.assertEquals(N / 2, writer.size());
-
-            ts = timestampAfterCommit;
 
             // make sure row rollback works after rollback
             writer.newRow(ts).cancel();
