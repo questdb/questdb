@@ -48,7 +48,7 @@ jobs:
   steps:
   - template: steps.yml
 - job: linux_jdk8
-  displayName: "on linux_jdk8"
+  displayName: "on linux-jdk8"
   pool:
     name: "Azure Pipelines"
     vmImage: "ubuntu-latest"
