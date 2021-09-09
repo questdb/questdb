@@ -2,7 +2,6 @@
 SHELL = bash
 
 export AWS_REGION           ?= eu-west-1
-export AZURE_DEVOPS_EXT_PAT ?= none
 
 BUCKET_NAME 		?= questdb-releases
 BUCKET_PATH			?= releases/c_binaries
@@ -15,6 +14,8 @@ aws   ?= aws
 az    ?= az
 jq    ?= jq
 git   ?= git
+
+
 
 ifeq (, $(shell which aws))
 $(error "No aws cli in $(PATH)")
@@ -30,7 +31,15 @@ endif
 
 get_cbinaries: az_login az_trigger_pipeline
 
+README:
+	@ echo "1. make sure you have installed all the dependecies listed in https://questdb.slab.com/posts/development-station-configuration-zw6gdow8"
+	@ echo "2. You need az-cli, aws cli, jq and azure devops token set env varible"
+	@ echo "3. to start build run 'make get_cbinaries'"
+
 az_login:
+	ifndef AZURE_DEVOPS_EXT_PAT
+		$(error AZURE_DEVOPS_EXT_PAT is undefined, check README)
+	endif
 	@ $(az) devops configure --defaults organization=$(DEVOPS_ORG) project=$(DEVOPS_PROJECT) --use-git-aliases true
 
 az_trigger_pipeline: GIT_ID?=$(shell $(git) rev-parse --short HEAD)
@@ -38,7 +47,7 @@ az_trigger_pipeline: GIT_BRANCH?=$(shell $(git) symbolic-ref -q --short HEAD || 
 az_trigger_pipeline:
 	$(eval pipeline_id := $(shell $(az) pipelines run --detect true  --id $(AZ_PIPELINE_ID) --branch $(GIT_BRANCH) --output json --only-show-errors | $(jq) -r '.id') )
 	@ echo "Build branch: $(GIT_BRANCH) - commit: $(GIT_ID)"
-	@ echo "link: https://dev.azure.com/questdb/questdb/_build/results?buildId=$(pipeline_id)"
+	@ echo "link: $(DEVOPS_ORG)/$(DEVOPS_PROJECT)/_build/results?buildId=$(pipeline_id)"
 	@ $(MAKE) wait ID=$(pipeline_id)
 	@ $(MAKE) s3_download_cbinaries ID=$(pipeline_id)
 
