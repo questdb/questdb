@@ -712,7 +712,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 false);
     }
 
-    // TODO verify whether aggregation functions can have sizeCanBeVariable == true
     protected static void assertQuery(CharSequence expected,
                                       CharSequence query,
                                       CharSequence ddl,

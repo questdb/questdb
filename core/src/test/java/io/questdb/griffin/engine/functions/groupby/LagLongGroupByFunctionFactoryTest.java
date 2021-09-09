@@ -24,12 +24,18 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.griffin.engine.groupby.SimpleMapValue;
+import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
-import org.junit.Assert;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -52,6 +58,7 @@ public class LagLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testBase() throws Exception {
+        // to showcase the input data for subsequent tests
         assertQuery(
                 "ts\tname\tvalue\n" +
                         "2021-07-05T22:37:00.000000Z\taaa\t3\n" +
@@ -59,22 +66,25 @@ public class LagLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "2021-07-05T23:03:00.000000Z\t\t12\n" +
                         "2021-07-05T23:16:00.000000Z\tbbb\t8\n" +
                         "2021-07-05T23:29:00.000000Z\tccc\t18\n" +
+
                         "2021-07-05T23:42:00.000000Z\tbbb\t11\n" +
                         "2021-07-05T23:55:00.000000Z\tccc\t5\n" +
                         "2021-07-06T00:08:00.000000Z\tccc\tNaN\n" +
                         "2021-07-06T00:21:00.000000Z\t\t14\n" +
+
                         "2021-07-06T00:34:00.000000Z\taaa\t4\n" +
                         "2021-07-06T00:47:00.000000Z\taaa\t4\n" +
                         "2021-07-06T01:00:00.000000Z\tbbb\t8\n" +
                         "2021-07-06T01:13:00.000000Z\tddd\t17\n" +
                         "2021-07-06T01:26:00.000000Z\tddd\t4\n" +
+
                         "2021-07-06T01:39:00.000000Z\taaa\t17\n" +
                         "2021-07-06T01:52:00.000000Z\taaa\tNaN\n" +
                         "2021-07-06T02:05:00.000000Z\t\tNaN\n" +
                         "2021-07-06T02:18:00.000000Z\tbbb\t20\n" +
                         "2021-07-06T02:31:00.000000Z\tccc\t15\n" +
-                        "2021-07-06T02:44:00.000000Z\tccc\t2\n",
 
+                        "2021-07-06T02:44:00.000000Z\tccc\t2\n",
                 "select * from tab",
                 CREATE_TABLE_STMT,
                 "ts",
@@ -86,7 +96,7 @@ public class LagLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testLagSampleBy1h() throws Exception {
-        // TODO: something is broken, the lag function is being called 7 times
+        // TODO: it calls lagLong.getLong() 7 * number of groups
         assertQuery(
                 "lag\n" +
                         "8\n" +
@@ -164,7 +174,6 @@ public class LagLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testLagSampleBy1d() throws Exception {
-        // TODO: something is broken, the lag function is being called 7 times
         assertQuery(
                 "lag\n" +
                         "15\n",
@@ -257,32 +266,65 @@ public class LagLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
     public void testExcessiveArgs() throws Exception {
         assertFailure("select lag(value, 1, 0, 2) from tab sample by 100T",
                 CREATE_TABLE_STMT, 7, "excessive arguments, up to three are expected");
-
     }
 
     @Test
     public void testOffsetZero() throws Exception {
         assertFailure("select lag(value, 0) from tab",
                 CREATE_TABLE_STMT, 7, "offset must be greater than 0");
+    }
 
+    private static final DateFormat TS_PATTERN = new TimestampFormatCompiler().compile("yyyy-MM-ddTHH:mm:ss.Sz");
+
+
+    private static void appendUserCaseRow(TableWriter writer, int id, long count, long ts) {
+        TableWriter.Row row = writer.newRow();
+        row.putInt(0, id);
+        row.putLong(1, count);
+        row.putTimestamp(2, ts);
+        row.append();
     }
 
     @Test
-    public void testLongRingBuffer() {
-        final long[] sequence = {1, 2, 6, 9, 7, 11, 15, 2, 0};
-        long defaultValue = 0;
-        for (int offset = 1; offset < 12; offset++) {
-            LagLongGroupByFunction f = new LagLongGroupByFunction(NullConstant.NULL, offset, 0);
-            f.cache.reset(new SimpleMapValue(1));
-            for (int i = 0; i < sequence.length; i++) {
-                f.cache.putLong(sequence[i]);
-            }
-            int resultOffset = sequence.length - offset - 1;
-            if (resultOffset < 0) {
-                Assert.assertEquals(defaultValue, f.cache.getLong());
-            } else {
-                Assert.assertEquals(sequence[resultOffset], f.cache.getLong());
+    public void testUserCase() throws SqlException, NumericException {
+        // id	count	ts
+        // 0	10	2021-09-09T12:43:45.000000Z
+        // 0	3	2021-09-09T12:43:46.000000Z
+        // 0	2	2021-09-09T12:43:47.000000Z
+        // 0	6	2021-09-09T12:43:48.000000Z
+        // 0	12	2021-09-09T12:43:49.000000Z
+        // 1	20	2021-09-09T12:43:50.000000Z
+        // 1	19	2021-09-09T12:43:51.000000Z
+        // 1	18	2021-09-09T12:43:52.000000Z
+        // 1	20	2021-09-09T12:43:53.000000Z
+        compiler.compile("create table tank(id int, count long, ts timestamp)", sqlExecutionContext);
+        try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tank", "testing")) {
+            long ts = 1631191425000000L;
+            appendUserCaseRow(writer, 0, 10, ts);
+            appendUserCaseRow(writer, 0, 3, ts +=Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 0, 2, ts +=Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 0, 6, ts +=Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 0, 12, ts +=Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 1, 20, ts +=Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 1, 19, ts +=Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 1, 18, ts +=Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 1, 20, ts + Timestamps.SECOND_MICROS);
+            writer.commit();
+        }
+        // TODO: why if I sample by 4s all the groups go fubar?
+        CharSequence selectQuery = "SELECT id, lag(count, 2) FROM tank timestamp(ts) sample by 5s";
+        try (RecordCursorFactory factory = compiler.compile(selectQuery, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                sink.clear();
+                TestUtils.assertCursor("id\tlag\n" +
+                                "0\t2\n" +
+                                "1\t19\n",
+                        cursor,
+                        factory.getMetadata(),
+                        true,
+                        sink);
             }
         }
+
     }
 }

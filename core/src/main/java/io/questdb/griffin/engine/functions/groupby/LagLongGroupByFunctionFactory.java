@@ -50,7 +50,7 @@ public class LagLongGroupByFunctionFactory implements FunctionFactory {
                                 IntList argPositions,
                                 CairoConfiguration configuration,
                                 SqlExecutionContext sqlExecutionContext) throws SqlException {
-        Function colName = args.getQuick(0);
+        Function column = args.getQuick(0);
         int offset = 1;
         long defaultValue = Numbers.LONG_NaN;
         switch (args.size()) {
@@ -69,6 +69,6 @@ public class LagLongGroupByFunctionFactory implements FunctionFactory {
         if (offset < 1) {
             throw SqlException.$(position, "offset must be greater than 0");
         }
-        return new LagLongGroupByFunction(colName, offset, defaultValue);
+        return new LagLongGroupByFunction(column, offset, defaultValue);
     }
 }

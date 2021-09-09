@@ -32,42 +32,43 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
-// TODO: other types are missing (whichever types are generally accepted as args by aggregation functions)
 public class LagLongGroupByFunction extends LongFunction implements GroupByFunction {
     private final Function column;
     private final int offset;
     private final long defaultValue;
     private int valueIndex;
-    // visible for testing
-    final LongRingCache cache;
+    private final ObjList<LongRingBuffer> groupIdxToBuffer;
+    private LongRingBuffer currBuffer;
+    private int readerGroupIdx;
 
     public LagLongGroupByFunction(@NotNull Function column, int offset, long defaultValue) {
         assert offset > 0;
         this.column = column;
         this.offset = offset;
         this.defaultValue = defaultValue;
-        this.cache = new LongRingCache();
-    }
-
-    @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        cache.reset(mapValue);
-        cache.putLong(column.getLong(record));
-    }
-
-    @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        cache.putLong(column.getLong(record));
+        groupIdxToBuffer = new ObjList<>();
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
+    }
+
+    @Override
+    public void computeFirst(MapValue mapValue, Record record) {
+        groupIdxToBuffer.add(currBuffer = new LongRingBuffer(mapValue));
+        currBuffer.putLong(column.getLong(record));
+    }
+
+    @Override
+    public void computeNext(MapValue mapValue, Record record) {
+        currBuffer.putLong(column.getLong(record));
     }
 
     @Override
@@ -78,45 +79,46 @@ public class LagLongGroupByFunction extends LongFunction implements GroupByFunct
 
     @Override
     public long getLong(Record record) {
-        return cache.getLong();
+        currBuffer = groupIdxToBuffer.get(readerGroupIdx++);
+        return currBuffer.getLong();
     }
 
-    // visible for testing
-    class LongRingCache {
-        private final int size;
+    @Override
+    public void close() {
+        groupIdxToBuffer.clear();
+        currBuffer = null;
+    }
+
+    private class LongRingBuffer {
+        private final MapValue mapValue;
+        private final int capacity;
         private final long[] buf;
-        private int nextValIdx;
-        private MapValue mapValue; // reset method sets it
+        private int appendOffset;
+        private long result;
 
-        LongRingCache() {
-            size = offset + 1;
-            buf = new long[size];
-            Arrays.fill(buf, defaultValue);
-            nextValIdx = 0;
-        }
-
-        void reset(MapValue mapValue) {
-            System.out.printf("RESET INVOKED%n");
+        LongRingBuffer(MapValue mapValue) {
             this.mapValue = mapValue;
+            capacity = offset + 1;
+            buf = new long[capacity];
             Arrays.fill(buf, defaultValue);
-            this.nextValIdx = 0;
         }
 
         void putLong(long value) {
-            buf[nextValIdx++ % size] = value;
+            buf[appendOffset++ % capacity] = value;
         }
 
         long getLong() {
-            long value;
-            if (nextValIdx > size) {
-                value = buf[nextValIdx % size];
+            if (appendOffset > capacity) {
+                result = buf[appendOffset % capacity];
             } else {
-                int idx = nextValIdx - offset - 1;
-                value = idx < 0 ? defaultValue : buf[idx];
+                int idx = appendOffset - offset - 1;
+                result = idx < 0 ? defaultValue : buf[idx];
             }
-            value = value == Numbers.LONG_NaN ? defaultValue : value;
-            mapValue.putLong(valueIndex, value);
-            return value;
+            if (result == Numbers.LONG_NaN) {
+                result = defaultValue;
+            }
+            mapValue.putLong(valueIndex, result);
+            return result;
         }
     }
 }
