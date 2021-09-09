@@ -282,7 +282,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     new Thread(() -> {
                         try {
                             for (int n = 0; n < iterations; n++) {
-                                Thread.sleep(minIdleMsBeforeWriterRelease - 50);
+                                Os.sleep(minIdleMsBeforeWriterRelease - 50);
                                 send(lineDataThread, threadTable, false);
                             }
                         } catch (Exception e) {
@@ -367,12 +367,6 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 }
 
                 compiler.compile("drop table weather", sqlExecutionContext);
-                String expected =
-                        "windspeed\ttimestamp\ttimetocycle\n" +
-                                "1.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
-                                "2.0\t1990-01-01T00:00:00.000000Z\tNaN\n" +
-                                "3.0\t1990-01-01T02:13:20.000000Z\t0.0\n" +
-                                "4.0\t1990-01-01T05:00:00.000000Z\tNaN\n";
 
                 runInContext(() -> {
                     String lineData =
@@ -386,39 +380,9 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
                     TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, printer);
                     Assert.fail();
-                } catch (ReaderOutOfDateException e) {
+                } catch (ReaderOutOfDateException ignored) {
                 }
             }
-        }
-    }
-
-    @Test
-    public void testWithColumnAsReservedKeyword() throws Exception {
-        try (SqlCompiler compiler = new SqlCompiler(engine);
-             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(
-                     engine, 1, engine.getMessageBus())
-                     .with(
-                             AllowAllCairoSecurityContext.INSTANCE,
-                             new BindVariableServiceImpl(configuration),
-                             null,
-                             -1,
-                             null)) {
-            String expected =
-                    "out\ttimestamp\tin\n" +
-                            "NaN\t1990-01-01T00:00:00.000000Z\t2.0\n" +
-                            "NaN\t1990-01-01T02:13:20.000000Z\t3.0\n" +
-                            "NaN\t1990-01-01T05:00:00.000000Z\t4.0\n";
-
-            runInContext(() -> {
-                String lineData =
-                        "up out=1.0 631150000000000000\n" +
-                                "up in=2.0 631152000000000000\n" +
-                                "up in=3.0 631160000000000000\n" +
-                                "up in=4.0 631170000000000000\n";
-                send(lineData, "up", true, false);
-            });
-
-            TestUtils.assertSql(compiler, sqlExecutionContext, "up", sink, expected);
         }
     }
 
@@ -452,6 +416,36 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "2016-06-13T17:43:50.100400Z\t1\tB\t92\t1.5\n";
             assertTable(expected, "table_a");
         });
+    }
+
+    @Test
+    public void testWithColumnAsReservedKeyword() throws Exception {
+        try (SqlCompiler compiler = new SqlCompiler(engine);
+             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(
+                     engine, 1, engine.getMessageBus())
+                     .with(
+                             AllowAllCairoSecurityContext.INSTANCE,
+                             new BindVariableServiceImpl(configuration),
+                             null,
+                             -1,
+                             null)) {
+            String expected =
+                    "out\ttimestamp\tin\n" +
+                            "NaN\t1990-01-01T00:00:00.000000Z\t2.0\n" +
+                            "NaN\t1990-01-01T02:13:20.000000Z\t3.0\n" +
+                            "NaN\t1990-01-01T05:00:00.000000Z\t4.0\n";
+
+            runInContext(() -> {
+                String lineData =
+                        "up out=1.0 631150000000000000\n" +
+                                "up in=2.0 631152000000000000\n" +
+                                "up in=3.0 631160000000000000\n" +
+                                "up in=4.0 631170000000000000\n";
+                send(lineData, "up", true, false);
+            });
+
+            TestUtils.assertSql(compiler, sqlExecutionContext, "up", sink, expected);
+        }
     }
 
     @Test
@@ -823,7 +817,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                         sender.flush();
                         if (expectDisconnect) {
                             // To prevent all data being buffered before the expected disconnect slow sending
-                            Thread.sleep(100);
+                            Os.sleep(100);
                         }
                         ts += rand.nextInt(1000);
                     }
@@ -882,12 +876,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
     private void wait(SOUnboundedCountDownLatch latch, int value, long iterations) {
         while (-latch.getCount() < value && iterations-- > 0) {
-            try {
-                Thread.sleep(20);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-                return;
-            }
+            Os.sleep(20);
         }
     }
 

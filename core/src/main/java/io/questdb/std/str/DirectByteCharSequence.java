@@ -75,6 +75,15 @@ public class DirectByteCharSequence extends AbstractCharSequence implements Muta
         return this;
     }
 
+    public void decHi() {
+        this.hi--;
+    }
+
+    public void squeeze() {
+        this.lo++;
+        this.hi--;
+    }
+
     @NotNull
     @Override
     public String toString() {

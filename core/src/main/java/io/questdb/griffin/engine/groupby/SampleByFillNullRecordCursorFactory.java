@@ -117,8 +117,17 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
                     case ColumnType.SHORT:
                         placeholderFunctions.add(ShortConstant.ZERO);
                         break;
-                    case ColumnType.GEOHASH:
-                        placeholderFunctions.add(Constants.getNullConstant(type));
+                    case ColumnType.GEOBYTE:
+                        placeholderFunctions.add(GeoByteConstant.NULL);
+                        break;
+                    case ColumnType.GEOSHORT:
+                        placeholderFunctions.add(GeoShortConstant.NULL);
+                        break;
+                    case ColumnType.GEOINT:
+                        placeholderFunctions.add(GeoIntConstant.NULL);
+                        break;
+                    case ColumnType.GEOLONG:
+                        placeholderFunctions.add(GeoLongConstant.NULL);
                         break;
                     default:
                         throw SqlException.$(recordFunctionPositions.getQuick(i), "Unsupported type: ").put(ColumnType.nameOf(type));

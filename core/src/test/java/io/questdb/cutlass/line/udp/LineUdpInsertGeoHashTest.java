@@ -27,7 +27,6 @@ package io.questdb.cutlass.line.udp;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoSender;
-import io.questdb.griffin.engine.functions.rnd.RndGeoHashFunctionFactory;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
@@ -77,7 +76,7 @@ abstract class LineUdpInsertGeoHashTest extends LineUdpInsertTest {
 
     protected static void createTable(CairoEngine engine, int bitsPrecision) {
         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-            CairoTestUtils.create(model.col(targetColumnName, ColumnType.geohashWithPrecision(bitsPrecision)).timestamp());
+            CairoTestUtils.create(model.col(targetColumnName, ColumnType.getGeoHashTypeWithBits(bitsPrecision)).timestamp());
         }
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "pleasure")) {
             writer.warmUp();
@@ -105,7 +104,7 @@ abstract class LineUdpInsertGeoHashTest extends LineUdpInsertTest {
         final Rnd rnd = new Rnd();
         return () -> {
             StringSink sink = Misc.getThreadLocalBuilder();
-            GeoHashes.toString(RndGeoHashFunctionFactory.nextGeoHash(rnd, chars * 5), chars, sink);
+            GeoHashes.appendChars(rnd.nextGeoHash(chars * 5), chars, sink);
             return sink.toString();
         };
     }

@@ -50,13 +50,15 @@ public class CairoLineProtoParserSupport {
      * @param value          value characters
      * @throws BadCastException when value cannot be cast to the give type
      */
-    public static void putValue(TableWriter.Row row,
-                                int columnType,
-                                int columnTypeMeta,
-                                int columnIndex,
-                                CharSequence value) throws BadCastException {
+    public static void putValue(
+            TableWriter.Row row,
+            int columnType,
+            int columnTypeMeta,
+            int columnIndex,
+            CharSequence value
+    ) throws BadCastException {
         try {
-            switch (ColumnType.storageTag(columnType)) {
+            switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.LONG:
                     row.putLong(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                     break;
@@ -110,20 +112,48 @@ public class CairoLineProtoParserSupport {
                     row.putChar(columnIndex, value.length() == 2 ? (char) 0 : value.charAt(1)); // skip quotes
                     break;
                 case ColumnType.GEOBYTE:
-                    row.putGeoHashByte(columnIndex,  // skip quotes
-                            (byte) GeoHashes.fromStringTruncatingNl(value, 1, value.length() - 1, columnTypeMeta));
+                    row.putByte(
+                            columnIndex,  // skip quotes
+                            (byte) GeoHashes.fromStringTruncatingNl(
+                                    value,
+                                    1,
+                                    value.length() - 1,
+                                    columnTypeMeta
+                            )
+                    );
                     break;
                 case ColumnType.GEOSHORT:
-                    row.putGeoHashShort(columnIndex,
-                            (short) GeoHashes.fromStringTruncatingNl(value, 1, value.length() - 1, columnTypeMeta));
+                    row.putShort(
+                            columnIndex,
+                            (short) GeoHashes.fromStringTruncatingNl(
+                                    value,
+                                    1,
+                                    value.length() - 1,
+                                    columnTypeMeta
+                            )
+                    );
                     break;
                 case ColumnType.GEOINT:
-                    row.putGeoHashInt(columnIndex,
-                            (int) GeoHashes.fromStringTruncatingNl(value, 1, value.length() - 1, columnTypeMeta));
+                    row.putInt(
+                            columnIndex,
+                            (int) GeoHashes.fromStringTruncatingNl(
+                                    value,
+                                    1,
+                                    value.length() - 1,
+                                    columnTypeMeta
+                            )
+                    );
                     break;
                 case ColumnType.GEOLONG:
-                    row.putGeoHashLong(columnIndex,
-                            GeoHashes.fromStringTruncatingNl(value, 1, value.length() - 1, columnTypeMeta));
+                    row.putLong(
+                            columnIndex,
+                            GeoHashes.fromStringTruncatingNl(
+                                    value,
+                                    1,
+                                    value.length() - 1,
+                                    columnTypeMeta
+                            )
+                    );
                     break;
                 default:
                     // unsupported types are ignored

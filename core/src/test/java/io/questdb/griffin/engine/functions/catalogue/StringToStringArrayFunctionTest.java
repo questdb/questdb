@@ -125,10 +125,10 @@ public class StringToStringArrayFunctionTest {
     @Test
     public void testGeoHashInterface() throws SqlException {
         StringToStringArrayFunction f = new StringToStringArrayFunction(5, "{abcd}");
-        Assert.assertThrows(UnsupportedOperationException.class, () -> f.getGeoHashInt(null));
-        Assert.assertThrows(UnsupportedOperationException.class, () -> f.getGeoHashLong(null));
-        Assert.assertThrows(UnsupportedOperationException.class, () -> f.getGeoHashShort(null));
-        Assert.assertThrows(UnsupportedOperationException.class, () -> f.getGeoHashByte(null));
+        Assert.assertThrows(UnsupportedOperationException.class, () -> f.getGeoInt(null));
+        Assert.assertThrows(UnsupportedOperationException.class, () -> f.getGeoLong(null));
+        Assert.assertThrows(UnsupportedOperationException.class, () -> f.getGeoShort(null));
+        Assert.assertThrows(UnsupportedOperationException.class, () -> f.getGeoByte(null));
     }
 
     private static String[] array(String... items) {

@@ -32,9 +32,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.GeoHashFunction;
-import io.questdb.griffin.engine.functions.constants.GeoHashConstant;
+import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.IntList;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -56,11 +56,11 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
 
         final Function bitsArg = args.get(2);
         int bits = bitsArg.getInt(null);
-        if (bits < 1 || bits > GeoHashes.MAX_BITS_LENGTH) {
+        if (bits < 1 || bits > ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
             throw SqlException.$(argPositions.getQuick(2), "precision must be in [1..60] range");
         }
 
-        int type = ColumnType.geohashWithPrecision(bits);
+        int type = ColumnType.getGeoHashTypeWithBits(bits);
 
         final Function lonArg = args.get(0);
         final Function latArg = args.get(1);
@@ -79,19 +79,19 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
                 throw SqlException.$(argPositions.getQuick(1), "latitude must be in [-90.0..90.0] range");
             }
 
-            return GeoHashConstant.newInstance(GeoHashes.fromCoordinatesUnsafe(lat, lon, bits), type);
+            return Constants.getGeoHashConstantWithType(GeoHashes.fromCoordinatesUnsafe(lat, lon, bits), type);
         } else {
             return new FromCoordinatesFixedBitsFunction(lonArg, latArg, bits);
         }
     }
 
-    private static class FromCoordinatesFixedBitsFunction extends GeoHashFunction implements BinaryFunction {
+    private static class FromCoordinatesFixedBitsFunction extends AbstractGeoHashFunction implements BinaryFunction {
         private final Function lon;
         private final Function lat;
         private final int bits;
 
         public FromCoordinatesFixedBitsFunction(Function lon, Function lat, int bits) {
-            super(ColumnType.geohashWithPrecision(bits));
+            super(ColumnType.getGeoHashTypeWithBits(bits));
             this.lon = lon;
             this.lat = lat;
             this.bits = bits;
@@ -108,22 +108,22 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public byte getGeoHashByte(Record rec) {
+        public byte getGeoByte(Record rec) {
             return (byte) getLongValue(rec);
         }
 
         @Override
-        public short getGeoHashShort(Record rec) {
+        public short getGeoShort(Record rec) {
             return (short) getLongValue(rec);
         }
 
         @Override
-        public int getGeoHashInt(Record rec) {
+        public int getGeoInt(Record rec) {
             return (int) getLongValue(rec);
         }
 
         @Override
-        public long getGeoHashLong(Record rec) {
+        public long getGeoLong(Record rec) {
             return getLongValue(rec);
         }
 

@@ -51,33 +51,33 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
         int type = function.getType();
 
         // Reuse first implementation overriding computeNext() method inline
-        switch (ColumnType.sizeOf(type)) {
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.GEOBYTE:
+                return new FirstGeoHashGroupByFunctionByte(type, function) {
+                    @Override
+                    public void computeNext(MapValue mapValue, Record record) {
+                        mapValue.putByte(this.valueIndex, this.function.getGeoByte(record));
+                    }
+                };
+            case ColumnType.GEOSHORT:
+                return new FirstGeoHashGroupByFunctionShort(type, function) {
+                    @Override
+                    public void computeNext(MapValue mapValue, Record record) {
+                        mapValue.putShort(this.valueIndex, this.function.getGeoShort(record));
+                    }
+                };
+            case ColumnType.GEOINT:
+                return new FirstGeoHashGroupByFunctionInt(type, function) {
+                    @Override
+                    public void computeNext(MapValue mapValue, Record record) {
+                        mapValue.putInt(this.valueIndex, this.function.getGeoInt(record));
+                    }
+                };
             default:
                 return new FirstGeoHashGroupByFunctionLong(type, function) {
                     @Override
                     public void computeNext(MapValue mapValue, Record record) {
-                        mapValue.putLong(this.valueIndex, this.function.getGeoHashLong(record));
-                    }
-                };
-            case Integer.BYTES:
-                return new FirstGeoHashGroupByFunctionInt(type, function) {
-                    @Override
-                    public void computeNext(MapValue mapValue, Record record) {
-                        mapValue.putInt(this.valueIndex, this.function.getGeoHashInt(record));
-                    }
-                };
-            case Short.BYTES:
-                return new FirstGeoHashGroupByFunctionShort(type, function) {
-                    @Override
-                    public void computeNext(MapValue mapValue, Record record) {
-                        mapValue.putShort(this.valueIndex, this.function.getGeoHashShort(record));
-                    }
-                };
-            case Byte.BYTES:
-                return new FirstGeoHashGroupByFunctionByte(type, function) {
-                    @Override
-                    public void computeNext(MapValue mapValue, Record record) {
-                        mapValue.putByte(this.valueIndex, this.function.getGeoHashByte(record));
+                        mapValue.putLong(this.valueIndex, this.function.getGeoLong(record));
                     }
                 };
         }

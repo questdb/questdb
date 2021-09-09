@@ -102,7 +102,7 @@ public class FunctionParserEqFunctionsNullTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testEqFunctionResolutionNullArgsForNumericTypes() throws SqlException {
-        Arrays.stream(EQ_FUNCS).forEach(functions::add);
+        functions.addAll(Arrays.asList(EQ_FUNCS));
         FunctionParser functionParser = createFunctionParser();
         for (int col0Type : EQUIVALENT_NULL_TYPES) {
             for (int col1Type : EQUIVALENT_NULL_TYPES) {

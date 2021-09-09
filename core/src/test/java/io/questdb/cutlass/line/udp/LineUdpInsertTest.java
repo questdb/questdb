@@ -55,7 +55,7 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
     }
 
     protected static void assertReader(String tableName, String expected) {
-        assertReader(tableName, expected, null);
+        assertReader(tableName, expected, (String[]) null);
     }
 
     protected static void assertReader(String tableName, String expected, String... expectedExtraStringColumns) {
@@ -84,7 +84,6 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
             } catch (CairoException err) {
                 pendingRecoveryErr = err;
                 LockSupport.parkNanos(200);
-                continue;
             }
         }
         if (pendingRecoveryErr != null) {

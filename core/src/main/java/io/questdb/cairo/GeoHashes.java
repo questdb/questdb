@@ -26,7 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 
 public class GeoHashes {
@@ -43,10 +46,8 @@ public class GeoHashes {
     public static final short SHORT_NULL = -1;
     public static final int INT_NULL = -1;
     public static final long NULL = -1L;
-    public static final int MAX_BITS_LENGTH = 60;
     public static final int MAX_STRING_LENGTH = 12;
-    private static final int[] GEO_TYPE_SIZE_POW2 = new int[MAX_BITS_LENGTH + 1];
-
+    // we fill this array with BYTE_NULL (-1)
     static final byte[] base32Indexes = {
             0, 1, 2, 3, 4, 5, 6, 7,         // 30-37, '0'..'7'
             8, 9, -1, -1, -1, -1, -1, -1,   // 38-2F, '8','9'
@@ -57,10 +58,9 @@ public class GeoHashes {
             -1, -1, 10, 11, 12, 13, 14, 15, // 60-67, 'b'..'g'
             16, -1, 17, 18, -1, 19, 20, -1, // 68-6F, 'h','j','k','m','n'
             21, 22, 23, 24, 25, 26, 27, 28, // 70-77, 'p'..'w'
-            29, 30, 31                      // 78-7A, 'x'..'z'
+            29, 30, 31, -1, -1, -1, -1, -1  // 78-7A, 'x'..'z'
     };
 
-    private static final int BITS_OFFSET = 8;
     private static final char[] base32 = {
             '0', '1', '2', '3', '4', '5', '6', '7',
             '8', '9', 'b', 'c', 'd', 'e', 'f', 'g',
@@ -68,9 +68,33 @@ public class GeoHashes {
             's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
     };
 
-    static {
-        for (int bits = 1; bits <= MAX_BITS_LENGTH; bits++) {
-            GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
+    public static void appendBinary(long hash, int bits, CharSink sink) {
+        if (hash != NULL) {
+            appendBinaryStringUnsafe(hash, bits, sink);
+        }
+    }
+
+    public static void appendBinaryStringUnsafe(long hash, int bits, CharSink sink) {
+        // Below assertion can happen if there is corrupt metadata
+        // which should not happen in production code since reader and writer check table metadata
+        assert bits > 0 && bits <= ColumnType.GEO_HASH_MAX_BITS_LENGTH;
+        for (int i = bits - 1; i >= 0; --i) {
+            sink.put(((hash >> i) & 1) == 1 ? '1' : '0');
+        }
+    }
+
+    public static void appendChars(long hash, int chars, CharSink sink) {
+        if (hash != NULL) {
+            appendCharsUnsafe(hash, chars, sink);
+        }
+    }
+
+    public static void appendCharsUnsafe(long hash, int chars, CharSink sink) {
+        // Below assertion can happen if there is corrupt metadata
+        // which should not happen in production code since reader and writer check table metadata
+        assert chars > 0 && chars <= MAX_STRING_LENGTH;
+        for (int i = chars - 1; i >= 0; --i) {
+            sink.put(base32[(int) ((hash >> i * 5) & 0x1F)]);
         }
     }
 
@@ -79,33 +103,34 @@ public class GeoHashes {
         return ((1L << count) - 1) << shift;
     }
 
+    public static byte encodeChar(char c) {
+        // element at index 11 is -1
+        return base32Indexes[c > 47 && c < 123 ? c - 48 : 11];
+    }
+
+    public static long fromBitString(CharSequence bits, int start) throws NumericException {
+        return fromBitString(bits, start, Math.min(bits.length(), ColumnType.GEO_HASH_MAX_BITS_LENGTH + start));
+    }
+
     public static long fromBitStringNl(CharSequence bits, int start) throws NumericException {
         int len = bits.length();
         if (len - start <= 0) {
             return NULL;
         }
-        return fromBitString(bits, start, Math.min(bits.length(), MAX_BITS_LENGTH + start));
+        return fromBitString(bits, start, Math.min(bits.length(), ColumnType.GEO_HASH_MAX_BITS_LENGTH + start));
     }
 
-    public static long fromBitString(CharSequence bits, int start) throws NumericException {
-        return fromBitString(bits, start, Math.min(bits.length(), MAX_BITS_LENGTH + start));
-    }
-
-    private static long fromBitString(CharSequence bits, int start, int limit) throws NumericException {
-        long result = 0;
-        for (int i = start; i < limit; i++) {
-            switch (bits.charAt(i)) {
-                case '0':
-                    result = result << 1;
-                    break;
-                case '1':
-                    result = (result << 1) | 1;
-                    break;
-                default:
-                    throw NumericException.INSTANCE;
-            }
+    public static long fromCoordinates(double lat, double lng, int bits) throws NumericException {
+        if (lat < -90.0 || lat > 90.0) {
+            throw NumericException.INSTANCE;
         }
-        return result;
+        if (lng < -180.0 || lng > 180.0) {
+            throw NumericException.INSTANCE;
+        }
+        if (bits < 0 || bits > ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
+            throw NumericException.INSTANCE;
+        }
+        return fromCoordinatesUnsafe(lat, lng, bits);
     }
 
     public static long fromCoordinatesUnsafe(double lat, double lng, int bits) {
@@ -136,52 +161,8 @@ public class GeoHashes {
         return result;
     }
 
-    public static long fromCoordinates(double lat, double lng, int bits) throws NumericException {
-        if (lat < -90.0 || lat > 90.0) {
-            throw NumericException.INSTANCE;
-        }
-        if (lng < -180.0 || lng > 180.0) {
-            throw NumericException.INSTANCE;
-        }
-        if (bits < 0 || bits > MAX_BITS_LENGTH) {
-            throw NumericException.INSTANCE;
-        }
-        return fromCoordinatesUnsafe(lat, lng, bits);
-    }
-
-    public static long fromStringTruncatingNl(CharSequence hash, int start, int end, int bits) throws NumericException {
-        if (start == end) {
-            return NULL;
-        }
-        final int chars = Math.min(end - start, MAX_STRING_LENGTH);
-        int actualBits = 5 * chars;
-        if (actualBits < bits) {
-            throw NumericException.INSTANCE;
-        }
-        return fromString(hash, start, start + chars) >>> (actualBits - bits);
-    }
-
-    public static long fromStringTruncatingNl(long lo, long hi, int bits) throws NumericException {
-        if (lo == hi) {
-            return NULL;
-        }
-        final int chars = Math.min((int) (hi - lo), MAX_STRING_LENGTH);
-        int actualBits = 5 * chars;
-        if (actualBits < bits) {
-            throw NumericException.INSTANCE;
-        }
-        long geohash = 0;
-        for (long p = lo, limit = p + chars; p < limit; p++) {
-            geohash = appendChar(geohash, (char) Unsafe.getUnsafe().getByte(p)); // base32
-        }
-        return geohash >>> (actualBits - bits);
-    }
-
-    public static long fromStringNl(CharSequence geohash, int start, int length) throws NumericException {
-        if (length <= 0 || geohash == null || geohash.length() == 0) {
-            return GeoHashes.NULL;
-        }
-        return fromString(geohash, start, start + (length <= MAX_STRING_LENGTH ? length : MAX_STRING_LENGTH));
+    public static long fromString(CharSequence hash) throws NumericException {
+        return fromString(hash, 0, hash.length());
     }
 
     public static long fromString(CharSequence hash, int start, int end) throws NumericException {
@@ -193,45 +174,17 @@ public class GeoHashes {
         return geohash;
     }
 
-    private static long appendChar(long geohash, char c) throws NumericException {
-        byte idx;
-        if (c >= 48 && c < 123) { // 123 = base32Indexes.length + 48
-            idx = base32Indexes[c - 48];
-            if (idx >= 0) {
-                return (geohash << 5) | idx;
-            }
+    public static long fromStringNl(CharSequence geohash, int start, int length) throws NumericException {
+        if (length <= 0 || geohash == null || geohash.length() == 0) {
+            return GeoHashes.NULL;
         }
-        throw NumericException.INSTANCE;
-    }
-
-    public static boolean isValidChars(CharSequence tok, int start) {
-        int idx;
-        int len = tok.length();
-        for (int i = start; i < len; i++) {
-            idx = tok.charAt(i);
-            if (idx < 48 || idx > 122 || base32Indexes[idx - 48] == -1) {
-                return false;
-            }
-        }
-        return start < len;
-    }
-
-    public static boolean isValidBits(CharSequence tok, int start) {
-        int idx;
-        int len = tok.length();
-        for (int i = start; i < len; i++) {
-            idx = tok.charAt(i);
-            if (idx < '0' || idx > '1') {
-                return false;
-            }
-        }
-        return start < len;
+        return fromString(geohash, start, start + Math.min(length, MAX_STRING_LENGTH));
     }
 
     public static void fromStringToBits(final CharSequenceHashSet prefixes, int columnType, final DirectLongList prefixesBits) {
         prefixesBits.clear();
         final int columnSize = ColumnType.sizeOf(columnType);
-        final int columnBits = GeoHashes.getBitsPrecision(columnType);
+        final int columnBits = ColumnType.getGeoHashBits(columnType);
         for (int i = 0, sz = prefixes.size(); i < sz; i++) {
             try {
                 final CharSequence prefix = prefixes.get(i);
@@ -258,80 +211,94 @@ public class GeoHashes {
         }
     }
 
-    // TODO: technical debt, remove. Was going to be variable size geohash col
-    public static int hashSize(long hashz) {
-        return (int) (hashz >>> MAX_BITS_LENGTH);
-    }
-
-    // TODO: technical debt, remove. Was going to be variable size geohash col
-    public static long toHash(long hashz) {
-        return hashz & 0x0fffffffffffffffL;
-    }
-
-    // TODO: technical debt, remove. Was going to be variable size geohash col
-    public static long toHashWithSize(long hash, int length) {
-        return (((long) length) << 60L) + hash;
-    }
-
-    public static int getBitsPrecision(int type) {
-        assert ColumnType.tagOf(type) == ColumnType.GEOHASH; // This maybe relaxed in the future
-        return (byte) ((type >> BITS_OFFSET) & 0xFF);
-    }
-
-    public static int setBitsPrecision(int type, int bits) {
-        return (type & ~(0xFF << 8)) | (Byte.toUnsignedInt((byte) bits) << 8);
-    }
-
-    public static int sizeOf(int columnType) {
-        assert ColumnType.tagOf(columnType) == ColumnType.GEOHASH;
-        int bits = getBitsPrecision(columnType);
-        if (bits <= MAX_BITS_LENGTH && bits > 0) {
-            return 1 << GEO_TYPE_SIZE_POW2[bits];
+    public static long fromStringTruncatingNl(CharSequence hash, int start, int end, int toBits) throws NumericException {
+        if (start == end) {
+            return NULL;
         }
-        return -1; // Corrupt metadata
+        final int chars = Math.min(end - start, MAX_STRING_LENGTH);
+        int fromBits = 5 * chars;
+        if (fromBits < toBits) {
+            throw NumericException.INSTANCE;
+        }
+        return ColumnType.truncateGeoHashBits(fromString(hash, start, start + chars), fromBits, toBits);
     }
 
-    public static int pow2SizeOf(int columnType) {
-        assert ColumnType.tagOf(columnType) == ColumnType.GEOHASH;
-        int bits = getBitsPrecision(columnType);
-        if (bits <= MAX_BITS_LENGTH) {
-            return GEO_TYPE_SIZE_POW2[bits];
-        }
-        return -1; // Corrupt metadata
-    }
 
-    public static void toBitString(long hash, int bits, CharSink sink) {
-        if (hash != NULL) {
-            // Below assertion can happen if there is corrupt metadata
-            // which should not happen in production code since reader and writer check table metadata
-            assert bits > 0 && bits <= MAX_BITS_LENGTH;
-            for (int i = bits - 1; i >= 0; --i) {
-                sink.put(((hash >> i) & 1) == 1 ? '1' : '0');
-            }
+    public static long fromStringTruncatingNl(long lo, long hi, int bits) throws NumericException {
+        if (lo == hi) {
+            return NULL;
         }
-    }
-
-    public static void toString(long hash, int chars, CharSink sink) {
-        if (hash != NULL) {
-            // Below assertion can happen if there is corrupt metadata
-            // which should not happen in production code since reader and writer check table metadata
-            assert chars > 0 && chars <= MAX_STRING_LENGTH;
-            for (int i = chars - 1; i >= 0; --i) {
-                sink.put(base32[(int) ((hash >> i * 5) & 0x1F)]);
-            }
+        final int chars = Math.min((int) (hi - lo), MAX_STRING_LENGTH);
+        int actualBits = 5 * chars;
+        if (actualBits < bits) {
+            throw NumericException.INSTANCE;
         }
+        long geohash = 0;
+        for (long p = lo, limit = p + chars; p < limit; p++) {
+            geohash = appendChar(geohash, (char) Unsafe.getUnsafe().getByte(p)); // base32
+        }
+        return ColumnType.truncateGeoHashBits(geohash, actualBits, bits);
     }
 
     public static long getGeoLong(int type, Function func, Record rec) {
-        switch (ColumnType.sizeOf(type)) {
-            case Byte.BYTES:
-                return func.getGeoHashByte(rec);
-            case Short.BYTES:
-                return func.getGeoHashShort(rec);
-            case Integer.BYTES:
-                return func.getGeoHashInt(rec);
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.GEOBYTE:
+                return func.getGeoByte(rec);
+            case ColumnType.GEOSHORT:
+                return func.getGeoShort(rec);
+            case ColumnType.GEOINT:
+                return func.getGeoInt(rec);
             default:
-                return func.getGeoHashLong(rec);
+                return func.getGeoLong(rec);
         }
+    }
+
+    public static boolean isValidBits(CharSequence tok, int start) {
+        int idx;
+        int len = tok.length();
+        for (int i = start; i < len; i++) {
+            idx = tok.charAt(i);
+            if (idx < '0' || idx > '1') {
+                return false;
+            }
+        }
+        return start < len;
+    }
+
+    public static boolean isValidChars(CharSequence tok, int start) {
+        char c;
+        int len = tok.length();
+        for (int i = start; i < len; i++) {
+            c = tok.charAt(i);
+            if (encodeChar(c) == -1) {
+                return false;
+            }
+        }
+        return start < len;
+    }
+
+    private static long fromBitString(CharSequence bits, int start, int limit) throws NumericException {
+        long result = 0;
+        for (int i = start; i < limit; i++) {
+            switch (bits.charAt(i)) {
+                case '0':
+                    result = result << 1;
+                    break;
+                case '1':
+                    result = (result << 1) | 1;
+                    break;
+                default:
+                    throw NumericException.INSTANCE;
+            }
+        }
+        return result;
+    }
+
+    private static long appendChar(long hash, char c) throws NumericException {
+        final byte idx = encodeChar(c);
+        if (idx > -1) {
+            return (hash << 5) | idx;
+        }
+        throw NumericException.INSTANCE;
     }
 }

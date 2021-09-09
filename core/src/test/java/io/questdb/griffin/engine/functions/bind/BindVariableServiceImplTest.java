@@ -453,6 +453,17 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testSetGeoByteToLessAccurateGeoByte() throws SqlException {
+        bindVariableService.define(0, ColumnType.getGeoHashTypeWithBits(5), 0);
+        try {
+            bindVariableService.setGeoHash(0, 3, ColumnType.getGeoHashTypeWithBits(3));
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: GEOHASH(3b) -> GEOHASH(1c) [varIndex=0]");
+        }
+    }
+
+    @Test
     public void testSetBooleanToLong256() throws SqlException {
         bindVariableService.define(0, ColumnType.BOOLEAN, 0);
         try {

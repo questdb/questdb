@@ -24,7 +24,6 @@
 
 package io.questdb.std;
 
-import io.questdb.cairo.GeoHashes;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
@@ -121,50 +120,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             return value.subSequence(1, value.length() - 1);
         }
         return immutableOf(value);
-    }
-
-    public static boolean isGeoHashCharsConstant(CharSequence tok) {
-        assert tok.charAt(0) == '#'; // called by ExpressionParser where this has been checked.
-        // the EP will eagerly try to detect '/dd' following the geohash token, and if so
-        // it will create a FloatingSequencePair with '/' as separator. At this point
-        // however, '/dd' does not exist, tok is just the potential geohash chars constant, with leading '#'
-        int len = tok.length();
-        if (len < 2 || len - 1 > GeoHashes.MAX_STRING_LENGTH) {
-            return false;
-        }
-        return GeoHashes.isValidChars(tok, 1);
-    }
-
-    public static boolean isGeoHashBitsConstant(CharSequence tok) {
-        assert tok.charAt(0) == '#'; // ^ ^, also suffix not allowed
-        int len = tok.length();
-        if (len < 3 || len - 2 > GeoHashes.MAX_BITS_LENGTH || tok.charAt(1) != 35) { // 2nd '#'
-            return false;
-        }
-        return GeoHashes.isValidBits(tok, 2);
-    }
-
-    public static int extractGeoHashSuffix(int position, CharSequence tok) throws SqlException {
-        assert tok.charAt(0) == '#'; // ^ ^
-        // EP has already checked that the 'd' in '/d', '/dd' are numeric [0..9]
-        int tokLen = tok.length();
-        if (tokLen > 1) {
-            if (tokLen >= 3 && tok.charAt(tokLen - 3) == '/') { // '/dd'
-                short bits = (short) (10 * tok.charAt(tokLen - 2) + tok.charAt(tokLen - 1) - 528); // 10 * 48 + 48
-                if (bits >= 1 && bits <= GeoHashes.MAX_BITS_LENGTH) {
-                    return Numbers.encodeLowHighShorts((short) 3, bits);
-                }
-                throw SqlException.$(position, "invalid bits size for GEOHASH constant: ").put(tok);
-            }
-            if (tok.charAt(tokLen - 2) == '/') { // '/d'
-                char du = tok.charAt(tokLen - 1);
-                if (du >= '1' && du <= '9') {
-                    return Numbers.encodeLowHighShorts((short) 2, (short) (du - 48));
-                }
-                throw SqlException.$(position, "invalid bits size for GEOHASH constant: ").put(tok);
-            }
-        }
-        return Numbers.encodeLowHighShorts((short) 0, (short) (5 * Math.max(tokLen - 1, 0))); // - 1 to exclude '#'
     }
 
     public final void defineSymbol(String token) {

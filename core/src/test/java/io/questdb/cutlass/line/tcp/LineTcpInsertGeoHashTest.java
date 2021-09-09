@@ -54,7 +54,7 @@ abstract class LineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
     public abstract void testNullGeoHash() throws Exception;
 
     protected void assertGeoHash(int columnBits, String inboundLines, String expected) throws Exception {
-        assertGeoHash(columnBits, inboundLines, expected, null);
+        assertGeoHash(columnBits, inboundLines, expected, (String[]) null);
     }
 
     protected void assertGeoHash(int columnBits,
@@ -63,7 +63,7 @@ abstract class LineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
                                  String... expectedExtraStringColumns) throws Exception {
         runInContext(() -> {
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-                CairoTestUtils.create(model.col(targetColumnName, ColumnType.geohashWithPrecision(columnBits)).timestamp());
+                CairoTestUtils.create(model.col(targetColumnName, ColumnType.getGeoHashTypeWithBits(columnBits)).timestamp());
             }
             recvBuffer = inboundLines;
             handleContextIO();
