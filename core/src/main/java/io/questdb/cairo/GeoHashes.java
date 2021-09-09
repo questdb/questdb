@@ -26,10 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.DirectLongList;
-import io.questdb.std.NumericException;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
 public class GeoHashes {
@@ -134,31 +131,9 @@ public class GeoHashes {
     }
 
     public static long fromCoordinatesUnsafe(double lat, double lng, int bits) {
-        double minLat = -90, maxLat = 90;
-        double minLng = -180, maxLng = 180;
-        long result = 0;
-        for (int i = 0; i < bits; ++i) {
-            if (i % 2 == 0) {
-                double midpoint = (minLng + maxLng) / 2;
-                if (lng < midpoint) {
-                    result <<= 1;
-                    maxLng = midpoint;
-                } else {
-                    result = result << 1 | 1;
-                    minLng = midpoint;
-                }
-            } else {
-                double midpoint = (minLat + maxLat) / 2;
-                if (lat < midpoint) {
-                    result <<= 1;
-                    maxLat = midpoint;
-                } else {
-                    result = result << 1 | 1;
-                    minLat = midpoint;
-                }
-            }
-        }
-        return result;
+        long latq = (long)Math.scalb((lat + 90.0) / 180.0, 32);
+        long lngq = (long)Math.scalb((lng + 180.0) / 360.0, 32);
+        return Numbers.interleaveBits(latq, lngq) >>> (64 - bits);
     }
 
     public static long fromString(CharSequence hash) throws NumericException {
