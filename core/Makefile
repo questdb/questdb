@@ -45,7 +45,7 @@ az_trigger_pipeline:
 s3_download_cbinaries: ID=$(ID)
 s3_download_cbinaries:
 	@ echo "Updating local binaries"
-	$(aws) s3 sync s3://$(BUCKET_NAME)/$(BUCKET_PATH)/$(ID) $(DEFAULT_BINARY_PATH)
+	$(aws) s3 cp --recursive s3://$(BUCKET_NAME)/$(BUCKET_PATH)/$(ID) $(DEFAULT_BINARY_PATH)
 
 az_download_cbinaries: ID=$(ID)
 az_download_cbinaries:
