@@ -70,6 +70,7 @@ stages:
           - checkout: none
           - bash: |
               echo test
+              sleep 60
               exit 1;
             name: test
             displayName: 'Test'

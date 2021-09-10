@@ -6,6 +6,7 @@ jobs:
     vmImage: "ubuntu-latest"
   dependsOn:
   - CheckChanges
+  - Test
   timeoutInMinutes: 60
   variables:
     SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
@@ -22,6 +23,7 @@ jobs:
     vmImage: "macos-latest"
   dependsOn:
   - CheckChanges
+  - Test
   timeoutInMinutes: 60
   variables:
     SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
@@ -38,6 +40,7 @@ jobs:
     vmImage: "windows-latest"
   dependsOn:
   - CheckChanges
+  - Test
   timeoutInMinutes: 60
   variables:
     SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
@@ -54,6 +57,7 @@ jobs:
     vmImage: "ubuntu-latest"
   dependsOn:
   - CheckChanges
+  - Test
   timeoutInMinutes: 60
   variables:
     SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
@@ -72,6 +76,7 @@ jobs:
     - Agent.Name -equals arm64-$(Build.BuildId)
   dependsOn:
   - CheckChanges
+  - Test
   timeoutInMinutes: 60
   condition: eq(variables['System.PullRequest.IsFork'], 'false')
   variables:
