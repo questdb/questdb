@@ -96,7 +96,6 @@ public class LagLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testLagSampleBy1h() throws Exception {
-        // TODO: it calls lagLong.getLong() 7 * number of groups
         assertQuery(
                 "lag\n" +
                         "8\n" +
@@ -286,39 +285,41 @@ public class LagLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUserCase() throws SqlException, NumericException {
+    public void testUserCase1() throws SqlException, NumericException {
         // id	count	ts
         // 0	10	2021-09-09T12:43:45.000000Z
-        // 0	3	2021-09-09T12:43:46.000000Z
-        // 0	2	2021-09-09T12:43:47.000000Z
-        // 0	6	2021-09-09T12:43:48.000000Z
-        // 0	12	2021-09-09T12:43:49.000000Z
+        // 0	11	2021-09-09T12:43:46.000000Z
+        // 0	12	2021-09-09T12:43:47.000000Z
+        // 0	16	2021-09-09T12:43:48.000000Z
+
+        // 0	17	2021-09-09T12:43:49.000000Z
         // 1	20	2021-09-09T12:43:50.000000Z
-        // 1	19	2021-09-09T12:43:51.000000Z
-        // 1	18	2021-09-09T12:43:52.000000Z
-        // 1	20	2021-09-09T12:43:53.000000Z
+        // 1	21	2021-09-09T12:43:51.000000Z
+        // 1	21	2021-09-09T12:43:52.000000Z
+
+        // 1	22	2021-09-09T12:43:53.000000Z
         compiler.compile("create table tank(id int, count long, ts timestamp)", sqlExecutionContext);
         try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tank", "testing")) {
             long ts = 1631191425000000L;
             appendUserCaseRow(writer, 0, 10, ts);
-            appendUserCaseRow(writer, 0, 3, ts +=Timestamps.SECOND_MICROS);
-            appendUserCaseRow(writer, 0, 2, ts +=Timestamps.SECOND_MICROS);
-            appendUserCaseRow(writer, 0, 6, ts +=Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 0, 11, ts +=Timestamps.SECOND_MICROS);
             appendUserCaseRow(writer, 0, 12, ts +=Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 0, 16, ts +=Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 0, 17, ts +=Timestamps.SECOND_MICROS);
             appendUserCaseRow(writer, 1, 20, ts +=Timestamps.SECOND_MICROS);
-            appendUserCaseRow(writer, 1, 19, ts +=Timestamps.SECOND_MICROS);
-            appendUserCaseRow(writer, 1, 18, ts +=Timestamps.SECOND_MICROS);
-            appendUserCaseRow(writer, 1, 20, ts + Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 1, 21, ts +=Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 1, 21, ts +=Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 1, 22, ts + Timestamps.SECOND_MICROS);
             writer.commit();
         }
-        // TODO: why if I sample by 4s all the groups go fubar?
-        CharSequence selectQuery = "SELECT id, lag(count, 2) FROM tank timestamp(ts) sample by 5s";
+        CharSequence selectQuery = "SELECT ts, last(count) - first(count) FROM tank timestamp(ts) sample by 4s";
         try (RecordCursorFactory factory = compiler.compile(selectQuery, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 sink.clear();
-                TestUtils.assertCursor("id\tlag\n" +
-                                "0\t2\n" +
-                                "1\t19\n",
+                TestUtils.assertCursor("ts\tcolumn\n" +
+                                "2021-09-09T12:43:45.000000Z\t6\n" +
+                                "2021-09-09T12:43:49.000000Z\t4\n" +
+                                "2021-09-09T12:43:53.000000Z\t0\n",
                         cursor,
                         factory.getMetadata(),
                         true,
@@ -326,5 +327,51 @@ public class LagLongGroupByFunctionFactoryTest extends AbstractGriffinTest {
             }
         }
 
+    }
+
+    @Test
+    public void testUserCase2() throws SqlException, NumericException {
+        // id	count	ts
+        // 0	10	2021-09-09T12:43:45.000000Z
+        // 0	11	2021-09-09T12:43:46.000000Z
+        // 0	12	2021-09-09T12:43:47.000000Z
+        // 0	16	2021-09-09T12:43:48.000000Z
+
+        // 0	17	2021-09-09T12:43:49.000000Z
+
+        // 1	20	2021-09-09T12:43:50.000000Z
+        // 1	21	2021-09-09T12:43:51.000000Z
+        // 1	21	2021-09-09T12:43:52.000000Z
+
+        // 1	22	2021-09-09T12:43:53.000000Z
+        compiler.compile("create table tank(id int, count long, ts timestamp)", sqlExecutionContext);
+        try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tank", "testing")) {
+            long ts = 1631191425000000L;
+            appendUserCaseRow(writer, 0, 10, ts);
+            appendUserCaseRow(writer, 0, 11, ts +=Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 0, 12, ts +=Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 0, 16, ts +=Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 0, 17, ts +=Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 1, 20, ts +=Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 1, 21, ts +=Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 1, 21, ts +=Timestamps.SECOND_MICROS);
+            appendUserCaseRow(writer, 1, 22, ts + Timestamps.SECOND_MICROS);
+            writer.commit();
+        }
+        CharSequence selectQuery = "SELECT ts, id, lag(count, 2, 0) FROM tank timestamp(ts) sample by 4s";
+        try (RecordCursorFactory factory = compiler.compile(selectQuery, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                sink.clear();
+                TestUtils.assertCursor("ts\tid\tlag\n" +
+                                "2021-09-09T12:43:45.000000Z\t0\t11\n" +
+                                "2021-09-09T12:43:49.000000Z\t0\t0\n" +
+                                "2021-09-09T12:43:49.000000Z\t1\t20\n" +
+                                "2021-09-09T12:43:53.000000Z\t1\t0\n",
+                        cursor,
+                        factory.getMetadata(),
+                        true,
+                        sink);
+            }
+        }
     }
 }
