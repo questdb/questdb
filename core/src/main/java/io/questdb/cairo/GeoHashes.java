@@ -117,22 +117,22 @@ public class GeoHashes {
         return fromBitString(bits, start, Math.min(bits.length(), ColumnType.GEO_HASH_MAX_BITS_LENGTH + start));
     }
 
-    public static long fromCoordinates(double lat, double lng, int bits) throws NumericException {
+    public static long fromCoordinatesDeg(double lat, double lon, int bits) throws NumericException {
         if (lat < -90.0 || lat > 90.0) {
             throw NumericException.INSTANCE;
         }
-        if (lng < -180.0 || lng > 180.0) {
+        if (lon < -180.0 || lon > 180.0) {
             throw NumericException.INSTANCE;
         }
         if (bits < 0 || bits > ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
             throw NumericException.INSTANCE;
         }
-        return fromCoordinatesUnsafe(lat, lng, bits);
+        return fromCoordinatesDegUnsafe(lat, lon, bits);
     }
 
-    public static long fromCoordinatesUnsafe(double lat, double lng, int bits) {
+    public static long fromCoordinatesDegUnsafe(double lat, double lon, int bits) {
         long latq = (long)Math.scalb((lat + 90.0) / 180.0, 32);
-        long lngq = (long)Math.scalb((lng + 180.0) / 360.0, 32);
+        long lngq = (long)Math.scalb((lon + 180.0) / 360.0, 32);
         return Numbers.interleaveBits(latq, lngq) >>> (64 - bits);
     }
 
