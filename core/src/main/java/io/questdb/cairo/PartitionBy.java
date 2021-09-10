@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 
 /**
  * Setting partition type on JournalKey to override default settings.
@@ -39,13 +39,13 @@ public final class PartitionBy {
      * all data is stored in a single directory
      */
     public static final int NONE = 3;
-    private final static CharSequenceIntHashMap nameToIndexMap = new CharSequenceIntHashMap();
+    private final static LowerCaseCharSequenceIntHashMap nameToIndexMap = new LowerCaseCharSequenceIntHashMap();
 
     static {
-        nameToIndexMap.put("DAY", DAY);
-        nameToIndexMap.put("MONTH", MONTH);
-        nameToIndexMap.put("YEAR", YEAR);
-        nameToIndexMap.put("NONE", NONE);
+        nameToIndexMap.put("day", DAY);
+        nameToIndexMap.put("month", MONTH);
+        nameToIndexMap.put("year", YEAR);
+        nameToIndexMap.put("none", NONE);
     }
 
     private PartitionBy() {

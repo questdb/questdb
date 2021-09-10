@@ -944,7 +944,12 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
             if (null != writer) {
                 LOG.debug().$("maintenance commit [table=").$(writer.getTableName()).I$();
-                writer.commit();
+                try {
+                    writer.commit();
+                } catch (Throwable e) {
+                    LOG.error().$("could not commit [table=").$(writer.getTableName()).I$();
+                    writer = Misc.free(writer);
+                }
                 lastCommitMillis = milliClock.getTicks();
             }
         }

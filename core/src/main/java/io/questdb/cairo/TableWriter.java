@@ -2547,7 +2547,8 @@ public class TableWriter implements Closeable {
                         final long srcOooLo = srcOoo;
                         final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
                         final long srcOooHi;
-                        final long srcOooTimestampCeil = timestampCeilMethod.ceil(o3Timestamp);
+                        // keep ceil inclusive in the interval
+                        final long srcOooTimestampCeil = timestampCeilMethod.ceil(o3Timestamp) - 1;
                         if (srcOooTimestampCeil < o3TimestampMax) {
                             srcOooHi = Vect.boundedBinarySearchIndexT(
                                     sortedTimestampsAddr,
@@ -4765,6 +4766,11 @@ public class TableWriter implements Closeable {
             notNull(index);
         }
 
+        public void putGeoHash(int index, long value) {
+            int type = metadata.getColumnType(index);
+            putGeoHash0(index, value, type);
+        }
+
         public void putGeoStr(int index, CharSequence hash) {
             long val;
             final int type = metadata.getColumnType(index);
@@ -4789,11 +4795,6 @@ public class TableWriter implements Closeable {
                 val = GeoHashes.NULL;
             }
             putGeoHash0(index, val, type);
-        }
-
-        public void putGeoHash(int index, long value) {
-            int type = metadata.getColumnType(index);
-            putGeoHash0(index, value, type);
         }
 
         public void putInt(int index, int value) {
