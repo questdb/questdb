@@ -41,7 +41,7 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
     @Test
     public void testTouchUpdateTouchAgain() throws Exception {
         assertQuery("touch\n" +
-                        "touched dataPages[80], indexKeyPages[1043], indexValuePages[1043]\n",
+                        "{\"data_pages\": 80, \"index_key_pages\":1043, \"index_values_pages\": 1043}\n",
                 "select touch(select * from x)",
                 "create table x as " +
                         "(" +
@@ -62,7 +62,7 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
                         " from long_sequence(100)" +
                         ") timestamp (t)",
                 "touch\n" +
-                        "touched dataPages[84], indexKeyPages[1044], indexValuePages[1044]\n",
+                        "{\"data_pages\": 84, \"index_key_pages\":1044, \"index_values_pages\": 1044}\n",
                 true,
                 true,
                 true
@@ -72,7 +72,7 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
     @Test
     public void testTouchTableTimeInterval() throws Exception {
         assertQuery("touch\n" +
-                        "touched dataPages[4], indexKeyPages[1024], indexValuePages[1024]\n",
+                        "{\"data_pages\": 4, \"index_key_pages\":1024, \"index_values_pages\": 1024}\n",
                 "select touch(select * from x where k in '1970-01-22')",
                 "create table x as " +
                         "(" +
@@ -94,8 +94,7 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
     @Test
     public void testTouchTableNoTimestampColumnSelected() throws Exception {
         try {
-            assertQuery("touch\n" +
-                            "touched dataPages[4], indexKeyPages[1024], indexValuePages[1024]\n",
+            assertQuery("",
                     "select touch(select g,a,b from x where k in '1970-01-22')",
                     "create table x as " +
                             "(" +
@@ -120,8 +119,7 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
     @Test
     public void testTouchTableThrowOnComplexFilter() throws Exception {
         try {
-            assertQuery("touch\n" +
-                            "touched dataPages[4], indexKeyPages[1024], indexValuePages[1024]\n",
+            assertQuery("",
                     "select touch(select * from x where k in '1970-01-22' and a > 100.0)",
                     "create table x as " +
                             "(" +
@@ -146,7 +144,7 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
     @Test
     public void testTouchTableTimeRange() throws Exception {
             assertQuery("touch\n" +
-                            "touched dataPages[20], indexKeyPages[1028], indexValuePages[1028]\n",
+                            "{\"data_pages\": 20, \"index_key_pages\":1028, \"index_values_pages\": 1028}\n",
                     "select touch(select * from x where k > '1970-01-18T00:00:00.000000Z')",
                     "create table x as " +
                             "(" +
