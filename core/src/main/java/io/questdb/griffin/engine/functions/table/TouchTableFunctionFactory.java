@@ -123,7 +123,7 @@ public class TouchTableFunctionFactory implements FunctionFactory {
 
         private void touchTable() {
             clearCounters();
-            final int pageSize = (int) Files.PAGE_SIZE;
+            final long pageSize = Files.PAGE_SIZE;
             try (RecordCursorFactory recordCursorFactory = arg.getRecordCursorFactory()) {
                 try (PageFrameCursor pageFrameCursor = recordCursorFactory.getPageFrameCursor(sqlExecutionContext)) {
                     PageFrame frame;
@@ -154,7 +154,7 @@ public class TouchTableFunctionFactory implements FunctionFactory {
             }
         }
 
-        private long touchMemory(int pageSize, long baseAddress, long memorySize) {
+        private long touchMemory(long pageSize, long baseAddress, long memorySize) {
             final long pageCount = (memorySize + pageSize - 1) / pageSize;
 
             for (long i = 0; i < pageCount; i++) {
