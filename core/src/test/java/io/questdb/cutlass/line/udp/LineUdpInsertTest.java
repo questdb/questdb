@@ -83,7 +83,7 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                 break;
             } catch (CairoException err) {
                 pendingRecoveryErr = err;
-                LockSupport.parkNanos(200);
+                LockSupport.parkNanos(1000000); // 1 milli
             }
         }
         if (pendingRecoveryErr != null) {

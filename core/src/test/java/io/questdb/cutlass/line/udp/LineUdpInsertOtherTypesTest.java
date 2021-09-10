@@ -812,19 +812,15 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                 });
     }
 
-    protected static void assertType(int columnType, String expected, CharSequence[] values) throws Exception {
-        assertType(columnType, expected, values, true);
-    }
-
     protected static void assertTypeNoTable(String expected, CharSequence[] values) throws Exception {
-        assertType(ColumnType.UNDEFINED, expected, values, false);
+        assertType(ColumnType.UNDEFINED, expected, values);
     }
 
-    private static void assertType(int columnType, String expected, CharSequence[] values, boolean createTable) throws Exception {
+    protected static void assertType(int columnType, String expected, CharSequence[] values) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
-                    if (createTable) {
+                    if (columnType != ColumnType.UNDEFINED) {
                         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
                             CairoTestUtils.create(model.col(targetColumnName, columnType).timestamp());
                         }
@@ -833,7 +829,11 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                     long ts = 0L;
                     try (LineProtoSender sender = createLineProtoSender()) {
                         for (int i = 0; i < values.length; i++) {
-                            sender.metric(tableName).put(' ').put(targetColumnName).put('=').put(values[i]).$(ts += 1000000000);
+                            ((LineProtoSender) sender.metric(tableName).put(' ')
+                                    .encodeUtf8(targetColumnName)) // this method belongs to a super class that returns this
+                                    .put('=')
+                                    .put(values[i]) // field method decorates this token, I want full control
+                                    .$(ts += 1000000000);
                         }
                         sender.flush();
                     }

@@ -69,120 +69,119 @@ public class CairoLineProtoParserSupport {
             CharSequence value,
             int storageColumnType
     ) throws BadCastException {
-        if (!SqlKeywords.isNullKeyword(value)) {
-            try {
-                switch (ColumnType.tagOf(columnType)) {
-                    case ColumnType.LONG:
-                        row.putLong(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
-                        break;
-                    case ColumnType.BOOLEAN:
-                        row.putBool(columnIndex, isTrue(value));
-                        break;
-                    case ColumnType.STRING:
-                        row.putStr(columnIndex, value, 1, value.length() - 2);
-                        break;
-                    case ColumnType.SYMBOL:
-                        row.putSym(columnIndex, value);
-                        break;
-                    case ColumnType.DOUBLE:
-                        row.putDouble(columnIndex, Numbers.parseDouble(value));
-                        break;
-                    case ColumnType.FLOAT:
-                        row.putFloat(columnIndex, Numbers.parseFloat(value));
-                        break;
-                    case ColumnType.INT:
-                        row.putInt(columnIndex, Numbers.parseInt(value, 0, value.length() - 1));
-                        break;
-                    case ColumnType.SHORT:
-                        row.putShort(columnIndex, Numbers.parseShort(value, 0, value.length() - 1));
-                        break;
-                    case ColumnType.BYTE:
-                        long v = Numbers.parseLong(value, 0, value.length() - 1);
-                        if (v < Byte.MIN_VALUE || v > Byte.MAX_VALUE) {
-                            throw CairoException.instance(0)
-                                    .put("line protocol integer is out of byte bounds [columnIndex=")
-                                    .put(columnIndex)
-                                    .put(", v=")
-                                    .put(v)
-                                    .put(']');
-                        }
-                        row.putByte(columnIndex, (byte) v);
-                        break;
-                    case ColumnType.DATE:
-                        row.putDate(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
-                        break;
-                    case ColumnType.LONG256:
-                        int limit = value.length() - 1;
-                        if (value.charAt(limit) != 'i') {
-                            limit++;
-                        }
-                        row.putLong256(columnIndex, value, 2, limit);
-                        break;
-                    case ColumnType.TIMESTAMP:
-                        row.putTimestamp(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
-                        break;
-                    case ColumnType.CHAR:
-                        row.putChar(columnIndex, value.length() == 2 ? (char) 0 : value.charAt(1)); // skip quotes
-                        break;
-                    case ColumnType.GEOBYTE:
-                        row.putByte(
-                                columnIndex,  // skip quotes
-                                (byte) GeoHashes.fromStringTruncatingNl(
-                                        value,
-                                        1,
-                                        value.length() - 1,
-                                        columnTypeMeta
-                                )
-                        );
-                        break;
-                    case ColumnType.GEOSHORT:
-                        row.putShort(
-                                columnIndex,
-                                (short) GeoHashes.fromStringTruncatingNl(
-                                        value,
-                                        1,
-                                        value.length() - 1,
-                                        columnTypeMeta
-                                )
-                        );
-                        break;
-                    case ColumnType.GEOINT:
-                        row.putInt(
-                                columnIndex,
-                                (int) GeoHashes.fromStringTruncatingNl(
-                                        value,
-                                        1,
-                                        value.length() - 1,
-                                        columnTypeMeta
-                                )
-                        );
-                        break;
-                    case ColumnType.GEOLONG:
-                        row.putLong(
-                                columnIndex,
-                                GeoHashes.fromStringTruncatingNl(
-                                        value,
-                                        1,
-                                        value.length() - 1,
-                                        columnTypeMeta
-                                )
-                        );
-                        break;
-                    default:
-                        // unsupported types are ignored
-                        break;
-                }
-            } catch (NumericException e) {
-                LOG.info()
-                        .$("cast error [value=")
-                        .$(value).$(", toType=")
-                        .$(ColumnType.nameOf(columnType))
-                        .$(']')
-                        .$();
-            }
-        }
-        else {
+        if (SqlKeywords.isNullKeyword(value)) {
             putNullValue(row, columnIndex, storageColumnType);
+            return;
+        }
+        try {
+            switch (ColumnType.tagOf(columnType)) {
+                case ColumnType.LONG:
+                    row.putLong(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
+                    break;
+                case ColumnType.BOOLEAN:
+                    row.putBool(columnIndex, isTrue(value));
+                    break;
+                case ColumnType.STRING:
+                    row.putStr(columnIndex, value, 1, value.length() - 2);
+                    break;
+                case ColumnType.SYMBOL:
+                    row.putSym(columnIndex, value);
+                    break;
+                case ColumnType.DOUBLE:
+                    row.putDouble(columnIndex, Numbers.parseDouble(value));
+                    break;
+                case ColumnType.FLOAT:
+                    row.putFloat(columnIndex, Numbers.parseFloat(value));
+                    break;
+                case ColumnType.INT:
+                    row.putInt(columnIndex, Numbers.parseInt(value, 0, value.length() - 1));
+                    break;
+                case ColumnType.SHORT:
+                    row.putShort(columnIndex, Numbers.parseShort(value, 0, value.length() - 1));
+                    break;
+                case ColumnType.BYTE:
+                    long v = Numbers.parseLong(value, 0, value.length() - 1);
+                    if (v < Byte.MIN_VALUE || v > Byte.MAX_VALUE) {
+                        throw CairoException.instance(0)
+                                .put("line protocol integer is out of byte bounds [columnIndex=")
+                                .put(columnIndex)
+                                .put(", v=")
+                                .put(v)
+                                .put(']');
+                    }
+                    row.putByte(columnIndex, (byte) v);
+                    break;
+                case ColumnType.DATE:
+                    row.putDate(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
+                    break;
+                case ColumnType.LONG256:
+                    int limit = value.length() - 1;
+                    if (value.charAt(limit) != 'i') {
+                        limit++;
+                    }
+                    row.putLong256(columnIndex, value, 2, limit);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    row.putTimestamp(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
+                    break;
+                case ColumnType.CHAR:
+                    row.putChar(columnIndex, value.length() == 2 ? (char) 0 : value.charAt(1)); // skip quotes
+                    break;
+                case ColumnType.GEOBYTE:
+                    row.putByte(
+                            columnIndex,  // skip quotes
+                            (byte) GeoHashes.fromStringTruncatingNl(
+                                    value,
+                                    1,
+                                    value.length() - 1,
+                                    columnTypeMeta
+                            )
+                    );
+                    break;
+                case ColumnType.GEOSHORT:
+                    row.putShort(
+                            columnIndex,
+                            (short) GeoHashes.fromStringTruncatingNl(
+                                    value,
+                                    1,
+                                    value.length() - 1,
+                                    columnTypeMeta
+                            )
+                    );
+                    break;
+                case ColumnType.GEOINT:
+                    row.putInt(
+                            columnIndex,
+                            (int) GeoHashes.fromStringTruncatingNl(
+                                    value,
+                                    1,
+                                    value.length() - 1,
+                                    columnTypeMeta
+                            )
+                    );
+                    break;
+                case ColumnType.GEOLONG:
+                    row.putLong(
+                            columnIndex,
+                            GeoHashes.fromStringTruncatingNl(
+                                    value,
+                                    1,
+                                    value.length() - 1,
+                                    columnTypeMeta
+                            )
+                    );
+                    break;
+                default:
+                    // unsupported types are ignored
+                    break;
+            }
+        } catch (NumericException e) {
+            LOG.info()
+                    .$("cast error [value=")
+                    .$(value).$(", toType=")
+                    .$(ColumnType.nameOf(columnType))
+                    .$(']')
+                    .$();
         }
     }
 
@@ -252,9 +251,6 @@ public class CairoLineProtoParserSupport {
 
     private static void putNullValue(TableWriter.Row row, int columnIndex, int storageColumnType) {
         switch (ColumnType.tagOf(storageColumnType)) {
-            case ColumnType.LONG:
-                row.putLong(columnIndex, Numbers.LONG_NaN);
-                break;
             case ColumnType.BOOLEAN:
                 row.putBool(columnIndex, false);
                 break;
@@ -270,6 +266,9 @@ public class CairoLineProtoParserSupport {
             case ColumnType.FLOAT:
                 row.putFloat(columnIndex, Float.NaN);
                 break;
+            case ColumnType.LONG:
+                row.putLong(columnIndex, Numbers.LONG_NaN);
+                break;
             case ColumnType.INT:
                 row.putInt(columnIndex, Numbers.INT_NaN);
                 break;
@@ -279,17 +278,17 @@ public class CairoLineProtoParserSupport {
             case ColumnType.BYTE:
                 row.putByte(columnIndex, (byte) 0);
                 break;
+            case ColumnType.CHAR:
+                row.putChar(columnIndex, (char) 0);
+                break;
             case ColumnType.DATE:
                 row.putDate(columnIndex, Numbers.LONG_NaN);
-                break;
-            case ColumnType.LONG256:
-                row.putLong256(columnIndex, "");
                 break;
             case ColumnType.TIMESTAMP:
                 row.putTimestamp(columnIndex, Numbers.LONG_NaN);
                 break;
-            case ColumnType.CHAR:
-                row.putChar(columnIndex, (char) 0);
+            case ColumnType.LONG256:
+                row.putLong256(columnIndex, "");
                 break;
             case ColumnType.GEOBYTE:
                 row.putByte(columnIndex, GeoHashes.BYTE_NULL);
@@ -301,7 +300,7 @@ public class CairoLineProtoParserSupport {
                 row.putInt(columnIndex, GeoHashes.INT_NULL);
                 break;
             case ColumnType.GEOLONG:
-                row.putLong(columnIndex, GeoHashes.INT_NULL);
+                row.putLong(columnIndex, GeoHashes.NULL);
                 break;
             default:
                 // unsupported types are ignored
