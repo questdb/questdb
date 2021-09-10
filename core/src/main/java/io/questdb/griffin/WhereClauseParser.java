@@ -29,8 +29,6 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
-import io.questdb.griffin.engine.functions.constants.Constants;
-import io.questdb.griffin.engine.functions.constants.GeoHashTypeConstant;
 import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
