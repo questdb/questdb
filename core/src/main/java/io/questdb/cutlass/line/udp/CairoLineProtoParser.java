@@ -58,6 +58,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final CairoConfiguration configuration;
     private final LongList columnNameType = new LongList();
     private final LongList columnIndexAndType = new LongList();
+    private final IntList geohashBitsSizeByColIdx = new IntList(); // 0 if not a geohash, else bits precision
     private final LongList columnValues = new LongList();
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final MicrosecondClock clock;
@@ -77,13 +78,13 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private long columnName;
     private int columnType;
     private final FieldNameParser MY_FIELD_NAME = this::parseFieldName;
-    private final FieldValueParser MY_TAG_VALUE = this::parseTagValue;
     private long tableName;
     private final LineEndParser MY_NEW_LINE_END = this::createTableAndAppendRow;
     private LineEndParser onLineEnd;
     private FieldNameParser onFieldName;
     private FieldValueParser onFieldValue;
     private FieldValueParser onTagValue;
+    private final FieldValueParser MY_TAG_VALUE = this::parseTagValue;
     private final FieldValueParser MY_FIELD_VALUE = this::parseFieldValue;
     private final FieldValueParser MY_NEW_FIELD_VALUE = this::parseFieldValueNewTable;
 
@@ -155,6 +156,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 break;
             case EVT_TIMESTAMP:
                 columnValues.add(token.getCacheAddress());
+                geohashBitsSizeByColIdx.add(0);
                 break;
             default:
                 break;
@@ -187,10 +189,11 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         try {
             for (int i = 0; i < columnCount; i++) {
                 CairoLineProtoParserSupport.putValue(
-                        row
-                        , (int) columnNameType.getQuick(i * 2 + 1)
-                        , i
-                        , cache.get(columnValues.getQuick(i))
+                        row,
+                        (int) columnNameType.getQuick(i * 2 + 1),
+                        geohashBitsSizeByColIdx.getQuick(i),
+                        i,
+                        cache.get(columnValues.getQuick(i))
                 );
             }
             row.append();
@@ -210,10 +213,11 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             for (int i = 0; i < columnCount; i++) {
                 final long value = columnIndexAndType.getQuick(i);
                 CairoLineProtoParserSupport.putValue(
-                        row
-                        , Numbers.decodeHighInt(value)
-                        , Numbers.decodeLowInt(value)
-                        , cache.get(columnValues.getQuick(i))
+                        row,
+                        Numbers.decodeHighInt(value),
+                        geohashBitsSizeByColIdx.getQuick(i),
+                        Numbers.decodeLowInt(value),
+                        cache.get(columnValues.getQuick(i))
                 );
             }
             row.append();
@@ -237,6 +241,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private void clearState() {
         columnNameType.clear();
         columnIndexAndType.clear();
+        geohashBitsSizeByColIdx.clear();
         columnValues.clear();
     }
 
@@ -319,17 +324,17 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
     private void parseFieldValue(CachedCharSequence value, CharSequenceCache cache) {
         int valueType = CairoLineProtoParserSupport.getValueType(value);
-        if (valueType == -1) {
+        if (valueType == ColumnType.UNDEFINED) {
             switchModeToSkipLine();
         } else {
-            parseValue(value, valueType, cache);
+            parseValue(value, valueType, cache, true);
         }
     }
 
     @SuppressWarnings("unused")
     private void parseFieldValueNewTable(CachedCharSequence value, CharSequenceCache cache) {
         int valueType = CairoLineProtoParserSupport.getValueType(value);
-        if (valueType == -1) {
+        if (valueType == ColumnType.UNDEFINED) {
             switchModeToSkipLine();
         } else {
             parseValueNewTable(value, valueType);
@@ -337,7 +342,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     private void parseTagValue(CachedCharSequence value, CharSequenceCache cache) {
-        parseValue(value, ColumnType.SYMBOL, cache);
+        parseValue(value, ColumnType.SYMBOL, cache, false);
     }
 
     @SuppressWarnings("unused")
@@ -345,10 +350,11 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         parseValueNewTable(value, ColumnType.SYMBOL);
     }
 
-    private void parseValue(CachedCharSequence value, int valueType, CharSequenceCache cache) {
-        assert valueType > -1;
-        if (columnType > -1) {
+    private void parseValue(CachedCharSequence value, int valueType, CharSequenceCache cache, boolean isForField) {
+        assert valueType > ColumnType.UNDEFINED;
+        if (columnType > ColumnType.UNDEFINED) {
             boolean valid;
+            int geoHashBits = 0;
             final int valueTypeTag = ColumnType.tagOf(valueType);
             final int columnTypeTag = ColumnType.tagOf(columnType);
             switch (valueTypeTag) {
@@ -364,7 +370,10 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                     valid = columnTypeTag == ColumnType.BOOLEAN;
                     break;
                 case ColumnType.STRING:
-                    valid = columnTypeTag == ColumnType.STRING;
+                    valid = columnTypeTag == ColumnType.STRING ||
+                            columnTypeTag == ColumnType.CHAR ||
+                            isForField &&
+                                    (geoHashBits = ColumnType.getGeoHashBits(columnType)) != 0;
                     break;
                 case ColumnType.DOUBLE:
                     valid = columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT;
@@ -381,6 +390,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             if (valid) {
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, columnType));
                 columnValues.add(value.getCacheAddress());
+                geohashBitsSizeByColIdx.add(geoHashBits);
             } else {
                 LOG.error().$("mismatched column and value types [table=").$(writer.getTableName())
                         .$(", column=").$(metadata.getColumnName(columnIndex))
@@ -388,7 +398,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                         .$(", valueType=").$(ColumnType.nameOf(valueType))
                         .$(']').$();
                 switchModeToSkipLine();
-
             }
         } else {
             CharSequence colNameAsChars = cache.get(columnName);
@@ -396,6 +405,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 writer.addColumn(colNameAsChars, valueType);
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnCount++, valueType));
                 columnValues.add(value.getCacheAddress());
+                geohashBitsSizeByColIdx.add(0);
             } else {
                 LOG.error().$("invalid column name [table=").$(writer.getTableName())
                         .$(", columnName=").$(colNameAsChars)
@@ -408,11 +418,13 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private void parseValueNewTable(CachedCharSequence value, int valueType) {
         columnNameType.add(valueType);
         columnValues.add(value.getCacheAddress());
+        geohashBitsSizeByColIdx.add(0); // not a geohash, no constant literal
+        // that can be recognised yet
     }
 
     private void prepareNewColumn(CachedCharSequence token) {
         columnName = token.getCacheAddress();
-        columnType = -1;
+        columnType = ColumnType.UNDEFINED;
     }
 
     private void switchModeToAppend() {

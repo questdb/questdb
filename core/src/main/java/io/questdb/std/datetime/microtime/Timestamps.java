@@ -55,11 +55,11 @@ final public class Timestamps {
     public static final TimestampFloorMethod FLOOR_DD = Timestamps::floorDD;
     public static final TimestampAddMethod ADD_DD = Timestamps::addDays;
     private static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
-    private static final long YEAR_MICROS = 365 * DAY_MICROS;
-    private static final long LEAP_YEAR_MICROS = 366 * DAY_MICROS;
     private static final long HALF_YEAR_MICROS = AVG_YEAR_MICROS / 2;
     private static final long EPOCH_MICROS = 1970L * AVG_YEAR_MICROS;
     private static final long HALF_EPOCH_MICROS = EPOCH_MICROS / 2;
+    private static final long YEAR_MICROS = 365 * DAY_MICROS;
+    private static final long LEAP_YEAR_MICROS = 366 * DAY_MICROS;
     private static final int DAY_HOURS = 24;
     private static final int HOUR_MINUTES = 60;
     private static final int MINUTE_SECONDS = 60;
@@ -177,12 +177,15 @@ final public class Timestamps {
         boolean l;
         return yearMicros(y = getYear(micros), l = isLeapYear(y))
                 + monthOfYearMicros(m = getMonthOfYear(micros, y, l), l)
-                + (getDayOfMonth(micros, y, m, l) - 1) * DAY_MICROS
-                + 23 * HOUR_MICROS
-                + 59 * MINUTE_MICROS
-                + 59 * SECOND_MICROS
-                + 999999L
-                ;
+                + (getDayOfMonth(micros, y, m, l)) * DAY_MICROS ;
+    }
+
+    public static long ceilHH(long micros) {
+        return floorHH(micros) + HOUR_MICROS;
+    }
+
+    public static long ceilMI(long micros) {
+        return floorMI(micros) + MINUTE_MICROS;
     }
 
     public static long ceilMM(long micros) {
@@ -190,12 +193,11 @@ final public class Timestamps {
         boolean l;
         return yearMicros(y = getYear(micros), l = isLeapYear(y))
                 + monthOfYearMicros(m = getMonthOfYear(micros, y, l), l)
-                + (getDaysPerMonth(m, l) - 1) * DAY_MICROS
-                + 23 * HOUR_MICROS
-                + 59 * MINUTE_MICROS
-                + 59 * SECOND_MICROS
-                + 999999L
-                ;
+                + (getDaysPerMonth(m, l)) * DAY_MICROS;
+    }
+
+    public static long ceilSS(long micros) {
+        return floorSS(micros) + SECOND_MICROS;
     }
 
     public static long ceilYYYY(long micros) {
@@ -203,11 +205,7 @@ final public class Timestamps {
         boolean l;
         return yearMicros(y = getYear(micros), l = isLeapYear(y))
                 + monthOfYearMicros(12, l)
-                + (DAYS_PER_MONTH[11] - 1) * DAY_MICROS
-                + 23 * HOUR_MICROS
-                + 59 * MINUTE_MICROS
-                + 59 * SECOND_MICROS
-                + 999999L;
+                + (DAYS_PER_MONTH[11]) * DAY_MICROS;
     }
 
     public static long endOfYear(int year) {
@@ -231,6 +229,18 @@ final public class Timestamps {
         int y;
         boolean l;
         return yearMicros(y = getYear(micros), l = isLeapYear(y)) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);
+    }
+
+    public static long floorSS(long micros) {
+        return micros - micros % SECOND_MICROS;
+    }
+
+    public static long floorMS(long micros) {
+        return micros - micros % MILLI_MICROS;
+    }
+
+    public static long ceilMS(long micros) {
+        return floorMS(micros) + MILLI_MICROS;
     }
 
     public static long floorYYYY(long micros) {
@@ -508,7 +518,6 @@ final public class Timestamps {
                                 state = STATE_END;
                                 break;
                             case '+':
-                                negative = false;
                                 state = STATE_HOUR;
                                 break;
                             case '-':
@@ -543,7 +552,6 @@ final public class Timestamps {
                     case STATE_SIGN:
                         switch (c) {
                             case '+':
-                                negative = false;
                                 break;
                             case '-':
                                 negative = true;

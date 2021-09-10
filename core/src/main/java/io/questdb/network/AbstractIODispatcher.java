@@ -300,7 +300,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         evt.context = context;
         evt.operation = operation;
         ioEventPubSeq.done(cursor);
-        LOG.debug().$("fired [fd=").$(context.getFd()).$(", op=").$(evt.operation).$(", pos=").$(cursor).$(']').$();
+        LOG.debug().$("fired [fd=").$(context.getFd()).$(", op=").$(operation).$(", pos=").$(cursor).$(']').$();
     }
 
     @Override

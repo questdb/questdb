@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 
 // ColumnType layout - 32bit
@@ -58,50 +59,73 @@ public final class ColumnType {
     public static final short STRING = 11;
     public static final short SYMBOL = 12;
     public static final short LONG256 = 13;
-    public static final short GEOHASH = 14;
-    public static final short BINARY = 15;
-    public static final short PARAMETER = 16;
-    public static final short CURSOR = 17;
-    public static final short VAR_ARG = 18;
-    public static final short RECORD = 19;
+    public static final short GEOBYTE = 14;
+    public static final short GEOSHORT = 15;
+    public static final short GEOINT = 16;
+    public static final short GEOLONG = 17;
+    public static final short BINARY = 18;
+    public static final short PARAMETER = 19;
+    public static final short CURSOR = 20;
+    public static final short VAR_ARG = 21;
+    public static final short RECORD = 22;
+    // This type is not stored, it is used on function arguments to resolve overloads.
+    // We also build overload matrix, which logic relies on the fact GEOHASH value has to be
+    // inside the MAX type value.
+    public static final short GEOHASH = 23;
+    public static final short NULL = 24;
 
-    public static final short NULL = 20;
-
-    // Virtual storage types, only needed to flatten storage switch extension with GEOHASH column types
-    public static final short GEOBYTE = 1001;
-    public static final short GEOSHORT = 1002;
-    public static final short GEOINT = 1004;
-    public static final short GEOLONG = 1008;
-
-
+    // Overload matrix algo depends on the fact that MAX == NULL
     public static final short MAX = NULL;
-    public static final int NO_OVERLOAD = 10000;
-    private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
-    private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     public static final short TYPES_SIZE = MAX + 1;
     private static final int[] TYPE_SIZE_POW2 = new int[TYPES_SIZE];
     private static final int[] TYPE_SIZE = new int[TYPES_SIZE];
-
+    public static final int GEO_HASH_MAX_BITS_LENGTH;
+    public static final int NO_OVERLOAD = 10000;
+    static final int[] GEO_TYPE_SIZE_POW2;
+    private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
+    private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     // For function overload the priority is taken from left to right
     private static final short[][] overloadPriority = {
-            /* 0 UNDEFINED */  {DOUBLE, FLOAT, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
-            /* 1  BOOLEAN  */, {}
-            /* 2  BYTE     */, {SHORT, INT, LONG, FLOAT, DOUBLE}
-            /* 3  SHORT    */, {INT, LONG, FLOAT, DOUBLE}
-            /* 4  CHAR     */, {STRING}
-            /* 5  INT      */, {LONG, DOUBLE, TIMESTAMP, DATE}
-            /* 6  LONG     */, {DOUBLE, TIMESTAMP, DATE}
-            /* 7  DATE     */, {TIMESTAMP, LONG}
-            /* 8  TIMESTAMP*/, {LONG}
-            /* 9  FLOAT    */, {DOUBLE}
-            /* 10  DOUBLE  */, {}
-            /* 11 STRING   */, {} // STRING can be cast to TIMESTAMP, but it's handled in a special way
-            /* 12 SYMBOL   */, {STRING}
+            /* 0 UNDEFINED  */  {DOUBLE, FLOAT, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
+            /* 1  BOOLEAN   */, {BOOLEAN}
+            /* 2  BYTE      */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
+            /* 3  SHORT     */, {SHORT, INT, LONG, FLOAT, DOUBLE}
+            /* 4  CHAR      */, {CHAR, STRING}
+            /* 5  INT       */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE}
+            /* 6  LONG      */, {LONG, DOUBLE, TIMESTAMP, DATE}
+            /* 7  DATE      */, {DATE, TIMESTAMP, LONG}
+            /* 8  TIMESTAMP */, {TIMESTAMP, LONG}
+            /* 9  FLOAT     */, {FLOAT, DOUBLE}
+            /* 10 DOUBLE    */, {DOUBLE}
+            /* 11 STRING    */, {} // STRING can be cast to TIMESTAMP, but it's handled in a special way
+            /* 12 SYMBOL    */, {SYMBOL, STRING}
+            /* 13 LONG256   */, {LONG256}
+            /* 14 GEOBYTE   */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
+            /* 15 GEOSHORT  */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
+            /* 16 GEOINT    */, {GEOINT, GEOLONG, GEOHASH}
+            /* 17 GEOLONG   */, {GEOLONG, GEOHASH}
+            /* 18 BINARY    */, {BINARY}
     };
 
+    // this value has to be larger than MAX type and be power of 2
     private static final int OVERLOAD_MATRIX_SIZE = 32;
     private static final int[] overloadPriorityMatrix;
-    private static final int DESIGNATED_TIMESTAMP_BIT = 8;
+    private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
+    private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
+    private static final int BITS_OFFSET = 8;
+
+    private ColumnType() {
+    }
+
+    public static int getGeoHashBits(int type) {
+        return (byte) ((type >> BITS_OFFSET) & 0xFF);
+    }
+
+    public static int getGeoHashTypeWithBits(int bits) {
+        assert bits > 0;
+        // this logic relies on GeoHash type value to be clustered together
+        return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
+    }
 
     public static boolean isBinary(int columnType) {
         return columnType == BINARY;
@@ -119,8 +143,8 @@ public final class ColumnType {
         return columnType == CURSOR;
     }
 
-    public static boolean isDesignatedTimestamp(int tsType) {
-        return ((tsType >> DESIGNATED_TIMESTAMP_BIT) & 1) == 1;
+    public static boolean isDesignatedTimestamp(int type) {
+        return (type & TYPE_FLAG_DESIGNATED_TIMESTAMP) != 0;
     }
 
     public static boolean isDouble(int columnType) {
@@ -128,7 +152,7 @@ public final class ColumnType {
     }
 
     public static boolean isGeoHash(int columnType) {
-        return tagOf(columnType) == GEOHASH;
+        return (columnType & TYPE_FLAG_GEO_HASH) != 0;
     }
 
     public static boolean isInt(int columnType) {
@@ -147,6 +171,10 @@ public final class ColumnType {
         return columnType == SYMBOL;
     }
 
+    public static boolean isSymbolOrString(int columnType) {
+        return columnType == SYMBOL || columnType == STRING;
+    }
+
     public static boolean isTimestamp(int columnType) {
         return columnType == TIMESTAMP;
     }
@@ -157,74 +185,6 @@ public final class ColumnType {
 
     public static boolean isVariableLength(int columnType) {
         return columnType == STRING || columnType == BINARY;
-    }
-
-    public static boolean isSymbolOrString(int columnType) {
-        return columnType == SYMBOL || columnType == STRING;
-    }
-
-    public static int setDesignatedTimestampBit(int tsType, boolean designated) {
-        if (designated) {
-            return tsType | 1 << DESIGNATED_TIMESTAMP_BIT;
-        } else {
-            return tsType & ~(1 << DESIGNATED_TIMESTAMP_BIT);
-        }
-    }
-
-    static {
-        overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE];
-        for (short i = UNDEFINED; i < MAX; i++) {
-            for (short j = BOOLEAN; j < MAX; j++) {
-                if (i < overloadPriority.length) {
-                    int index = indexOf(overloadPriority[i], j);
-                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = index >= 0 ? index + 1 : NO_OVERLOAD;
-                } else {
-                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = NO_OVERLOAD;
-                }
-            }
-        }
-    }
-
-    private ColumnType() {
-    }
-
-    public static int geohashWithPrecision(int bits) {
-        assert bits > 0;
-        return (GEOHASH & ~(0xFF << 8)) | (bits << 8);
-    }
-
-    // This method used by row copier assembler
-    public static long geohashTruncatePrecision(long value, int fromType, int toType) {
-        final int fromBits = GeoHashes.getBitsPrecision(fromType);
-        final int toBits = GeoHashes.getBitsPrecision(toType);
-        assert fromBits >= toBits;
-        return value >>> (fromBits - toBits);
-    }
-
-    public static short tagOf(int type) {
-        return (short) (type & 0xFF);
-    }
-
-    public static int storageTag(int type) {
-        short tagType = tagOf(type & 0xFF);
-        if (tagType != GEOHASH) {
-            return tagType;
-        }
-        switch (GeoHashes.sizeOf(type)) {
-            case 1:
-                return GEOBYTE;
-            case 2:
-                return GEOSHORT;
-            case 4:
-                return GEOINT;
-            case 8:
-                return GEOLONG;
-        }
-        throw new UnsupportedOperationException("Invalid geohash size" + sizeOf(type));
-    }
-
-    public static short tagOf(CharSequence name) {
-        return (short) nameTypeMap.get(name);
     }
 
     public static String nameOf(int columnType) {
@@ -245,30 +205,84 @@ public final class ColumnType {
     }
 
     public static int pow2SizeOf(int columnType) {
-        final int size = TYPE_SIZE_POW2[tagOf(columnType)];
+        return TYPE_SIZE_POW2[tagOf(columnType)];
+    }
 
-        if (size > -2) {
-            return size;
+    public static int pow2SizeOfBits(int bits) {
+        assert bits <= GEO_HASH_MAX_BITS_LENGTH;
+        return GEO_TYPE_SIZE_POW2[bits];
+    }
+
+    public static int setDesignatedTimestampBit(int tsType, boolean designated) {
+        if (designated) {
+            return tsType | TYPE_FLAG_DESIGNATED_TIMESTAMP;
+        } else {
+            return tsType & ~(TYPE_FLAG_DESIGNATED_TIMESTAMP);
         }
-        // Geohashes
-        return GeoHashes.pow2SizeOf(columnType);
     }
 
     public static int sizeOf(int columnType) {
         short tag = tagOf(columnType); // tagOf
         if (tag < TYPES_SIZE) {
-            final int size = TYPE_SIZE[tag];
+            return TYPE_SIZE[tag];
+        }
+        return -1;
+    }
 
-            if (size > -2) {
-                return size;
+    public static short tagOf(int type) {
+        return (short) (type & 0xFF);
+    }
+
+    public static short tagOf(CharSequence name) {
+        return (short) nameTypeMap.get(name);
+    }
+
+    public static long truncateGeoHashBits(long value, int fromBits, int toBits) {
+        return value >> (fromBits - toBits);
+    }
+
+    // This method used by row copier assembler
+    public static long truncateGeoHashTypes(long value, int fromType, int toType) {
+        final int fromBits = getGeoHashBits(fromType);
+        final int toBits = getGeoHashBits(toType);
+        assert fromBits >= toBits;
+        return truncateGeoHashBits(value, fromBits, toBits);
+    }
+
+    private static int mkGeoHashType(int bits, short baseType) {
+        return (baseType & ~(0xFF << BITS_OFFSET)) | (bits << BITS_OFFSET) | TYPE_FLAG_GEO_HASH; // bit 16 is GeoHash flag
+    }
+
+    private static short indexOf(short[] list, short value) {
+        for (short i = 0; i < list.length; i++) {
+            if (list[i] == value) {
+                return i;
             }
-            // Geohashes
-            return GeoHashes.sizeOf(columnType);
         }
         return -1;
     }
 
     static {
+        overloadPriorityMatrix = new int[OVERLOAD_MATRIX_SIZE * OVERLOAD_MATRIX_SIZE];
+        for (short i = UNDEFINED; i < MAX; i++) {
+            for (short j = BOOLEAN; j < MAX; j++) {
+                if (i < overloadPriority.length) {
+                    int index = indexOf(overloadPriority[i], j);
+                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = index != -1 ? index : NO_OVERLOAD;
+                } else {
+                    overloadPriorityMatrix[OVERLOAD_MATRIX_SIZE * i + j] = NO_OVERLOAD;
+                }
+            }
+        }
+    }
+
+    static {
+        GEO_HASH_MAX_BITS_LENGTH = 60;
+        GEO_TYPE_SIZE_POW2 = new int[GEO_HASH_MAX_BITS_LENGTH + 1];
+        for (int bits = 1; bits <= GEO_HASH_MAX_BITS_LENGTH; bits++) {
+            GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
+        }
+
         typeNameMap.put(BOOLEAN, "BOOLEAN");
         typeNameMap.put(BYTE, "BYTE");
         typeNameMap.put(DOUBLE, "DOUBLE");
@@ -291,15 +305,15 @@ public final class ColumnType {
 
         StringSink sink = new StringSink();
 
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= GEO_HASH_MAX_BITS_LENGTH; b++) {
             sink.clear();
 
             if (b % 5 != 0) {
                 sink.put("GEOHASH(").put(b).put("b)");
             } else {
-                sink.put("GEOHASH(").put(b/5).put("c)");
+                sink.put("GEOHASH(").put(b / 5).put("c)");
             }
-            typeNameMap.put(geohashWithPrecision(b), sink.toString());
+            typeNameMap.put(getGeoHashTypeWithBits(b), sink.toString());
         }
 
         nameTypeMap.put("boolean", BOOLEAN);
@@ -339,14 +353,16 @@ public final class ColumnType {
         TYPE_SIZE_POW2[DATE] = 3;
         TYPE_SIZE_POW2[TIMESTAMP] = 3;
         TYPE_SIZE_POW2[LONG256] = 5;
-        TYPE_SIZE_POW2[GEOHASH] = -2;
+        TYPE_SIZE_POW2[GEOBYTE] = 0;
+        TYPE_SIZE_POW2[GEOSHORT] = 1;
+        TYPE_SIZE_POW2[GEOINT] = 2;
+        TYPE_SIZE_POW2[GEOLONG] = 3;
         TYPE_SIZE_POW2[BINARY] = 2;
         TYPE_SIZE_POW2[PARAMETER] = -1;
         TYPE_SIZE_POW2[CURSOR] = -1;
         TYPE_SIZE_POW2[VAR_ARG] = -1;
         TYPE_SIZE_POW2[RECORD] = -1;
         TYPE_SIZE_POW2[NULL] = -1;
-        // GEOHASH: geohash column types has variable storage size, 1-8 bytes depending on type bit length
 
         TYPE_SIZE[UNDEFINED] = -1;
         TYPE_SIZE[BOOLEAN] = Byte.BYTES;
@@ -362,22 +378,15 @@ public final class ColumnType {
         TYPE_SIZE[DATE] = Long.BYTES;
         TYPE_SIZE[TIMESTAMP] = Long.BYTES;
         TYPE_SIZE[LONG256] = Long256.BYTES;
-        TYPE_SIZE[GEOHASH] = -2;
+        TYPE_SIZE[GEOBYTE] = Byte.BYTES;
+        TYPE_SIZE[GEOSHORT] = Short.BYTES;
+        TYPE_SIZE[GEOINT] = Integer.BYTES;
+        TYPE_SIZE[GEOLONG] = Long.BYTES;
         TYPE_SIZE[BINARY] = 0;
         TYPE_SIZE[PARAMETER] = -1;
         TYPE_SIZE[CURSOR] = -1;
         TYPE_SIZE[VAR_ARG] = -1;
         TYPE_SIZE[RECORD] = -1;
         TYPE_SIZE[NULL] = 0;
-        // GEOHASH: geohash column types has variable storage size, 1-8 bytes depending on type bit length
-    }
-
-    private static short indexOf(short[] list, short value) {
-        for (short i = 0; i < list.length; i++) {
-            if (list[i] == value) {
-                return i;
-            }
-        }
-        return -1;
     }
 }

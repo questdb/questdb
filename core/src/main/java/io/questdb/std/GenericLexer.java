@@ -59,12 +59,17 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     }
 
     public CharSequence immutablePairOf(CharSequence value0, CharSequence value1) {
+        return immutablePairOf(value0, FloatingSequencePair.NO_SEPARATOR, value1);
+    }
+
+    public CharSequence immutablePairOf(CharSequence value0, char separator, CharSequence value1) {
         if (!(value0 instanceof FloatingSequence && value1 instanceof InternalFloatingSequence)) {
             throw new UnsupportedOperationException("only pairs of floating sequences are allowed");
         }
         FloatingSequencePair seqPair = csPairPool.next();
         seqPair.cs0 = (FloatingSequence) value0;
         seqPair.cs1 = (FloatingSequence) immutableOf(value1);
+        seqPair.sep = separator;
         return seqPair;
     }
 
@@ -187,7 +192,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         this._lo = this._hi = _pos;
 
         char term = 0;
-
+        int openTermIdx = -1;
         while (hasNext()) {
             char c = content.charAt(_pos++);
             CharSequence token;
@@ -196,12 +201,15 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
                     switch (c) {
                         case '\'':
                             term = '\'';
+                            openTermIdx = _pos - 1;
                             break;
                         case '"':
                             term = '"';
+                            openTermIdx = _pos - 1;
                             break;
                         case '`':
                             term = '`';
+                            openTermIdx = _pos - 1;
                             break;
                         default:
                             if ((token = token(c)) != null) {
@@ -238,6 +246,24 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
                     break;
                 default:
                     break;
+            }
+        }
+        if (openTermIdx != -1) { // dangling terms
+            if (_len == 1) {
+                _hi += 1; // emit term
+            } else {
+                if (openTermIdx == _lo) { // term is at the start
+                    _hi = _lo + 1; // emit term
+                    _pos = _hi; // rewind pos
+                } else if (openTermIdx == _len - 1) { // term is at the end, high is right on term
+                    FloatingSequence termFs = csPool.next();
+                    termFs.lo = _hi;
+                    termFs.hi = _hi + 1;
+                    next = termFs; // emit term next
+                } else { // term is somewhere in between
+                    _hi = openTermIdx; // emit whatever comes before term
+                    _pos = openTermIdx; // rewind pos
+                }
             }
         }
         return last = flyweightSequence;
@@ -409,22 +435,28 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         }
     }
 
-    public class FloatingSequencePair extends AbstractCharSequence implements Mutable {
+    public static class FloatingSequencePair extends AbstractCharSequence implements Mutable {
+        public static final char NO_SEPARATOR = (char) 0;
 
         FloatingSequence cs0;
         FloatingSequence cs1;
+        char sep = NO_SEPARATOR;
 
         @Override
         public int length() {
-            return cs0.length() + cs1.length();
+            return cs0.length() + cs1.length() + (sep != NO_SEPARATOR ? 1 : 0);
         }
 
         @Override
         public char charAt(int index) {
-            if (index >= 0 && index < length()) {
-                return index < cs0.length() ? cs0.charAt(index) : cs1.charAt(index - cs0.length());
+            int cs0Len = cs0.length();
+            if (index < cs0Len) {
+                return cs0.charAt(index);
             }
-            throw new IndexOutOfBoundsException();
+            if (sep == NO_SEPARATOR) {
+                return cs1.charAt(index - cs0Len);
+            }
+            return index == cs0Len ? sep : cs1.charAt(index - cs0Len - 1);
         }
 
         @Override
@@ -437,6 +469,9 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         public String toString() {
             final CharSink b = Misc.getThreadLocalBuilder();
             b.put(cs0);
+            if (sep != NO_SEPARATOR) {
+                b.put(sep);
+            }
             b.put(cs1);
             return b.toString();
         }

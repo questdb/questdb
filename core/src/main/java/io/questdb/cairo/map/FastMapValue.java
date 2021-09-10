@@ -92,22 +92,22 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
-    public byte getGeoHashByte(int col) {
+    public byte getGeoByte(int col) {
         return getByte(col);
     }
 
     @Override
-    public short getGeoHashShort(int col) {
+    public short getGeoShort(int col) {
         return getShort(col);
     }
 
     @Override
-    public int getGeoHashInt(int col) {
+    public int getGeoInt(int col) {
         return getInt(col);
     }
 
     @Override
-    public long getGeoHashLong(int col) {
+    public long getGeoLong(int col) {
         return getLong(col);
     }
 

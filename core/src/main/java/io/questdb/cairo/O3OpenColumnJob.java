@@ -2523,7 +2523,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     }
 
     private static void setNull(int columnType, long addr, long count) {
-        switch (ColumnType.storageTag(columnType)) {
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
             case ColumnType.GEOBYTE:

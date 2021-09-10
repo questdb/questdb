@@ -2674,7 +2674,7 @@ public class IODispatcherTest {
                                     sent += n;
                                 }
 
-                                Thread.sleep(1);
+                                Os.sleep(1);
 
                                 NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
                                 long t = System.currentTimeMillis();
@@ -6091,7 +6091,7 @@ public class IODispatcherTest {
                         try {
                             int part1 = len / 2;
                             Assert.assertEquals(part1, Net.send(fd, buffer, part1));
-                            Thread.sleep(1000);
+                            Os.sleep(1000);
                             Assert.assertEquals(len - part1, Net.send(fd, buffer + part1, len - part1));
                         } finally {
                             Unsafe.free(buffer, len);

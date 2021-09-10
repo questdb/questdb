@@ -117,13 +117,13 @@ public interface Function extends Closeable {
 
     long getTimestamp(Record rec);
 
-    byte getGeoHashByte(Record rec);
+    byte getGeoByte(Record rec);
 
-    short getGeoHashShort(Record rec);
+    short getGeoShort(Record rec);
 
-    int getGeoHashInt(Record rec);
+    int getGeoInt(Record rec);
 
-    long getGeoHashLong(Record rec);
+    long getGeoLong(Record rec);
 
     int getType();
 

@@ -575,6 +575,10 @@ public class SqlKeywords {
         }
 
         int i = 0;
+        return isGeoHashKeyword(tok, i);
+    }
+
+    private static boolean isGeoHashKeyword(CharSequence tok, int i) {
         return (tok.charAt(i++) | 32) == 'g'
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i++) | 32) == 'o'
@@ -590,13 +594,7 @@ public class SqlKeywords {
         }
 
         int i = 0;
-        return (tok.charAt(i++) | 32) == 'g'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i++) | 32) == 'o'
-                && (tok.charAt(i++) | 32) == 'h'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i++) | 32) == 's'
-                && (tok.charAt(i) | 32) == 'h';
+        return isGeoHashKeyword(tok, i);
     }
 
     public static boolean isGroupKeyword(CharSequence tok) {

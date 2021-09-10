@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -112,8 +113,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 return TimestampColumn.newInstance(index);
             case ColumnType.RECORD:
                 return new RecordColumn(index, metadata.getMetadata(index));
-            case ColumnType.GEOHASH:
-                return GeoHashColumn.newInstance(index, columnType);
+            case ColumnType.GEOBYTE:
+                return new GeoByteColumn(index, columnType);
+            case ColumnType.GEOSHORT:
+                return new GeoShortColumn(index, columnType);
+            case ColumnType.GEOINT:
+                return new GeoIntColumn(index, columnType);
+            case ColumnType.GEOLONG:
+                return new GeoLongColumn(index, columnType);
             case ColumnType.NULL:
                 return NullConstant.NULL;
             case ColumnType.LONG256:
@@ -459,14 +466,43 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             return Constants.getTypeConstant(columnType);
         }
 
-        // geohash?
+        // geohash type constant
+
         if (startsWithGeoHashKeyword(tok)) {
-            int bits = SqlParser.parseGeoHashSize(position, 7, tok);
-            return GeoHashTypeConstant.getInstanceByPrecision(bits);
+            return GeoHashTypeConstant.getInstanceByPrecision(
+                    SqlParser.parseGeoHashBits(position, 7, tok));
+        }
+
+        if (len > 1 && tok.charAt(0) == '#') {
+            try {
+                if (tok.charAt(1) != '#') {
+                    // geohash from chars constant
+                    // optional '/dd', '/d' (max 3 chars, 1..60)
+                    final int sdd = ExpressionParser.extractGeoHashSuffix(position, tok);
+                    final int sddLen = Numbers.decodeLowShort(sdd);
+                    final int bits = Numbers.decodeHighShort(sdd);
+                    return Constants.getGeoHashConstant(
+                            GeoHashes.fromStringTruncatingNl(tok, 1, len - sddLen, bits),
+                            bits
+                    );
+                } else {
+                    // geohash from binary constant
+                    // minus leading '##', truncates tail bits if over 60
+                    int bits = len - 2;
+                    if (bits <= ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
+                        return Constants.getGeoHashConstant(
+                                GeoHashes.fromBitStringNl(tok, 2),
+                                bits
+                        );
+                    }
+                }
+            } catch (NumericException ignored) {
+            }
         }
 
         throw SqlException.position(position).put("invalid constant: ").put(tok);
     }
+
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
         return new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
@@ -559,7 +595,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     final short argTypeTag = ColumnType.tagOf(argType);
                     final short sigArgTypeTag = ColumnType.tagOf(sigArgType);
 
-                    if (sigArgTypeTag == argTypeTag) {
+                    if (sigArgTypeTag == argTypeTag || (sigArgTypeTag == ColumnType.GEOHASH && ColumnType.isGeoHash(argType))) {
                         switch (match) {
                             case MATCH_NO_MATCH: // was it no match
                                 match = MATCH_EXACT_MATCH;
@@ -774,20 +810,29 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 } else {
                     return new Long256Constant(function.getLong256A(null));
                 }
-            case ColumnType.GEOHASH:
-                if (function instanceof GeoHashConstant) {
+            case ColumnType.GEOBYTE:
+                if (function instanceof GeoByteConstant) {
                     return function;
                 } else {
-                    switch (ColumnType.sizeOf(type)) {
-                        case Byte.BYTES:
-                            return GeoHashConstant.newInstance(function.getGeoHashByte(null), type);
-                        case Short.BYTES:
-                            return GeoHashConstant.newInstance(function.getGeoHashShort(null), type);
-                        case Integer.BYTES:
-                            return GeoHashConstant.newInstance(function.getGeoHashInt(null), type);
-                        default:
-                            return GeoHashConstant.newInstance(function.getGeoHashLong(null), type);
-                    }
+                    return new GeoByteConstant(function.getGeoByte(null), type);
+                }
+            case ColumnType.GEOSHORT:
+                if (function instanceof GeoShortConstant) {
+                    return function;
+                } else {
+                    return new GeoShortConstant(function.getGeoShort(null), type);
+                }
+            case ColumnType.GEOINT:
+                if (function instanceof GeoIntConstant) {
+                    return function;
+                } else {
+                    return new GeoIntConstant(function.getGeoInt(null), type);
+                }
+            case ColumnType.GEOLONG:
+                if (function instanceof GeoLongConstant) {
+                    return function;
+                } else {
+                    return new GeoLongConstant(function.getGeoLong(null), type);
                 }
             case ColumnType.DATE:
                 if (function instanceof DateConstant) {

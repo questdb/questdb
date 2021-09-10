@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
@@ -31,6 +32,22 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class TypeOfFunctionFactoryTest extends AbstractGriffinTest {
+    @Test
+    public void testOfNull() throws SqlException {
+        assertSql("select typeOf(null)",
+                "typeOf\n" +
+                        "NULL\n");
+        assertSql("select typeOf(cast(null as string))",
+                "typeOf\n" +
+                        "STRING\n");
+        assertSql("select typeOf(value) from (select null value from long_sequence(1))",
+                "typeOf\n" +
+                        "NULL\n");
+        assertSql("select typeOf(value) from (select cast(null as long) value from long_sequence(1))",
+                "typeOf\n" +
+                        "LONG\n");
+    }
+
     @Test
     public void testTooFewArgs() throws Exception {
         assertSyntaxError("select typeOf()");
@@ -42,19 +59,13 @@ public class TypeOfFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOfNull() throws SqlException {
-        assertSql("select typeOf(null)",
-                "typeOf\n" +
-                "NULL\n");
-        assertSql("select typeOf(cast(null as string))",
-                "typeOf\n" +
-                "STRING\n");
-        assertSql("select typeOf(value) from (select null value from long_sequence(1))",
-                "typeOf\n" +
-                "NULL\n");
-        assertSql("select typeOf(value) from (select cast(null as long) value from long_sequence(1))",
-                "typeOf\n" +
-                "LONG\n");
+    public void testTypeOfGeoHash() throws SqlException {
+        for (int i = 1; i <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; i++) {
+            int type = ColumnType.getGeoHashTypeWithBits(i);
+            sink.clear();
+            sink.put("select typeOf(rnd_geohash(").put(i).put("))");
+            assertSql(sink, "typeOf\n" + ColumnType.nameOf(type) + "\n");
+        }
     }
 
     private void assertSyntaxError(String sql) throws Exception {

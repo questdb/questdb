@@ -163,6 +163,12 @@ public class BooleanFunctionTest {
     }
 
     @Test
+    public void testGetSymB() {
+        Assert.assertEquals("false", functionA.getSymbolB(null));
+        Assert.assertEquals("true", functionB.getSymbolB(null));
+    }
+
+    @Test
     public void testGetTimestamp() {
         Assert.assertEquals(1, functionA.getTimestamp(null));
         Assert.assertEquals(0, functionB.getTimestamp(null));
@@ -184,22 +190,22 @@ public class BooleanFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHash() {
-        functionA.getGeoHashLong(null);
+    public void testGeoLong() {
+        functionA.getGeoLong(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashInt() {
-        functionA.getGeoHashInt(null);
+    public void testGeoInt() {
+        functionA.getGeoInt(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashByte() {
-        functionA.getGeoHashByte(null);
+    public void testGeoByte() {
+        functionA.getGeoByte(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashShor() {
-        functionA.getGeoHashShort(null);
+    public void testGeoShort() {
+        functionA.getGeoShort(null);
     }
 }

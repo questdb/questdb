@@ -171,6 +171,8 @@ io.questdb.griffin.engine.functions.date.TimestampAddFunctionFactory
 io.questdb.griffin.engine.functions.date.ToDateFunctionFactory
 io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory
 io.questdb.griffin.engine.functions.date.ToPgDateFunctionFactory
+io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory
+io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory
 
 # cast functions
 
@@ -533,5 +535,8 @@ io.questdb.griffin.engine.functions.math.BitwiseNotIntFunctionFactory
 # timezone conversion
 io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory
 io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory
+
+# geohash functions
+io.questdb.griffin.engine.functions.geohash.GeoHashFromCoordinatesFunctionFactory
 
 io.questdb.griffin.engine.functions.catalogue.TypeOfFunctionFactory

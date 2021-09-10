@@ -241,7 +241,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
-    public byte getGeoHashByte(int columnIndex) {
+    public byte getGeoByte(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long offset = getAdjustedRecordIndex(col);
@@ -249,7 +249,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
-    public short getGeoHashShort(int columnIndex) {
+    public short getGeoShort(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long offset = getAdjustedRecordIndex(col) * Short.BYTES;
@@ -257,7 +257,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
-    public int getGeoHashInt(int columnIndex) {
+    public int getGeoInt(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
@@ -265,7 +265,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
-    public long getGeoHashLong(int columnIndex) {
+    public long getGeoLong(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long offset = getAdjustedRecordIndex(col) * Long.BYTES;

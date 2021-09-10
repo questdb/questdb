@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -74,68 +75,81 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
             geohash2 = Constants.getNullConstant(type1p);
         }
 
-        // Make sure we don't compare apples with pears once null type is ruled out
-        if (type1p != type2p) {
+        if (geohash1.isConstant()) {
+            final long hash1 = getGeoLong(type1p, geohash1, null);
+            if (geohash2.isConstant()) {
+                // both constants, we do not need to do null check
+                // null values across types are equal as it is
+                long hash2 = getGeoLong(type2p, geohash2, null);
+                return BooleanConstant.of((type1p == type2p && hash1 == hash2) || (hash1 == GeoHashes.NULL && hash2 == GeoHashes.NULL));
+            }
+
+            if (hash1 == GeoHashes.NULL || type1p == type2p) {
+                // continue only if types match or we have constant NULL
+                return createConstCheckFunc(geohash2, hash1, type1p);
+            }
+
             return BooleanConstant.of(false);
         }
 
-        if (geohash1.isConstant()) {
-            long hash1 = getGeoLong(geohash1.getType(), geohash1, null);
-            if (geohash2.isConstant()) {
-                long hash2 = getGeoLong(type1p, geohash2, null);
-                return BooleanConstant.of(hash1 == hash2);
+        if (geohash2.isConstant()) {
+            final long hash2 = getGeoLong(type2p, geohash2, null);
+            if (hash2 == GeoHashes.NULL || type1p == type2p) {
+                return createConstCheckFunc(geohash1, hash2, type1p);
             }
-
-            return createConstCheckFunc(geohash2, hash1, type1p);
+            return BooleanConstant.of(false);
         }
-        return geohash2.isConstant() ?
-                createConstCheckFunc(geohash1, getGeoLong(type1p, geohash2, null), type1p) :
-                crateBinaryFunc(geohash1, geohash2, type1p);
+
+        if (type1p == type2p) {
+            return crateBinaryFunc(geohash1, geohash2, type1p);
+        }
+
+        return BooleanConstant.of(false);
     }
 
     private Function crateBinaryFunc(Function geohash1, Function geohash2, int valType) {
-        switch (ColumnType.sizeOf(valType)) {
+        switch (ColumnType.tagOf(valType)) {
+            case ColumnType.GEOBYTE:
+                return new GeoEqFunc(geohash1, geohash2) {
+                    @Override
+                    public boolean getBool(Record rec) {
+                        return negated != (geohash1.getGeoByte(rec) == geohash2.getGeoByte(rec));
+                    }
+                };
+            case ColumnType.GEOSHORT:
+                return new GeoEqFunc(geohash1, geohash2) {
+                    @Override
+                    public boolean getBool(Record rec) {
+                        return negated != (geohash1.getGeoShort(rec) == geohash2.getGeoShort(rec));
+                    }
+                };
+            case ColumnType.GEOINT:
+                return new GeoEqFunc(geohash1, geohash2) {
+                    @Override
+                    public boolean getBool(Record rec) {
+                        return negated != (geohash1.getGeoInt(rec) == geohash2.getGeoInt(rec));
+                    }
+                };
             default:
                 return new GeoEqFunc(geohash1, geohash2) {
                     @Override
                     public boolean getBool(Record rec) {
-                        return negated != (geohash1.getGeoHashLong(rec) == geohash2.getGeoHashLong(rec));
-                    }
-                };
-            case Integer.BYTES:
-                return new GeoEqFunc(geohash1, geohash2) {
-                    @Override
-                    public boolean getBool(Record rec) {
-                        return negated != (geohash1.getGeoHashInt(rec) == geohash2.getGeoHashInt(rec));
-                    }
-                };
-            case Short.BYTES:
-                return new GeoEqFunc(geohash1, geohash2) {
-                    @Override
-                    public boolean getBool(Record rec) {
-                        return negated != (geohash1.getGeoHashShort(rec) == geohash2.getGeoHashShort(rec));
-                    }
-                };
-            case Byte.BYTES:
-                return new GeoEqFunc(geohash1, geohash2) {
-                    @Override
-                    public boolean getBool(Record rec) {
-                        return negated != (geohash1.getGeoHashByte(rec) == geohash2.getGeoHashByte(rec));
+                        return negated != (geohash1.getGeoLong(rec) == geohash2.getGeoLong(rec));
                     }
                 };
         }
     }
 
     private Function createConstCheckFunc(Function function, long value, int valType) {
-        switch (ColumnType.sizeOf(valType)) {
+        switch (ColumnType.tagOf(valType)) {
+            case ColumnType.GEOBYTE:
+                return new ConstCheckFuncByte(function, (byte) value);
+            case ColumnType.GEOSHORT:
+                return new ConstCheckFuncShort(function, (short) value);
+            case ColumnType.GEOINT:
+                return new ConstCheckFuncInt(function, (int) value);
             default:
                 return new ConstCheckFuncLong(function, value);
-            case Integer.BYTES:
-                return new ConstCheckFuncInt(function, (int) value);
-            case Short.BYTES:
-                return new ConstCheckFuncShort(function, (short) value);
-            case Byte.BYTES:
-                return new ConstCheckFuncByte(function, (byte) value);
         }
     }
 
@@ -155,7 +169,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (hash == arg.getGeoHashByte(rec));
+            return negated != (hash == arg.getGeoByte(rec));
         }
     }
 
@@ -175,7 +189,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (hash == arg.getGeoHashShort(rec));
+            return negated != (hash == arg.getGeoShort(rec));
         }
     }
 
@@ -195,7 +209,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (hash == arg.getGeoHashInt(rec));
+            return negated != (hash == arg.getGeoInt(rec));
         }
     }
 
@@ -215,7 +229,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (hash == arg.getGeoHashLong(rec));
+            return negated != (hash == arg.getGeoLong(rec));
         }
     }
 

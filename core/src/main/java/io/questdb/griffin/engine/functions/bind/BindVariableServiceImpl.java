@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
@@ -54,6 +55,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     private final ObjectPool<DateBindVariable> dateVarPool;
     private final ObjectPool<ShortBindVariable> shortVarPool;
     private final ObjectPool<ByteBindVariable> byteVarPool;
+    private final ObjectPool<GeoHashBindVariable> geoHashVarPool;
     private final ObjectPool<BooleanBindVariable> booleanVarPool;
     private final ObjectPool<StrBindVariable> strVarPool;
     private final ObjectPool<CharBindVariable> charVarPool;
@@ -69,6 +71,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         this.dateVarPool = new ObjectPool<>(DateBindVariable::new, poolSize);
         this.shortVarPool = new ObjectPool<>(ShortBindVariable::new, poolSize);
         this.byteVarPool = new ObjectPool<>(ByteBindVariable::new, poolSize);
+        this.geoHashVarPool = new ObjectPool<>(GeoHashBindVariable::new, poolSize);
         this.booleanVarPool = new ObjectPool<>(BooleanBindVariable::new, poolSize);
         this.strVarPool = new ObjectPool<>(() -> new StrBindVariable(configuration.getFloatToStrCastScale()), poolSize);
         this.charVarPool = new ObjectPool<>(CharBindVariable::new, 8);
@@ -102,6 +105,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         strVarPool.clear();
         charVarPool.clear();
         long256VarPool.clear();
+        geoHashVarPool.clear();
     }
 
     @Override
@@ -147,6 +151,12 @@ public class BindVariableServiceImpl implements BindVariableService {
                 return type;
             case ColumnType.BINARY:
                 setBin(index);
+                return type;
+            case ColumnType.GEOBYTE:
+            case ColumnType.GEOSHORT:
+            case ColumnType.GEOINT:
+            case ColumnType.GEOLONG:
+                setGeoHash(index, type);
                 return type;
             default:
                 throw SqlException.$(position, "bind variable cannot be used [contextType=").put(ColumnType.nameOf(type)).put(", index=").put(index).put(']');
@@ -260,6 +270,30 @@ public class BindVariableServiceImpl implements BindVariableService {
             indexedVariables.setQuick(index, function = byteVarPool.next());
             ((ByteBindVariable) function).value = value;
         }
+    }
+
+    @Override
+    public void setGeoHash(int index, long value, int type) throws SqlException {
+        indexedVariables.extendPos(index + 1);
+        // variable exists
+        Function function = indexedVariables.getQuick(index);
+        if (function != null) {
+            setGeoByte0(function, value, type, index, null);
+        } else {
+            indexedVariables.setQuick(index, function = geoHashVarPool.next());
+            ((GeoHashBindVariable) function).value = value;
+            ((GeoHashBindVariable) function).setType(type);
+        }
+    }
+
+    @Override
+    public void setByte(int index) throws SqlException {
+        setByte(index, (byte) 0);
+    }
+
+    @Override
+    public void setGeoHash(int index, int type) throws SqlException {
+        setGeoHash(index, GeoHashes.NULL, type);
     }
 
     @Override
@@ -595,11 +629,6 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
-    @Override
-    public void setByte(int index) throws SqlException {
-        setByte(index, (byte) 0);
-    }
-
     private static long parseTimestamp(CharSequence value) throws NumericException {
         final int hi = value.length();
         for (int i = 0; i < TIMESTAMP_FORMATS_SIZE; i++) {
@@ -875,6 +904,38 @@ public class BindVariableServiceImpl implements BindVariableService {
             default:
                 reportError(function, ColumnType.BYTE, index, name);
                 break;
+        }
+    }
+
+    private static void setGeoByte0(Function function, long value, int type, int index, @Nullable CharSequence name) throws SqlException {
+        final int varType = function.getType();
+        switch (ColumnType.tagOf(varType)) {
+            case ColumnType.GEOBYTE:
+            case ColumnType.GEOINT:
+            case ColumnType.GEOSHORT:
+            case ColumnType.GEOLONG:
+                int fromBits = ColumnType.getGeoHashBits(type);
+                int toBits = ColumnType.getGeoHashBits(varType);
+                if (fromBits == toBits) {
+                    ((GeoHashBindVariable) function).value = value;
+                } else if (fromBits > toBits) {
+                    ((GeoHashBindVariable) function).value = ColumnType.truncateGeoHashBits(value, fromBits, toBits);
+                } else if (name != null) {
+                    throw SqlException.$(0, "inconvertible types: ")
+                            .put(ColumnType.nameOf(type))
+                            .put(" -> ")
+                            .put(ColumnType.nameOf(varType))
+                            .put(" [varName=").put(name).put(']');
+                } else {
+                    throw SqlException.$(0, "inconvertible types: ")
+                            .put(ColumnType.nameOf(type))
+                            .put(" -> ")
+                            .put(ColumnType.nameOf(varType))
+                            .put(" [varIndex=").put(index).put(']');
+                }
+                break;
+            default:
+                reportError(function, type, index, name);
         }
     }
 

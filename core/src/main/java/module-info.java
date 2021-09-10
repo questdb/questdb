@@ -205,6 +205,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.rnd.RndLongFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampSequenceFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampShuffleFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndByteCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndBinCCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory,
@@ -558,7 +560,8 @@ open module io.questdb {
 
             // metadata functions
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,
-
+            // geohash functions
+            io.questdb.griffin.engine.functions.geohash.GeoHashFromCoordinatesFunctionFactory,
             // bit operations
             BitwiseAndLongFunctionFactory,
             BitwiseOrLongFunctionFactory,
