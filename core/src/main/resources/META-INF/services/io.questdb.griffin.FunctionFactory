@@ -171,6 +171,8 @@ io.questdb.griffin.engine.functions.date.TimestampAddFunctionFactory
 io.questdb.griffin.engine.functions.date.ToDateFunctionFactory
 io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory
 io.questdb.griffin.engine.functions.date.ToPgDateFunctionFactory
+io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory
+io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory
 
 # cast functions
 
