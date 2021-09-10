@@ -29,5 +29,3 @@ public interface BuildInformation {
     CharSequence getJdkVersion();
     CharSequence getCommitHash();
 }
-
-/* TRIGGER */
