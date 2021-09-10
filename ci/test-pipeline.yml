@@ -62,6 +62,19 @@ stages:
     displayName: "Running tests"
     condition: or(succeeded(), eq(variables['System.PullRequest.IsFork'], 'true'))
     jobs:
+      - job: Test
+        displayName: 'Test'
+        pool:
+          vmImage: "ubuntu-latest"
+        steps:
+          - checkout: none
+          - bash: |
+              echo test
+              exit 1;
+            name: test
+            displayName: 'Test'
+            continueOnError: boolean
+
       - job: CheckChanges
         displayName: 'Check changes'
         pool:
