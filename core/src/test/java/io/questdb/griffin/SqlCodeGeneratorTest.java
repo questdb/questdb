@@ -2037,6 +2037,38 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testEqGeoHashWhenOtherIsStr1() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(4);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.439000Z\tbbb\tewef\n",
+                            "select * from pos where hash = 'ewef'",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testEqGeoHashWhenOtherIsStr2() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(4);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.439000Z\tbbb\tewef\n",
+                            "select * from pos where 'ewef' = hash",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
     public void testLatestByAllIndexedGeoHashTimeRange1c() throws Exception {
         assertMemoryLeak(
                 () -> {
