@@ -112,7 +112,7 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
                     true
             );
         } catch (SqlException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "query is not support page frame cursor");
+            TestUtils.assertContains(ex.getFlyweightMessage(), "query does not support framing execution and cannot be pre-touched");
         }
     }
 
@@ -137,7 +137,7 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
                     true
             );
         } catch (SqlException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "query is not support page frame cursor");
+            TestUtils.assertContains(ex.getFlyweightMessage(), "query does not support framing execution and cannot be pre-touched");
         }
     }
 

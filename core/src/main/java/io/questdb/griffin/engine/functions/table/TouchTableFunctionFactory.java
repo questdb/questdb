@@ -56,7 +56,7 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         final int pos = argPositions.get(0);
         final RecordCursorFactory recordCursorFactory = function.getRecordCursorFactory();
         if (recordCursorFactory == null || !recordCursorFactory.supportPageFrameCursor()) {
-            throw SqlException.$(pos, "query is not support page frame cursor");
+            throw SqlException.$(pos, "query does not support framing execution and cannot be pre-touched");
         }
         return new TouchTableFunc(function);
     }
