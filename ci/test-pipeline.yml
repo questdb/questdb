@@ -11,9 +11,16 @@ variables:
   DIFF_CONVER_THRESHOLD_PCT: 50
 
 stages:
+  - stage: CheckChanges
+    displayName: "Check Changes"
+    jobs:
+      - template: templates/check-changes-job.yml
+
   - stage: SelfHostedRunTestsBranches
     displayName: "Self Hosted Running tests"
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    dependsOn:
+      - CheckChanges
     jobs:
       - job: StartArmAgent
         displayName: 'Start ARM Agent'
@@ -57,12 +64,11 @@ stages:
               echo "Agent found ..."
             name: 'Check_agent'
             displayName: 'Check agent'
-      - template: templates/check-changes-job.yml
       - template: templates/self-hosted-jobs.yml
 
   - stage: HostedRunTestsBranches
     displayName: "Hosted Running tests"
-    dependsOn: []
+    dependsOn:
+      - CheckChanges
     jobs:
-      - template: templates/check-changes-job.yml
       - template: templates/hosted-jobs.yml
