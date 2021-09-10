@@ -25,8 +25,10 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -37,7 +39,7 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTouchTable() throws Exception {
+    public void testTouchUpdateTouchAgain() throws Exception {
         assertQuery("touch\n" +
                         "touched dataPages[80], indexKeyPages[1043], indexValuePages[1043]\n",
                 "select touch(select * from x)",
@@ -66,4 +68,101 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
                 true
         );
     }
+
+    @Test
+    public void testTouchTableTimeInterval() throws Exception {
+        assertQuery("touch\n" +
+                        "touched dataPages[4], indexKeyPages[1024], indexValuePages[1024]\n",
+                "select touch(select * from x where k in '1970-01-22')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_geohash(40) g," +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                null,
+                null, null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testTouchTableNoTimestampColumnSelected() throws Exception {
+        try {
+            assertQuery("touch\n" +
+                            "touched dataPages[4], indexKeyPages[1024], indexValuePages[1024]\n",
+                    "select touch(select g,a,b from x where k in '1970-01-22')",
+                    "create table x as " +
+                            "(" +
+                            "select" +
+                            " rnd_geohash(40) g," +
+                            " rnd_double(0)*100 a," +
+                            " rnd_symbol(5,4,4,1) b," +
+                            " timestamp_sequence(0, 100000000000) k" +
+                            " from long_sequence(20)" +
+                            "), index(b) timestamp(k) partition by DAY",
+                    null,
+                    null, null,
+                    true,
+                    true,
+                    true
+            );
+        } catch (SqlException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "query is not support page frame cursor");
+        }
+    }
+
+    @Test
+    public void testTouchTableThrowOnComplexFilter() throws Exception {
+        try {
+            assertQuery("touch\n" +
+                            "touched dataPages[4], indexKeyPages[1024], indexValuePages[1024]\n",
+                    "select touch(select * from x where k in '1970-01-22' and a > 100.0)",
+                    "create table x as " +
+                            "(" +
+                            "select" +
+                            " rnd_geohash(40) g," +
+                            " rnd_double(0)*100 a," +
+                            " rnd_symbol(5,4,4,1) b," +
+                            " timestamp_sequence(0, 100000000000) k" +
+                            " from long_sequence(20)" +
+                            "), index(b) timestamp(k) partition by DAY",
+                    null,
+                    null, null,
+                    true,
+                    true,
+                    true
+            );
+        } catch (SqlException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "query is not support page frame cursor");
+        }
+    }
+
+    @Test
+    public void testTouchTableTimeRange() throws Exception {
+            assertQuery("touch\n" +
+                            "touched dataPages[20], indexKeyPages[1028], indexValuePages[1028]\n",
+                    "select touch(select * from x where k > '1970-01-18T00:00:00.000000Z')",
+                    "create table x as " +
+                            "(" +
+                            "select" +
+                            " rnd_geohash(40) g," +
+                            " rnd_double(0)*100 a," +
+                            " rnd_symbol(5,4,4,1) b," +
+                            " timestamp_sequence(0, 100000000000) k" +
+                            " from long_sequence(20)" +
+                            "), index(b) timestamp(k) partition by DAY",
+                    null,
+                    null, null,
+                    true,
+                    true,
+                    true
+            );
+    }
+
 }
