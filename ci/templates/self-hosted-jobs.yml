@@ -7,6 +7,7 @@ jobs:
     demands:
     - Agent.Name -equals arm64-$(Build.BuildId)
   dependsOn:
+  - StartArmAgent
   - CheckChanges
   timeoutInMinutes: 60
   condition: eq(variables['System.PullRequest.IsFork'], 'false')
