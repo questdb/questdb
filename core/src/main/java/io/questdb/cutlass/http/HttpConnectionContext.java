@@ -595,21 +595,24 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     }
 
     private boolean handleClientSend() {
-        assert resumeProcessor != null;
-        try {
-            responseSink.resumeSend();
-            resumeProcessor.resumeSend(this);
-            clear();
-            return true;
-        } catch (PeerIsSlowToReadException ignore) {
-            resumeProcessor.parkRequest(this);
-            LOG.debug().$("peer is slow reader").$();
-            dispatcher.registerChannel(this, IOOperation.WRITE);
-        } catch (PeerDisconnectedException ignore) {
-            handlePeerDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
-        } catch (ServerDisconnectException ignore) {
-            LOG.info().$("kicked out [fd=").$(fd).$(']').$();
-            dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_SEND);
+        if (resumeProcessor != null) {
+            try {
+                responseSink.resumeSend();
+                resumeProcessor.resumeSend(this);
+                clear();
+                return true;
+            } catch (PeerIsSlowToReadException ignore) {
+                resumeProcessor.parkRequest(this);
+                LOG.debug().$("peer is slow reader").$();
+                dispatcher.registerChannel(this, IOOperation.WRITE);
+            } catch (PeerDisconnectedException ignore) {
+                handlePeerDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
+            } catch (ServerDisconnectException ignore) {
+                LOG.info().$("kicked out [fd=").$(fd).$(']').$();
+                dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_SEND);
+            }
+        } else {
+            LOG.error().$("spurious write request [fd=").$(fd).I$();
         }
         return false;
     }
