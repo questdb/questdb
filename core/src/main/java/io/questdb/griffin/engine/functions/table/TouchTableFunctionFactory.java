@@ -59,14 +59,14 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         }
 
         final RecordMetadata metadata = recordCursorFactory.getMetadata();
-        final PageFrameCursor pageFrameCursor = recordCursorFactory.getPageFrameCursor(sqlExecutionContext);
-        return new TouchTableFunc(function, metadata, pageFrameCursor);
+        return new TouchTableFunc(function, metadata, recordCursorFactory, sqlExecutionContext);
     }
 
     private static class TouchTableFunc extends StrFunction implements UnaryFunction {
         private final Function arg;
         private final RecordMetadata metadata;
-        private final PageFrameCursor pageFrameCursor;
+        private final RecordCursorFactory recordCursorFactory;
+        private final SqlExecutionContext sqlExecutionContext;
 
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
@@ -76,10 +76,14 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         private long indexKeyPages = 0;
         private long indexValuePages = 0;
 
-        public TouchTableFunc(Function arg, RecordMetadata metadata, PageFrameCursor pageFrameCursor) {
+        public TouchTableFunc(Function arg,
+                              RecordMetadata metadata,
+                              RecordCursorFactory recordCursorFactory,
+                              SqlExecutionContext sqlExecutionContext) {
             this.arg = arg;
             this.metadata = metadata;
-            this.pageFrameCursor = pageFrameCursor;
+            this.recordCursorFactory = recordCursorFactory;
+            this.sqlExecutionContext = sqlExecutionContext;
         }
 
         @Override
@@ -89,7 +93,6 @@ public class TouchTableFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStr(Record rec) {
-            touchTable();
             sinkA.clear();
             getStr(rec, sinkA);
             return sinkA;
@@ -97,7 +100,6 @@ public class TouchTableFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrB(Record rec) {
-            touchTable();
             sinkB.clear();
             getStr(rec, sinkB);
             return sinkB;
@@ -105,6 +107,8 @@ public class TouchTableFunctionFactory implements FunctionFactory {
 
         @Override
         public void getStr(Record rec, CharSink sink) {
+            touchTable();
+
             sink.put("touched dataPages[")
                     .put(dataPages)
                     .put("],")
@@ -127,28 +131,31 @@ public class TouchTableFunctionFactory implements FunctionFactory {
             clearCounters();
             final int pageSize = Unsafe.getUnsafe().pageSize();
 
-            PageFrame frame;
-            while ((frame = pageFrameCursor.next()) != null) {
+            try(PageFrameCursor pageFrameCursor = recordCursorFactory.getPageFrameCursor(sqlExecutionContext)) {
+                PageFrame frame;
+                while ((frame = pageFrameCursor.next()) != null) {
+                    for (int columnIndex = 0, sz = metadata.getColumnCount(); columnIndex < sz; columnIndex++) {
 
-                for (int columnIndex = 0, sz = metadata.getColumnCount(); columnIndex < sz; columnIndex++) {
+                        final long columnMemorySize = frame.getPageSize(columnIndex);
+                        final long columnBaseAddress = frame.getPageAddress(columnIndex);
+                        dataPages += touchMemory(pageSize, columnBaseAddress, columnMemorySize);
 
-                    final long columnMemorySize = frame.getPageSize(columnIndex);
-                    final long columnBaseAddress = frame.getPageAddress(columnIndex);
-                    dataPages += touchMemory(pageSize, columnBaseAddress, columnMemorySize);
+                        if (metadata.isColumnIndexed(columnIndex)) {
+                            //TODO: backward/forward ???
+                            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
 
-                    if (metadata.isColumnIndexed(columnIndex)) {
-                        //TODO: backward/forward ???
-                        final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+                            final long keyBaseAddress = indexReader.getKeyBaseAddress();
+                            final long keyMemorySize = indexReader.getKeyMemorySize();
+                            indexKeyPages += touchMemory(pageSize, keyBaseAddress, keyMemorySize);
 
-                        final long keyBaseAddress = indexReader.getKeyBaseAddress();
-                        final long keyMemorySize = indexReader.getKeyMemorySize();
-                        indexKeyPages += touchMemory(pageSize, keyBaseAddress, keyMemorySize);
-
-                        final long valueBaseAddress = indexReader.getValueBaseAddress();
-                        final long valueMemorySize = indexReader.getValueMemorySize();
-                        indexValuePages += touchMemory(pageSize, valueBaseAddress, valueMemorySize);
+                            final long valueBaseAddress = indexReader.getValueBaseAddress();
+                            final long valueMemorySize = indexReader.getValueMemorySize();
+                            indexValuePages += touchMemory(pageSize, valueBaseAddress, valueMemorySize);
+                        }
                     }
                 }
+            } catch (SqlException ignored) {
+                // do not propagate
             }
         }
 
