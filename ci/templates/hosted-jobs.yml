@@ -4,8 +4,6 @@ jobs:
   pool:
     name: "Azure Pipelines"
     vmImage: "ubuntu-latest"
-  dependsOn:
-  - CheckChanges
   timeoutInMinutes: 60
   variables:
     SOURCE_CODE_CHANGED: $[ stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
@@ -20,8 +18,6 @@ jobs:
 #   pool:
 #     name: "Azure Pipelines"
 #     vmImage: "macos-latest"
-#   dependsOn:
-#   - CheckChanges
 #   timeoutInMinutes: 60
 #   variables:
 #     SOURCE_CODE_CHANGED: $[ stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
@@ -36,8 +32,6 @@ jobs:
 #   pool:
 #     name: "Azure Pipelines"
 #     vmImage: "windows-latest"
-#   dependsOn:
-#   - CheckChanges
 #   timeoutInMinutes: 60
 #   variables:
 #     SOURCE_CODE_CHANGED: $[ stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
@@ -52,8 +46,6 @@ jobs:
 #   pool:
 #     name: "Azure Pipelines"
 #     vmImage: "ubuntu-latest"
-#   dependsOn:
-#   - CheckChanges
 #   timeoutInMinutes: 60
 #   variables:
 #     SOURCE_CODE_CHANGED: $[ stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
