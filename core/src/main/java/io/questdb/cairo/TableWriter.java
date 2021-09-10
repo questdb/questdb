@@ -408,6 +408,9 @@ public class TableWriter implements Closeable {
 
         // add column objects
         configureColumn(type, isIndexed);
+        if (isIndexed) {
+            populateDenseIndexerList();
+        }
 
         // increment column count
         columnCount++;
@@ -1796,7 +1799,6 @@ public class TableWriter implements Closeable {
         configureNullSetters(o3NullSetters, type, oooPrimary, oooSecondary);
         if (indexFlag) {
             indexers.extendAndSet((columns.size() - 1) / 2, new SymbolColumnIndexer());
-            populateDenseIndexerList();
         }
         refs.add(0);
     }
@@ -1827,7 +1829,6 @@ public class TableWriter implements Closeable {
             o3TimestampMem = o3Columns.getQuick(getPrimaryColumnIndex(timestampIndex));
             o3TimestampMemCpy = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE);
         }
-        populateDenseIndexerList();
     }
 
     private LongConsumer configureTimestampSetter() {
@@ -3594,6 +3595,7 @@ public class TableWriter implements Closeable {
 
     private void openFirstPartition(long timestamp) {
         openPartition(repairDataGaps(timestamp));
+        populateDenseIndexerList();
         setAppendPosition(txFile.getTransientRowCount(), true);
         if (performRecovery) {
             performRecovery();
@@ -3663,6 +3665,7 @@ public class TableWriter implements Closeable {
                     indexer.configureFollowerAndWriter(configuration, path, name, getPrimaryColumn(i), columnTop);
                 }
             }
+            populateDenseIndexerList();
             LOG.info().$("switched partition [path='").$(path).$("']").$();
         } catch (Throwable e) {
             distressed = true;
@@ -4492,7 +4495,7 @@ public class TableWriter implements Closeable {
             try {
                 denseIndexers.getQuick(i).refreshSourceAndIndex(lo, hi);
             } catch (CairoException e) {
-                // this is pretty severe, we hit some sort of a limit
+                // this is pretty severe, we hit some sort of limit
                 LOG.error().$("index error {").$((Sinkable) e).$('}').$();
                 throwDistressException(e);
             }

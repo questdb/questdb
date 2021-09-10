@@ -71,8 +71,10 @@ public class ObjList<T> implements Mutable, Sinkable {
      * {@inheritDoc}
      */
     public void clear() {
+        if (pos > 0) {
+            Arrays.fill(buffer, null);
+        }
         pos = 0;
-        Arrays.fill(buffer, null);
     }
 
     @SuppressWarnings("unchecked")
@@ -92,6 +94,11 @@ public class ObjList<T> implements Mutable, Sinkable {
             pos = index + 1;
         }
         buffer[index] = value;
+    }
+
+    public void extendPos(int capacity) {
+        ensureCapacity(capacity);
+        pos = Math.max(pos, capacity);
     }
 
     /**
@@ -173,14 +180,6 @@ public class ObjList<T> implements Mutable, Sinkable {
         return this == that || that instanceof ObjList && equals((ObjList<?>) that);
     }
 
-    public void insert(int index, int length) {
-        ensureCapacity(pos + length);
-        if (pos > index) {
-            System.arraycopy(buffer, index, buffer, index + length, pos - index);
-        }
-        pos += length;
-    }
-
     /**
      * {@inheritDoc}
      */
@@ -214,6 +213,14 @@ public class ObjList<T> implements Mutable, Sinkable {
             }
             return -1;
         }
+    }
+
+    public void insert(int index, int length) {
+        ensureCapacity(pos + length);
+        if (pos > index) {
+            System.arraycopy(buffer, index, buffer, index + length, pos - index);
+        }
+        pos += length;
     }
 
     public void remove(int index) {
@@ -257,7 +264,6 @@ public class ObjList<T> implements Mutable, Sinkable {
         buffer[index] = value;
     }
 
-
     public void setAll(int capacity, T value) {
         ensureCapacity(capacity);
         pos = capacity;
@@ -267,11 +273,6 @@ public class ObjList<T> implements Mutable, Sinkable {
     public void setPos(int capacity) {
         ensureCapacity(capacity);
         pos = capacity;
-    }
-
-    public void extendPos(int capacity) {
-        ensureCapacity(capacity);
-        pos = Math.max(pos, capacity);
     }
 
     public void setQuick(int index, T value) {
