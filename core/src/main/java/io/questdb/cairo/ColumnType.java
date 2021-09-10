@@ -122,7 +122,7 @@ public final class ColumnType {
     }
 
     public static int getGeoHashTypeWithBits(int bits) {
-        assert bits > 0;
+        assert bits > 0 && bits <= GEO_HASH_MAX_BITS_LENGTH;
         // this logic relies on GeoHash type value to be clustered together
         return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
     }

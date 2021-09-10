@@ -25,8 +25,12 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
+import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.griffin.engine.functions.constants.GeoHashTypeConstant;
 import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
@@ -1077,7 +1081,9 @@ final class WhereClauseParser implements Mutable {
             AliasTranslator translator,
             ExpressionNode node,
             RecordMetadata metadata,
-            CharSequenceHashSet prefixes
+            FunctionParser functionParser,
+            SqlExecutionContext executionContext,
+            LongList prefixes
     ) throws SqlException {
 
         prefixes.clear();
@@ -1086,7 +1092,7 @@ final class WhereClauseParser implements Mutable {
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal
 
-        if (removeWithin(translator, node, metadata, prefixes)) {
+        if (removeWithin(translator, node, metadata, functionParser, executionContext, prefixes)) {
             return collapseWithinNodes(node);
         }
 
@@ -1094,10 +1100,10 @@ final class WhereClauseParser implements Mutable {
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
                 if (isAndKeyword(node.token) || isOrKeyword(node.token)) {
-                    if (!removeWithin(translator, node.rhs, metadata, prefixes)) {
+                    if (!removeWithin(translator, node.rhs, metadata, functionParser, executionContext, prefixes)) {
                         stack.push(node.rhs);
                     }
-                    node = removeWithin(translator, node.lhs, metadata, prefixes) ? null : node.lhs;
+                    node = removeWithin(translator, node.lhs, metadata, functionParser, executionContext, prefixes) ? null : node.lhs;
                 } else {
                     node = stack.poll();
                 }
@@ -1109,11 +1115,17 @@ final class WhereClauseParser implements Mutable {
         return collapseWithinNodes(root);
     }
 
-    private boolean removeWithin(AliasTranslator translator, ExpressionNode node, RecordMetadata metadata, CharSequenceHashSet prefixes) throws SqlException {
+    private boolean removeWithin(
+            AliasTranslator translator,
+            ExpressionNode node,
+            RecordMetadata metadata,
+            FunctionParser functionParser,
+            SqlExecutionContext executionContext,
+            LongList prefixes) throws SqlException {
         if (isWithinKeyword(node.token)) {
 
             if (prefixes.size() > 0) {
-                throw SqlException.$(node.position, "Using more than one 'within' operator per query is not allowed");
+                throw SqlException.$(node.position, "Multiple 'within' expressions not supported");
             }
 
             if (node.paramCount < 2) {
@@ -1123,7 +1135,7 @@ final class WhereClauseParser implements Mutable {
             ExpressionNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
 
             if (col.type != ExpressionNode.LITERAL) {
-                return false;
+                throw SqlException.unexpectedToken(col.position, col.token);
             }
 
             CharSequence column = translator.translateAlias(col.token);
@@ -1132,30 +1144,108 @@ final class WhereClauseParser implements Mutable {
                 throw SqlException.invalidColumn(col.position, col.token);
             }
 
-            if(prefixes.size() == 0) {
-                prefixes.add(column); //TODO: make a proper data struct
+            final int hashColumnIndex = metadata.getColumnIndex(column);
+            final int hashColumnType = metadata.getColumnType(hashColumnIndex);
+
+            if (!ColumnType.isGeoHash(hashColumnType)) {
+                throw SqlException.$(node.position, "GeoHash column type expected");
             }
 
-            int i = node.paramCount - 1;
+            if(prefixes.size() == 0) {
+                prefixes.add(hashColumnIndex);
+                prefixes.add(hashColumnType);
+            }
 
-            if (i == 1) {
-                if (node.rhs == null || node.rhs.type != ExpressionNode.CONSTANT) {
-                    return false;
-                }
-                prefixes.add(unquote(node.rhs.token));
+
+            int c = node.paramCount - 1;
+
+            if (c == 1) {
+                ExpressionNode inArg = node.rhs;
+                processArgument(inArg, metadata, functionParser, executionContext, hashColumnType, prefixes);
             } else {
-                for (i--; i > -1; i--) {
-                    ExpressionNode c = node.args.getQuick(i);
-                    if (c.type != ExpressionNode.CONSTANT || isNullKeyword(c.token)) {
-                        return false;
-                    }
-                    prefixes.add(unquote(c.token));
+                for (c--; c > -1; c--) {
+                    ExpressionNode inArg = node.args.getQuick(c);
+                    processArgument(inArg, metadata, functionParser, executionContext, hashColumnType, prefixes);
                 }
             }
             return true;
         } else {
             return false;
         }
+    }
+
+    private void processArgument(
+            ExpressionNode inArg,
+            RecordMetadata metadata,
+            FunctionParser functionParser,
+            SqlExecutionContext executionContext,
+            int columnType,
+            LongList prefixes
+    ) throws SqlException {
+        if(isNull(inArg)) {
+            throw SqlException.$(inArg.position, "GeoHash value expected");
+        }
+        if (isFunc(inArg)) {
+            Function f = functionParser.parseFunction(inArg, metadata, executionContext);
+            if (isGeoHashConstFunction(f)) {
+                final int fnType = f.getType();
+                final long hash = GeoHashes.getGeoLong(fnType, f, null);
+                try {
+                    GeoHashes.addNormalizedGeoPrefix(hash, fnType, columnType, prefixes);
+                } catch (NumericException e) {
+                    throw SqlException.$(inArg.position, "GeoHash prefix precision mismatch");
+                }
+            } else {
+                throw SqlException.$(inArg.position, "GeoHash const function expected");
+            }
+        } else {
+            final boolean isConstant = inArg.type == ExpressionNode.CONSTANT;
+            final int position = inArg.position;
+            final CharSequence token = inArg.token;
+            final int len = token.length();
+            final boolean isBitsPrefix = len > 2 && token.charAt(0) == '#' && token.charAt(1) == '#';
+            final boolean isCharsPrefix = len > 1 && token.charAt(0) == '#';
+
+            if (!(isConstant && (isBitsPrefix || isCharsPrefix))) {
+                throw SqlException.$(position, "GeoHash literal expected");
+            }
+
+            final int type;
+            final long hash;
+            try {
+                if (token.charAt(1) != '#') {
+                    final int sdd = ExpressionParser.extractGeoHashSuffix(position, token);
+                    final int sddLen = Numbers.decodeLowShort(sdd);
+                    final int bits = Numbers.decodeHighShort(sdd);
+                    type = ColumnType.getGeoHashTypeWithBits(bits);
+                    hash = GeoHashes.fromStringTruncatingNl(token, 1, len - sddLen, bits);
+                } else {
+                    int bits = len - 2;
+                    if (bits <= ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
+                        type = ColumnType.getGeoHashTypeWithBits(bits);
+                        hash = GeoHashes.fromBitStringNl(token, 2);
+                    } else {
+                        throw SqlException.$(position, "GeoHash bits literal expected");
+                    }
+                }
+            } catch (NumericException ignored) {
+                throw SqlException.$(position, "GeoHash literal expected");
+            }
+
+            try {
+                GeoHashes.addNormalizedGeoPrefix(hash, type, columnType, prefixes);
+            } catch (NumericException e) {
+                throw SqlException.$(position, "GeoHash prefix precision mismatch");
+            }
+        }
+    }
+
+    private boolean isNull(ExpressionNode node) {
+        return node == null || isNullKeyword(node.token);
+    }
+
+    private boolean isGeoHashConstFunction(Function fn) {
+        return (fn instanceof AbstractGeoHashFunction) && fn.isConstant();
     }
 
     private ExpressionNode collapseWithinNodes(ExpressionNode node) {
