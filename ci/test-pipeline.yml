@@ -11,8 +11,8 @@ variables:
   DIFF_CONVER_THRESHOLD_PCT: 50
 
 stages:
-  - stage: StartBuildAgent
-    displayName: "Start Building Agent"
+  - stage: SelfHostedRunTestsBranches
+    displayName: "Self Hosted Running tests"
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     jobs:
       - job: StartArmAgent
@@ -57,47 +57,12 @@ stages:
               echo "Agent found ..."
             name: 'Check_agent'
             displayName: 'Check agent'
+      - template: templates/check-changes-job.yml
+      - template: templates/self-hosted-jobs.yml
 
-  - stage: RunTestsBranches
-    displayName: "Running tests"
+  - stage: HostedRunTestsBranches
+    displayName: "Hosted Running tests"
     condition: or(succeeded(), eq(variables['System.PullRequest.IsFork'], 'true'))
     jobs:
-      - job: Test
-        displayName: 'Test'
-        pool:
-          vmImage: "ubuntu-latest"
-        steps:
-          - checkout: none
-          - bash: |
-              echo test
-              sleep 60
-              exit 1;
-            name: test
-            displayName: 'Test'
-            continueOnError: true
-
-      - job: CheckChanges
-        displayName: 'Check changes'
-        pool:
-          vmImage: "ubuntu-latest"
-        steps:
-          - checkout: none
-          - bash: |
-              if [ -z "$PR_ID" ]
-              then
-                # No PR - cannot detect changed files, default to true
-                echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
-              else
-                CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PR_ID/files -s  | grep -oP 'filename": "core/*\/\K[^.]+')
-                if [ -z "$CHANGED_CORE_FILES" ]
-                  then
-                    echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]false"
-                  else
-                    echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
-                fi
-              fi
-            env:
-              PR_ID: $(System.PullRequest.PullRequestNumber)
-            name: check_changes
-            displayName: 'Check changed files'
-      - template: templates/jobs.yml
+      - template: templates/check-changes-job.yml
+      - template: templates/hosted-jobs.yml

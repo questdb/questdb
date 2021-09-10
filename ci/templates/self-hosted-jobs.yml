@@ -1,0 +1,20 @@
+jobs:
+- job: linux_arm64
+  displayName: "on linux-arm64"
+  pool:
+    name: "arm64"
+    vmImage:
+    demands:
+    - Agent.Name -equals arm64-$(Build.BuildId)
+  dependsOn:
+  - CheckChanges
+  timeoutInMinutes: 60
+  condition: eq(variables['System.PullRequest.IsFork'], 'false')
+  variables:
+    SOURCE_CODE_CHANGED: $[ dependencies.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
+    MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
+    MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m'
+    os: Linux
+    jdk: "1.11"
+  steps:
+  - template: steps.yml
