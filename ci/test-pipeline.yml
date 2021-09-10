@@ -63,7 +63,6 @@ stages:
   - stage: HostedRunTestsBranches
     displayName: "Hosted Running tests"
     dependsOn: []
-    condition: eq(variables['System.PullRequest.IsFork'], 'true')
     jobs:
       - template: templates/check-changes-job.yml
       - template: templates/hosted-jobs.yml
