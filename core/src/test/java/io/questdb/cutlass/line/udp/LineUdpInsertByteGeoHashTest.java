@@ -122,8 +122,10 @@ public class LineUdpInsertByteGeoHashTest extends LineUdpInsertGeoHashTest {
                     createTable(engine, 1);
                     receiver.start();
                     sendGeoHashLine("");
+                    sendGeoHashLine("null");
                     assertReader(tableName,
                             "geohash\ttimestamp\n" +
+                                    "\t1970-01-01T00:00:01.000000Z\n" +
                                     "\t1970-01-01T00:00:01.000000Z\n");
                 }
             }
