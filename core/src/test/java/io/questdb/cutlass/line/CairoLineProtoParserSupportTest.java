@@ -183,10 +183,16 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
 
     @Test
     public void testGetValueType() {
+        Assert.assertEquals(ColumnType.NULL, CairoLineProtoParserSupport.getValueType(""));
+        Assert.assertEquals(ColumnType.NULL, CairoLineProtoParserSupport.getValueType("null"));
+        Assert.assertEquals(ColumnType.NULL, CairoLineProtoParserSupport.getValueType("NULL"));
+        Assert.assertEquals(ColumnType.NULL, CairoLineProtoParserSupport.getValueType("NulL"));
+
+        Assert.assertEquals(ColumnType.SYMBOL, CairoLineProtoParserSupport.getValueType("skull"));
+        Assert.assertEquals(ColumnType.SYMBOL, CairoLineProtoParserSupport.getValueType("skulL"));
         Assert.assertEquals(ColumnType.SYMBOL, CairoLineProtoParserSupport.getValueType("1.6x"));
         Assert.assertEquals(ColumnType.SYMBOL, CairoLineProtoParserSupport.getValueType("aa\"aa"));
         Assert.assertEquals(ColumnType.SYMBOL, CairoLineProtoParserSupport.getValueType("tre"));
-        Assert.assertEquals(ColumnType.SYMBOL, CairoLineProtoParserSupport.getValueType("\"aaa"));
         Assert.assertEquals(ColumnType.SYMBOL, CairoLineProtoParserSupport.getValueType("''"));
         Assert.assertEquals(ColumnType.SYMBOL, CairoLineProtoParserSupport.getValueType("oX"));
         Assert.assertEquals(ColumnType.SYMBOL, CairoLineProtoParserSupport.getValueType("0x"));
@@ -216,7 +222,7 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
         Assert.assertEquals(ColumnType.DOUBLE, CairoLineProtoParserSupport.getValueType("1"));
 
         Assert.assertEquals(ColumnType.UNDEFINED, CairoLineProtoParserSupport.getValueType("aaa\""));
-        Assert.assertEquals(ColumnType.UNDEFINED, CairoLineProtoParserSupport.getValueType(""));
+        Assert.assertEquals(ColumnType.UNDEFINED, CairoLineProtoParserSupport.getValueType("\"aaa"));
 
         // the type is guessed, and the parser (CairoLineProtoParserSupport.parseFieldValue) will fail
         Assert.assertEquals(ColumnType.LONG256, CairoLineProtoParserSupport.getValueType("0x123a4"));

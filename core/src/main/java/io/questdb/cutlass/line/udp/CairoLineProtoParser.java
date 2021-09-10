@@ -211,13 +211,14 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
         try {
             for (int i = 0; i < columnCount; i++) {
-                final long value = columnIndexAndType.getQuick(i);
+                final long valueIdxAndType = columnIndexAndType.getQuick(i);
                 CairoLineProtoParserSupport.putValue(
                         row,
-                        Numbers.decodeHighInt(value),
+                        Numbers.decodeHighInt(valueIdxAndType),
                         geohashBitsSizeByColIdx.getQuick(i),
-                        Numbers.decodeLowInt(value),
-                        cache.get(columnValues.getQuick(i))
+                        Numbers.decodeLowInt(valueIdxAndType),
+                        cache.get(columnValues.getQuick(i)),
+                        metadata.getColumnType(i)
                 );
             }
             row.append();
@@ -334,7 +335,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     @SuppressWarnings("unused")
     private void parseFieldValueNewTable(CachedCharSequence value, CharSequenceCache cache) {
         int valueType = CairoLineProtoParserSupport.getValueType(value);
-        if (valueType == ColumnType.UNDEFINED) {
+        if (valueType == ColumnType.UNDEFINED || valueType == ColumnType.NULL) { // cannot create a col of type null
             switchModeToSkipLine();
         } else {
             parseValueNewTable(value, valueType);
@@ -355,37 +356,41 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         if (columnType > ColumnType.UNDEFINED) {
             boolean valid;
             int geoHashBits = 0;
-            final int valueTypeTag = ColumnType.tagOf(valueType);
-            final int columnTypeTag = ColumnType.tagOf(columnType);
-            switch (valueTypeTag) {
-                case ColumnType.LONG:
-                    valid = columnTypeTag == ColumnType.LONG
-                            || columnTypeTag == ColumnType.INT
-                            || columnTypeTag == ColumnType.SHORT
-                            || columnTypeTag == ColumnType.BYTE
-                            || columnTypeTag == ColumnType.TIMESTAMP
-                            || columnTypeTag == ColumnType.DATE;
-                    break;
-                case ColumnType.BOOLEAN:
-                    valid = columnTypeTag == ColumnType.BOOLEAN;
-                    break;
-                case ColumnType.STRING:
-                    valid = columnTypeTag == ColumnType.STRING ||
-                            columnTypeTag == ColumnType.CHAR ||
-                            isForField &&
-                                    (geoHashBits = ColumnType.getGeoHashBits(columnType)) != 0;
-                    break;
-                case ColumnType.DOUBLE:
-                    valid = columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT;
-                    break;
-                case ColumnType.SYMBOL:
-                    valid = columnTypeTag == ColumnType.SYMBOL;
-                    break;
-                case ColumnType.LONG256:
-                    valid = columnTypeTag == ColumnType.LONG256;
-                    break;
-                default:
-                    valid = false;
+            if (valueType != ColumnType.NULL) {
+                final int valueTypeTag = ColumnType.tagOf(valueType);
+                final int columnTypeTag = ColumnType.tagOf(columnType);
+                switch (valueTypeTag) {
+                    case ColumnType.LONG:
+                        valid = columnTypeTag == ColumnType.LONG
+                                || columnTypeTag == ColumnType.INT
+                                || columnTypeTag == ColumnType.SHORT
+                                || columnTypeTag == ColumnType.BYTE
+                                || columnTypeTag == ColumnType.TIMESTAMP
+                                || columnTypeTag == ColumnType.DATE;
+                        break;
+                    case ColumnType.BOOLEAN:
+                        valid = columnTypeTag == ColumnType.BOOLEAN;
+                        break;
+                    case ColumnType.STRING:
+                        valid = columnTypeTag == ColumnType.STRING ||
+                                columnTypeTag == ColumnType.CHAR ||
+                                isForField &&
+                                        (geoHashBits = ColumnType.getGeoHashBits(columnType)) != 0;
+                        break;
+                    case ColumnType.DOUBLE:
+                        valid = columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT;
+                        break;
+                    case ColumnType.SYMBOL:
+                        valid = columnTypeTag == ColumnType.SYMBOL;
+                        break;
+                    case ColumnType.LONG256:
+                        valid = columnTypeTag == ColumnType.LONG256;
+                        break;
+                    default:
+                        valid = false;
+                }
+            } else {
+                valid = true; // null is valid, the storage value is assigned later
             }
             if (valid) {
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, columnType));

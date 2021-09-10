@@ -37,19 +37,6 @@ import io.questdb.std.NumericException;
 public class CairoLineProtoParserSupport {
     private final static Log LOG = LogFactory.getLog(CairoLineProtoParserSupport.class);
 
-    /**
-     * Writes column value to table row. CharSequence value is interpreted depending on
-     * column type and written to column, identified by columnIndex. If value cannot be
-     * cast to column type, #BadCastException is thrown.
-     *
-     * @param row            table row
-     * @param columnType     column type value will be cast to
-     * @param columnTypeMeta if columnType's tag is GeoHash it contains bits precision (low short)
-     *                       and tag size (high short negative), otherwise -1
-     * @param columnIndex    index of column to write value to
-     * @param value          value characters
-     * @throws BadCastException when value cannot be cast to the give type
-     */
     public static void putValue(
             TableWriter.Row row,
             int columnType,
@@ -57,115 +44,145 @@ public class CairoLineProtoParserSupport {
             int columnIndex,
             CharSequence value
     ) throws BadCastException {
-        try {
-            switch (ColumnType.tagOf(columnType)) {
-                case ColumnType.LONG:
-                    row.putLong(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
-                    break;
-                case ColumnType.BOOLEAN:
-                    row.putBool(columnIndex, isTrue(value));
-                    break;
-                case ColumnType.STRING:
-                    row.putStr(columnIndex, value, 1, value.length() - 2);
-                    break;
-                case ColumnType.SYMBOL:
-                    row.putSym(columnIndex, value);
-                    break;
-                case ColumnType.DOUBLE:
-                    row.putDouble(columnIndex, Numbers.parseDouble(value));
-                    break;
-                case ColumnType.FLOAT:
-                    row.putFloat(columnIndex, Numbers.parseFloat(value));
-                    break;
-                case ColumnType.INT:
-                    row.putInt(columnIndex, Numbers.parseInt(value, 0, value.length() - 1));
-                    break;
-                case ColumnType.SHORT:
-                    row.putShort(columnIndex, Numbers.parseShort(value, 0, value.length() - 1));
-                    break;
-                case ColumnType.BYTE:
-                    long v = Numbers.parseLong(value, 0, value.length() - 1);
-                    if (v < Byte.MIN_VALUE || v > Byte.MAX_VALUE) {
-                        throw CairoException.instance(0)
-                                .put("line protocol integer is out of byte bounds [columnIndex=")
-                                .put(columnIndex)
-                                .put(", v=")
-                                .put(v)
-                                .put(']');
-                    }
-                    row.putByte(columnIndex, (byte) v);
-                    break;
-                case ColumnType.DATE:
-                    row.putDate(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
-                    break;
-                case ColumnType.LONG256:
-                    int limit = value.length() - 1;
-                    if (value.charAt(limit) != 'i') {
-                        limit++;
-                    }
-                    row.putLong256(columnIndex, value, 2, limit);
-                    break;
-                case ColumnType.TIMESTAMP:
-                    row.putTimestamp(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
-                    break;
-                case ColumnType.CHAR:
-                    row.putChar(columnIndex, value.length() == 2 ? (char) 0 : value.charAt(1)); // skip quotes
-                    break;
-                case ColumnType.GEOBYTE:
-                    row.putByte(
-                            columnIndex,  // skip quotes
-                            (byte) GeoHashes.fromStringTruncatingNl(
-                                    value,
-                                    1,
-                                    value.length() - 1,
-                                    columnTypeMeta
-                            )
-                    );
-                    break;
-                case ColumnType.GEOSHORT:
-                    row.putShort(
-                            columnIndex,
-                            (short) GeoHashes.fromStringTruncatingNl(
-                                    value,
-                                    1,
-                                    value.length() - 1,
-                                    columnTypeMeta
-                            )
-                    );
-                    break;
-                case ColumnType.GEOINT:
-                    row.putInt(
-                            columnIndex,
-                            (int) GeoHashes.fromStringTruncatingNl(
-                                    value,
-                                    1,
-                                    value.length() - 1,
-                                    columnTypeMeta
-                            )
-                    );
-                    break;
-                case ColumnType.GEOLONG:
-                    row.putLong(
-                            columnIndex,
-                            GeoHashes.fromStringTruncatingNl(
-                                    value,
-                                    1,
-                                    value.length() - 1,
-                                    columnTypeMeta
-                            )
-                    );
-                    break;
-                default:
-                    // unsupported types are ignored
-                    break;
+        putValue(row, columnType, columnTypeMeta, columnIndex, value, ColumnType.UNDEFINED);
+    }
+
+    /**
+     * Writes column value to table row. CharSequence value is interpreted depending on
+     * column type and written to column, identified by columnIndex. If value cannot be
+     * cast to column type, #BadCastException is thrown.
+     *
+     * @param row               table row
+     * @param columnType        column type value will be cast to
+     * @param columnTypeMeta    if columnType's tag is GeoHash it contains bits precision (low short)
+     *                          and tag size (high short negative), otherwise -1
+     * @param columnIndex       index of column to write value to
+     * @param value             value characters
+     * @param storageColumnType column storage type when table exists, otherwise UNDEFINED
+     * @throws BadCastException when value cannot be cast to the give type
+     */
+    public static void putValue(
+            TableWriter.Row row,
+            int columnType,
+            int columnTypeMeta,
+            int columnIndex,
+            CharSequence value,
+            int storageColumnType
+    ) throws BadCastException {
+        if (!SqlKeywords.isNullKeyword(value)) {
+            try {
+                switch (ColumnType.tagOf(columnType)) {
+                    case ColumnType.LONG:
+                        row.putLong(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
+                        break;
+                    case ColumnType.BOOLEAN:
+                        row.putBool(columnIndex, isTrue(value));
+                        break;
+                    case ColumnType.STRING:
+                        row.putStr(columnIndex, value, 1, value.length() - 2);
+                        break;
+                    case ColumnType.SYMBOL:
+                        row.putSym(columnIndex, value);
+                        break;
+                    case ColumnType.DOUBLE:
+                        row.putDouble(columnIndex, Numbers.parseDouble(value));
+                        break;
+                    case ColumnType.FLOAT:
+                        row.putFloat(columnIndex, Numbers.parseFloat(value));
+                        break;
+                    case ColumnType.INT:
+                        row.putInt(columnIndex, Numbers.parseInt(value, 0, value.length() - 1));
+                        break;
+                    case ColumnType.SHORT:
+                        row.putShort(columnIndex, Numbers.parseShort(value, 0, value.length() - 1));
+                        break;
+                    case ColumnType.BYTE:
+                        long v = Numbers.parseLong(value, 0, value.length() - 1);
+                        if (v < Byte.MIN_VALUE || v > Byte.MAX_VALUE) {
+                            throw CairoException.instance(0)
+                                    .put("line protocol integer is out of byte bounds [columnIndex=")
+                                    .put(columnIndex)
+                                    .put(", v=")
+                                    .put(v)
+                                    .put(']');
+                        }
+                        row.putByte(columnIndex, (byte) v);
+                        break;
+                    case ColumnType.DATE:
+                        row.putDate(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
+                        break;
+                    case ColumnType.LONG256:
+                        int limit = value.length() - 1;
+                        if (value.charAt(limit) != 'i') {
+                            limit++;
+                        }
+                        row.putLong256(columnIndex, value, 2, limit);
+                        break;
+                    case ColumnType.TIMESTAMP:
+                        row.putTimestamp(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
+                        break;
+                    case ColumnType.CHAR:
+                        row.putChar(columnIndex, value.length() == 2 ? (char) 0 : value.charAt(1)); // skip quotes
+                        break;
+                    case ColumnType.GEOBYTE:
+                        row.putByte(
+                                columnIndex,  // skip quotes
+                                (byte) GeoHashes.fromStringTruncatingNl(
+                                        value,
+                                        1,
+                                        value.length() - 1,
+                                        columnTypeMeta
+                                )
+                        );
+                        break;
+                    case ColumnType.GEOSHORT:
+                        row.putShort(
+                                columnIndex,
+                                (short) GeoHashes.fromStringTruncatingNl(
+                                        value,
+                                        1,
+                                        value.length() - 1,
+                                        columnTypeMeta
+                                )
+                        );
+                        break;
+                    case ColumnType.GEOINT:
+                        row.putInt(
+                                columnIndex,
+                                (int) GeoHashes.fromStringTruncatingNl(
+                                        value,
+                                        1,
+                                        value.length() - 1,
+                                        columnTypeMeta
+                                )
+                        );
+                        break;
+                    case ColumnType.GEOLONG:
+                        row.putLong(
+                                columnIndex,
+                                GeoHashes.fromStringTruncatingNl(
+                                        value,
+                                        1,
+                                        value.length() - 1,
+                                        columnTypeMeta
+                                )
+                        );
+                        break;
+                    default:
+                        // unsupported types are ignored
+                        break;
+                }
+            } catch (NumericException e) {
+                LOG.info()
+                        .$("cast error [value=")
+                        .$(value).$(", toType=")
+                        .$(ColumnType.nameOf(columnType))
+                        .$(']')
+                        .$();
             }
-        } catch (NumericException e) {
-            LOG.info()
-                    .$("cast error [value=")
-                    .$(value).$(", toType=")
-                    .$(ColumnType.nameOf(columnType))
-                    .$(']')
-                    .$();
+        }
+        else {
+            putNullValue(row, columnIndex, storageColumnType);
         }
     }
 
@@ -210,6 +227,9 @@ public class CairoLineProtoParserSupport {
                         return ColumnType.UNDEFINED;
                     }
                     return ColumnType.STRING;
+                case 'l':
+                case 'L': // null
+                    return SqlKeywords.isNullKeyword(token) ? ColumnType.NULL : ColumnType.SYMBOL;
                 default:
                     if (lastChar >= '0' && lastChar <= '9') {
                         if (len > 2 && token.charAt(0) == '0' && token.charAt(1) == 'x') {
@@ -217,13 +237,75 @@ public class CairoLineProtoParserSupport {
                         }
                         return ColumnType.DOUBLE;
                     }
+                    if (token.charAt(0) == '"') {
+                        return ColumnType.UNDEFINED;
+                    }
                     return ColumnType.SYMBOL;
             }
         }
-        return ColumnType.UNDEFINED;
+        return len == 0 ? ColumnType.NULL : ColumnType.UNDEFINED;
     }
 
-    public static boolean isTrue(CharSequence value) {
+    private static boolean isTrue(CharSequence value) {
         return (value.charAt(0) | 32) == 't';
+    }
+
+    private static void putNullValue(TableWriter.Row row, int columnIndex, int storageColumnType) {
+        switch (ColumnType.tagOf(storageColumnType)) {
+            case ColumnType.LONG:
+                row.putLong(columnIndex, Numbers.LONG_NaN);
+                break;
+            case ColumnType.BOOLEAN:
+                row.putBool(columnIndex, false);
+                break;
+            case ColumnType.STRING:
+                row.putStr(columnIndex, null);
+                break;
+            case ColumnType.SYMBOL:
+                row.putSym(columnIndex, null);
+                break;
+            case ColumnType.DOUBLE:
+                row.putDouble(columnIndex, Double.NaN);
+                break;
+            case ColumnType.FLOAT:
+                row.putFloat(columnIndex, Float.NaN);
+                break;
+            case ColumnType.INT:
+                row.putInt(columnIndex, Numbers.INT_NaN);
+                break;
+            case ColumnType.SHORT:
+                row.putShort(columnIndex, (short) 0);
+                break;
+            case ColumnType.BYTE:
+                row.putByte(columnIndex, (byte) 0);
+                break;
+            case ColumnType.DATE:
+                row.putDate(columnIndex, Numbers.LONG_NaN);
+                break;
+            case ColumnType.LONG256:
+                row.putLong256(columnIndex, "");
+                break;
+            case ColumnType.TIMESTAMP:
+                row.putTimestamp(columnIndex, Numbers.LONG_NaN);
+                break;
+            case ColumnType.CHAR:
+                row.putChar(columnIndex, (char) 0);
+                break;
+            case ColumnType.GEOBYTE:
+                row.putByte(columnIndex, GeoHashes.BYTE_NULL);
+                break;
+            case ColumnType.GEOSHORT:
+                row.putShort(columnIndex, GeoHashes.SHORT_NULL);
+                break;
+            case ColumnType.GEOINT:
+                row.putInt(columnIndex, GeoHashes.INT_NULL);
+                break;
+            case ColumnType.GEOLONG:
+                row.putLong(columnIndex, GeoHashes.INT_NULL);
+                break;
+            default:
+                // unsupported types are ignored
+                break;
+        }
     }
 }
