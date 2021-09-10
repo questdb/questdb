@@ -990,6 +990,19 @@ public final class Numbers {
         return parseLong0(sequence, p, lim);
     }
 
+    public static long spreadBits(long v) {
+        v = (v | (v << 16)) & 0X0000FFFF0000FFFFL;
+        v = (v | (v << 8)) & 0X00FF00FF00FF00FFL;
+        v = (v | (v << 4)) & 0X0F0F0F0F0F0F0F0FL;
+        v = (v | (v << 2)) & 0x3333333333333333L;
+        v = (v | (v << 1)) & 0x5555555555555555L;
+        return v;
+    }
+
+    public static long interleaveBits(long x, long y) {
+        return spreadBits(x) | (spreadBits(y) << 1);
+    }
+
     @NotNull
     public static Long256Impl parseLong256(CharSequence text, int len, Long256Impl long256) {
         if (Long256Util.isValidString(text, len)) {
