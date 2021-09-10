@@ -27,7 +27,10 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.cairo.SymbolMapWriter.TransientSymbolCountChangeHandler;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.SqlException;
@@ -4772,6 +4775,11 @@ public class TableWriter implements Closeable {
         public void putGeoHash(int index, long value) {
             int type = metadata.getColumnType(index);
             putGeoHash0(index, value, type);
+        }
+
+        public void putGeoHashDeg(int index, double lat, double lon) {
+            int type = metadata.getColumnType(index);
+            putGeoHash0(index, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type);
         }
 
         public void putGeoStr(int index, CharSequence hash) {

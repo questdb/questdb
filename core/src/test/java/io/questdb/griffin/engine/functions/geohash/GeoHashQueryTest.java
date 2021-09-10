@@ -455,34 +455,37 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
                     "rnd_geohash(15) geo2," +
                     "rnd_geohash(20) geo4," +
                     "rnd_geohash(40) geo8," +
+                    "rnd_geohash(40) geo9," +
                     "x " +
                     "from long_sequence(0))", sqlExecutionContext);
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "t1", "test")) {
                 for(int i = 0; i < 10; i++) {
                     TableWriter.Row row = writer.newRow();
-                    row.putGeoHash(0, GeoHashes.fromString("qeustdb", 0, 1));
+                    row.putGeoStr(0, "qeustdb");
                     row.putGeoHash(1, GeoHashes.fromString("qeustdb", 0, 2));
                     row.putGeoHash(2, GeoHashes.fromString("qeustdb", 0, 4));
                     row.putGeoHash(3, GeoHashes.fromString("qeustdb123456", 0, 8));
-                    row.putGeoHash(4, i);
+                    row.putGeoHashDeg(4, -78.22, 113.22);
+                    row.putGeoHash(5, i);
                     row.append();
                 }
                 writer.commit();
             }
 
             assertSql("t1",
-                    "geo1\tgeo2\tgeo4\tgeo8\tx\n" +
-                            "q\t0qe\tqeus\tqeustdb1\t0\n" +
-                            "q\t0qe\tqeus\tqeustdb1\t1\n" +
-                            "q\t0qe\tqeus\tqeustdb1\t2\n" +
-                            "q\t0qe\tqeus\tqeustdb1\t3\n" +
-                            "q\t0qe\tqeus\tqeustdb1\t4\n" +
-                            "q\t0qe\tqeus\tqeustdb1\t5\n" +
-                            "q\t0qe\tqeus\tqeustdb1\t6\n" +
-                            "q\t0qe\tqeus\tqeustdb1\t7\n" +
-                            "q\t0qe\tqeus\tqeustdb1\t8\n" +
-                            "q\t0qe\tqeus\tqeustdb1\t9\n");
+                    "geo1\tgeo2\tgeo4\tgeo8\tgeo9\tx\n" +
+                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t0\n" +
+                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t1\n" +
+                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t2\n" +
+                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t3\n" +
+                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t4\n" +
+                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t5\n" +
+                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t6\n" +
+                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t7\n" +
+                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t8\n" +
+                            "q\t0qe\tqeus\tqeustdb1\tnd0e02kr\t9\n"
+            );
         });
     }
 
