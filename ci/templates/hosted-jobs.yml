@@ -1,57 +1,35 @@
 jobs:
-- job: linux
-  displayName: "on linux"
+- job: RunOn
+  displayName: "on"
+  strategy:
+    matrix:
+      linux:
+        imageName: "ubuntu-latest"
+        poolName: "Azure Pipelines"
+        os: Linux
+        jdk: "1.11"
+      mac:
+        imageName: "macos-latest"
+        poolName: "Azure Pipelines"
+        os: macOS
+        jdk: "1.11"
+      windows:
+        imageName: "windows-latest"
+        poolName: "Azure Pipelines"
+        os: Windows
+        jdk: "1.11"
+      linux-jdk8:
+        imageName: "ubuntu-latest"
+        poolName: "Azure Pipelines"
+        os: Linux
+        jdk: "1.8"
   pool:
-    name: "Azure Pipelines"
-    vmImage: "ubuntu-latest"
+    vmImage: $(imageName)
+    name: $(poolName) 
   timeoutInMinutes: 60
   variables:
     SOURCE_CODE_CHANGED: $[ stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
     MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
     MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m'
-    os: Linux
-    jdk: "1.11"
   steps:
   - template: steps.yml
-# - job: mac
-#   displayName: "on mac"
-#   pool:
-#     name: "Azure Pipelines"
-#     vmImage: "macos-latest"
-#   timeoutInMinutes: 60
-#   variables:
-#     SOURCE_CODE_CHANGED: $[ stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
-#     MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
-#     MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m'
-#     os: macOS
-#     jdk: "1.11"
-#   steps:
-#   - template: steps.yml
-# - job: windows
-#   displayName: "on windows"
-#   pool:
-#     name: "Azure Pipelines"
-#     vmImage: "windows-latest"
-#   timeoutInMinutes: 60
-#   variables:
-#     SOURCE_CODE_CHANGED: $[ stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
-#     MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
-#     MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m'
-#     os: Windows
-#     jdk: "1.11"
-#   steps:
-#   - template: steps.yml
-# - job: linux_jdk8
-#   displayName: "on linux-jdk8"
-#   pool:
-#     name: "Azure Pipelines"
-#     vmImage: "ubuntu-latest"
-#   timeoutInMinutes: 60
-#   variables:
-#     SOURCE_CODE_CHANGED: $[ stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
-#     MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
-#     MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m'
-#     os: Linux
-#     jdk: "1.8"
-#   steps:
-#   - template: steps.yml
