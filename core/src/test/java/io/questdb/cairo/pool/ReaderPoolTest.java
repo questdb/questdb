@@ -580,7 +580,9 @@ public class ReaderPoolTest extends AbstractCairoTest {
                                 LockSupport.parkNanos(1L);
                             } finally {
                                 if (lockAcquired) {
-                                    lockTimes.add(System.currentTimeMillis());
+                                    synchronized (lockTimes) {
+                                        lockTimes.add(System.currentTimeMillis());
+                                    }
                                     pool.unlock(tblName);
                                     break;
                                 }
@@ -598,7 +600,9 @@ public class ReaderPoolTest extends AbstractCairoTest {
             new Thread(() -> {
                 Rnd rnd = new Rnd();
                 try {
-                    workerTimes.add(System.currentTimeMillis());
+                    synchronized (workerTimes){
+                        workerTimes.add(System.currentTimeMillis());
+                    }
                     for (int i = 0; i < iterations; i++) {
                         int index = rnd.nextPositiveInt() % readerCount;
                         String tblName = tableNames[index];
@@ -618,7 +622,9 @@ public class ReaderPoolTest extends AbstractCairoTest {
                             break;
                         }
                     }
-                    workerTimes.add(System.currentTimeMillis());
+                    synchronized (workerTimes) {
+                        workerTimes.add(System.currentTimeMillis());
+                    }
                 } finally {
                     halt.countDown();
                 }
@@ -630,18 +636,22 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             // check that there are lock times between worker times
             int count = 0;
-
+            long lo;
+            long hi;
             // ensure that we have worker times
-            Assert.assertEquals(2, workerTimes.size());
-            long lo = workerTimes.get(0);
-            long hi = workerTimes.get(1);
+            synchronized (workerTimes){
+                Assert.assertEquals(2, workerTimes.size());
+                lo = workerTimes.get(0);
+                hi = workerTimes.get(1);
+            }
 
-            Assert.assertTrue(lockTimes.size() > 0);
-
-            for (int i = 0, n = lockTimes.size(); i < n; i++) {
-                long t = lockTimes.getQuick(i);
-                if (t > lo && t < hi) {
-                    count++;
+            synchronized (lockTimes) {
+                Assert.assertTrue(lockTimes.size() > 0);
+                for (int i = 0, n = lockTimes.size(); i < n; i++) {
+                    long t = lockTimes.getQuick(i);
+                    if (t > lo && t < hi) {
+                        count++;
+                    }
                 }
             }
             Assert.assertTrue(count > 0);
