@@ -5,7 +5,7 @@ export AWS_REGION           ?= eu-west-1
 
 BUCKET_NAME 		?= questdb-releases
 BUCKET_PATH			?= releases/c_binaries
-DEFAULT_BINARY_PATH ?= ./src/main/resources/io/questdb/bin
+DEFAULT_BINARY_PATH ?= ../resources/io/questdb/bin
 DEVOPS_ORG			?= https://dev.azure.com/questdb
 DEVOPS_PROJECT		?= questdb
 AZ_PIPELINE_ID      ?= 6
