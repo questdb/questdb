@@ -2550,7 +2550,8 @@ public class TableWriter implements Closeable {
                         final long srcOooLo = srcOoo;
                         final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
                         final long srcOooHi;
-                        final long srcOooTimestampCeil = timestampCeilMethod.ceil(o3Timestamp);
+                        // keep ceil inclusive in the interval
+                        final long srcOooTimestampCeil = timestampCeilMethod.ceil(o3Timestamp) - 1;
                         if (srcOooTimestampCeil < o3TimestampMax) {
                             srcOooHi = Vect.boundedBinarySearchIndexT(
                                     sortedTimestampsAddr,
