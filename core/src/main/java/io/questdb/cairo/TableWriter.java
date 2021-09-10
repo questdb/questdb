@@ -408,6 +408,9 @@ public class TableWriter implements Closeable {
 
         // add column objects
         configureColumn(type, isIndexed);
+        if (isIndexed) {
+            populateDenseIndexerList();
+        }
 
         // increment column count
         columnCount++;
@@ -1796,7 +1799,6 @@ public class TableWriter implements Closeable {
         configureNullSetters(o3NullSetters, type, oooPrimary, oooSecondary);
         if (indexFlag) {
             indexers.extendAndSet((columns.size() - 1) / 2, new SymbolColumnIndexer());
-            populateDenseIndexerList();
         }
         refs.add(0);
     }
@@ -1827,7 +1829,6 @@ public class TableWriter implements Closeable {
             o3TimestampMem = o3Columns.getQuick(getPrimaryColumnIndex(timestampIndex));
             o3TimestampMemCpy = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE);
         }
-        populateDenseIndexerList();
     }
 
     private LongConsumer configureTimestampSetter() {
@@ -2547,7 +2548,8 @@ public class TableWriter implements Closeable {
                         final long srcOooLo = srcOoo;
                         final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
                         final long srcOooHi;
-                        final long srcOooTimestampCeil = timestampCeilMethod.ceil(o3Timestamp);
+                        // keep ceil inclusive in the interval
+                        final long srcOooTimestampCeil = timestampCeilMethod.ceil(o3Timestamp) - 1;
                         if (srcOooTimestampCeil < o3TimestampMax) {
                             srcOooHi = Vect.boundedBinarySearchIndexT(
                                     sortedTimestampsAddr,
@@ -3593,6 +3595,7 @@ public class TableWriter implements Closeable {
 
     private void openFirstPartition(long timestamp) {
         openPartition(repairDataGaps(timestamp));
+        populateDenseIndexerList();
         setAppendPosition(txFile.getTransientRowCount(), true);
         if (performRecovery) {
             performRecovery();
@@ -3662,6 +3665,7 @@ public class TableWriter implements Closeable {
                     indexer.configureFollowerAndWriter(configuration, path, name, getPrimaryColumn(i), columnTop);
                 }
             }
+            populateDenseIndexerList();
             LOG.info().$("switched partition [path='").$(path).$("']").$();
         } catch (Throwable e) {
             distressed = true;
@@ -4491,7 +4495,7 @@ public class TableWriter implements Closeable {
             try {
                 denseIndexers.getQuick(i).refreshSourceAndIndex(lo, hi);
             } catch (CairoException e) {
-                // this is pretty severe, we hit some sort of a limit
+                // this is pretty severe, we hit some sort of limit
                 LOG.error().$("index error {").$((Sinkable) e).$('}').$();
                 throwDistressException(e);
             }
@@ -4765,6 +4769,11 @@ public class TableWriter implements Closeable {
             notNull(index);
         }
 
+        public void putGeoHash(int index, long value) {
+            int type = metadata.getColumnType(index);
+            putGeoHash0(index, value, type);
+        }
+
         public void putGeoStr(int index, CharSequence hash) {
             long val;
             final int type = metadata.getColumnType(index);
@@ -4789,11 +4798,6 @@ public class TableWriter implements Closeable {
                 val = GeoHashes.NULL;
             }
             putGeoHash0(index, val, type);
-        }
-
-        public void putGeoHash(int index, long value) {
-            int type = metadata.getColumnType(index);
-            putGeoHash0(index, value, type);
         }
 
         public void putInt(int index, int value) {
