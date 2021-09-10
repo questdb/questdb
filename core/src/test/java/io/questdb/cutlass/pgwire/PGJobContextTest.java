@@ -3794,6 +3794,32 @@ nodejs code:
         testStaleQueryCacheOnTableDropped(false);
     }
 
+    @Test
+    public void testSimpleAlterTable() throws Exception {
+        // we are going to:
+        // 1. create a table
+        // 2. alter table
+        // 2. check table column added
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(true, true)
+            ) {
+                PreparedStatement statement = connection.prepareStatement("create table x (a int)");
+                statement.execute();
+
+                PreparedStatement alter = connection.prepareStatement("alter table x add column b long");
+                alter.executeUpdate();
+
+                PreparedStatement select = connection.prepareStatement("x");
+                try (ResultSet resultSet = select.executeQuery()) {
+                    Assert.assertEquals(resultSet.findColumn("a"), 1);
+                    Assert.assertEquals(resultSet.findColumn("b"), 2);
+                }
+            }
+        });
+    }
+
     private void testStaleQueryCacheOnTableDropped(boolean simple) throws Exception {
         assertMemoryLeak(() -> {
             try (

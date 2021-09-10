@@ -1021,6 +1021,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 case CompiledQuery.SET:
                     configureContextForSet();
                     break;
+                case CompiledQuery.ALTER:
+                    compiler.executeAlterCommand(cc, sqlExecutionContext);
                 default:
                     // DDL SQL
                     queryTag = TAG_OK;
