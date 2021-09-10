@@ -1,0 +1,130 @@
+trigger: none
+
+variables:
+  OS_MAPPING: none
+  Windows_NT-X86: windows 
+  Darwin-X64: osx
+  Darwin-ARM: armosx 
+  Linux-ARM: armlinux
+  Linux-X64: linux
+
+stages:
+  - stage: BuildBinaries
+    displayName: "Building C++ binaries"
+    jobs:
+      - job: RunOn
+        displayName: "on"
+        strategy:
+          matrix:
+            linux:
+              imageName: "ubuntu-latest"
+              poolName: "Azure Pipelines"
+              os: Linux
+              jdk: "1.11"
+              generator: "CodeBlocks - Unix Makefiles"
+            mac:
+              imageName: "macos-latest"
+              poolName: "Azure Pipelines"
+              os: macOS
+              jdk: "1.11"
+              generator: "CodeBlocks - Unix Makefiles"       
+
+        pool:
+          name: $(poolName)
+          vmImage: $(imageName)
+        timeoutInMinutes: 60
+        steps:
+          - checkout: self
+            fetchDepth: 1
+            lfs: false
+            submodules: false
+          - bash: sudo sysctl -w fs.file-max=500000
+            condition: eq(variables['Agent.OS'], 'Linux')
+            displayName: "Increase file count on Linux"
+
+          - bash: |
+              echo "##vso[task.setvariable variable=OS_MAPPING]$(Linux-X64)"
+              sudo apt-get install -y nasm g++-10-aarch64-linux-gnu gcc-10-aarch64-linux-gnu gcc-mingw-w64
+            condition: and(eq(variables['Agent.OS'], 'Linux'), eq(variables['Agent.OSArchitecture'], 'x64'))
+            displayName: "Install NASM for Linux x64"
+          - bash: |
+              echo "##vso[task.setvariable variable=OS_MAPPING]$(Darwin-X64)"
+              brew install nasm
+            displayName: "Install NASM Mac"
+            condition: eq(variables['Agent.OS'], 'Darwin')
+          
+          - task: CMake@1
+            inputs:
+              workingDirectory: core
+              cmakeArgs: -G "$(generator)" -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+            displayName: "Genearting Makefiles for: $(generator)"
+
+          - task: CMake@1
+            inputs:
+              workingDirectory: core
+              cmakeArgs: --build cmake-build-release --config Release
+            displayName: "Build source-code $(Agent.OS)"
+
+
+          - task: CMake@1
+            inputs:
+              workingDirectory: core
+              cmakeArgs: -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake -DCMAKE_EXECUTABLE_SUFFIX=-10 -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release
+            displayName: "Build source-code Linux arm"
+            condition: eq(variables['Agent.OS'], 'Linux')
+
+          - task: CMake@1
+            inputs:
+              workingDirectory: core
+              cmakeArgs: -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/windows-x86_64.cmake -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release
+            displayName: "Build source-code for Windows"
+            condition: eq(variables['Agent.OS'], 'Linux')
+
+          - task: S3Upload@1
+            inputs:
+              awsCredentials: "ondemand-dev"
+              regionName: "eu-west-1"
+              bucketName: "questdb-releases"
+              sourceFolder: "core/src/main/resources/io/questdb/bin/$(OS_MAPPING)/"
+              globExpressions: |
+                *.so
+                *.dylib 
+                *.dll
+              targetFolder: "releases/c_binaries/$(Build.BuildId)/$(OS_MAPPING)"
+              filesAcl: 'bucket-owner-full-control'
+            displayName: "Upload binaries to S3 $(Agent.OS)"
+
+          - task: S3Upload@1
+            inputs:
+              awsCredentials: "ondemand-dev"
+              regionName: "eu-west-1"
+              bucketName: "questdb-releases"
+              sourceFolder: "core/src/main/resources/io/questdb/bin/windows/"
+              globExpressions: |
+                *.so
+                *.dylib 
+                *.dll
+              targetFolder: "releases/c_binaries/$(Build.BuildId)/windows"
+              filesAcl: 'bucket-owner-full-control'
+            displayName: "Upload binaries to S3 for cross-compiled windows"
+            condition: eq(variables['Agent.OS'], 'Linux')
+
+          - task: S3Upload@1
+            inputs:
+              awsCredentials: "ondemand-dev"
+              regionName: "eu-west-1"
+              bucketName: "questdb-releases"
+              sourceFolder: "core/src/main/resources/io/questdb/bin/armlinux/"
+              globExpressions: |
+                *.so
+                *.dylib 
+                *.dll
+              targetFolder: "releases/c_binaries/$(Build.BuildId)/armlinux"
+              filesAcl: 'bucket-owner-full-control'
+            displayName: "Upload binaries to S3 for cross-compiled armlinux"
+            condition: eq(variables['Agent.OS'], 'Linux')
+
+          - task: PublishBuildArtifacts@1
+            inputs:
+              pathToPublish: ./core/src/main/resources/io/questdb/bin
+            displayName: "Publish c++ artifacts" 
