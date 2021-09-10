@@ -210,7 +210,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             // old table
             try (TableModel model = new TableModel(configuration, "y_416", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()
             ) {
-                CairoTestUtils.createTableWithVersion(model, 416);
+                CairoTestUtils.createTable(model, 416);
             }
 
             FilesFacade ff = new FilesFacadeImpl() {
@@ -699,7 +699,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 }
 
                 try (TableModel model = new TableModel(configuration, "y_416", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()) {
-                    CairoTestUtils.createTableWithVersion(model, 416);
+                    CairoTestUtils.createTable(model, 416);
                     downgradeTxFile(model);
                 }
 

@@ -39,7 +39,7 @@ public class MigrateSymbolNullFlagTest extends AbstractGriffinTest {
             String tableName = "test";
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()
             ) {
-                CairoTestUtils.createTableWithVersion(model, 404);
+                CairoTestUtils.createTable(model, 404);
                 compiler.compile(
                         "insert into test select * from (" +
                                 "select" +
@@ -63,7 +63,7 @@ public class MigrateSymbolNullFlagTest extends AbstractGriffinTest {
         String tableName = "test";
         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE).col("aaa", ColumnType.SYMBOL)
         ) {
-            CairoTestUtils.createTableWithVersion(model, 404);
+            CairoTestUtils.createTable(model, 404);
             Rnd rnd = new Rnd();
             try (TableWriter writer = new TableWriter(configuration, model.getName())) {
                 appendRows(rnd, writer);
@@ -81,7 +81,7 @@ public class MigrateSymbolNullFlagTest extends AbstractGriffinTest {
         String tableName = "test";
         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE).col("aaa", ColumnType.SYMBOL)
         ) {
-            CairoTestUtils.createTableWithVersion(model, 404);
+            CairoTestUtils.createTable(model, 404);
             assertTrue(engine.migrateNullFlag(sqlExecutionContext.getCairoSecurityContext(), tableName));
         }
     }
@@ -91,7 +91,7 @@ public class MigrateSymbolNullFlagTest extends AbstractGriffinTest {
         String tableName = "test";
         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE).col("aaa", ColumnType.SYMBOL)
         ) {
-            CairoTestUtils.createTableWithVersion(model, 404);
+            CairoTestUtils.createTable(model, 404);
             Rnd rnd = new Rnd();
             try (TableWriter writer = new TableWriter(configuration, model.getName())) {
                 appendRows(rnd, writer);

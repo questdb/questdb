@@ -5241,6 +5241,8 @@ public class TableWriter implements Closeable {
         void putTimestamp(int columnIndex, long value);
 
         void putTimestamp(int columnIndex, CharSequence value);
+
+        void putGeoStr(int columnIndex, CharSequence value);
     }
 
     static class TimestampValueRecord implements Record {
@@ -5356,11 +5358,13 @@ public class TableWriter implements Closeable {
             setRowValueNotNull(columnIndex);
         }
 
+        @Override
         public void putGeoHash(int index, long value) {
             int type = metadata.getColumnType(index);
             putGeoHash0(index, value, type);
         }
 
+        @Override
         public void putGeoStr(int index, CharSequence hash) {
             long val;
             final int type = metadata.getColumnType(index);
@@ -5510,6 +5514,51 @@ public class TableWriter implements Closeable {
             final int p = getPrimaryColumnIndex(columnIndex);
             activeColumns.getQuick(p).putByte(value);
             logColumns.getQuick(p).putByte(value);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putGeoStr(int columnIndex, CharSequence hash) {
+            long val;
+            final int type = metadata.getColumnType(columnIndex);
+            if (hash != null) {
+                final int hashLen = hash.length();
+                final int typeBits = ColumnType.getGeoHashBits(type);
+                final int charsRequired = (typeBits - 1) / 5 + 1;
+                if (hashLen < charsRequired) {
+                    val = GeoHashes.NULL;
+                } else {
+                    try {
+                        val = ColumnType.truncateGeoHashBits(
+                                GeoHashes.fromString(hash, 0, charsRequired),
+                                charsRequired * 5,
+                                typeBits
+                        );
+                    } catch (NumericException e) {
+                        val = GeoHashes.NULL;
+                    }
+                }
+            } else {
+                val = GeoHashes.NULL;
+            }
+            putGeoHash0(columnIndex, val, type);
+        }
+
+        private void putGeoHash0(int columnIndex, long value, int type) {
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.GEOBYTE:
+                    putByte(columnIndex, (byte) value);
+                    break;
+                case ColumnType.GEOSHORT:
+                    putShort(columnIndex, (short) value);
+                    break;
+                case ColumnType.GEOINT:
+                    putInt(columnIndex, (int) value);
+                    break;
+                default:
+                    putLong(columnIndex, value);
+                    break;
+            }
             setRowValueNotNull(columnIndex);
         }
 

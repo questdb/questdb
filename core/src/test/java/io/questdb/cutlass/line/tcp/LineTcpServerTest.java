@@ -173,7 +173,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
     public void testFieldsReducedNonPartitioned() throws Exception {
         try (TableModel m = new TableModel(configuration, "weather", PartitionBy.NONE)) {
             m.col("windspeed", ColumnType.DOUBLE).timestamp();
-            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+            CairoTestUtils.createTable(m, ColumnType.VERSION);
         }
 
         String lineData =
@@ -343,8 +343,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
     @Test
     public void testTableTableIdChangedOnRecreate() throws Exception {
         try (SqlCompiler compiler = new SqlCompiler(engine);
-             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(
-                     engine, 1, engine.getMessageBus())
+             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                      .with(
                              AllowAllCairoSecurityContext.INSTANCE,
                              new BindVariableServiceImpl(configuration),
@@ -404,7 +403,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
                     .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
                     .col("Length", ColumnType.INT);
-            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+            CairoTestUtils.createTable(m, ColumnType.VERSION);
         }
 
         String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
@@ -421,8 +420,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
     @Test
     public void testWithColumnAsReservedKeyword() throws Exception {
         try (SqlCompiler compiler = new SqlCompiler(engine);
-             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(
-                     engine, 1, engine.getMessageBus())
+             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                      .with(
                              AllowAllCairoSecurityContext.INSTANCE,
                              new BindVariableServiceImpl(configuration),
@@ -478,7 +476,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     .col("guild", ColumnType.LONG)
                     .col("channel", ColumnType.LONG)
                     .col("flags", ColumnType.BYTE);
-            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+            CairoTestUtils.createTable(m, ColumnType.VERSION);
         }
 
         int defaultMeasurementSize = maxMeasurementSize;
@@ -621,7 +619,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
                     .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
                     .col("Length", ColumnType.INT);
-            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+            CairoTestUtils.createTable(m, ColumnType.VERSION);
         }
 
         runInContext(() -> {

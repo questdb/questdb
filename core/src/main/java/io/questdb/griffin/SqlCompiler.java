@@ -240,7 +240,7 @@ public class SqlCompiler implements Closeable {
         int wPutSym = asm.poolInterfaceMethod(TableWriter.Row.class, "putSym", "(ILjava/lang/CharSequence;)V");
         int wPutSymChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putSym", "(IC)V");
         int wPutStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(ILjava/lang/CharSequence;)V");
-        int wPutGeoStr = asm.poolMethod(TableWriter.Row.class, "putGeoStr", "(ILjava/lang/CharSequence;)V");
+        int wPutGeoStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putGeoStr", "(ILjava/lang/CharSequence;)V");
         int wPutTimestampStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putTimestamp", "(ILjava/lang/CharSequence;)V");
         int wPutStrChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putStr", "(IC)V");
         int wPutChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putChar", "(IC)V");
@@ -598,7 +598,7 @@ public class SqlCompiler implements Closeable {
                                 asm.l2i();
                                 asm.i2b();
                             }
-                            asm.invokeVirtual(wPutByte);
+                            asm.invokeInterface(wPutByte, 2);
                             break;
                         default:
                             asm.invokeInterface(wPutChar, 2);
@@ -626,7 +626,7 @@ public class SqlCompiler implements Closeable {
                         case ColumnType.GEOSHORT:
                         case ColumnType.GEOINT:
                         case ColumnType.GEOLONG:
-                            asm.invokeVirtual(wPutGeoStr);
+                            asm.invokeInterface(wPutGeoStr, 2);
                             break;
                         default:
                             asm.invokeInterface(wPutStr, 2);
@@ -652,7 +652,7 @@ public class SqlCompiler implements Closeable {
                         asm.l2i();
                         asm.i2b();
                     }
-                    asm.invokeVirtual(wPutByte);
+                    asm.invokeInterface(wPutByte, 2);
                     break;
                 case ColumnType.GEOSHORT:
                     asm.invokeInterface(rGetGeoShort, 1);
@@ -663,7 +663,7 @@ public class SqlCompiler implements Closeable {
                         asm.invokeStatic(truncateGeoHashTypes);
                         asm.l2i();
                         asm.i2b();
-                        asm.invokeVirtual(wPutByte);
+                        asm.invokeInterface(wPutByte, 2);
                     } else if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOSHORT) {
                         asm.i2l();
                         asm.iconst(fromColumnType);
@@ -671,9 +671,9 @@ public class SqlCompiler implements Closeable {
                         asm.invokeStatic(truncateGeoHashTypes);
                         asm.l2i();
                         asm.i2s();
-                        asm.invokeVirtual(wPutShort);
+                        asm.invokeInterface(wPutShort, 2);
                     } else {
-                        asm.invokeVirtual(wPutShort);
+                        asm.invokeInterface(wPutShort, 2);
                     }
                     break;
                 case ColumnType.GEOINT:
@@ -686,7 +686,7 @@ public class SqlCompiler implements Closeable {
                             asm.invokeStatic(truncateGeoHashTypes);
                             asm.l2i();
                             asm.i2b();
-                            asm.invokeVirtual(wPutByte);
+                            asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.GEOSHORT:
                             asm.i2l();
@@ -695,7 +695,7 @@ public class SqlCompiler implements Closeable {
                             asm.invokeStatic(truncateGeoHashTypes);
                             asm.l2i();
                             asm.i2s();
-                            asm.invokeVirtual(wPutShort);
+                            asm.invokeInterface(wPutShort, 2);
                             break;
                         default:
                             if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOINT) {
@@ -705,7 +705,7 @@ public class SqlCompiler implements Closeable {
                                 asm.invokeStatic(truncateGeoHashTypes);
                                 asm.l2i();
                             }
-                            asm.invokeVirtual(wPutInt);
+                            asm.invokeInterface(wPutInt, 2);
                             break;
                     }
                     break;
@@ -718,7 +718,7 @@ public class SqlCompiler implements Closeable {
                             asm.invokeStatic(truncateGeoHashTypes);
                             asm.l2i();
                             asm.i2b();
-                            asm.invokeVirtual(wPutByte);
+                            asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.GEOSHORT:
                             asm.iconst(fromColumnType);
@@ -726,14 +726,14 @@ public class SqlCompiler implements Closeable {
                             asm.invokeStatic(truncateGeoHashTypes);
                             asm.l2i();
                             asm.i2s();
-                            asm.invokeVirtual(wPutShort);
+                            asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.GEOINT:
                             asm.iconst(fromColumnType);
                             asm.iconst(toColumnType);
                             asm.invokeStatic(truncateGeoHashTypes);
                             asm.l2i();
-                            asm.invokeVirtual(wPutInt);
+                            asm.invokeInterface(wPutInt, 2);
                             break;
                         default:
                             if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOLONG) {
@@ -741,7 +741,7 @@ public class SqlCompiler implements Closeable {
                                 asm.iconst(toColumnType);
                                 asm.invokeStatic(truncateGeoHashTypes);
                             }
-                            asm.invokeVirtual(wPutLong);
+                            asm.invokeInterface(wPutLong, 3);
                             break;
                     }
                     break;

@@ -57,6 +57,10 @@ public class CairoTestUtils {
         }
     }
 
+    public static void createTable(TableModel model) {
+        createTable(model, ColumnType.VERSION);
+    }
+
     public static void createTable(TableModel model, int version) {
         TableUtils.createTable(
                 model.getCairoCfg(),
