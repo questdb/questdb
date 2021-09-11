@@ -1543,13 +1543,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
     private void testConcurrentReloadMultiplePartitions(int partitionBy, long stride) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            // model data
-            LongList list = new LongList();
-            final int N = 1024;
-            final int scale = 10000;
-            for (int i = 0; i < N; i++) {
-                list.add(i);
-            }
+            final int N = 1024_0000;
 
             // model table
             try (TableModel model = new TableModel(configuration, "w", partitionBy).col("l", ColumnType.LONG).timestamp()) {
@@ -1567,9 +1561,9 @@ public class TableReaderTest extends AbstractCairoTest {
                     startBarrier.await();
                     long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
                     try (TableWriter writer = new TableWriter(configuration, "w")) {
-                        for (int i = 0; i < N * scale; i++) {
+                        for (int i = 0; i < N; i++) {
                             TableWriter.Row row = writer.newRow(timestampUs);
-                            row.putLong(0, list.getQuick(i % N));
+                            row.putLong(0, i);
                             row.append();
                             writer.commit();
                             timestampUs += stride;
@@ -1597,10 +1591,15 @@ public class TableReaderTest extends AbstractCairoTest {
                             cursor.toTop();
                             int count = 0;
                             while (cursor.hasNext()) {
-                                Assert.assertEquals(list.get(count++ % N), record.getLong(0));
+                                if (count++ != record.getLong(0)) {
+                                    sink.clear();
+                                    sink.put("Test [count=").put(count--).put(", rec=").put(record.getLong(0)).put(']').put(',');
+                                    ((Sinkable)record).toSink(sink);
+                                    Assert.fail(sink.toString());
+                                }
                             }
 
-                            if (count == N * scale) {
+                            if (count == N) {
                                 break;
                             }
                         } while (true);
@@ -2903,7 +2902,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     // now when we add new column by same name it must not pick up files we failed to delete previously
                     writer.addColumn("b", ColumnType.SYMBOL);
 
-                    // SymbolMap must be cleared when we try do add values to new column
+                    // SymbolMap must be cleared when we try to do add values to new column
                     appendTwoSymbols(writer, rnd);
                     writer.commit();
 
@@ -3008,7 +3007,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     // now when we add new column by same name it must not pick up files we failed to delete previously
                     writer.addColumn("b", ColumnType.SYMBOL);
 
-                    // SymbolMap must be cleared when we try do add values to new column
+                    // SymbolMap must be cleared when we try to do add values to new column
                     appendTwoSymbols(writer, rnd);
                     writer.commit();
 
@@ -3113,7 +3112,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     // now when we add new column by same name it must not pick up files we failed to delete previously
                     writer.addColumn("b", ColumnType.SYMBOL);
 
-                    // SymbolMap must be cleared when we try do add values to new column
+                    // SymbolMap must be cleared when we try to do add values to new column
                     appendTwoSymbols(writer, rnd);
                     writer.commit();
 
@@ -3632,7 +3631,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         assertCursor(reader2.getCursor(), ts, increment, blob, count, BATCH1_ASSERTER);
                     }
 
-                    // try reload when table hasn't changed
+                    // try to reload when table hasn't changed
                     Assert.assertFalse(reader.reload());
 
                     // add second batch to test if reload of open table will pick it up
@@ -3689,7 +3688,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         assertBatch2(count, increment, ts, blob, reader);
 
                         // good job we got as far as this
-                        // now add another column and populate fifth batch, including new column
+                        // lets now add another column and populate fifth batch, including new column
                         // reading this table will ensure tops are preserved
 
                         writer.addColumn("int2", ColumnType.INT);
@@ -4011,41 +4010,6 @@ public class TableReaderTest extends AbstractCairoTest {
         });
     }
 
-    private void testSwitchPartitionFail(RecoverableTestFilesFacade ff) throws Exception {
-        final Rnd rnd = new Rnd();
-
-        int count = 1000;
-        long increment = 60 * 60000L * 1000L;
-        long blob = allocBlob();
-        try {
-            TestUtils.assertMemoryLeak(() -> {
-                CairoTestUtils.createAllTable(configuration, PartitionBy.DAY);
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-                CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                    @Override
-                    public FilesFacade getFilesFacade() {
-                        return ff;
-                    }
-                };
-                testAppend(rnd, configuration, ts, count, increment, blob, 0);
-
-                try (TableReader reader = new TableReader(configuration, "all")) {
-                    RecordCursor cursor = reader.getCursor();
-                    try {
-                        assertCursor(cursor, ts, increment, blob, count, BATCH1_ASSERTER);
-                        Assert.fail();
-                    } catch (CairoException ignored) {
-                    }
-                    ff.setRecovered(true);
-                    assertCursor(cursor, ts, increment, blob, count, BATCH1_ASSERTER);
-                }
-                Assert.assertTrue(ff.wasCalled());
-            });
-        } finally {
-            freeBlob(blob);
-        }
-    }
-
     private void testTableCursor(long inc) throws NumericException {
         Rnd rnd = new Rnd();
         int N = 100;
@@ -4094,13 +4058,5 @@ public class TableReaderTest extends AbstractCairoTest {
     @FunctionalInterface
     private interface FieldGenerator {
         void generate(TableWriter.Row r, Rnd rnd, long ts, long blob);
-    }
-
-    private abstract static class RecoverableTestFilesFacade extends TestFilesFacade {
-        protected boolean recovered = false;
-
-        public void setRecovered(boolean recovered) {
-            this.recovered = recovered;
-        }
     }
 }
