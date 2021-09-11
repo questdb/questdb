@@ -1527,6 +1527,7 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    // flapping test
     public void testConcurrentReloadMultipleByDay() throws Exception {
         testConcurrentReloadMultiplePartitions(PartitionBy.DAY, 100000);
     }
@@ -1584,6 +1585,9 @@ public class TableReaderTest extends AbstractCairoTest {
                     try (TableReader reader = new TableReader(configuration, "w")) {
                         RecordCursor cursor = reader.getCursor();
                         final Record record = cursor.getRecord();
+                        sink.clear();
+                        ((Sinkable)record).toSink(sink);
+                        TestUtils.assertEquals("TableReaderRecord [columnBase=0, recordIndex=-1]", sink);
                         do {
                             // we deliberately ignore result of reload()
                             // to create more race conditions
