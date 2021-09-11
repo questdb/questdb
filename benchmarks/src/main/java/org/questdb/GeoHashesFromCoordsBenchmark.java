@@ -52,6 +52,6 @@ public class GeoHashesFromCoordsBenchmark {
     public long fromLatLon() {
         double lat = rnd.nextDouble() * 90.0;
         double lon = rnd.nextDouble() * 180.0;
-        return GeoHashes.fromCoordinatesUnsafe(lat, lon, 60);
+        return GeoHashes.fromCoordinatesDegUnsafe(lat, lon, 60);
     }
 }
