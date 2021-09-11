@@ -30,6 +30,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
@@ -57,7 +58,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
                                 ObjList<Function> args,
                                 IntList argPositions,
                                 CairoConfiguration configuration,
-                                SqlExecutionContext sqlExecutionContext) {
+                                SqlExecutionContext sqlExecutionContext) throws SqlException {
         Function geohash1 = args.getQuick(0);
         Function geohash2 = args.getQuick(1);
         int type1p = geohash1.getType();

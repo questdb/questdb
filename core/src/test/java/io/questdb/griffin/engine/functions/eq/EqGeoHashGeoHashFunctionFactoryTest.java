@@ -112,8 +112,8 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testSameTypeSameNonConstInt() {
         createEqFunctionNonConstAndAssert(
-                (int)1E9, ColumnType.getGeoHashTypeWithBits(30),
-                (int)1E9, ColumnType.getGeoHashTypeWithBits(30),
+                (int) 1E9, ColumnType.getGeoHashTypeWithBits(30),
+                (int) 1E9, ColumnType.getGeoHashTypeWithBits(30),
                 true
         );
     }
@@ -268,9 +268,9 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     public void testConstHalfConst1() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table geohash as (" +
-                    "select " +
-                    "    cast('sp052w92p1' as GeOhAsH(50b)) geohash from long_sequence(1)" +
-                    ")",
+                            "select " +
+                            "    cast('sp052w92p1' as GeOhAsH(50b)) geohash from long_sequence(1)" +
+                            ")",
                     sqlExecutionContext);
             assertSql(
                     "geohash where cast('sp052w92p1p' as gEoHaSh(10c)) = geohash",
@@ -392,18 +392,22 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     private void createEqFunctionAndAssert(boolean isConstant, boolean expectedEq) {
-        Function func =  factory.newInstance(-1, args, null, null, null);
-        Assert.assertEquals(expectedEq, func.getBool(null));
-        Assert.assertEquals(isConstant, func.isConstant());
-        if (func instanceof NegatableBooleanFunction) {
-            try {
-                NegatingFunctionFactory nf = new NegatingFunctionFactory("noteq", factory);
-                func = nf.newInstance(-1, args, null, null, null);
-                Assert.assertEquals(!expectedEq, func.getBool(null));
-            } catch (SqlException e) {
-                e.printStackTrace();
-                Assert.fail();
+        try {
+            Function func = factory.newInstance(-1, args, null, null, null);
+            Assert.assertEquals(expectedEq, func.getBool(null));
+            Assert.assertEquals(isConstant, func.isConstant());
+            if (func instanceof NegatableBooleanFunction) {
+                try {
+                    NegatingFunctionFactory nf = new NegatingFunctionFactory("noteq", factory);
+                    func = nf.newInstance(-1, args, null, null, null);
+                    Assert.assertEquals(!expectedEq, func.getBool(null));
+                } catch (SqlException e) {
+                    e.printStackTrace();
+                    Assert.fail();
+                }
             }
+        } catch (SqlException e) {
+            Assert.fail(e.getMessage());
         }
     }
 

@@ -202,14 +202,14 @@ public class GeoHashesTest {
 
     @Test
     public void testFromCoordinates() throws NumericException {
-        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 5), GeoHashes.fromBitString("11100", 0));
-        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 2 * 5), GeoHashes.fromBitString("1110011001", 0));
-        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 3 * 5), GeoHashes.fromBitString("111001100111100", 0));
-        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 4 * 5), GeoHashes.fromBitString("11100110011110000011", 0));
-        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 5 * 5), GeoHashes.fromBitString("1110011001111000001111000", 0));
-        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 6 * 5), GeoHashes.fromBitString("111001100111100000111100010001", 0));
-        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 7 * 5), GeoHashes.fromBitString("11100110011110000011110001000110001", 0));
-        Assert.assertEquals(GeoHashes.fromCoordinates(lat, lon, 8 * 5), GeoHashes.fromBitString("1110011001111000001111000100011000111111", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 5), GeoHashes.fromBitString("11100", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 2 * 5), GeoHashes.fromBitString("1110011001", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 3 * 5), GeoHashes.fromBitString("111001100111100", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 4 * 5), GeoHashes.fromBitString("11100110011110000011", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 5 * 5), GeoHashes.fromBitString("1110011001111000001111000", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 6 * 5), GeoHashes.fromBitString("111001100111100000111100010001", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 7 * 5), GeoHashes.fromBitString("11100110011110000011110001000110001", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 8 * 5), GeoHashes.fromBitString("1110011001111000001111000100011000111111", 0));
     }
 
     @Test
@@ -234,7 +234,7 @@ public class GeoHashesTest {
         StringSink sink = Misc.getThreadLocalBuilder();
         for (int precision = 1; precision <= maxGeoHashSizeChars; precision++) {
             int numBits = precision * 5;
-            long hash = GeoHashes.fromCoordinates(39.982, 0.024, numBits);
+            long hash = GeoHashes.fromCoordinatesDeg(39.982, 0.024, numBits);
             sink.clear();
             GeoHashes.appendChars(hash, precision, sink);
             expectedStr[precision - 1] = sink.toString();
@@ -252,16 +252,15 @@ public class GeoHashesTest {
         Assert.assertEquals(expected, everything.toString());
     }
 
-    @SuppressWarnings("ResultOfMethodCallIgnored")
     @Test
     public void testFromCoordinatesEdge() {
-        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromCoordinates(-91, 0, 10));
-        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromCoordinates(0, 190, 10));
+        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromCoordinatesDeg(-91, 0, 10));
+        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromCoordinatesDeg(0, 190, 10));
     }
 
     @Test
     public void testFromCoordinatesToFromStringMatch() throws NumericException {
-        final long gh = GeoHashes.fromCoordinates(lat, lon, 8 * 5);
+        final long gh = GeoHashes.fromCoordinatesDeg(lat, lon, 8 * 5);
         StringSink sink = Misc.getThreadLocalBuilder();
         GeoHashes.appendChars(gh, 8, sink);
         final long gh1 = GeoHashes.fromString(sink, 0, 8);
@@ -676,7 +675,7 @@ public class GeoHashesTest {
     private static long rnd_geohash(int size) throws NumericException {
         double x = rnd_double(-90, 90);
         double y = rnd_double(-180, 180);
-        return GeoHashes.fromCoordinates(x, y, size * 5);
+        return GeoHashes.fromCoordinatesDeg(x, y, size * 5);
     }
 
     private static double rnd_double(double min, double max) {
