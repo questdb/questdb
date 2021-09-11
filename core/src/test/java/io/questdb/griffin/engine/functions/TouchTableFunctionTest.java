@@ -24,15 +24,31 @@
 
 package io.questdb.griffin.engine.functions;
 
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 public class TouchTableFunctionTest extends AbstractGriffinTest {
+    final static String ddl = "create table x as " +
+            "(" +
+            "select" +
+            " rnd_geohash(40) g," +
+            " rnd_double(0)*100 a," +
+            " rnd_symbol(5,4,4,1) b," +
+            " timestamp_sequence(0, 100000000000) k" +
+            " from long_sequence(20)" +
+            "), index(b) timestamp(k) partition by DAY";
+
     @Before
     public void setUp3() {
         SharedRandom.RANDOM.set(new Rnd());
@@ -40,127 +56,97 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testTouchUpdateTouchAgain() throws Exception {
-        assertQuery("touch\n" +
-                        "{\"data_pages\": 80, \"index_key_pages\":1043, \"index_values_pages\": 1043}\n",
-                "select touch(select * from x)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_geohash(40) g," +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                null,
-                "insert into x select * from (" +
-                        " select" +
-                        " rnd_geohash(40)," +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(100)" +
-                        ") timestamp (t)",
-                "touch\n" +
-                        "{\"data_pages\": 84, \"index_key_pages\":1044, \"index_values_pages\": 1044}\n",
-                true,
-                true,
-                true
-        );
+        assertMemoryLeak(() -> {
+
+            final String query = "select touch(select * from x)";
+
+            final String ddl2 = "insert into x select * from (" +
+                    " select" +
+                    " rnd_geohash(40)," +
+                    " rnd_double(0)*100," +
+                    " 'VTJW'," +
+                    " to_timestamp('2019', 'yyyy') t" +
+                    " from long_sequence(100)" +
+                    ") timestamp (t)";
+
+            try {
+                execQuery(ddl, query);
+                execQuery(ddl2, query);
+            } catch (SqlException ex) {
+                Assert.fail(ex.getMessage());
+            }
+
+        });
     }
 
     @Test
     public void testTouchTableTimeInterval() throws Exception {
-        assertQuery("touch\n" +
-                        "{\"data_pages\": 4, \"index_key_pages\":1024, \"index_values_pages\": 1024}\n",
-                "select touch(select * from x where k in '1970-01-22')",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_geohash(40) g," +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                null,
-                null, null,
-                true,
-                true,
-                true
-        );
+        assertMemoryLeak(() -> {
+            final String query = "select touch(select * from x where k in '1970-01-22')";
+            try {
+                execQuery(ddl, query);
+            } catch (SqlException ex) {
+                Assert.fail(ex.getMessage());
+            }
+        });
     }
 
     @Test
     public void testTouchTableNoTimestampColumnSelected() throws Exception {
-        try {
-            assertQuery("",
-                    "select touch(select g,a,b from x where k in '1970-01-22')",
-                    "create table x as " +
-                            "(" +
-                            "select" +
-                            " rnd_geohash(40) g," +
-                            " rnd_double(0)*100 a," +
-                            " rnd_symbol(5,4,4,1) b," +
-                            " timestamp_sequence(0, 100000000000) k" +
-                            " from long_sequence(20)" +
-                            "), index(b) timestamp(k) partition by DAY",
-                    null,
-                    null, null,
-                    true,
-                    true,
-                    true
-            );
-        } catch (SqlException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "query does not support framing execution and cannot be pre-touched");
-        }
+        assertMemoryLeak(() -> {
+            final String query = "select touch(select g,a,b from x where k in '1970-01-22')";
+            try {
+                execQuery(ddl, query);
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "query does not support framing execution and cannot be pre-touched");
+            }
+        });
     }
 
     @Test
     public void testTouchTableThrowOnComplexFilter() throws Exception {
-        try {
-            assertQuery("",
-                    "select touch(select * from x where k in '1970-01-22' and a > 100.0)",
-                    "create table x as " +
-                            "(" +
-                            "select" +
-                            " rnd_geohash(40) g," +
-                            " rnd_double(0)*100 a," +
-                            " rnd_symbol(5,4,4,1) b," +
-                            " timestamp_sequence(0, 100000000000) k" +
-                            " from long_sequence(20)" +
-                            "), index(b) timestamp(k) partition by DAY",
-                    null,
-                    null, null,
-                    true,
-                    true,
-                    true
-            );
-        } catch (SqlException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "query does not support framing execution and cannot be pre-touched");
-        }
+        assertMemoryLeak(() -> {
+            final String query = "select touch(select * from x where k in '1970-01-22' and a > 100.0)";
+            try {
+                execQuery(ddl, query);
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "query does not support framing execution and cannot be pre-touched");
+            }
+        });
     }
 
     @Test
     public void testTouchTableTimeRange() throws Exception {
-            assertQuery("touch\n" +
-                            "{\"data_pages\": 20, \"index_key_pages\":1028, \"index_values_pages\": 1028}\n",
-                    "select touch(select * from x where k > '1970-01-18T00:00:00.000000Z')",
-                    "create table x as " +
-                            "(" +
-                            "select" +
-                            " rnd_geohash(40) g," +
-                            " rnd_double(0)*100 a," +
-                            " rnd_symbol(5,4,4,1) b," +
-                            " timestamp_sequence(0, 100000000000) k" +
-                            " from long_sequence(20)" +
-                            "), index(b) timestamp(k) partition by DAY",
-                    null,
-                    null, null,
-                    true,
-                    true,
-                    true
-            );
+        assertMemoryLeak(() -> {
+            final String query = "select touch(select * from x where k > '1970-01-18T00:00:00.000000Z')";
+            try {
+                execQuery(ddl, query);
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "query does not support framing execution and cannot be pre-touched");
+            }
+        });
     }
 
+    private void execQuery(String ddl, String query) throws SqlException {
+        compiler.compile(ddl, sqlExecutionContext);
+        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+        printCursor(cc);
+    }
+
+    private void printCursor(CompiledQuery cc) throws SqlException {
+        try (RecordCursorFactory factory = cc.getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                cursor.toTop();
+                Record record = cursor.getRecord();
+                Assert.assertNotNull(record);
+
+                sink.clear();
+                final RecordMetadata metadata = factory.getMetadata();
+                printer.printHeader(metadata, sink);
+                while (cursor.hasNext()) {
+                    printer.print(record, metadata, sink);
+                }
+            }
+        }
+    }
 }
