@@ -15,23 +15,14 @@
   </a>
 </p>
 
-English | [简体中文](./i18n/README.zh-cn.md) | [العربية](./i18n/README.ar-dz.md)
+[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | العربية
 
 # QuestDB
+<div dir="rtl">
+QuestDB هي قاعدة بيانات SQL عالية الأداء ومفتوحة المصدر للتطبيقات في الخدمات المالية، إنترنت الأشياء، التعلم الآلي و DevOps وإمكانية المراقبة. يتضمن نقاط النهاية لبروتوكول الأسلاك PostgreSQL ، والابتلاع الحيادي للمخطط عالي الإنتاجية باستخدام بروتوكول خط InfluxDB ، وواجهة برمجة تطبيقات REST للاستعلامات، الواردات بالجملة والصادرات.
 
-QuestDB is a high-performance, open-source SQL database for applications in
-financial services, IoT, machine learning, DevOps and observability. It includes
-endpoints for PostgreSQL wire protocol, high-throughput schema-agnostic
-ingestion using InfluxDB Line Protocol, and a REST API for queries, bulk
-imports, and exports.
-
-QuestDB implements ANSI SQL with native extensions for time-oriented language
-features. These extensions make it simple to correlate data from multiple
-sources using relational and time series joins. QuestDB achieves high
-performance from a column-oriented storage model, massively-parallelized vector
-execution, SIMD instructions, and various low-latency techniques. The entire
-codebase was built from the ground up in Java and C++, with no dependencies, and
-is 100% free from garbage collection.
+تقوم QuestDB بتنفيذ ANSI SQL بامتدادات أصلية لميزات اللغة الموجهة للوقت. تجعل هذه الإضافات من السهل ربط البيانات من مصادر متعددة باستخدام الصلات العلائقية والمتسلسلات الزمنية.
+يحقق QuestDB أداءً عاليًا من نموذج التخزين الموجه إلى العمود، والمتجه المتوازي بشكل كبير التنفيذ ، تعليمات SIMD ، والعديد من التقنيات منخفضة الكمون. تم إنشاء قاعدة الشفرة بالكامل من الألف إلى الياء باستعمال ال Java و C ++، بدون تبعيات، وخالية 100٪ من جامع البيانات المهملة.
 
 <div align="center">
   <a href="https://demo.questdb.io">
@@ -39,98 +30,88 @@ is 100% free from garbage collection.
   </a>
 </div>
 
-## Try QuestDB
+<h2>جرب QuestDB</h2>
 
-We provide a [live demo](https://demo.questdb.io/) provisioned with the latest
-QuestDB release and a 1.6 billion row dataset with 10 years of NYC taxi trips to
-query.
+نحن نوفر <a href="https://demo.questdb.io/">عرضًا توضيحيًا مباشرًا</a> مزودًا بأحدث إصدار من QuestDB ومجموعة بيانات تقدر ب 1.6 مليار صف مع 10 سنوات من رحلات تاكسي مدينة نيويورك للاستعلام
 
-To run QuestDB, Docker can be used to get started quickly:
+
+لتشغيل QuestDB، يمكن استخدام Docker للبدء بسرعة:
+</div>
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-macOS users can use Homebrew:
+<div dir="rtl">
+يمكن لمستخدمي macOS استخدام Homebrew:
+</div>
 
 ```bash
 brew install questdb
 brew services start questdb
 ```
 
-The [QuestDB downloads page](https://questdb.io/get-questdb/) provides direct
-downloads for binaries and has details for other installation and deployment
-methods.
+<div dir="rtl">
+توفر <a href="https://questdb.io/get-questdb/">صفحة تحميلات QuestDB</a> تحميلات مباشرة للثنائيات وتحتوي على تفاصيل حول طرق التثبيت والنشر الأخرى.
 
-### Connecting to QuestDB
+<h3>الاتصال بـ QuestDB</h3>
 
-You can interact with QuestDB using the following interfaces:
+يمكنك التفاعل مع QuestDB باستخدام الواجهات التالية:
 
-- [Web Console](https://questdb.io/docs/reference/web-console/) listening on
-  port `9000`
-- [REST API](https://questdb.io/docs/reference/api/rest/) on port `9000`
-- [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) wire protocol on
-  port `8812`
-- [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) line protocol for
-  high-throughput ingestion on port `9009`
+- <a href="https://questdb.io/docs/reference/web-console/">وحدة تحكم الويب</a> الاستماع على المنفذ `9000`
+- <a href="https://questdb.io/docs/reference/api/rest/">REST API</a> في المنفذ `9000`
+- <a href="https://questdb.io/docs/reference/api/postgres/">PostgreSQL</a> بروتوكول سلكي على المنفذ `8812`
+- بروتوكول خط <a href="https://questdb.io/docs/reference/api/influxdb/">InfluxDB</a>  لبث عالي الإنتاجية على المنفذ `9009`
 
-## How QuestDB compares to other open source TSDBs
+<h2>كيف يقارن QuestDB مع TSDBs الأخرى مفتوحة المصدر</h2>
 
-Here are high-cardinality
-[Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
-results using the `cpu-only` use case with 6 workers on an AMD Ryzen 3970X:
+فيما يلي عدد العناصر الأساسية العالية
+<a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">مجموعة معايير السلسلة الزمنية</a>
+النتائج باستخدام حالة استخدام `cpu-only` مع 6 عمال على AMD Ryzen 3970X:
 
 <div align="center">
   <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
-    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png"/>
+    <img alt="مخطط بياني يقارن الحد الأقصى من الإنتاجية لكل من QuestDB و ClickHouse و TimescaleDB و InfluxDB." src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png"/>
   </a>
 </div>
 
-The following table shows query execution time of a billion rows run on a
-`c5.metal` instance using 16 of the 96 threads available:
+يوضح الجدول التالي وقت تنفيذ الاستعلام لمليار صف يتم تشغيلها على نسخة "c5.metal" باستخدام 16 من 96 سلسلة متاحة:
 
-| Query                                                     | Runtime    |
+| الاستعلام                                                     | مدة العرض |
 | --------------------------------------------------------- | ---------- |
 | `SELECT sum(double) FROM 1bn`                             | 0.061 secs |
 | `SELECT tag, sum(double) FROM 1bn`                        | 0.179 secs |
 | `SELECT tag, sum(double) FROM 1bn WHERE timestamp in '2019'` | 0.05 secs  |
 
-## Documentation & resources
+## التوثيق والموارد
 
-- The [QuestDB documentation](https://questdb.io/docs/introduction/) describes
-  how to run and configure QuestDB with technical references.
-- [Our Slack workspace](https://slack.questdb.io) is a great place for technical
-  discussions and to meet other users. :wave:
-- [GitHub discussions](https://github.com/questdb/questdb/discussions) is where
-  our users share ideas for features, ask questions, and show what they've built.
-- [GitHub issues](https://github.com/questdb/questdb/issues) are for bug reports.
-- [The project milestones](https://github.com/questdb/questdb/milestones) lists
-  the tasks and features we're working on for upcoming releases.
-- [Tutorials](https://questdb.io/tutorial/) written by our community members
-  show what's possible with QuestDB.
-- [QuestDB on Stack Overflow](https://stackoverflow.com/questions/tagged/questdb)
-  has common troubleshooting solutions.
+- توضح <a href="https://questdb.io/docs/introduction/">وثائق QuestDB</a> كيفية تشغيل وتهيئة QuestDB بالمراجع الفنية.
+- تعد <a href="https://slack.questdb.io">مساحة عمل Slack الخاصة بنا</a> مكانًا رائعًا للمناقشات التقنية ولقاء مستخدمين آخرين. :wave:
+- <a href="https://github.com/questdb/questdb/discussions">مناقشات GitHub</a> هي المكان الذي يشارك فيه مستخدمونا أفكارًا حول الميزات وطرح الأسئلة وإظهار ما قاموا ببنائه.
+- <a href="https://github.com/questdb/questdb/issues">قضايا GitHub</a> مخصصة لتقارير الأخطاء.
+- تسرد <a href="https://github.com/questdb/questdb/milestones">معالم المشروع</a> المهام والميزات التي نعمل عليها للإصدارات القادمة.
+- <a href="https://questdb.io/tutorial/">دروس</a> كتبها أعضاء مجتمعنا تظهر ما يمكن عمله مع QuestDB.
+- <a href="https://stackoverflow.com/questions/tagged/questdb">QuestDB على Stack Overflow</a> لديها حلول مشتركة لاستكشاف الأخطاء وإصلاحها.
 
-## Contribute
+## المساهمة
 
-We are always happy to have contributions to the project whether it is source
-code, documentation, bug reports, feature requests or feedback. To get started
-with contributing:
+يسعدنا دائمًا أن يكون لدينا مساهمات في المشروع سواء كانت المساهمة بالكود، التوثيق، التبليغ عن الأخطاء، طلب ميزات أو التعليقات. للبدء بالمساهمة:
 
-- Have a look through GitHub issues labeled
+- ألق نظرة على مشكلات GitHub المصنفة
   "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
-- Read the
-  [contribution guide](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
-- For details on building QuestDB, see the
-  [build instructions](https://github.com/questdb/questdb/blob/master/core/README.md).
-- [Create a fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
-  of QuestDB and submit a pull request with your proposed changes.
+- إقرأ
+  [دليل المساهمة](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
+- للحصول على تفاصيل حول بناء QuestDB ، راجع
+  [تعليمات البناء](https://github.com/questdb/questdb/blob/master/core/README.md).
+- [أنشيء fork ](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
+  من QuestDB وإرسل طلب سحب مع التغييرات المقترحة.
 
-As a sign of our gratitude, we'll send contributors some of our QuestDB swag
-such as stickers and t-shirts! :star2:
+كدليل على امتناننا، سنرسل للمساهمين بعضًا من غنائم QuestDB مثل الملصقات والقمصان! :star2:
 
-A big thanks goes to the following wonderful people who have contributed to
-QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
+نتقدم بالشكر الجزيل إلى الأشخاص الرائعين التاليين الذين ساهموا في QuestDB: 
+([مفتاح الرموز التعبيرية](https://allcontributors.org/docs/en/emoji-key)):
+
+</div>
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
@@ -218,6 +199,7 @@ QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-This project follows the
-[all-contributors](https://github.com/all-contributors/all-contributors)
-specification. Contributions of any kind welcome!
+<div dir="rtl">
+
+هذا المشروع يتبع تخصيص <a href="https://github.com/all-contributors/all-contributors">كل المساهمين</a>. جميع المساهمات من أي نوع مرحب بها!
+</div>

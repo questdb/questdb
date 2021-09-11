@@ -25,14 +25,12 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -44,23 +42,22 @@ public class LatestByAllIndexedFilteredRecordCursorFactory extends AbstractTreeS
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
-            int hashColumnIndex,
-            int hashColumnType,
             @Nullable Function filter,
             @NotNull IntList columnIndexes,
-            @NotNull CharSequenceHashSet prefixes
+            @NotNull LongList prefixes
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
+        this.prefixes = new DirectLongList(Math.max(2, prefixes.size()));
 
-        this.prefixes = new DirectLongList(64);
-        if (hashColumnIndex > -1 && ColumnType.isGeoHash(hashColumnType)) {
-            GeoHashes.fromStringToBits(prefixes, hashColumnType, this.prefixes);
+        // copy into owned direct memory
+        for (int i = 0; i < prefixes.size(); i++) {
+            this.prefixes.add(prefixes.get(i));
         }
 
         if (filter == null) {
-            this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, hashColumnIndex, hashColumnType, rows, columnIndexes, this.prefixes);
+            this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, rows, columnIndexes, this.prefixes);
         } else {
-            this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, hashColumnIndex, hashColumnType, rows, filter, columnIndexes, this.prefixes);
+            this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, rows, filter, columnIndexes, this.prefixes);
         }
     }
 

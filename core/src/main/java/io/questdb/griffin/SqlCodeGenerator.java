@@ -101,7 +101,7 @@ public class SqlCodeGenerator implements Mutable {
     private final IntList recordFunctionPositions = new IntList();
     private final IntList groupByFunctionPositions = new IntList();
     private boolean fullFatJoins = false;
-    private final CharSequenceHashSet prefixes = new CharSequenceHashSet();
+    private final LongList prefixes = new LongList();
 
     static {
         joinsRequiringTimestamp[JOIN_INNER] = false;
@@ -941,10 +941,8 @@ public class SqlCodeGenerator implements Mutable {
             Function filter,
             SqlExecutionContext executionContext,
             int timestampIndex,
-            int hashColumnIndex,
-            int hashColumnType,
             @NotNull IntList columnIndexes,
-            @NotNull CharSequenceHashSet prefixes
+            @NotNull LongList prefixes
     ) throws SqlException {
         final DataFrameCursorFactory dataFrameCursorFactory;
         if (intrinsicModel.hasIntervalFilters()) {
@@ -1093,8 +1091,6 @@ public class SqlCodeGenerator implements Mutable {
                         metadata,
                         dataFrameCursorFactory,
                         latestByIndex,
-                        hashColumnIndex,
-                        hashColumnType,
                         filter,
                         columnIndexes,
                         prefixes
@@ -2440,18 +2436,11 @@ public class SqlCodeGenerator implements Mutable {
             final ExpressionNode withinExtracted = whereClauseParser.extractWithin(
                     model,
                     model.getWhereClause(),
-                    myMeta,
+                    readerMeta,
+                    functionParser,
+                    executionContext,
                     prefixes
             );
-
-            int hashColumnIndex = -1; // latest by without prefix match part
-            int hashColumnType = ColumnType.UNDEFINED;
-            if (prefixes.size() > 1) {
-                CharSequence column = prefixes.get(0);
-                hashColumnIndex = reader.getMetadata().getColumnIndex(column);
-                hashColumnType = reader.getMetadata().getColumnType(hashColumnIndex);
-                prefixes.remove(column);
-            }
 
             model.setWhereClause(withinExtracted);
 
@@ -2508,8 +2497,6 @@ public class SqlCodeGenerator implements Mutable {
                             f,
                             executionContext,
                             readerTimestampIndex,
-                            hashColumnIndex,
-                            hashColumnType,
                             columnIndexes,
                             prefixes
                     );
@@ -2767,8 +2754,6 @@ public class SqlCodeGenerator implements Mutable {
                         myMeta,
                         new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
                         listColumnFilterA.getColumnIndexFactored(0),
-                        hashColumnIndex,
-                        hashColumnType,
                         null,
                         columnIndexes,
                         prefixes
