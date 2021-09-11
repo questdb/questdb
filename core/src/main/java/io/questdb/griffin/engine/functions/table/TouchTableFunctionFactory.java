@@ -54,10 +54,13 @@ public class TouchTableFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final Function function = args.get(0);
         final int pos = argPositions.get(0);
-        final RecordCursorFactory recordCursorFactory = function.getRecordCursorFactory();
-        if (recordCursorFactory == null || !recordCursorFactory.supportPageFrameCursor()) {
-            throw SqlException.$(pos, "query does not support framing execution and cannot be pre-touched");
+
+        try(final RecordCursorFactory recordCursorFactory = function.getRecordCursorFactory()) {
+            if (recordCursorFactory == null || !recordCursorFactory.supportPageFrameCursor()) {
+                throw SqlException.$(pos, "query does not support framing execution and cannot be pre-touched");
+            }
         }
+
         return new TouchTableFunc(function);
     }
 
