@@ -24,12 +24,7 @@
 
 package io.questdb.griffin.engine.functions;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
@@ -52,43 +47,6 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
     @Before
     public void setUp3() {
         SharedRandom.RANDOM.set(new Rnd());
-    }
-
-    @Test
-    public void testTouchUpdateTouchAgain() throws Exception {
-        assertMemoryLeak(() -> {
-
-            final String query = "select touch(select * from x)";
-
-            final String ddl2 = "insert into x select * from (" +
-                    " select" +
-                    " rnd_geohash(40)," +
-                    " rnd_double(0)*100," +
-                    " 'VTJW'," +
-                    " to_timestamp('2019', 'yyyy') t" +
-                    " from long_sequence(100)" +
-                    ") timestamp (t)";
-
-            try {
-                execQuery(ddl, query);
-                execQuery(ddl2, query);
-            } catch (SqlException ex) {
-                Assert.fail(ex.getMessage());
-            }
-
-        });
-    }
-
-    @Test
-    public void testTouchTableTimeInterval() throws Exception {
-        assertMemoryLeak(() -> {
-            final String query = "select touch(select * from x where k in '1970-01-22')";
-            try {
-                execQuery(ddl, query);
-            } catch (SqlException ex) {
-                Assert.fail(ex.getMessage());
-            }
-        });
     }
 
     @Test
@@ -116,6 +74,18 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testTouchTableTimeInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "select touch(select * from x where k in '1970-01-22')";
+            try {
+                execQuery(ddl, query);
+            } catch (SqlException ex) {
+                Assert.fail(ex.getMessage());
+            }
+        });
+    }
+
+    @Test
     public void testTouchTableTimeRange() throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select touch(select * from x where k > '1970-01-18T00:00:00.000000Z')";
@@ -127,26 +97,33 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
         });
     }
 
-    private void execQuery(String ddl, String query) throws SqlException {
-        compiler.compile(ddl, sqlExecutionContext);
-        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-        printCursor(cc);
+    @Test
+    public void testTouchUpdateTouchAgain() throws Exception {
+        assertMemoryLeak(() -> {
+
+            final String query = "select touch(select * from x)";
+
+            final String ddl2 = "insert into x select * from (" +
+                    " select" +
+                    " rnd_geohash(40)," +
+                    " rnd_double(0)*100," +
+                    " 'VTJW'," +
+                    " to_timestamp('2019', 'yyyy') t" +
+                    " from long_sequence(100)" +
+                    ") timestamp (t)";
+
+            try {
+                execQuery(ddl, query);
+                execQuery(ddl2, query);
+            } catch (SqlException ex) {
+                Assert.fail(ex.getMessage());
+            }
+
+        });
     }
 
-    private void printCursor(CompiledQuery cc) throws SqlException {
-        try (RecordCursorFactory factory = cc.getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                cursor.toTop();
-                Record record = cursor.getRecord();
-                Assert.assertNotNull(record);
-
-                sink.clear();
-                final RecordMetadata metadata = factory.getMetadata();
-                printer.printHeader(metadata, sink);
-                while (cursor.hasNext()) {
-                    printer.print(record, metadata, sink);
-                }
-            }
-        }
+    private void execQuery(String ddl, String query) throws SqlException {
+        compiler.compile(ddl, sqlExecutionContext);
+        TestUtils.printSql(compiler, sqlExecutionContext, query, sink);
     }
 }
