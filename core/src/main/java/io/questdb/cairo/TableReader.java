@@ -398,7 +398,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (openPartitionNameTxn == txPartitionNameTxn && openPartitionDataTxn == txPartitionDataTxn) {
                     if (openPartitionSize != newPartitionSize) {
                         if (openPartitionSize > -1L) {
-                            reloadPartition(partitionIndex, newPartitionSize, txPartitionNameTxn, partitionIndex == txPartitionCount - 1);
+                            reloadPartition(partitionIndex, newPartitionSize, txPartitionNameTxn);
                             this.openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE, newPartitionSize);
                             LOG.debug().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
                         }
@@ -598,8 +598,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             ObjList<BitmapIndexReader> indexReaders,
             int columnBase,
             int columnIndex,
-            long partitionRowCount,
-            boolean lastPartition
+            long partitionRowCount
     ) {
         MemoryMR mem1 = tempCopyStruct.mem1;
         final boolean reload = mem1 != null && mem1.isDeleted();
@@ -617,8 +616,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     indexReaders,
                     columnBase,
                     columnIndex,
-                    partitionRowCount,
-                    lastPartition
+                    partitionRowCount
             );
         }
     }
@@ -692,15 +690,14 @@ public class TableReader implements Closeable, SymbolTableSource {
             try {
                 final Path path = pathGenPartitioned(partitionIndex).$();
                 long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
-                final boolean lastPartition = partitionIndex == partitionCount - 1;
                 for (int i = 0; i < columnCount; i++) {
                     final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L) - 1;
                     if (copyFrom > -1) {
                         fetchColumnsFrom(oldBase, copyFrom);
-                        copyColumnsTo(columns, columnTops, indexReaders, base, i, partitionRowCount, lastPartition);
+                        copyColumnsTo(columns, columnTops, indexReaders, base, i, partitionRowCount);
                     } else {
                         // new instance
-                        reloadColumnAt(path, columns, columnTops, indexReaders, base, i, partitionRowCount, lastPartition);
+                        reloadColumnAt(path, columns, columnTops, indexReaders, base, i, partitionRowCount);
                     }
                 }
 
@@ -895,14 +892,13 @@ public class TableReader implements Closeable, SymbolTableSource {
     private MemoryMR openOrCreateMemory(
             Path path,
             ObjList<MemoryMR> columns,
-            boolean lastPartition,
             int primaryIndex,
             MemoryMR mem
     ) {
         if (mem != null && mem != NullColumn.INSTANCE) {
             mem.wholeFile(ff, path);
         } else {
-            mem = Vm.getMRInstance(ff, path, lastPartition ? ff.getMapPageSize() : ff.length(path));
+            mem = Vm.getMRInstance(ff, path, ff.length(path));
             columns.setQuick(primaryIndex, mem);
         }
         return mem;
@@ -921,7 +917,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (ff.exists(path.$())) {
                 path.chop$();
 
-                final boolean lastPartition = partitionIndex == partitionCount - 1;
                 final long partitionSize = txFile.getPartitionSize(partitionIndex);
 
                 LOG.info()
@@ -934,7 +929,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         .$(']').$();
 
                 if (partitionSize > 0) {
-                    openPartitionColumns(path, getColumnBase(partitionIndex), partitionSize, lastPartition);
+                    openPartitionColumns(path, getColumnBase(partitionIndex), partitionSize);
                     final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
                     this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                 }
@@ -965,7 +960,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void openPartitionColumns(Path path, int columnBase, long partitionRowCount, boolean lastPartition) {
+    private void openPartitionColumns(Path path, int columnBase, long partitionRowCount) {
         for (int i = 0; i < columnCount; i++) {
             reloadColumnAt(
                     path,
@@ -974,8 +969,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     this.bitmapIndexes,
                     columnBase,
                     i,
-                    partitionRowCount,
-                    lastPartition
+                    partitionRowCount
             );
         }
     }
@@ -1059,8 +1053,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void reconcileOpenPartitions(long prevPartitionVersion) {
-        // Reconcile partition full or partial
-        // Partial will only update row count of last partition and append new partitions
+        // Reconcile partition full or partial will only update row count of last partition and append new partitions
         if (this.txFile.getPartitionTableVersion() == prevPartitionVersion) {
             int partitionIndex = Math.max(0, partitionCount - 1);
             final int txPartitionCount = txFile.getPartitionCount();
@@ -1079,7 +1072,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                         if (openPartitionNameTxn == txPartitionNameTxn && openPartitionDataTxn == txPartitionDataTxn) {
                             if (openPartitionSize != txPartitionSize) {
-                                reloadPartition(partitionIndex, txPartitionSize, txPartitionNameTxn, partitionIndex == txPartitionCount - 1);
+                                reloadPartition(partitionIndex, txPartitionSize, txPartitionNameTxn);
                                 this.openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                 LOG.debug().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
                             }
@@ -1117,8 +1110,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             ObjList<BitmapIndexReader> indexReaders,
             int columnBase,
             int columnIndex,
-            long partitionRowCount,
-            boolean lastPartition
+            long partitionRowCount
     ) {
         final int plen = path.length();
         try {
@@ -1131,14 +1123,14 @@ public class TableReader implements Closeable, SymbolTableSource {
 
             if (ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
 
-                mem1 = openOrCreateMemory(path, columns, lastPartition, primaryIndex, mem1);
+                mem1 = openOrCreateMemory(path, columns, primaryIndex, mem1);
 
                 final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b);
                 final int type = metadata.getColumnType(columnIndex);
 
                 if (ColumnType.isVariableLength(type)) {
                     TableUtils.iFile(path.trimTo(plen), name);
-                    mem2 = openOrCreateMemory(path, columns, lastPartition, secondaryIndex, mem2);
+                    mem2 = openOrCreateMemory(path, columns, secondaryIndex, mem2);
                     growColumn(mem1, mem2, type, partitionRowCount - columnTop);
                 } else {
                     Misc.free(columns.getAndSetQuick(secondaryIndex, null));
@@ -1207,7 +1199,7 @@ public class TableReader implements Closeable, SymbolTableSource {
      * @param partitionIndex index of partition
      * @param rowCount       number of rows in partition
      */
-    private void reloadPartition(int partitionIndex, long rowCount, long openPartitionNameTxn, boolean lastPartition) {
+    private void reloadPartition(int partitionIndex, long rowCount, long openPartitionNameTxn) {
         Path path = pathGenPartitioned(partitionIndex);
         TableUtils.txnPartitionConditionally(path, openPartitionNameTxn);
         try {
@@ -1224,8 +1216,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                             bitmapIndexes,
                             columnBase,
                             i,
-                            rowCount,
-                            lastPartition
+                            rowCount
                     );
                 } else {
                     growColumn(
@@ -1309,7 +1300,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             try {
                 final Path path = pathGenPartitioned(partitionIndex).$();
                 final long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
-                final boolean lastPartition = partitionIndex == partitionCount - 1;
 
                 Vect.memset(pState, columnCount, 0);
 
@@ -1335,8 +1325,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                         bitmapIndexes,
                                         base,
                                         i,
-                                        partitionRowCount,
-                                        lastPartition
+                                        partitionRowCount
                                 );
                             }
                             continue;
@@ -1344,10 +1333,10 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                         if (copyFrom > -1) {
                             fetchColumnsFrom(base, copyFrom);
-                            copyColumnsTo(this.columns, this.columnTops, this.bitmapIndexes, base, i, partitionRowCount, lastPartition);
+                            copyColumnsTo(this.columns, this.columnTops, this.bitmapIndexes, base, i, partitionRowCount);
                             int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4) - 1;
                             while (copyTo > -1 && isEntryToBeProcessed(pState, copyTo)) {
-                                copyColumnsTo(this.columns, this.columnTops, this.bitmapIndexes, base, copyTo, partitionRowCount, lastPartition);
+                                copyColumnsTo(this.columns, this.columnTops, this.bitmapIndexes, base, copyTo, partitionRowCount);
                                 copyTo = Unsafe.getUnsafe().getInt(pIndexBase + (copyTo - 1) * 8L + 4);
                             }
                             Misc.free(tempCopyStruct.mem1);
@@ -1363,8 +1352,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                     bitmapIndexes,
                                     base,
                                     i,
-                                    partitionRowCount,
-                                    lastPartition
+                                    partitionRowCount
                             );
                         }
                     }

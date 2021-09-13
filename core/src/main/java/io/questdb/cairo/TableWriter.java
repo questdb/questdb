@@ -1278,7 +1278,7 @@ public class TableWriter implements Closeable {
                         mem2.allocate(actualPosition * Long.BYTES);
                     }
                     mem1.jumpTo(mem1Size);
-                    mem2.jumpTo(actualPosition * Long.BYTES);
+                    mem2.jumpTo(actualPosition * Long.BYTES + Long.BYTES);
                     break;
                 case ColumnType.STRING:
                     assert mem2 != null;
@@ -1292,7 +1292,7 @@ public class TableWriter implements Closeable {
                         mem2.allocate(actualPosition * Long.BYTES);
                     }
                     mem1.jumpTo(mem1Size);
-                    mem2.jumpTo(actualPosition * Long.BYTES);
+                    mem2.jumpTo(actualPosition * Long.BYTES + Long.BYTES);
                     break;
                 default:
                     mem1Size = actualPosition << ColumnType.pow2SizeOf(type);
@@ -1305,7 +1305,7 @@ public class TableWriter implements Closeable {
         } else {
             mem1.jumpTo(0);
             if (mem2 != null) {
-                mem2.jumpTo(0);
+                mem2.putLong(0);
             }
         }
     }
@@ -4844,17 +4844,20 @@ public class TableWriter implements Closeable {
         }
 
         public void putStr(int index, CharSequence value) {
-            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value));
+            getPrimaryColumn(index).putStr(value);
+            getSecondaryColumn(index).putLong(getPrimaryColumn(index).getAppendOffset());
             notNull(index);
         }
 
         public void putStr(int index, char value) {
-            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value));
+            getPrimaryColumn(index).putStr(value);
+            getSecondaryColumn(index).putLong(getPrimaryColumn(index).getAppendOffset());
             notNull(index);
         }
 
         public void putStr(int index, CharSequence value, int pos, int len) {
-            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value, pos, len));
+            getPrimaryColumn(index).putStr(value, pos, len);
+            getSecondaryColumn(index).putLong(getPrimaryColumn(index).getAppendOffset());
             notNull(index);
         }
 
