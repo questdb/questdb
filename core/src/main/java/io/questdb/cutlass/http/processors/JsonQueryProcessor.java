@@ -342,7 +342,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CompiledQuery cc,
             CharSequence keepAliveHeader
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, SqlException {
-        compiler.executeAlterCommand(cc, sqlExecutionContext);
+        try {
+            compiler.executeAlterCommand(cc, sqlExecutionContext);
+        } catch (EntryUnavailableException ex) {
+            state.info().$("writer busy, will pass execution to writer owner [table=").$(cc.getAlterStatement().getTableName()).I$();
+
+        }
         sendConfirmation(state, cc, keepAliveHeader);
     }
 

@@ -30,12 +30,14 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.tasks.TableWriterTask;
 
-public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnStatement, AlterStatementRenameColumnStatement, AlterStatementDropColumnStatement, Mutable {
+public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnStatement, AlterStatementRenameColumnStatement, AlterStatementDropColumnStatement, AlterStatementChangePartitionStatement, Mutable {
     private final static Log LOG = LogFactory.getLog(AlterTableImpl.class);
     private final int indexValueBlockSize;
     private short command;
-    private CharSequence tableName;
+    private String tableName;
+    private int tableId;
     private int tableNamePosition;
     private final LongList partitionList = new LongList();
     private final ObjList<CharSequence> nameList = new ObjList<>();
@@ -117,29 +119,33 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
         return tableName;
     }
 
+    @Override
+    public AlterStatementChangePartitionStatement ofPartition(long partitionTimestamp) {
+        partitionList.add(partitionTimestamp);
+        return this;
+    }
+
+    @Override
+    public void serialize(TableWriterTask event) {
+        event.of(TableWriterTask.TSK_ALTER_TABLE, tableId, tableName);
+        event.put(command);
+    }
+
     public AlterStatement doNothing() {
         this.command = DO_NOTHING;
         this.tableName = null;
         return this;
     }
 
-    public AlterStatement doNoting(CharSequence tableName) {
-        this.command = DO_NOTHING;
-        this.tableName = tableName;
-        return this;
-    }
-
-    public LongList getPartitionList() {
-        return partitionList;
-    }
-
     public AlterStatementAddColumnStatement ofAddColumn(
             int tableNamePosition,
-            CharSequence tableName
+            String tableName,
+            int tableId
     ) {
         this.command = ADD_COLUMN;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
+        this.tableId = tableId;
         return this;
     }
 
@@ -154,25 +160,28 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
         return this;
     }
 
-    public AlterStatement ofAddIndex(int tableNamePosition, CharSequence tableName, CharSequence columnName) {
+    public AlterStatement ofAddIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
         this.command = ADD_INDEX;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
+        this.tableId = tableId;
         this.nameList.add(columnName);
         return this;
     }
 
-    public AlterStatement ofAttachPartition(int tableNamePosition, CharSequence tableName) {
+    public AlterStatementChangePartitionStatement ofAttachPartition(int tableNamePosition, String tableName, int tableId) {
         this.command = ATTACH_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
+        this.tableId = tableId;
         return this;
     }
 
-    public AlterStatement ofCacheSymbol(int tableNamePosition, CharSequence tableName, CharSequence columnName) {
+    public AlterStatement ofCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
         this.command = ADD_SYMBOL_CACHE;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
+        this.tableId = tableId;
         this.nameList.add(columnName);
         return this;
     }
@@ -190,52 +199,58 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
         return this;
     }
 
-    public AlterStatementDropColumnStatement ofDropColumn(int tableNamePosition, CharSequence tableName) {
+    public AlterStatementDropColumnStatement ofDropColumn(int tableNamePosition, String tableName, int tableId) {
         this.command = DROP_COLUMN;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
+        this.tableId = tableId;
         return this;
     }
 
-    public AlterStatement ofDropPartition(int tableNamePosition, CharSequence tableName) {
+    public AlterStatementChangePartitionStatement ofDropPartition(int tableNamePosition, String tableName, int tableId) {
         this.command = DROP_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
+        this.tableId = tableId;
         return this;
     }
 
-    public AlterStatement ofRemoveCacheSymbol(int tableNamePosition, CharSequence tableName, CharSequence columnName) {
+    public AlterStatement ofRemoveCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
         this.command = REMOVE_SYMBOL_CACHE;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
+        this.tableId = tableId;
         this.nameList.add(columnName);
         return this;
     }
 
-    public AlterStatementRenameColumnStatement ofRenameColumn(int tableNamePosition, CharSequence tableName) {
+    public AlterStatementRenameColumnStatement ofRenameColumn(int tableNamePosition, String tableName, int tableId) {
         this.command = RENAME_COLUMN;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
+        this.tableId = tableId;
         return this;
     }
 
-    public AlterStatement ofSetParamCommitLag(CharSequence tableName, long commitLag) {
+    public AlterStatement ofSetParamCommitLag(String tableName, int tableId, long commitLag) {
         this.command = SET_PARAM_COMMIT_LAG;
         this.tableName = tableName;
+        this.tableId = tableId;
         this.partitionList.add(commitLag);
         return this;
     }
 
-    public AlterStatement ofSetParamUncommittedRows(CharSequence tableName, int maxUncommittedRows) {
+    public AlterStatement ofSetParamUncommittedRows(String tableName, int tableId, int maxUncommittedRows) {
         this.command = SET_PARAM_MAX_UNCOMMITTED_ROWS;
         this.tableName = tableName;
+        this.tableId = tableId;
         this.partitionList.add(maxUncommittedRows);
         return this;
     }
 
     private void applyAddColumn(TableWriter tableWriter) throws SqlException {
         int lParam = 0;
-        for(int i = 0, n = nameList.size(); i < n; i++) {
+        for (int i = 0, n = nameList.size(); i < n; i++) {
             CharSequence columnName = nameList.get(i);
             int type = (int) partitionList.get(lParam++);
             int symbolCapacity = (int) partitionList.get(lParam++);
@@ -324,7 +339,7 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
     }
 
     private void applyDropColumn(TableWriter writer) throws SqlException {
-        for(int i = 0, n = nameList.size(); i < n; i++) {
+        for (int i = 0, n = nameList.size(); i < n; i++) {
             CharSequence columnName = nameList.get(i);
             RecordMetadata metadata = writer.getMetadata();
             if (metadata.getColumnIndexQuiet(columnName) == -1) {
@@ -345,8 +360,8 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
             try {
                 if (!tableWriter.removePartition(partitionTimestamp)) {
                     throw putPartitionName(SqlException.$(tableNamePosition, "could not remove partition '"),
-                                    tableWriter.getPartitionBy(),
-                                    partitionTimestamp).put('\'');
+                            tableWriter.getPartitionBy(),
+                            partitionTimestamp).put('\'');
                 }
             } catch (CairoException e) {
                 LOG.error().$("failed to drop partition [table=").$(tableName)

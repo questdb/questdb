@@ -917,9 +917,10 @@ public class SqlCompiler implements Closeable {
             tok = GenericLexer.unquote(expectToken(lexer, "table name"));
             tableExistsOrFail(tableNamePosition, tok, executionContext);
 
-            CharSequence tableName = GenericLexer.immutableOf(tok);
-            try (TableReader reader = getAlterTableReader(executionContext, tableName)) {
-                RecordMetadata tableMetadata = reader.getMetadata();
+            CharSequence name = GenericLexer.immutableOf(tok);
+            try (TableReader reader = getAlterTableReader(executionContext, name)) {
+                String tableName = reader.getTableName();
+                TableReaderMetadata tableMetadata = reader.getMetadata();
                 tok = expectToken(lexer, "'add', 'alter' or 'drop'");
 
                 if (SqlKeywords.isAddKeyword(tok)) {
@@ -979,7 +980,7 @@ public class SqlCompiler implements Closeable {
                         tok = expectToken(lexer, "'='");
                         if (tok.length() == 1 && tok.charAt(0) == '=') {
                             CharSequence value = GenericLexer.immutableOf(SqlUtil.fetchNext(lexer));
-                            return alterTableSetParam(paramName, value, paramNameNamePosition, tableName);
+                            return alterTableSetParam(paramName, value, paramNameNamePosition, tableName, tableMetadata.getId());
                         } else {
                             throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
                         }
@@ -990,8 +991,8 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'set' or 'rename' expected");
                 }
             } catch (CairoException e) {
-                LOG.info().$("could not alter table [table=").$(tableName).$(", ex=").$((Sinkable) e).$();
-                throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tableName).put("' could not be altered: ").put(e);
+                LOG.info().$("could not alter table [table=").$(name).$(", ex=").$((Sinkable) e).$();
+                throw SqlException.$(lexer.lastTokenPosition(), "table '").put(name).put("' could not be altered: ").put(e);
             }
         } else if (SqlKeywords.isSystemKeyword(tok)) {
             tok = expectToken(lexer, "'lock' or 'unlock'");
@@ -1041,7 +1042,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private CompiledQuery alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, CharSequence tableName) throws SqlException {
+    private CompiledQuery alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, String tableName, int tableId) throws SqlException {
         if (isMaxUncommittedRowsParam(paramName)) {
             int maxUncommittedRows;
             try {
@@ -1052,19 +1053,19 @@ public class SqlCompiler implements Closeable {
             if (maxUncommittedRows < 0) {
                 throw SqlException.$(paramNameNamePosition, "maxUncommittedRows must be non negative");
             }
-            return compiledQuery.ofAlter(alterQuery.ofSetParamUncommittedRows(tableName, maxUncommittedRows));
+            return compiledQuery.ofAlter(alterQuery.ofSetParamUncommittedRows(tableName, tableId, maxUncommittedRows));
         } else if (isCommitLag(paramName)) {
             long commitLag = SqlUtil.expectMicros(value, paramNameNamePosition);
             if (commitLag < 0) {
                 throw SqlException.$(paramNameNamePosition, "commitLag must be non negative");
             }
-            return compiledQuery.ofAlter(alterQuery.ofSetParamCommitLag(tableName, commitLag));
+            return compiledQuery.ofAlter(alterQuery.ofSetParamCommitLag(tableName, tableId, commitLag));
         } else {
             throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(paramName).put('\'');
         }
     }
 
-    private CompiledQuery alterTableAddColumn(int tableNamePosition, CharSequence tableName, RecordMetadata tableMetadata) throws SqlException {
+    private CompiledQuery alterTableAddColumn(int tableNamePosition, String tableName, TableReaderMetadata tableMetadata) throws SqlException {
         // add columns to table
         CharSequence tok = SqlUtil.fetchNext(lexer);
         //ignoring `column`
@@ -1074,7 +1075,8 @@ public class SqlCompiler implements Closeable {
 
         AlterStatementAddColumnStatement addColumnStatement = alterQuery.ofAddColumn(
                 tableNamePosition,
-                tableName);
+                tableName,
+                tableMetadata.getId());
 
         do {
             tok = expectToken(lexer, "'column' or column name");
@@ -1230,23 +1232,23 @@ public class SqlCompiler implements Closeable {
 
     private CompiledQuery alterTableColumnAddIndex(
             int tableNamePosition,
-            CharSequence tableName,
+            String tableName,
             int columnNamePosition,
             CharSequence columnName,
-            RecordMetadata metadata
+            TableReaderMetadata metadata
     ) throws SqlException {
 
         if (metadata.getColumnIndexQuiet(columnName) == -1) {
             throw SqlException.invalidColumn(columnNamePosition, columnName);
         }
-        return compiledQuery.ofAlter(alterQuery.ofAddIndex(tableNamePosition, tableName, columnName));
+        return compiledQuery.ofAlter(alterQuery.ofAddIndex(tableNamePosition, tableName, metadata.getId(), columnName));
     }
 
     private CompiledQuery alterTableColumnCacheFlag(
             int tableNamePosition,
-            CharSequence tableName,
+            String tableName,
             CharSequence columnName,
-            RecordMetadata metadata,
+            TableReaderMetadata metadata,
             boolean cache
     ) throws SqlException {
         try {
@@ -1264,16 +1266,16 @@ public class SqlCompiler implements Closeable {
                 return compiledQuery.ofAlter(null);
             }
 
-            return cache ? compiledQuery.ofAlter(alterQuery.ofCacheSymbol(tableNamePosition, tableName, columnName))
-                    :  compiledQuery.ofAlter(alterQuery.ofRemoveCacheSymbol(tableNamePosition, tableName, columnName));
+            return cache ? compiledQuery.ofAlter(alterQuery.ofCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName))
+                    :  compiledQuery.ofAlter(alterQuery.ofRemoveCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName));
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage())
                     .put("[errno=").put(e.getErrno()).put(']');
         }
     }
 
-    private CompiledQuery alterTableDropColumn(int tableNamePosition, CharSequence tableName, RecordMetadata metadata) throws SqlException {
-        AlterStatementDropColumnStatement dropColumnStatement = alterQuery.ofDropColumn(tableNamePosition, tableName);
+    private CompiledQuery alterTableDropColumn(int tableNamePosition, String tableName, TableReaderMetadata metadata) throws SqlException {
+        AlterStatementDropColumnStatement dropColumnStatement = alterQuery.ofDropColumn(tableNamePosition, tableName, metadata.getId());
         do {
             CharSequence tok = GenericLexer.unquote(expectToken(lexer, "column name"));
 
@@ -1299,11 +1301,12 @@ public class SqlCompiler implements Closeable {
     private CompiledQuery alterTableDropOrAttachPartition(TableReader reader, int action, SqlExecutionContext executionContext)
             throws SqlException {
         final int pos = lexer.lastTokenPosition();
-        if (reader.getMetadata().getPartitionBy() == PartitionBy.NONE) {
+        TableReaderMetadata readerMetadata = reader.getMetadata();
+        if (readerMetadata.getPartitionBy() == PartitionBy.NONE) {
             throw SqlException.$(pos, "table is not partitioned");
         }
 
-        CharSequence tableName = reader.getTableName();
+        String tableName = reader.getTableName();
         final CharSequence tok = expectToken(lexer, "'list' or 'where'");
         if (SqlKeywords.isListKeyword(tok)) {
             return alterTableDropOrAttachPartitionByList(reader, pos, action);
@@ -1311,20 +1314,21 @@ public class SqlCompiler implements Closeable {
             if (action != PartitionAction.DROP) {
                 throw SqlException.$(pos, "WHERE clause can only be used with DROP PARTITION command");
             }
+            AlterStatementChangePartitionStatement alterPartitionStatement = alterQuery.ofDropPartition(pos, tableName, reader.getMetadata().getId());
             ExpressionNode expr = parser.expr(lexer, (QueryModel) null);
             String designatedTimestampColumnName = null;
-            int tsIndex = reader.getMetadata().getTimestampIndex();
+            int tsIndex = readerMetadata.getTimestampIndex();
             if (tsIndex >= 0) {
-                designatedTimestampColumnName = reader.getMetadata().getColumnName(tsIndex);
+                designatedTimestampColumnName = readerMetadata.getColumnName(tsIndex);
             }
             if (designatedTimestampColumnName != null) {
-                GenericRecordMetadata metadata = new GenericRecordMetadata();
-                metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP, null));
-                Function function = functionParser.parseFunction(expr, metadata, currentExecutionContext);
+                GenericRecordMetadata recordMetadata = new GenericRecordMetadata();
+                recordMetadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP, null));
+                Function function = functionParser.parseFunction(expr, recordMetadata, currentExecutionContext);
                 if (function != null && ColumnType.isBoolean(function.getType())) {
                     function.init(null, executionContext);
-                    filterPartitions(function, reader, alterQuery.getPartitionList());
-                    return compiledQuery.ofAlter(alterQuery.ofDropPartition(pos, tableName));
+                    filterPartitions(function, reader, alterPartitionStatement);
+                    return compiledQuery.ofAlter(alterQuery);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
                 }
@@ -1336,7 +1340,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    public void filterPartitions(Function function, TableReader reader, LongList outList) throws SqlException {
+    public void filterPartitions(Function function, TableReader reader, AlterStatementChangePartitionStatement outList) throws SqlException {
         // Iterate partitions in descending order so if folders are missing on disk
         // removePartition does not fail to determine next minTimestamp
         // Last partition cannot be dropped, exclude it from the list
@@ -1345,15 +1349,23 @@ public class SqlCompiler implements Closeable {
             long partitionTimestamp = reader.getPartitionTimestampByIndex(i);
             partitionFunctionRec.setTimestamp(partitionTimestamp);
             if (function.getBool(partitionFunctionRec)) {
-                outList.add(partitionTimestamp);
+                outList.ofPartition(partitionTimestamp);
             }
         }
     }
 
     private CompiledQuery alterTableDropOrAttachPartitionByList(TableReader reader, int pos, int action) throws SqlException {
-        LongList partitionList = alterQuery.getPartitionList();
-        partitionList.clear();
-        CharSequence tableName = reader.getTableName();
+        String tableName = reader.getTableName();
+        AlterStatementChangePartitionStatement alterPartitionSmt;
+        int tableId = reader.getMetadata().getId();
+        if (action == PartitionAction.DROP) {
+            alterPartitionSmt = alterQuery.ofDropPartition(pos, tableName, tableId);
+        } else if (action == PartitionAction.ATTACH) {
+            alterPartitionSmt = alterQuery.ofAttachPartition(pos, tableName, tableId);
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "unsupported partition action");
+        }
+
         do {
             CharSequence tok = expectToken(lexer, "partition name");
             if (Chars.equals(tok, ',')) {
@@ -1364,7 +1376,7 @@ public class SqlCompiler implements Closeable {
             final long timestamp;
             timestamp = parsePartitionNameToTimestamp(unquoted, reader.getPartitionedBy());
 
-            partitionList.add(timestamp);
+            alterPartitionSmt.ofPartition(timestamp);
             tok = SqlUtil.fetchNext(lexer);
 
             if (tok == null || Chars.equals(tok, ';')) {
@@ -1376,13 +1388,7 @@ public class SqlCompiler implements Closeable {
             }
         } while (true);
 
-        if (action == PartitionAction.DROP) {
-            return compiledQuery.ofAlter(alterQuery.ofDropPartition(pos, tableName));
-        } else if (action == PartitionAction.ATTACH) {
-            return compiledQuery.ofAlter(alterQuery.ofAttachPartition(pos, tableName));
-        } else {
-            throw SqlException.$(lexer.lastTokenPosition(), "unsupported partition action");
-        }
+        return compiledQuery.ofAlter(alterQuery);
     }
 
     private long parsePartitionNameToTimestamp(CharSequence text, int partitionBy) {
@@ -1393,6 +1399,7 @@ public class SqlCompiler implements Closeable {
                 return IntervalUtils.parseFloorPartialDate(text);
             }
         } catch (NumericException e) {
+            // fall through to generte exception message
         }
         // Invalid value
         final CairoException ee = CairoException.instance(0);
@@ -1411,8 +1418,8 @@ public class SqlCompiler implements Closeable {
         throw ee;
     }
 
-    private CompiledQuery alterTableRenameColumn(int tableNamePosition, CharSequence tableName, RecordMetadata metadata) throws SqlException {
-        AlterStatementRenameColumnStatement renameColumnStatement = alterQuery.ofRenameColumn(tableNamePosition, tableName);
+    private CompiledQuery alterTableRenameColumn(int tableNamePosition, String tableName, TableReaderMetadata metadata) throws SqlException {
+        AlterStatementRenameColumnStatement renameColumnStatement = alterQuery.ofRenameColumn(tableNamePosition, tableName, metadata.getId());
         do {
             CharSequence tok = GenericLexer.unquote(expectToken(lexer, "current column name"));
             int columnIndex = metadata.getColumnIndexQuiet(tok);

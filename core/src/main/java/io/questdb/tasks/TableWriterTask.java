@@ -32,6 +32,7 @@ import java.io.Closeable;
 
 public class TableWriterTask implements Closeable {
     public static final int TSK_SLAVE_SYNC = 1;
+    public static final int TSK_ALTER_TABLE = 2;
     private int type;
     private long tableId;
     private String tableName;
@@ -84,6 +85,16 @@ public class TableWriterTask implements Closeable {
         this.tableName = tableName;
         this.ip = slaveIP;
         this.sequence = sequence;
+    }
+
+    public void of(
+            int type,
+            long tableId,
+            String tableName
+    ) {
+        this.tableId = tableId;
+        this.tableName = tableName;
+        this.type = type;
     }
 
     public long getAppendOffset() {
@@ -152,6 +163,13 @@ public class TableWriterTask implements Closeable {
         Unsafe.getUnsafe().putInt(appendPtr, value);
         appendPtr += 4;
     }
+
+    public void put(short value) {
+        ensureCapacity(2);
+        Unsafe.getUnsafe().putShort(appendPtr, value);
+        appendPtr += 2;
+    }
+
 
     public void put(long value) {
         ensureCapacity(8);

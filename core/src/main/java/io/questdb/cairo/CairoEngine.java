@@ -30,6 +30,7 @@ import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.WriterSource;
+import io.questdb.cairo.sql.AlterStatement;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
@@ -180,6 +181,25 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public CairoConfiguration getConfiguration() {
         return configuration;
+    }
+
+    public void pubTableWriterTask(AlterStatement alterTableStatement) {
+        CharSequence tableName = alterTableStatement.getTableName();
+        long pubCursor = messageBus.getTableWriterEventPubSeq().next();
+        if (pubCursor > -1) {
+            final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
+            alterTableStatement.serialize(event);
+            messageBus.getTableWriterEventPubSeq().done(pubCursor);
+            LOG.info()
+                    .$("published ASYNC writer ALTER TABLE task [table=").$(tableName)
+                    .I$();
+        } else {
+            LOG.error()
+                    .$("could not publish writer task [table=").$(tableName)
+                    .$(",seqCursor=").$(pubCursor)
+                    .I$();
+            throw CairoException.instance(0).put("Could not publish writer ALTER TABLE task [table=").put(tableName).put(']');
+        }
     }
 
     public MessageBus getMessageBus() {
