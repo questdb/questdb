@@ -25,5 +25,5 @@
 package io.questdb.cairo.sql;
 
 public interface AlterStatementChangePartitionStatement {
-    AlterStatementChangePartitionStatement ofPartition(long partitionTimestamp);
+    void ofPartition(long timestamp);
 }

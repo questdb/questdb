@@ -34,18 +34,13 @@ import io.questdb.tasks.TableWriterTask;
 
 public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnStatement, AlterStatementRenameColumnStatement, AlterStatementDropColumnStatement, AlterStatementChangePartitionStatement, Mutable {
     private final static Log LOG = LogFactory.getLog(AlterTableImpl.class);
-    private final int indexValueBlockSize;
     private short command;
     private String tableName;
     private int tableId;
     private int tableNamePosition;
-    private final LongList partitionList = new LongList();
+    private final LongList longList = new LongList();
     private final ObjList<CharSequence> nameList = new ObjList<>();
     private final ExceptionSinkAdapter exceptionSinkAdapter = new ExceptionSinkAdapter();
-
-    public AlterTableImpl(final CairoConfiguration configuration) {
-        indexValueBlockSize = configuration.getIndexValueBlockSize();
-    }
 
     @Override
     public void apply(TableWriter tableWriter) throws SqlException {
@@ -111,18 +106,12 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
     public void clear() {
         command = DO_NOTHING;
         nameList.clear();
-        partitionList.clear();
+        longList.clear();
     }
 
     @Override
     public CharSequence getTableName() {
         return tableName;
-    }
-
-    @Override
-    public AlterStatementChangePartitionStatement ofPartition(long partitionTimestamp) {
-        partitionList.add(partitionTimestamp);
-        return this;
     }
 
     @Override
@@ -152,20 +141,21 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
     @Override
     public AlterStatementAddColumnStatement ofAddColumn(CharSequence columnName, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity) {
         this.nameList.add(columnName);
-        this.partitionList.add(type);
-        this.partitionList.add(symbolCapacity);
-        this.partitionList.add(cache ? 1 : -1);
-        this.partitionList.add(indexed ? 1 : -1);
-        this.partitionList.add(indexValueBlockCapacity);
+        this.longList.add(type);
+        this.longList.add(symbolCapacity);
+        this.longList.add(cache ? 1 : -1);
+        this.longList.add(indexed ? 1 : -1);
+        this.longList.add(indexValueBlockCapacity);
         return this;
     }
 
-    public AlterStatement ofAddIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
+    public AlterStatement ofAddIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName, int indexValueBlockSize) {
         this.command = ADD_INDEX;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;
         this.nameList.add(columnName);
+        this.longList.add(indexValueBlockSize);
         return this;
     }
 
@@ -184,6 +174,11 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
         this.tableId = tableId;
         this.nameList.add(columnName);
         return this;
+    }
+
+    @Override
+    public void ofPartition(long timestamp) {
+        this.longList.add(timestamp);
     }
 
     @Override
@@ -235,16 +230,16 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
     public AlterStatement ofSetParamCommitLag(String tableName, int tableId, long commitLag) {
         this.command = SET_PARAM_COMMIT_LAG;
         this.tableName = tableName;
+        this.longList.add(commitLag);
         this.tableId = tableId;
-        this.partitionList.add(commitLag);
         return this;
     }
 
     public AlterStatement ofSetParamUncommittedRows(String tableName, int tableId, int maxUncommittedRows) {
         this.command = SET_PARAM_MAX_UNCOMMITTED_ROWS;
         this.tableName = tableName;
+        this.longList.add(maxUncommittedRows);
         this.tableId = tableId;
-        this.partitionList.add(maxUncommittedRows);
         return this;
     }
 
@@ -252,11 +247,11 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
         int lParam = 0;
         for (int i = 0, n = nameList.size(); i < n; i++) {
             CharSequence columnName = nameList.get(i);
-            int type = (int) partitionList.get(lParam++);
-            int symbolCapacity = (int) partitionList.get(lParam++);
-            boolean symbolCacheFlag = partitionList.get(lParam++) > 0;
-            boolean isIndexed = partitionList.get(lParam++) > 0;
-            int indexValueBlockCapacity = (int) partitionList.get(lParam++);
+            int type = (int) longList.get(lParam++);
+            int symbolCapacity = (int) longList.get(lParam++);
+            boolean symbolCacheFlag = longList.get(lParam++) > 0;
+            boolean isIndexed = longList.get(lParam++) > 0;
+            int indexValueBlockCapacity = (int) longList.get(lParam++);
             try {
                 tableWriter.addColumn(
                         columnName,
@@ -279,6 +274,7 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
     private void applyAddIndex(TableWriter tableWriter) throws SqlException {
         CharSequence columnName = nameList.get(0);
         try {
+            int indexValueBlockSize = (int) longList.get(0);
             tableWriter.addIndex(columnName, indexValueBlockSize);
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage())
@@ -287,8 +283,8 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
     }
 
     private void applyAttachPartition(TableWriter tableWriter) throws SqlException {
-        for (int i = 0, n = partitionList.size(); i < n; i++) {
-            long partitionTimestamp = partitionList.getQuick(i);
+        for (int i = 0, n = longList.size(); i < n; i++) {
+            long partitionTimestamp = longList.getQuick(i);
             try {
                 int statusCode = tableWriter.attachPartition(partitionTimestamp);
                 switch (statusCode) {
@@ -355,8 +351,8 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
     }
 
     private void applyDropPartition(TableWriter tableWriter) throws SqlException {
-        for (int i = 0, n = partitionList.size(); i < n; i++) {
-            long partitionTimestamp = partitionList.getQuick(i);
+        for (int i = 0, n = longList.size(); i < n; i++) {
+            long partitionTimestamp = longList.getQuick(i);
             try {
                 if (!tableWriter.removePartition(partitionTimestamp)) {
                     throw putPartitionName(SqlException.$(tableNamePosition, "could not remove partition '"),
@@ -376,12 +372,12 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
     }
 
     private void applyParamCommitLag(TableWriter tableWriter) {
-        long commitLag = partitionList.get(0);
+        long commitLag = longList.get(0);
         tableWriter.setMetaCommitLag(commitLag);
     }
 
     private void applyParamUncommittedRows(TableWriter tableWriter) {
-        int maxUncommittedRows = (int) partitionList.get(0);
+        int maxUncommittedRows = (int) longList.get(0);
         tableWriter.setMetaMaxUncommittedRows(maxUncommittedRows);
     }
 

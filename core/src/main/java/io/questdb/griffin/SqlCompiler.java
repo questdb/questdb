@@ -67,7 +67,7 @@ public class SqlCompiler implements Closeable {
     protected final CairoEngine engine;
     protected final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
     protected final CompiledQueryImpl compiledQuery = new CompiledQueryImpl();
-    protected final AlterTableImpl alterQuery;
+    protected final AlterTableImpl alterQuery = new AlterTableImpl();
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -135,7 +135,6 @@ public class SqlCompiler implements Closeable {
                                              FunctionFactory.class, FunctionFactory.class.getClassLoader()))
         );
         this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser);
-        this.alterQuery = new AlterTableImpl(configuration);
 
         // we have cyclical dependency here
         functionParser.setSqlCodeGenerator(codeGenerator);
@@ -1026,7 +1025,9 @@ public class SqlCompiler implements Closeable {
             return engine.getReader(executionContext.getCairoSecurityContext(), tableName);
         } catch (CairoException ex) {
             // Cannot open reader on existing table is pretty bad
-            LOG.error().$("error opening reader for alter table statement [table=").$(tableName).$(",error=").$(ex.getMessage()).I$();
+            LOG.error().$("error opening reader for alter table statement [table=").$(tableName)
+                    .$(",errno=").$(ex.getErrno())
+                    .$(",error=").$(ex.getMessage()).I$();
             // In some messed states, for example after _meta file swap failure Reader cannot be opened
             // but writer can be
             // Opening writer fixes the table mess
@@ -1241,7 +1242,7 @@ public class SqlCompiler implements Closeable {
         if (metadata.getColumnIndexQuiet(columnName) == -1) {
             throw SqlException.invalidColumn(columnNamePosition, columnName);
         }
-        return compiledQuery.ofAlter(alterQuery.ofAddIndex(tableNamePosition, tableName, metadata.getId(), columnName));
+        return compiledQuery.ofAlter(alterQuery.ofAddIndex(tableNamePosition, tableName, metadata.getId(), columnName, configuration.getIndexValueBlockSize()));
     }
 
     private CompiledQuery alterTableColumnCacheFlag(
@@ -1340,7 +1341,11 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    public void filterPartitions(Function function, TableReader reader, AlterStatementChangePartitionStatement outList) throws SqlException {
+    public void filterPartitions(
+            Function function,
+            TableReader reader,
+            AlterStatementChangePartitionStatement changePartitionStatement
+    ) throws SqlException {
         // Iterate partitions in descending order so if folders are missing on disk
         // removePartition does not fail to determine next minTimestamp
         // Last partition cannot be dropped, exclude it from the list
@@ -1349,23 +1354,20 @@ public class SqlCompiler implements Closeable {
             long partitionTimestamp = reader.getPartitionTimestampByIndex(i);
             partitionFunctionRec.setTimestamp(partitionTimestamp);
             if (function.getBool(partitionFunctionRec)) {
-                outList.ofPartition(partitionTimestamp);
+                changePartitionStatement.ofPartition(partitionTimestamp);
             }
         }
     }
 
     private CompiledQuery alterTableDropOrAttachPartitionByList(TableReader reader, int pos, int action) throws SqlException {
         String tableName = reader.getTableName();
-        AlterStatementChangePartitionStatement alterPartitionSmt;
-        int tableId = reader.getMetadata().getId();
+        AlterStatementChangePartitionStatement partitions;
         if (action == PartitionAction.DROP) {
-            alterPartitionSmt = alterQuery.ofDropPartition(pos, tableName, tableId);
-        } else if (action == PartitionAction.ATTACH) {
-            alterPartitionSmt = alterQuery.ofAttachPartition(pos, tableName, tableId);
+            partitions = alterQuery.ofDropPartition(pos, tableName, reader.getMetadata().getId());
         } else {
-            throw SqlException.$(lexer.lastTokenPosition(), "unsupported partition action");
+            partitions = alterQuery.ofAttachPartition(pos, tableName, reader.getMetadata().getId());
         }
-
+        assert action == PartitionAction.DROP || action == PartitionAction.ATTACH;
         do {
             CharSequence tok = expectToken(lexer, "partition name");
             if (Chars.equals(tok, ',')) {
@@ -1376,7 +1378,7 @@ public class SqlCompiler implements Closeable {
             final long timestamp;
             timestamp = parsePartitionNameToTimestamp(unquoted, reader.getPartitionedBy());
 
-            alterPartitionSmt.ofPartition(timestamp);
+            partitions.ofPartition(timestamp);
             tok = SqlUtil.fetchNext(lexer);
 
             if (tok == null || Chars.equals(tok, ';')) {
