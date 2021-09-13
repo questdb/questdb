@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.table;
 
+import io.questdb.TelemetryJob;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
@@ -32,10 +33,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Files;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
@@ -65,6 +65,8 @@ public class TouchTableFunctionFactory implements FunctionFactory {
     }
 
     private static class TouchTableFunc extends StrFunction implements UnaryFunction {
+        private static final Log LOG = LogFactory.getLog(TouchTableFunc.class);
+
         private final Function arg;
 
         private SqlExecutionContext sqlExecutionContext;
@@ -151,8 +153,9 @@ public class TouchTableFunctionFactory implements FunctionFactory {
                             }
                         }
                     }
-                } catch (SqlException ignored) {
+                } catch (SqlException e) {
                     // do not propagate
+                    LOG.error().$("cannot acquire page frame cursor: ").$((Sinkable) e).$();
                 }
             }
         }
