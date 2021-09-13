@@ -52,6 +52,7 @@ import { selectors } from "store"
 import { color } from "utils"
 import * as QuestDB from "utils/questdb"
 
+import VirtualList from "./VirtualList"
 import Table from "./Table"
 
 type Props = Readonly<{
@@ -135,6 +136,18 @@ const Schema = ({
     void fetchTables()
   }, [fetchTables])
 
+  function itemRenderer(table: QuestDB.Table) {
+    return (
+      <Table
+        expanded={table.table === opened}
+        key={table.table}
+        onChange={handleChange}
+        refresh={refresh}
+        table={table.table}
+      />
+    )
+  }
+
   return (
     <Wrapper ref={innerRef} {...rest}>
       <Menu>
@@ -160,17 +173,9 @@ const Schema = ({
 
       <Content _loading={loading}>
         {loading && <Loader size="48px" />}
-        {!loading &&
-          tables &&
-          tables.map(({ table }) => (
-            <Table
-              expanded={table === opened}
-              key={table}
-              onChange={handleChange}
-              refresh={refresh}
-              table={table}
-            />
-          ))}
+        {!loading && tables && (
+          <VirtualList itemRenderer={itemRenderer} items={tables} />
+        )}
         {!loading && <FlexSpacer />}
       </Content>
     </Wrapper>
