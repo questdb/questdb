@@ -314,6 +314,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastLongToSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToLong256FunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToBooleanFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastLongToGeoHashFunctionFactory,
 //                  cast long256 to ...,
             io.questdb.griffin.engine.functions.cast.CastLong256ToShortFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLong256ToByteFunctionFactory,
