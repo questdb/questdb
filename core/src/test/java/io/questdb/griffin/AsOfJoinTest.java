@@ -322,7 +322,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "9\tgoogl\t67.786\t0.198\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
                     "10\tgoogl\t38.54\t0.198\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n";
             try {
-                compiler.setFullSatJoins(true);
+                compiler.setFullFatJoins(true);
 
                 compiler.compile(
                         "create table x as (" +
@@ -402,7 +402,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
 
                 );
             } finally {
-                compiler.setFullSatJoins(false);
+                compiler.setFullFatJoins(false);
             }
         });
     }
