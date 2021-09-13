@@ -489,7 +489,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                 new CharSequence[]{
                         "", // discarded, empty line
                         "\"null\"", // actual string
-                        "0x1234", //  discarded, bad type long256
+                        "0x123t4", //  discarded, bad type long256
                 });
     }
 
