@@ -29,6 +29,7 @@ import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
@@ -37,10 +38,12 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 public class ReaderPoolTest extends AbstractCairoTest {
@@ -526,127 +529,55 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
     @Test
     public void testLockBusyReader() throws Exception {
-        final int readerCount = 5;
-        final int threadCount = 2;
-        final int iterations = 4000;
-        Rnd dataRnd = new Rnd();
-        StringSink sink = new StringSink();
-
-        final String[] tableNames = new String[readerCount];
-        final String[] expectedRowsPerReader = new String[readerCount];
-
-        for (int i = 0; i < readerCount; i++) {
-            tableNames[i] = "x" + i;
-            try (TableModel model = new TableModel(configuration, tableNames[i], PartitionBy.NONE).col("ts", ColumnType.DATE)) {
-                CairoTestUtils.create(model);
-            }
-
-            try (TableWriter w = new TableWriter(configuration, tableNames[i])) {
-                for (int k = 0; k < 10; k++) {
-                    TableWriter.Row r = w.newRow();
-                    r.putDate(0, dataRnd.nextLong());
-                    r.append();
+        assertWithPool(new PoolAwareCode() {
+            @Override
+            public void run(ReaderPool pool) throws Exception {
+                try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
+                    CairoTestUtils.create(model);
                 }
-                w.commit();
+
+                final int N = 100_000;
+                for (int i = 0; i < N; i++) {
+                    testLockBusyReaderRollTheDice(pool);
+                }
             }
 
-            sink.clear();
-            try (TableReader r = new TableReader(configuration, tableNames[i])) {
-                printer.print(r.getCursor(), r.getMetadata(), true, sink);
-            }
-            expectedRowsPerReader[i] = sink.toString();
-        }
-
-        LOG.info().$("testLockBusyReader BEGIN").$();
-
-        assertWithPool(pool -> {
-            final CyclicBarrier barrier = new CyclicBarrier(threadCount);
-            final CountDownLatch halt = new CountDownLatch(threadCount);
-            final AtomicInteger errors = new AtomicInteger();
-            final LongList lockTimes = new LongList();
-            final LongList workerTimes = new LongList();
-
-            new Thread(() -> {
-                Rnd rnd = new Rnd();
-                try {
-                    barrier.await();
-                    String tblName;
-                    for (int i = 0; i < iterations; i++) {
-                        tblName = tableNames[rnd.nextPositiveInt() % readerCount];
-                        while (true) {
-                            boolean lockAcquired = false;
-                            try {
-                                lockAcquired = pool.lock(tblName);
-                                LockSupport.parkNanos(1L);
-                            } finally {
-                                if (lockAcquired) {
-                                    lockTimes.add(System.currentTimeMillis());
-                                    pool.unlock(tblName);
-                                    break;
-                                }
-                            }
-                        }
+            private void testLockBusyReaderRollTheDice(ReaderPool pool) throws BrokenBarrierException, InterruptedException {
+                final CyclicBarrier start = new CyclicBarrier(2);
+                final SOCountDownLatch halt = new SOCountDownLatch(1);
+                final AtomicReference<TableReader> ref = new AtomicReference<>();
+                new Thread(() -> {
+                    try {
+                        // start together with main thread
+                        start.await();
+                        // try to get reader from pool
+                        ref.set(pool.get("x"));
+                    } catch (Throwable ignored) {
+                    } finally {
+                        // the end
+                        halt.countDown();
                     }
-                } catch (Exception e) {
-                    errors.incrementAndGet();
-                    e.printStackTrace();
-                } finally {
-                    halt.countDown();
-                }
-            }).start();
+                }).start();
 
-            new Thread(() -> {
-                Rnd rnd = new Rnd();
-                try {
-                    workerTimes.add(System.currentTimeMillis());
-                    for (int i = 0; i < iterations; i++) {
-                        int index = rnd.nextPositiveInt() % readerCount;
-                        String tblName = tableNames[index];
-                        String expected = expectedRowsPerReader[index];
-                        try (TableReader r = pool.get(tblName)) {
-                            sink.clear();
-                            TestUtils.assertReader(expected, r, sink);
-                            if (barrier.getNumberWaiting() > 0 && tblName.equals(tableNames[readerCount - 1])) {
-                                barrier.await();
-                            }
-                            LockSupport.parkNanos(10L);
-                        } catch (EntryLockedException | EntryUnavailableException ignored) {
-                            // entry is locked at the moment
-                        } catch (Exception e) {
-                            errors.incrementAndGet();
-                            e.printStackTrace();
-                            break;
-                        }
-                    }
-                    workerTimes.add(System.currentTimeMillis());
-                } finally {
-                    halt.countDown();
-                }
-            }).start();
+                // start together with the thread
+                start.await();
 
-            halt.await();
-            Assert.assertEquals(0, halt.getCount());
-            Assert.assertEquals(0, errors.get());
+                // get a lock
+                boolean couldLock = pool.lock("x");
 
-            // check that there are lock times between worker times
-            int count = 0;
+                // wait until thread stops
+                halt.await();
 
-            // ensure that we have worker times
-            Assert.assertEquals(2, workerTimes.size());
-            long lo = workerTimes.get(0);
-            long hi = workerTimes.get(1);
-
-            Assert.assertTrue(lockTimes.size() > 0);
-
-            for (int i = 0, n = lockTimes.size(); i < n; i++) {
-                long t = lockTimes.getQuick(i);
-                if (t > lo && t < hi) {
-                    count++;
+                // assert
+                if (couldLock) {
+                    pool.unlock("x");
+                    Assert.assertNull(ref.get());
+                } else {
+                    TableReader reader = ref.get();
+                    Assert.assertNotNull(reader);
+                    reader.close();
                 }
             }
-            Assert.assertTrue(count > 0);
-
-            LOG.info().$("testLockBusyReader END").$();
         });
     }
 
