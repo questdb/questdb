@@ -2171,7 +2171,7 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofRepair();
     }
 
-    void setFullSatJoins(boolean value) {
+    void setFullFatJoins(boolean value) {
         codeGenerator.setFullFatJoins(value);
     }
 
