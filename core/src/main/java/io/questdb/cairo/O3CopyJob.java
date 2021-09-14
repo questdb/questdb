@@ -99,13 +99,31 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter
     ) {
+        LOG.debug().$("o3 copy [blockType=").$(blockType)
+                .$(", columnType=").$(columnType)
+                .$(", dstFixFd=").$(dstFixFd)
+                .$(", dstFixSize=").$(dstFixSize)
+                .$(", dstFixOffset=").$(dstFixOffset)
+                .$(", dstVarFd=").$(dstVarFd)
+                .$(", dstVarSize=").$(dstVarSize)
+                .$(", dstVarOffset=").$(dstVarOffset)
+                .$(", srcDataLo=").$(srcDataLo)
+                .$(", srcDataHi=").$(srcDataHi)
+                .$(", srcDataMax=").$(srcDataMax)
+                .$(", srcOooLo=").$(srcOooLo)
+                .$(", srcOooHi=").$(srcOooHi)
+                .$(", srcOooMax=").$(srcOooMax)
+                .$(", srcOooPartitionLo=").$(srcOooPartitionLo)
+                .$(", srcOooPartitionHi=").$(srcOooPartitionHi)
+                .I$();
+
         switch (blockType) {
             case O3_BLOCK_MERGE:
                 mergeCopy(
                         columnType,
                         timestampMergeIndexAddr,
-                        // this is a hack, when we have column top we can have only of of the two:
-                        // srcDataFixOffset, when we had to shift data to back fill nulls or
+                        // this is a hack, when we have column top we can have only of the two:
+                        // srcDataFixOffset, when we had to shift data to backfill nulls or
                         // srcDataTopOffset - if we kept the column top
                         // when one value is present the other will be 0
                         srcDataFixAddr + srcDataFixOffset - srcDataTop,
@@ -754,7 +772,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarOffset,
             long dstVarAdjust
     ) {
-        switch (columnType) {
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.STRING:
             case ColumnType.BINARY:
                 copyVarSizeCol(
@@ -799,7 +817,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarOffset,
             long dstVarAdjust
     ) {
-        switch (columnType) {
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.STRING:
             case ColumnType.BINARY:
                 // we can find out the edge of string column in one of two ways
@@ -834,14 +852,22 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.DOUBLE:
-            case ColumnType.TIMESTAMP:
                 copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 3);
                 break;
-            case -ColumnType.TIMESTAMP:
-                O3Utils.copyFromTimestampIndex(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr);
+            case ColumnType.TIMESTAMP:
+                final boolean designated = ColumnType.isDesignatedTimestamp(columnType);
+                if (designated) {
+                    O3Utils.copyFromTimestampIndex(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr);
+                } else {
+                    copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 3);
+                }
                 break;
             case ColumnType.LONG256:
                 copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 5);
+                break;
+            case ColumnType.GEOHASH:
+                final int pow2SizeOf = ColumnType.pow2SizeOf(columnType);
+                copyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, pow2SizeOf);
                 break;
             default:
                 // we have exhausted all supported types in "case" clauses
@@ -897,13 +923,15 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarOffset
     ) {
         final long rowCount = srcOooHi - srcOooLo + 1 + srcDataHi - srcDataLo + 1;
-        switch (columnType) {
+        switch (ColumnType.storageTag(columnType)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
+            case ColumnType.GEOBYTE:
                 Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
                 break;
             case ColumnType.SHORT:
             case ColumnType.CHAR:
+            case ColumnType.GEOSHORT:
                 Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
                 break;
             case ColumnType.STRING:
@@ -935,16 +963,22 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             case ColumnType.INT:
             case ColumnType.FLOAT:
             case ColumnType.SYMBOL:
+            case ColumnType.GEOINT:
                 Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
                 break;
             case ColumnType.DOUBLE:
             case ColumnType.LONG:
             case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
+            case ColumnType.GEOLONG:
                 Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
                 break;
-            case -ColumnType.TIMESTAMP:
-                Vect.oooCopyIndex(mergeIndexAddr, rowCount, dstFixAddr);
+            case ColumnType.TIMESTAMP:
+                final boolean designated = ColumnType.isDesignatedTimestamp(columnType);
+                if (designated) {
+                    Vect.oooCopyIndex(mergeIndexAddr, rowCount, dstFixAddr);
+                } else {
+                    Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                }
                 break;
             case ColumnType.LONG256:
                 Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);

@@ -30,7 +30,9 @@ import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.griffin.engine.table.LongTreeSet;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.LongList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -66,8 +68,8 @@ public class CairoEngineTest extends AbstractCairoTest {
                 engine.setPoolListener(listener);
                 Assert.assertEquals(listener, engine.getPoolListener());
 
-                TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", -1);
-                TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x");
+                TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, -1);
+                TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing");
                 Assert.assertEquals(1, engine.getBusyReaderCount());
                 Assert.assertEquals(1, engine.getBusyWriterCount());
 
@@ -122,9 +124,9 @@ public class CairoEngineTest extends AbstractCairoTest {
 
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                     Assert.assertNotNull(reader);
-                    Assert.assertFalse(engine.lock(AllowAllCairoSecurityContext.INSTANCE, "x"));
+                    Assert.assertEquals(CairoEngine.BUSY_READER, engine.lock(AllowAllCairoSecurityContext.INSTANCE, "x", "testing"));
                     assertReader(engine, "x");
                     assertWriter(engine, "x");
                 }
@@ -209,13 +211,13 @@ public class CairoEngineTest extends AbstractCairoTest {
                 Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, "x"));
 
                 try {
-                    engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION);
+                    engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION);
                     Assert.fail();
                 } catch (CairoException ignored) {
                 }
 
                 try {
-                    engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x");
+                    engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing");
                     Assert.fail();
                 } catch (CairoException ignored) {
                 }
@@ -255,7 +257,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             createX();
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                     Assert.assertNotNull(reader);
                     try {
                         engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
@@ -273,7 +275,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             createX();
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
                     Assert.assertNotNull(writer);
                     try {
                         engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
@@ -313,7 +315,7 @@ public class CairoEngineTest extends AbstractCairoTest {
 
                 try (CairoEngine engine = new CairoEngine(configuration)) {
                     try {
-                        engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x");
+                        engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing");
                         Assert.fail();
                     } catch (CairoException ignored) {
                     }
@@ -427,7 +429,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 assertWriter(engine, "x");
                 try {
-                    engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", 2);
+                    engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION, 2);
                     Assert.fail();
                 } catch (ReaderOutOfDateException ignored) {
                 }
@@ -436,14 +438,65 @@ public class CairoEngineTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCannotMapTableId() throws Exception {
+        TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
+            @Override
+            public void run() {
+                ff = new FilesFacadeImpl() {
+                    private long theFD = 0;
+                    private boolean failNextAlloc = false;
+
+                    @Override
+                    public boolean allocate(long fd, long size) {
+                        if (failNextAlloc) {
+                            failNextAlloc = false;
+                            return false;
+                        }
+                        return super.allocate(fd, size);
+                    }
+
+                    @Override
+                    public long length(long fd) {
+                        if (theFD == fd) {
+                            failNextAlloc = true;
+                            theFD = 0;
+                            return 0;
+                        }
+                        return super.length(fd);
+                    }
+
+                    @Override
+                    public long openRW(LPSZ name) {
+                        long fd = super.openRW(name);
+                        if (Chars.endsWith(name, TableUtils.TAB_INDEX_FILE_NAME)) {
+                            theFD = fd;
+                        }
+                        return fd;
+                    }
+                };
+
+                try {
+                    new CairoEngine(configuration);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
+                } finally {
+                    ff = null;
+                }
+                Path.clearThreadLocals();
+            }
+        });
+    }
+
     private void assertReader(CairoEngine engine, String name) {
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, name, TableUtils.ANY_TABLE_VERSION)) {
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, name, TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
             Assert.assertNotNull(reader);
         }
     }
 
     private void assertWriter(CairoEngine engine, String name) {
-        try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, name)) {
+        try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, name, "testing")) {
             Assert.assertNotNull(w);
         }
     }

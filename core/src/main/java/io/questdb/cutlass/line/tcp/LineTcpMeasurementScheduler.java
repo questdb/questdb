@@ -29,7 +29,8 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ProtoEntity;
 import io.questdb.log.Log;
@@ -50,6 +51,8 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 import java.util.Arrays;
 import java.util.concurrent.locks.ReadWriteLock;
+
+import static io.questdb.network.IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATION;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
@@ -73,10 +76,11 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final long maintenanceInterval;
     private final long writerIdleTimeout;
     private final int defaultPartitionBy;
+    private final int commitMode;
     private final NetworkIOJob[] netIoJobs;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final Path path = new Path();
-    private final AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory();
+    private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private Sequence pubSeq;
     private int nLoadCheckCycles = 0;
     private int nRebalances = 0;
@@ -92,6 +96,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         this.securityContext = lineConfiguration.getCairoSecurityContext();
         this.cairoConfiguration = engine.getConfiguration();
         this.milliClock = cairoConfiguration.getMillisecondClock();
+        this.commitMode = cairoConfiguration.getCommitMode();
 
         this.netIoJobs = new NetworkIOJob[ioWorkerPool.getWorkerCount()];
         for (int i = 0; i < ioWorkerPool.getWorkerCount(); i++) {
@@ -152,11 +157,15 @@ class LineTcpMeasurementScheduler implements Closeable {
                 ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
                 for (int n = 0, sz = tableNames.size(); n < sz; n++) {
                     TableUpdateDetails updateDetails = tableUpdateDetailsByTableName.get(tableNames.get(n));
-                    if (!updateDetails.assignedToJob) {
-                        updateDetails.close();
-                    }
+                    updateDetails.closeLocals();
                 }
                 tableUpdateDetailsByTableName.clear();
+
+                tableNames = idleTableUpdateDetailsByTableName.keys();
+                for (int n = 0, sz = tableNames.size(); n < sz; n++) {
+                    TableUpdateDetails updateDetails = idleTableUpdateDetailsByTableName.get(tableNames.get(n));
+                    updateDetails.closeLocals();
+                }
                 idleTableUpdateDetailsByTableName.clear();
             } finally {
                 tableUpdateDetailsLock.writeLock().unlock();
@@ -165,7 +174,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 queue.get(n).close();
             }
             path.close();
-            mem.close();
+            ddlMem.close();
         }
     }
 
@@ -344,7 +353,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 int status = engine.getStatus(securityContext, path, tableName, 0, tableName.length());
                 if (status != TableUtils.TABLE_EXISTS) {
                     LOG.info().$("creating table [tableName=").$(tableName).$(']').$();
-                    engine.createTable(securityContext, mem, path, tableStructureAdapter.of(tableName, protoParser));
+                    engine.createTable(securityContext, ddlMem, path, tableStructureAdapter.of(tableName, protoParser));
                 }
 
                 keyIndex = idleTableUpdateDetailsByTableName.keyIndex(tableName);
@@ -427,6 +436,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         private int rebalanceFromThreadId;
         private int rebalanceToThreadId;
         private volatile boolean rebalanceReleasedByFromThread;
+        private boolean commitOnWriterClose;
 
         private LineTcpMeasurementEvent(int maxMeasurementSize, MicrosecondClock clock, LineProtoTimestampAdapter timestampAdapter) {
             bufSize = (long) (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1);
@@ -550,9 +560,10 @@ class LineTcpMeasurementScheduler implements Closeable {
             rebalanceReleasedByFromThread = false;
         }
 
-        void createReleaseWriterEvent(TableUpdateDetails tableUpdateDetails) {
+        void createReleaseWriterEvent(TableUpdateDetails tableUpdateDetails, boolean commitOnWriterClose) {
             threadId = RELEASE_WRITER_EVENT_ID;
             this.tableUpdateDetails = tableUpdateDetails;
+            this.commitOnWriterClose = commitOnWriterClose;
         }
 
         void processMeasurementEvent(WriterJob job) {
@@ -631,7 +642,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         }
 
                         case NewLineProtoParser.ENTITY_TYPE_INTEGER: {
-                            final int colType = writer.getMetadata().getColumnType(colIndex);
+                            final int colType = ColumnType.tagOf(writer.getMetadata().getColumnType(colIndex));
                             long v = Unsafe.getUnsafe().getLong(bufPos);
                             bufPos += Long.BYTES;
                             switch (colType) {
@@ -690,7 +701,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             double v = Unsafe.getUnsafe().getDouble(bufPos);
                             bufPos += Double.BYTES;
                             final int colType = writer.getMetadata().getColumnType(colIndex);
-                            switch (colType) {
+                            switch (ColumnType.tagOf(colType)) {
                                 case ColumnType.DOUBLE:
                                     row.putDouble(colIndex, v);
                                     break;
@@ -722,7 +733,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             job.floatingCharSink.asCharSequence(bufPos, hi);
                             bufPos = hi;
                             final int colType = writer.getMetadata().getColumnType(colIndex);
-                            if (colType == ColumnType.STRING) {
+                            if (ColumnType.isString(colType)) {
                                 row.putStr(colIndex, job.floatingCharSink);
                             } else {
                                 throw CairoException.instance(0)
@@ -788,16 +799,36 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         @Override
         public void close() {
+            tableUpdateDetailsLock.writeLock().lock();
+            try {
+                closeNoLock();
+            } finally {
+                tableUpdateDetailsLock.writeLock().unlock();
+            }
+        }
+
+        private void closeLocals() {
+            for (int n = 0; n < localDetailsArray.length; n++) {
+                LOG.info().$("closing table parsers [tableName=").$(tableName).$(']').$();
+                localDetailsArray[n] = Misc.free(localDetailsArray[n]);
+            }
+        }
+
+        private void closeNoLock() {
             if (writerThreadId != Integer.MIN_VALUE) {
-                LOG.info().$("closing table [tableName=").$(tableName).$(']').$();
+                LOG.info().$("closing table writer [tableName=").$(tableName).$(']').$();
                 if (null != writer) {
-                    writer.commit();
-                    writer.close();
-                    writer = null;
-                }
-                for (int n = 0; n < localDetailsArray.length; n++) {
-                    localDetailsArray[n].close();
-                    localDetailsArray[n] = null;
+                    try {
+                        writer.commit();
+                    } catch (Throwable ex) {
+                        LOG.error().$("cannot commit writer transaction, rolling back before releasing it [table=").$(tableName).$(",ex=").$(ex).I$();
+                        try {
+                            writer.rollback();
+                        } catch (Throwable ignored) {
+                        }
+                    } finally {
+                        writer = Misc.free(writer);
+                    }
                 }
                 writerThreadId = Integer.MIN_VALUE;
             }
@@ -814,20 +845,29 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (null != writer) {
                 return writer;
             }
-            return writer = engine.getWriter(securityContext, tableName);
+            return writer = engine.getWriter(securityContext, tableName, "ilpTcp");
         }
 
         void handleRowAppended() {
-            if (writer.checkMaxAndCommitLag()) {
+            if (writer.checkMaxAndCommitLag(commitMode)) {
                 lastCommitMillis = milliClock.getTicks();
             }
         }
 
-        void handleWriterRelease() {
+        void handleWriterRelease(boolean commit) {
             if (null != writer) {
                 LOG.debug().$("release commit [table=").$(writer.getTableName()).I$();
-                writer.commit();
-                writer = Misc.free(writer);
+                try {
+                    if (commit) {
+                        writer.commit();
+                    }
+                } catch (Throwable ex) {
+                    LOG.error().$("writer commit fails, force closing it [table=").$(writer.getTableName()).$(",ex=").$(ex).I$();
+                } finally {
+                    // writer or FS can be in a bad state
+                    // do not leave writer locked
+                    writer = Misc.free(writer);
+                }
                 lastCommitMillis = milliClock.getTicks();
             }
         }
@@ -851,7 +891,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         void switchThreads() {
             assignedToJob = false;
-            handleWriterRelease();
+            handleWriterRelease(true);
         }
 
         private class ThreadLocalDetails implements Closeable {
@@ -935,7 +975,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             private int resolveSymbolIndex(TableReaderMetadata metadata, int colIndex) {
                 int symIndex = 0;
                 for (int n = 0; n < colIndex; n++) {
-                    if (metadata.getColumnType(n) == ColumnType.SYMBOL) {
+                    if (ColumnType.isSymbol(metadata.getColumnType(n))) {
                         symIndex++;
                     }
                 }
@@ -947,7 +987,6 @@ class LineTcpMeasurementScheduler implements Closeable {
     private class WriterJob implements Job {
         private final int workerId;
         private final Sequence sequence;
-        private final AppendOnlyVirtualMemory appendMemory = new AppendOnlyVirtualMemory();
         private final Path path = new Path();
         private final DirectCharSink charSink = new DirectCharSink(64);
         private final FloatingDirectCharSink floatingCharSink = new FloatingDirectCharSink();
@@ -977,7 +1016,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                 }
             }
 
-            Misc.free(appendMemory);
             Misc.free(path);
             Misc.free(charSink);
             Misc.free(floatingCharSink);
@@ -1009,28 +1047,40 @@ class LineTcpMeasurementScheduler implements Closeable {
                 busy = true;
                 final LineTcpMeasurementEvent event = queue.get(cursor);
                 boolean eventProcessed;
-                if (event.threadId == workerId) {
-                    if (!event.tableUpdateDetails.assignedToJob) {
-                        assignedTables.add(event.tableUpdateDetails);
-                        event.tableUpdateDetails.assignedToJob = true;
-                        LOG.info().$("assigned table to writer thread [tableName=").$(event.tableUpdateDetails.tableName).$(", threadId=").$(workerId).I$();
-                    }
-                    event.processMeasurementEvent(this);
-                    eventProcessed = true;
-                } else {
-                    switch (event.threadId) {
-                        case REBALANCE_EVENT_ID:
-                            eventProcessed = processRebalance(event);
-                            break;
 
-                        case RELEASE_WRITER_EVENT_ID:
-                            eventProcessed = processReleaseWriter(event);
-                            break;
-
-                        default:
+                try {
+                    if (event.threadId == workerId) {
+                        try {
+                            if (!event.tableUpdateDetails.assignedToJob) {
+                                assignedTables.add(event.tableUpdateDetails);
+                                event.tableUpdateDetails.assignedToJob = true;
+                                LOG.info().$("assigned table to writer thread [tableName=").$(event.tableUpdateDetails.tableName).$(", threadId=").$(workerId).I$();
+                            }
+                            event.processMeasurementEvent(this);
                             eventProcessed = true;
-                            break;
+                        } catch (Throwable ex) {
+                            LOG.error().$("closing writer for because of error [table=").$(event.tableUpdateDetails.tableName).$(",ex=").$(ex).I$();
+                            event.createReleaseWriterEvent(event.tableUpdateDetails, false);
+                            eventProcessed = false;
+                        }
+                    } else {
+                        switch (event.threadId) {
+                            case REBALANCE_EVENT_ID:
+                                eventProcessed = processRebalance(event);
+                                break;
+
+                            case RELEASE_WRITER_EVENT_ID:
+                                eventProcessed = processReleaseWriter(event);
+                                break;
+
+                            default:
+                                eventProcessed = true;
+                                break;
+                        }
                     }
+                } catch (Throwable ex) {
+                    eventProcessed = true;
+                    LOG.error().$("failed to process ILP event because of exception [ex=").$(ex).I$();
                 }
 
                 // by not releasing cursor we force the sequence to return us the same value over and over
@@ -1092,7 +1142,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         .$("[tableName=").$(tableUpdateDetails.tableName)
                         .I$();
 
-                tableUpdateDetails.handleWriterRelease();
+                tableUpdateDetails.handleWriterRelease(event.commitOnWriterClose);
             } finally {
                 tableUpdateDetailsLock.readLock().unlock();
             }
@@ -1185,7 +1235,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             final long seq = getNextPublisherEventSequence();
                             if (seq > -1) {
                                 LineTcpMeasurementEvent event = queue.get(seq);
-                                event.createReleaseWriterEvent(tableUpdateDetails);
+                                event.createReleaseWriterEvent(tableUpdateDetails, true);
                                 removeTableUpdateDetails(tableUpdateDetails);
                                 final CharSequence tableName = tableUpdateDetails.tableName;
                                 tableUpdateDetailsByTableName.remove(tableName);
@@ -1218,7 +1268,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     case QUEUE_FULL:
                         return true;
                     case NEEDS_DISCONNECT:
-                        context.getDispatcher().disconnect(context);
+                        context.getDispatcher().disconnect(context, DISCONNECT_REASON_UNKNOWN_OPERATION);
                         return false;
                 }
             }

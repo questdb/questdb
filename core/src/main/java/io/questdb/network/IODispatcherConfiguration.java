@@ -58,9 +58,15 @@ public interface IODispatcherConfiguration {
 
     NetworkFacade getNetworkFacade();
 
+    default boolean getPeerNoLinger() {
+        return false;
+    }
+
     int getRcvBufSize();
 
     SelectFacade getSelectFacade();
 
     int getSndBufSize();
+
+    long getQueuedConnectionTimeout();
 }

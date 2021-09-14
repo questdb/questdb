@@ -26,7 +26,10 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterTaskHolder;
-import io.questdb.mp.*;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.Sequence;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
 
@@ -66,6 +69,10 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<O3CopyTask> o3CopyQueue;
     private final MPSequence o3CopyPubSeq;
     private final MCSequence o3CopySubSeq;
+
+    private final RingQueue<LatestByTask> latestByQueue;
+    private final MPSequence latestByPubSeq;
+    private final MCSequence latestBySubSeq;
 
     private final CairoConfiguration configuration;
 
@@ -115,6 +122,11 @@ public class MessageBusImpl implements MessageBus {
         this.o3PurgePubSeq = new MPSequence(this.o3PurgeQueue.getCapacity());
         this.o3PurgeSubSeq = new MCSequence(this.o3PurgeQueue.getCapacity());
         this.o3PurgePubSeq.then(this.o3PurgeSubSeq).then(this.o3PurgePubSeq);
+
+        this.latestByQueue = new RingQueue<>(LatestByTask::new, configuration.getLatestByQueueCapacity());
+        this.latestByPubSeq = new MPSequence(latestByQueue.getCapacity());
+        this.latestBySubSeq = new MCSequence(latestByQueue.getCapacity());
+        latestByPubSeq.then(latestBySubSeq).then(latestByPubSeq);
     }
 
     @Override
@@ -255,5 +267,20 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getO3PurgeSubSeq() {
         return o3PurgeSubSeq;
+    }
+
+    @Override
+    public Sequence getLatestByPubSeq() {
+        return latestByPubSeq;
+    }
+
+    @Override
+    public RingQueue<LatestByTask> getLatestByQueue() {
+        return latestByQueue;
+    }
+
+    @Override
+    public Sequence getLatestBySubSeq() {
+        return latestBySubSeq;
     }
 }

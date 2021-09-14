@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableNoSizeRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -40,12 +41,9 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
-public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory {
-    protected final RecordCursorFactory base;
+public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordCursorFactory {
     protected final Map map;
     private final SampleByFillNoneRecordCursor cursor;
-    private final ObjList<Function> recordFunctions;
-    private final RecordMetadata metadata;
 
     public SampleByFillNoneRecordCursorFactory(
             CairoConfiguration configuration,
@@ -58,40 +56,49 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
             @Transient @NotNull BytecodeAssembler asm,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
-            int timestampIndex
+            int timestampIndex,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) {
-        this.recordFunctions = recordFunctions;
+        super(base, groupByMetadata, recordFunctions);
         // sink will be storing record columns to map key
         final RecordSink mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
         // this is the map itself, which we must not forget to free when factory closes
         this.map = MapFactory.createMap(configuration, keyTypes, valueTypes);
-        try {
-            this.base = base;
-            this.metadata = groupByMetadata;
-            this.cursor = new SampleByFillNoneRecordCursor(
-                    this.map,
-                    mapSink,
-                    groupByFunctions,
-                    this.recordFunctions,
-                    timestampIndex,
-                    timestampSampler
-            );
-        } catch (Throwable e) {
-            Misc.free(map);
-            Misc.freeObjList(recordFunctions);
-            throw e;
-        }
+        this.cursor = new SampleByFillNoneRecordCursor(
+                this.map,
+                mapSink,
+                groupByFunctions,
+                this.recordFunctions,
+                timestampIndex,
+                timestampSampler,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
+        );
     }
 
     @Override
     public void close() {
-        Misc.freeObjList(recordFunctions);
+        super.close();
         Misc.free(map);
-        Misc.free(base);
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+    public RecordMetadata getMetadata() {
+        return metadata;
+    }
+
+    @Override
+    public AbstractNoRecordSampleByCursor getRawCursor() {
+        return cursor;
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             if (baseCursor.hasNext()) {
@@ -102,29 +109,6 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
             return EmptyTableNoSizeRecordCursor.INSTANCE;
         } catch (Throwable ex) {
             Misc.free(baseCursor);
-            throw ex;
-        }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
-    }
-
-    @NotNull
-    private RecordCursor initFunctionsAndCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) {
-        try {
-            cursor.of(baseCursor, executionContext);
-            // init all record function for this cursor, in case functions require metadata and/or symbol tables
-            Function.init(recordFunctions, baseCursor, executionContext);
-            return cursor;
-        } catch (Throwable ex) {
-            baseCursor.close();
             throw ex;
         }
     }

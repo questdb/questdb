@@ -140,6 +140,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                             factory,
                             configuration.getKeepAliveHeader());
                 } catch (ReaderOutOfDateException e) {
+                    LOG.info().$(e.getFlyweightMessage()).$();
                     Misc.free(factory);
                     compileQuery(state);
                 }
@@ -272,7 +273,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         header(socket, keepAliveHeader);
-        socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}');
+        socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}').put('\n');
         socket.sendChunk(true);
         readyForNextRequest(context);
     }
@@ -320,7 +321,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state,
             RecordCursorFactory factory,
             CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         state.setCompilerNanos(0);
         state.logExecuteCached();
         executeSelect(state, factory, keepAliveHeader);
@@ -335,17 +336,19 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        JsonQueryProcessorState state = LV.get(context);
-        internalError(context.getChunkedResponseSocket(), e.getFlyweightMessage(), e, state);
-        readyForNextRequest(context);
+    public void failRequest(HttpConnectionContext context, HttpException e)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final JsonQueryProcessorState state = LV.get(context);
+        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
+        internalError(socket, e.getFlyweightMessage(), e, state);
+        socket.shutdownWrite();
     }
 
     private void executeInsert(
             JsonQueryProcessorState state,
             CompiledQuery cc,
             CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         final InsertStatement insertStatement = cc.getInsertStatement();
         try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
             insertMethod.execute();
@@ -358,7 +361,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state,
             CompiledQuery cc,
             CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         state.logExecuteNew();
         final RecordCursorFactory factory = cc.getRecordCursorFactory();
         executeSelect(
@@ -371,7 +374,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state,
             RecordCursorFactory factory,
             CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         try {
             if (state.of(factory, sqlExecutionContext)) {

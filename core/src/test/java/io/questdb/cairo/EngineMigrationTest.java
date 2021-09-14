@@ -24,7 +24,9 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -37,7 +39,16 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 import static io.questdb.cairo.EngineMigration.*;
 import static io.questdb.cairo.TableUtils.*;
@@ -51,13 +62,18 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void testMigrateTableNoSymbolsNoPartitions() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src", PartitionBy.NONE)) {
+            try (TableModel src = new TableModel(configuration, "x_none", PartitionBy.NONE)) {
+
                 createPopulateTable(
-                        src.col("c1", ColumnType.INT).col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
+                                .col("c1", ColumnType.INT)
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("c2", ColumnType.LONG)
+                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
                         100, "2020-01-01", 0
                 );
 
-                String query = "select sum(c1) from src";
+                String query = "select sum(c1) from x_none";
                 assertMigration(src, query);
             }
         });
@@ -66,13 +82,18 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void testMigrateTableWithDayPartitions() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY)) {
+            try (TableModel src = new TableModel(configuration, "x_day", PartitionBy.DAY)) {
+
                 createPopulateTable(
-                        src.col("c1", ColumnType.INT).col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
+                                .col("c1", ColumnType.INT)
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("c2", ColumnType.LONG)
+                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
                         100, "2020-01-01", 10
                 );
 
-                String query = "select sum(c1) from src";
+                String query = "select sum(c1) from x_day";
                 assertMigration(src, query);
             }
         });
@@ -81,13 +102,18 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void testMigrateTableWithMonthPartitions() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src", PartitionBy.MONTH)) {
+            try (TableModel src = new TableModel(configuration, "x_month", PartitionBy.MONTH)) {
+
                 createPopulateTable(
-                        src.col("c1", ColumnType.INT).col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
+                                .col("c1", ColumnType.INT)
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("c2", ColumnType.LONG)
+                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
                         100, "2020-01-01", 3
                 );
 
-                String query = "select sum(c1) from src";
+                String query = "select sum(c1) from x_month";
                 assertMigration(src, query);
             }
         });
@@ -96,13 +122,18 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void testMigrateTableWithYearPartitions() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src", PartitionBy.YEAR)) {
+            try (TableModel src = new TableModel(configuration, "x_year", PartitionBy.YEAR)) {
+
                 createPopulateTable(
-                        src.col("c1", ColumnType.INT).col("ts", ColumnType.TIMESTAMP).timestamp(),
-                        100, "2017-01-01", 3
+                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
+                                .col("c1", ColumnType.INT)
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("c2", ColumnType.LONG)
+                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        100, "2020-01-01", 3
                 );
 
-                String query = "select sum(c1) from src";
+                String query = "select sum(c1) from x_year";
                 assertMigration(src, query);
             }
         });
@@ -111,17 +142,18 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void testMigrateTableWithSymbols() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src", PartitionBy.NONE)) {
+            try (TableModel src = new TableModel(configuration, "x_none", PartitionBy.NONE)) {
+
                 createPopulateTable(
                         src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
                                 .col("c1", ColumnType.INT)
                                 .col("s2", ColumnType.SYMBOL)
                                 .col("c2", ColumnType.LONG)
                                 .col("ts", ColumnType.TIMESTAMP).timestamp(),
-                        10, "2020-01-01", 0
+                        100, "2020-01-01", 0
                 );
 
-                String query = "select distinct s1, s2 from src";
+                String query = "select distinct s1, s2 from x_none";
                 assertMigration(src, query);
             }
         });
@@ -130,7 +162,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void testMigrateTableWithDayPartitionsAndSymbols() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY)) {
+            try (TableModel src = new TableModel(configuration, "x_day", PartitionBy.DAY)) {
+
                 createPopulateTable(
                         src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
                                 .col("c1", ColumnType.INT)
@@ -140,7 +173,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         100, "2020-01-01", 10
                 );
 
-                String query = "select distinct s1, s2 from src";
+                String query = "select distinct s1, s2 from x_day";
                 assertMigration(src, query);
             }
         });
@@ -149,66 +182,22 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void testMigrateTableWithDayRemovedPartition() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY)) {
+            try (TableModel src = new TableModel(configuration, "x_day", PartitionBy.DAY)) {
+
                 createPopulateTable(
-                        src.col("c1", ColumnType.INT).col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
+                                .col("c1", ColumnType.INT)
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("c2", ColumnType.LONG)
+                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
                         100, "2020-01-01", 10
                 );
 
-                String queryOld = "select sum(c1) from src where ts not in '2020-01-01'";
-                String queryNew = "select sum(c1) from src";
+                String queryOld = "select sum(c1) from x_day where ts not in '2020-01-01'";
+                String queryNew = "select sum(c1) from x_day";
                 LongList removedTimestamps = new LongList();
                 removedTimestamps.add(TimestampFormatUtils.parseTimestamp("2020-01-01T00:00:00.000Z"));
                 assertMigration(src, queryOld, queryNew, removedTimestamps);
-            }
-        });
-    }
-
-    @Test
-    public void testAssignTableId() throws Exception {
-        assertMemoryLeak(() -> {
-            // This test has to run in a separate engine from the base test engine
-            // because of removal of mapped file _tab_index.d with every test
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                // roll table id up
-                for (int i = 0; i < 10; i++) {
-                    engine.getNextTableId();
-                }
-                String tableName = "test";
-                // old table
-                try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()
-                ) {
-                    CairoTestUtils.createTableWithVersion(model, 416);
-                    downgradeTxFile(model, null);
-                }
-
-                try (TableModel model = new TableModel(configuration, "test2", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()
-                ) {
-                    TableUtils.createTable(
-                            model.getCairoCfg().getFilesFacade(),
-                            model.getMem(),
-                            model.getPath(),
-                            model.getCairoCfg().getRoot(),
-                            model,
-                            model.getCairoCfg().getMkDirMode(),
-                            ColumnType.VERSION,
-                            (int) engine.getNextTableId()
-                    );
-                }
-
-                // we need to remove "upgrade" file for the engine to upgrade tables
-                // remember, this is the second instance of the engine
-                assertRemoveUpgradeFile();
-
-                try (CairoEngine engine2 = new CairoEngine(configuration)) {
-                    // check if constructor upgrades test
-                    try (TableReader reader = engine2.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
-                        Assert.assertEquals(12, reader.getMetadata().getId());
-                    }
-                    try (TableReader reader = engine2.getReader(sqlExecutionContext.getCairoSecurityContext(), "test2")) {
-                        Assert.assertEquals(11, reader.getMetadata().getId());
-                    }
-                }
             }
         });
     }
@@ -220,9 +209,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             for (int i = 0; i < 10; i++) {
                 engine.getNextTableId();
             }
-            String tableName = "test";
             // old table
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()
+            try (TableModel model = new TableModel(configuration, "y_416", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()
             ) {
                 CairoTestUtils.createTableWithVersion(model, 416);
             }
@@ -256,7 +244,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void testMigrateTxFileFailsToSaveTableMetaVersion() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "test", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()
+            try (TableModel model = new TableModel(configuration, "y_416", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()
             ) {
                 CairoTestUtils.createTableWithVersion(model, 416);
                 downgradeTxFile(model, null);
@@ -285,7 +273,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void testMigrateFailsToSaveTableMetaId() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "test", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()
+            try (TableModel model = new TableModel(configuration, "y_416", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()
             ) {
                 CairoTestUtils.createTableWithVersion(model, 416);
                 downgradeTxFile(model, null);
@@ -314,7 +302,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void testMigrateToSaveGlobalUpdateVersion() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "test", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()
+            try (TableModel model = new TableModel(configuration, "y_416", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()
             ) {
                 CairoTestUtils.createTableWithVersion(model, 416);
                 downgradeTxFile(model, null);
@@ -342,13 +330,18 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         configOverrideCommitLag = 777777;
 
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src", PartitionBy.NONE)) {
+            try (TableModel src = new TableModel(configuration, "x_none", PartitionBy.NONE)) {
+
                 createPopulateTable(
-                        src.col("c1", ColumnType.INT).col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
+                                .col("c1", ColumnType.INT)
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("c2", ColumnType.LONG)
+                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
                         100, "2020-01-01", 0
                 );
 
-                String query = "select sum(c1) from src";
+                String query = "select sum(c1) from x_none";
                 assertMetadataMigration(src, query);
             }
         });
@@ -359,9 +352,14 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         configOverrideMaxUncommittedRows = 1231231;
         configOverrideCommitLag = 85754;
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src", PartitionBy.NONE)) {
+            try (TableModel src = new TableModel(configuration, "x_none", PartitionBy.NONE)) {
+
                 createPopulateTable(
-                        src.col("c1", ColumnType.INT).col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
+                                .col("c1", ColumnType.INT)
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("c2", ColumnType.LONG)
+                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
                         100, "2020-01-01", 0
                 );
 
@@ -376,7 +374,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 };
 
                 try {
-                    assertMetadataMigration(src, "select sum(c1) from src");
+                    assertMetadataMigration(src, "select sum(c1) from x_none");
                     Assert.fail();
                 } catch (SqlException e) {
                     Chars.contains(e.getFlyweightMessage(), "Metadata version does not match runtime version");
@@ -394,7 +392,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
                 try {
                     new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
-                    assertMetadataMigration(src, "select sum(c1) from src");
+                    assertMetadataMigration(src, "select sum(c1) from x_none");
                     Assert.fail();
                 } catch (SqlException e) {
                     Chars.contains(e.getFlyweightMessage(), "Metadata version does not match runtime version");
@@ -402,16 +400,16 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
                 ff = new FilesFacadeImpl();
                 new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
-                assertMetadataMigration(src, "select sum(c1) from src");
+                assertMetadataMigration(src, "select sum(c1) from x_none");
             }
         });
     }
 
-    private void assertMetadataMigration(TableModel src, String query) throws SqlException {
+    private void assertMetadataMigration(TableModel src, String query) throws SqlException, IOException {
         assertMetadataMigration(src, query, query);
     }
 
-    private void assertMetadataMigration(TableModel src, String queryOld, String queryNew) throws SqlException {
+    private void assertMetadataMigration(TableModel src, String queryOld, String queryNew) throws SqlException, IOException {
         CharSequence expected = executeSql(queryOld).toString();
         if (!queryOld.equals(queryNew)) {
             // if queries are different they must produce different results
@@ -420,6 +418,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         }
 
         // Downgrade version meta
+        replaceDbContent("/migration/dbRoot_noid.zip");
         downgradeMetaDataFile(src);
 
         // Act
@@ -433,6 +432,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertEquals(expected, executeSql(queryNew));
 
         // Third time, downgrade and migrate
+        replaceDbContent("/migration/dbRoot_noid.zip");
         downgradeMetaDataFile(src);
         new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
         TestUtils.assertEquals(expected, executeSql(queryNew));
@@ -455,7 +455,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
             long fileSize = ff.length(fd);
             ff.close(fd);
-            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), fileSize)) {
+            try (MemoryARW rwTx = Vm.getSmallARWInstance(ff, path.$())) {
                 rwTx.putInt(META_OFFSET_MAX_UNCOMMITTED_ROWS, 0);
                 rwTx.putLong(META_OFFSET_COMMIT_LAG, 0);
                 rwTx.jumpTo(fileSize);
@@ -476,7 +476,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
             long fileSize = ff.length(fd);
             ff.close(fd);
-            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), fileSize)) {
+            try (MemoryARW rwTx = Vm.getSmallARWInstance(ff, path.$())) {
                 if (rwTx.getInt(META_OFFSET_VERSION) > version - 1) {
                     rwTx.putInt(META_OFFSET_VERSION, version - 1);
                     rwTx.jumpTo(fileSize);
@@ -490,7 +490,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     private void downgradeUpdateFileTo(FilesFacade ff, Path path) {
         path.trimTo(0).concat(root).concat(UPGRADE_FILE_NAME);
         if (ff.exists(path.$())) {
-            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), 8)) {
+            try (MemoryCMARW rwTx = Vm.getSmallCMARWInstance(ff, path.$())) {
                 rwTx.putInt(0, EngineMigration.VERSION_TBL_META_COMMIT_LAG - 1);
                 rwTx.jumpTo(Integer.BYTES);
             }
@@ -521,7 +521,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         };
     }
 
-    private static void assertRemoveUpgradeFile() {
+    public static void assertRemoveUpgradeFile() {
         try (Path path = new Path()) {
             path.of(configuration.getRoot()).concat(TableUtils.UPGRADE_FILE_NAME).$();
             Assert.assertTrue(!FilesFacadeImpl.INSTANCE.exists(path) || FilesFacadeImpl.INSTANCE.remove(path));
@@ -541,11 +541,11 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertMigration(TableModel src, String query) throws SqlException {
+    private void assertMigration(TableModel src, String query) throws SqlException, IOException {
         assertMigration(src, query, query, null);
     }
 
-    private void assertMigration(TableModel src, String queryOld, String queryNew, LongList removedPartitions) throws SqlException {
+    private void assertMigration(TableModel src, String queryOld, String queryNew, LongList removedPartitions) throws SqlException, IOException {
         CharSequence expected = executeSql(queryOld).toString();
         if (!queryOld.equals(queryNew)) {
             // if queries are different they must produce different results
@@ -554,6 +554,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         }
 
         // There are no symbols, no partition, tx file is same. Downgrade version
+        replaceDbContent("/migration/dbRoot_noid.zip");
         downgradeTxFile(src, removedPartitions);
 
         // Act
@@ -567,6 +568,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertEquals(expected, executeSql(queryNew));
 
         // Third time, downgrade and migrate
+        replaceDbContent("/migration/dbRoot_noid.zip");
         downgradeTxFile(src, removedPartitions);
         new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
         TestUtils.assertEquals(expected, executeSql(queryNew));
@@ -595,7 +597,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             }
 
             path.trimTo(0).concat(root).concat(src.getName()).concat(TXN_FILE_NAME);
-            try (PagedMappedReadWriteMemory rwTx = new PagedMappedReadWriteMemory(ff, path.$(), ff.getPageSize())) {
+            try (MemoryCMARW rwTx = Vm.getSmallCMARWInstance(ff, path.$())) {
                 rwTx.putInt(TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT, symbolCounts.size());
                 rwTx.jumpTo(TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + 4);
 
@@ -628,8 +630,9 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                     if (ff.exists(path.$())) {
                         ff.remove(path);
                     }
-                    try (PagedMappedReadWriteMemory rwAr = new PagedMappedReadWriteMemory(ff, path.$(), 8)) {
+                    try (MemoryCMARW rwAr = Vm.getSmallCMARWInstance(ff, path.$())) {
                         rwAr.putLong(partitionSize);
+                        rwAr.jumpTo(8);
                     }
                 }
             }
@@ -652,4 +655,168 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         );
         return sink;
     }
+
+    public static void replaceDbContent(String path) throws IOException {
+
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+
+        final byte[] buffer = new byte[1024 * 1024];
+        URL resource = EngineMigrationTest.class.getResource(path);
+        Assert.assertNotNull(resource);
+        try (final InputStream is = EngineMigrationTest.class.getResourceAsStream(path)) {
+            Assert.assertNotNull(is);
+            try (ZipInputStream zip = new ZipInputStream(is)) {
+                ZipEntry ze;
+                while ((ze = zip.getNextEntry()) != null) {
+                    final File dest = new File((String) root, ze.getName());
+                    if (!ze.isDirectory()) {
+                        copyInputStream(true, buffer, dest, zip);
+                    }
+                    zip.closeEntry();
+                }
+            }
+        }
+    }
+
+    private static void copyInputStream(boolean force, byte[] buffer, File out, InputStream is) throws IOException {
+        final boolean exists = out.exists();
+        if (force || !exists) {
+            File dir = out.getParentFile();
+            Assert.assertTrue(dir.exists() || dir.mkdirs());
+            try (FileOutputStream fos = new FileOutputStream(out)) {
+                int n;
+                while ((n = is.read(buffer, 0, buffer.length)) > 0) {
+                    fos.write(buffer, 0, n);
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testAllColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "x_cols", PartitionBy.NONE)) {
+
+                createPopulateTable(src.col("bool", ColumnType.BOOLEAN)
+                                .col("byte", ColumnType.BYTE)
+                                .col("short", ColumnType.SHORT)
+                                .col("char", ColumnType.CHAR)
+                                .col("int", ColumnType.INT)
+                                .col("long", ColumnType.LONG)
+                                .col("date", ColumnType.DATE)
+                                .col("float", ColumnType.FLOAT)
+                                .col("double", ColumnType.DOUBLE)
+                                .col("string", ColumnType.STRING)
+                                .col("long256", ColumnType.LONG256)
+                                .col("symbol", ColumnType.SYMBOL).indexed(true, 4096)
+                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        100, "2020-01-01", 0
+                );
+
+                String query = "select * from x_cols";
+                assertMigration(src, query);
+            }
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testGenerateTablesForMigrationTest() throws Exception {
+        assertMemoryLeak(() -> {
+
+            SharedRandom.RANDOM.set(new Rnd());
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                // roll table id up
+                for (int i = 0; i < 10; i++) {
+                    engine.getNextTableId();
+                }
+
+                try (TableModel model = new TableModel(configuration, "y_416", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()) {
+                    CairoTestUtils.createTableWithVersion(model, 416);
+                    downgradeTxFile(model, null);
+                }
+
+                try (TableModel model = new TableModel(configuration, "y_419", PartitionBy.DAY).col("aaa", ColumnType.SYMBOL).timestamp()) {
+                    TableUtils.createTable(
+                            model.getCairoCfg().getFilesFacade(),
+                            model.getMem(),
+                            model.getPath(),
+                            model.getCairoCfg().getRoot(),
+                            model,
+                            model.getCairoCfg().getMkDirMode(),
+                            ColumnType.VERSION,
+                            (int) engine.getNextTableId()
+                    );
+                }
+            }
+
+            try (TableModel src = new TableModel(configuration, "x_none", PartitionBy.NONE)) {
+                createPopulateTable(
+                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
+                                .col("c1", ColumnType.INT)
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("c2", ColumnType.LONG)
+                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        100, "2020-01-01", 0
+                );
+            }
+
+            SharedRandom.RANDOM.set(new Rnd());
+            try (TableModel src = new TableModel(configuration, "x_day", PartitionBy.DAY)) {
+                createPopulateTable(
+                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
+                                .col("c1", ColumnType.INT)
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("c2", ColumnType.LONG)
+                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        100, "2020-01-01", 10
+                );
+            }
+
+            SharedRandom.RANDOM.set(new Rnd());
+            try (TableModel src = new TableModel(configuration, "x_month", PartitionBy.MONTH)) {
+                createPopulateTable(
+                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
+                                .col("c1", ColumnType.INT)
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("c2", ColumnType.LONG)
+                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        100, "2020-01-01", 3
+                );
+            }
+
+            SharedRandom.RANDOM.set(new Rnd());
+            try (TableModel src = new TableModel(configuration, "x_year", PartitionBy.YEAR)) {
+                createPopulateTable(
+                        src.col("s1", ColumnType.SYMBOL).indexed(true, 4096)
+                                .col("c1", ColumnType.INT)
+                                .col("s2", ColumnType.SYMBOL)
+                                .col("c2", ColumnType.LONG)
+                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        100, "2020-01-01", 3
+                );
+            }
+
+            SharedRandom.RANDOM.set(new Rnd());
+            try (TableModel src = new TableModel(configuration, "x_cols", PartitionBy.NONE)) {
+                createPopulateTable(src.col("bool", ColumnType.BOOLEAN)
+                                .col("byte", ColumnType.BYTE)
+                                .col("short", ColumnType.SHORT)
+                                .col("char", ColumnType.CHAR)
+                                .col("int", ColumnType.INT)
+                                .col("long", ColumnType.LONG)
+                                .col("date", ColumnType.DATE)
+                                .col("float", ColumnType.FLOAT)
+                                .col("double", ColumnType.DOUBLE)
+                                .col("string", ColumnType.STRING)
+                                .col("long256", ColumnType.LONG256)
+                                .col("symbol", ColumnType.SYMBOL).indexed(true, 4096)
+                                .col("ts", ColumnType.TIMESTAMP).timestamp(),
+                        100, "2020-01-01", 0
+                );
+            }
+        });
+    }
+
 }

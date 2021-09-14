@@ -26,8 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
-import io.questdb.cairo.vm.VmUtils;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -38,8 +38,8 @@ import java.io.Closeable;
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
     private final BitmapIndexBwdReader indexReader = new BitmapIndexBwdReader();
-    private final SinglePageMappedReadOnlyPageMemory charMem = new SinglePageMappedReadOnlyPageMemory();
-    private final SinglePageMappedReadOnlyPageMemory offsetMem = new SinglePageMappedReadOnlyPageMemory();
+    private final MemoryMR charMem = Vm.getMRInstance();
+    private final MemoryMR offsetMem = Vm.getMRInstance();
     private final ObjList<String> cache = new ObjList<>();
     private int maxHash;
     private boolean cached;
@@ -85,7 +85,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         if (symbolCount > this.symbolCount) {
             this.symbolCount = symbolCount;
             this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
-            this.offsetMem.grow(maxOffset);
+            this.offsetMem.extend(maxOffset);
             growCharMemToSymbolCount(symbolCount);
         } else if (symbolCount < this.symbolCount) {
             cache.remove(symbolCount + 1, this.symbolCount);
@@ -99,8 +99,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
         final int plen = path.length();
         try {
-            final long mapPageSize = configuration.getFilesFacade().getMapPageSize();
-
             // this constructor does not create index. Index must exist
             // and we use "offset" file to store "header"
             SymbolMapWriter.offsetFileName(path.trimTo(plen), name);
@@ -118,7 +116,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
-            this.offsetMem.of(ff, path, mapPageSize, SymbolMapWriter.keyToOffset(symbolCount));
+            this.offsetMem.partialFile(ff, path, SymbolMapWriter.keyToOffset(symbolCount));
             symbolCapacity = offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY);
             this.cached = offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED);
             this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
@@ -127,7 +125,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             this.indexReader.of(configuration, path.trimTo(plen), name, 0, -1);
 
             // this is the place where symbol values are stored
-            this.charMem.of(ff, SymbolMapWriter.charFileName(path.trimTo(plen), name), mapPageSize, 0);
+            this.charMem.wholeFile(ff, SymbolMapWriter.charFileName(path.trimTo(plen), name));
 
             // move append pointer for symbol values in the correct place
             growCharMemToSymbolCount(symbolCount);
@@ -214,12 +212,12 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         long charMemLength;
         if (symbolCount > 0) {
             long lastSymbolOffset = this.offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolCount - 1));
-            this.charMem.grow(lastSymbolOffset + 4);
-            charMemLength = lastSymbolOffset + VmUtils.getStorageLength(this.charMem.getStrLen(lastSymbolOffset));
+            this.charMem.extend(lastSymbolOffset + 4);
+            charMemLength = lastSymbolOffset + Vm.getStorageLength(this.charMem.getStrLen(lastSymbolOffset));
         } else {
             charMemLength = 0;
         }
-        this.charMem.grow(charMemLength);
+        this.charMem.extend(charMemLength);
     }
 
     private CharSequence uncachedValue(int key) {

@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -88,7 +89,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             // todo: init key to null value
 
             // remember, single key for now
-            switch (columnTypes.getColumnType(0)) {
+            switch (ColumnType.tagOf(columnTypes.getColumnType(0))) {
                 case ColumnType.INT:
                     Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti[i], 0), Numbers.INT_NaN);
                     break;
@@ -157,7 +158,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
 
         // clear maps
         for (int i = 0, n = pRosti.length; i < n; i++) {
@@ -478,6 +479,26 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
             @Override
             public long getTimestamp(int col) {
+                return getLong(col);
+            }
+
+            @Override
+            public byte getGeoHashByte(int col) {
+                return getByte(col);
+            }
+
+            @Override
+            public short getGeoHashShort(int col) {
+                return getShort(col);
+            }
+
+            @Override
+            public int getGeoHashInt(int col) {
+                return getInt(col);
+            }
+
+            @Override
+            public long getGeoHashLong(int col) {
                 return getLong(col);
             }
         }

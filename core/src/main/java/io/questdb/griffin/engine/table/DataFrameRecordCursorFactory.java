@@ -26,7 +26,8 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
+import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -57,6 +58,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             @Nullable IntList columnSizes
     ) {
         super(metadata, dataFrameCursorFactory);
+
         this.cursor = new DataFrameRecordCursor(rowCursorFactory, rowCursorFactory.isEntity(), filter, columnIndexes);
         this.followsOrderByAdvice = followsOrderByAdvice;
         this.filter = filter;
@@ -77,7 +79,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
-    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) {
+    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext);
         if (pageFrameCursor != null) {
             return pageFrameCursor.of(dataFrameCursor);
@@ -110,7 +112,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     protected RecordCursor getCursorInstance(
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
-    ) {
+    ) throws SqlException {
         cursor.of(dataFrameCursor, executionContext);
         if (filter != null) {
             filter.init(cursor, executionContext);
@@ -118,7 +120,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         return cursor;
     }
 
-    private static class TableReaderPageFrameCursor implements PageFrameCursor {
+    public static class TableReaderPageFrameCursor implements PageFrameCursor {
         private final LongList columnPageNextAddress = new LongList();
         private final LongList columnPageAddress = new LongList();
         private final TableReaderPageFrameCursor.TableReaderPageFrame frame = new TableReaderPageFrameCursor.TableReaderPageFrame();
@@ -134,6 +136,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         private long partitionRemaining = 0L;
         private DataFrameCursor dataFrameCursor;
         private final int timestampIndex;
+        private long rowLo = -1;
 
         public TableReaderPageFrameCursor(IntList columnIndexes, IntList columnSizes, int timestampIndex) {
             this.columnIndexes = columnIndexes;
@@ -153,6 +156,8 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             if (partitionIndex > -1) {
                 final long m = computePageMin(reader.getColumnBase(partitionIndex));
                 if (m < Long.MAX_VALUE) {
+                    // Offset next frame lowest RowId with the count of rows returned in previous frame.
+                    rowLo += pageSizes.get(timestampIndex) >> columnSizes.get(timestampIndex);
                     return computeFrame(m);
                 }
             }
@@ -189,13 +194,13 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                         }
 
                         if (loRemaining > 0) {
-                            final ReadOnlyVirtualMemory col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i)));
+                            final MemoryR col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i)));
                             if (col instanceof NullColumn) {
                                 columnPageNextAddress.setQuick(i, 0);
                                 pageNRowsRemaining.setQuick(i, 0);
                             } else {
                                 int page = pages.getQuick(i);
-                                long pageSize = col.getPageSize(page) >> columnSizes.getQuick(i);
+                                long pageSize = col.getPageSize() >> columnSizes.getQuick(i);
                                 if (pageSize < loRemaining) {
                                     throw CairoException.instance(0).put("partition is not mapped as single page, cannot perform vector calculation");
                                 }
@@ -208,9 +213,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                             }
                         }
                     }
+                    rowLo = dataFrame.getRowLo();
                     return computeFrame(computePageMin(base));
                 }
             }
+            rowLo = 0;
             return null;
         }
 
@@ -243,7 +250,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             return this;
         }
 
-        private PageFrame computeFrame(long min) {
+        private TableReaderPageFrameCursor.TableReaderPageFrame computeFrame(long min) {
             for (int i = 0; i < columnCount; i++) {
                 final long top = topsRemaining.getQuick(i);
                 if (top > 0) {
@@ -290,11 +297,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                     } else if (partitionRemaining > 0) {
                         final int page = pages.getQuick(i);
                         pages.setQuick(i, page + 1);
-                        final ReadOnlyVirtualMemory col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i)));
+                        final MemoryR col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i)));
                         // page size is liable to change after it is mapped
                         // it is important to map page first and call pageSize() after
                         columnPageNextAddress.setQuick(i, col.getPageAddress(page));
-                        psz = !(col instanceof NullColumn) ? col.getPageSize(page) >> columnSizes.getQuick(i) : partitionRemaining;
+                        psz = !(col instanceof NullColumn) ? col.getPageSize() >> columnSizes.getQuick(i) : partitionRemaining;
                         final long m = Math.min(psz, partitionRemaining);
                         pageNRowsRemaining.setQuick(i, m);
                         if (min > m) {
@@ -307,6 +314,21 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         }
 
         private class TableReaderPageFrame implements PageFrame {
+            @Override
+            public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
+                return reader.getBitmapIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
+            }
+
+            @Override
+            public long getFirstRowId() {
+                assert rowLo >= 0;
+                return rowLo;
+            }
+
+            @Override
+            public int getPartitionIndex() {
+                return partitionIndex;
+            }
 
             @Override
             public long getFirstTimestamp() {
@@ -330,6 +352,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             public int getColumnSize(int columnIndex) {
                 return columnSizes.getQuick(columnIndex);
             }
+
         }
     }
 

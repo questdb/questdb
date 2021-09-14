@@ -24,10 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -148,10 +145,10 @@ public final class SqlParser {
     }
 
     private void expectBy(GenericLexer lexer) throws SqlException {
-        if (isByKeyword(tok(lexer, "by"))) {
+        if (isByKeyword(tok(lexer, "'by'"))) {
             return;
         }
-        throw SqlException.$((lexer.getPosition()), "'by' expected");
+        throw SqlException.$((lexer.lastTokenPosition()), "'by' expected");
     }
 
     private ExpressionNode expectExpr(GenericLexer lexer) throws SqlException {
@@ -203,8 +200,29 @@ public final class SqlParser {
         }
     }
 
+    private void expectObservation(GenericLexer lexer) throws SqlException {
+        if (isObservationKeyword(tok(lexer, "'observation'"))) {
+            return;
+        }
+        throw SqlException.$((lexer.lastTokenPosition()), "'observation' expected");
+    }
+
+    private void expectOffset(GenericLexer lexer) throws SqlException {
+        if (isOffsetKeyword(tok(lexer, "'offset'"))) {
+            return;
+        }
+        throw SqlException.$((lexer.lastTokenPosition()), "'offset' expected");
+    }
+
     private CharSequence expectTableNameOrSubQuery(GenericLexer lexer) throws SqlException {
         return tok(lexer, "table name or sub-query");
+    }
+
+    private void expectTo(GenericLexer lexer) throws SqlException {
+        if (isToKeyword(tok(lexer, "'to'"))) {
+            return;
+        }
+        throw SqlException.$((lexer.lastTokenPosition()), "'to' expected");
     }
 
     private void expectTok(GenericLexer lexer, CharSequence tok, CharSequence expected) throws SqlException {
@@ -233,6 +251,13 @@ public final class SqlParser {
         if (tok == null || !Chars.equals(tok, expected)) {
             throw SqlException.position(pos).put('\'').put(expected).put("' expected");
         }
+    }
+
+    private void expectZone(GenericLexer lexer) throws SqlException {
+        if (isZoneKeyword(tok(lexer, "'zone'"))) {
+            return;
+        }
+        throw SqlException.$((lexer.lastTokenPosition()), "'zone' expected");
     }
 
     ExpressionNode expr(GenericLexer lexer, QueryModel model) throws SqlException {
@@ -273,6 +298,10 @@ public final class SqlParser {
         // this can never be null in its current contexts
         // every time this function is called is after lexer.unparse(), which ensures non-null token.
         return expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.unquote(name), 0, position);
+    }
+
+    private ExpressionNode nextConstant(CharSequence value) {
+        return expressionNodePool.next().of(ExpressionNode.CONSTANT, value, 0, 0);
     }
 
     private ExpressionNode nextLiteral(CharSequence token, int position) {
@@ -499,7 +528,7 @@ public final class SqlParser {
         final int type = toColumnType(lexer, columnType.token);
         columnCastModel.setType(type, columnName.position, columnType.position);
 
-        if (type == ColumnType.SYMBOL) {
+        if (ColumnType.isSymbol(type)) {
             CharSequence tok = tok(lexer, "'capacity', 'nocache', 'cache', 'index' or ')'");
 
             int symbolCapacity;
@@ -577,7 +606,7 @@ public final class SqlParser {
             }
 
             CharSequence tok;
-            if (type == ColumnType.SYMBOL) {
+            if (ColumnType.isSymbol(type)) {
                 tok = tok(lexer, "'capacity', 'nocache', 'cache', 'index' or ')'");
 
                 int symbolCapacity;
@@ -760,7 +789,7 @@ public final class SqlParser {
                 nestedModel.setModelPosition(modelPosition);
                 ExpressionNode func = expressionNodePool.next().of(ExpressionNode.FUNCTION, "long_sequence", 0, lexer.lastTokenPosition());
                 func.paramCount = 1;
-                func.rhs = expressionNodePool.next().of(ExpressionNode.CONSTANT, "1", 0, 0);
+                func.rhs = nextConstant("1");
                 nestedModel.setTableName(func);
                 model.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
                 model.setNestedModel(nestedModel);
@@ -850,7 +879,50 @@ public final class SqlParser {
                     }
                     expectTok(tok, lexer.lastTokenPosition(), ',');
                 } while (true);
+
                 tok = optTok(lexer);
+            }
+
+            if (tok != null && isAlignKeyword(tok)) {
+                expectTo(lexer);
+
+                tok = tok(lexer, "'calendar' or 'first observation'");
+
+                if (isCalendarKeyword(tok)) {
+                    tok = optTok(lexer);
+
+                    if (tok != null) {
+                        if (isTimeKeyword(tok)) {
+                            expectZone(lexer);
+                            model.setSampleByTimezoneName(expectExpr(lexer));
+                            tok = optTok(lexer);
+
+                            if (tok != null) {
+                                if (isWithKeyword(tok)) {
+                                    tok = parseWithOffset(lexer, model);
+                                } else {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "'with offset' expected");
+                                }
+                            } else {
+                                model.setSampleByOffset(nextConstant("'00:00'"));
+                            }
+                        } else if (isWithKeyword(tok)) {
+                            tok = parseWithOffset(lexer, model);
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'time zone' or 'with offset' expected");
+                        }
+                    } else {
+                        model.setSampleByTimezoneName(null);
+                        model.setSampleByOffset(nextConstant("'00:00'"));
+                    }
+                } else if (isFirstKeyword(tok)) {
+                    expectObservation(lexer);
+                    model.setSampleByTimezoneName(null);
+                    model.setSampleByOffset(null);
+                    tok = optTok(lexer);
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'calendar' or 'first observation' expected");
+                }
             }
         }
 
@@ -986,12 +1058,7 @@ public final class SqlParser {
             expectTok(lexer, '(');
 
             do {
-                ExpressionNode expr = expectExpr(lexer);
-                if (Chars.equals(expr.token, ')')) {
-                    throw err(lexer, "missing column value");
-                }
-
-                model.addColumnValue(expr);
+                model.addColumnValue(expectExpr(lexer));
             } while (Chars.equals((tok = tok(lexer, "','")), ','));
 
             expectTok(tok, lexer.lastTokenPosition(), ')');
@@ -1347,6 +1414,14 @@ public final class SqlParser {
         } while (true);
     }
 
+    private CharSequence parseWithOffset(GenericLexer lexer, QueryModel model) throws SqlException {
+        CharSequence tok;
+        expectOffset(lexer);
+        model.setSampleByOffset(expectExpr(lexer));
+        tok = optTok(lexer);
+        return tok;
+    }
+
     private ExpressionNode rewriteCase(ExpressionNode parent) throws SqlException {
         traversalAlgo.traverse(parent, rewriteCase0Ref);
         return parent;
@@ -1548,11 +1623,50 @@ public final class SqlParser {
     }
 
     private int toColumnType(GenericLexer lexer, CharSequence tok) throws SqlException {
-        final int type = ColumnType.columnTypeOf(tok);
+        final short type = ColumnType.tagOf(tok);
         if (type == -1) {
             throw SqlException.$(lexer.lastTokenPosition(), "unsupported column type: ").put(tok);
         }
+        if (ColumnType.GEOHASH == type) {
+            expectTok(lexer, '(');
+            final int size = parseGeoHashSize(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
+            expectTok(lexer, ')');
+            return ColumnType.geohashWithPrecision(size);
+        }
         return type;
+    }
+
+    static int parseGeoHashSize(int position, int start, CharSequence sizeStr) throws SqlException {
+        assert start >= 0;
+        if (sizeStr.length() - start < 2) {
+            throw SqlException.position(position)
+                    .put("invalid GEOHASH size, must be number followed by 'C' or 'B' character");
+        }
+        int size;
+        try {
+            size = Numbers.parseInt(sizeStr, start, sizeStr.length() - 1);
+        } catch (NumericException e) {
+            throw SqlException.position(position)
+                    .put("invalid GEOHASH size, must be number followed by 'C' or 'B' character");
+        }
+        switch (sizeStr.charAt(sizeStr.length() - 1)) {
+            case 'C':
+            case 'c':
+                size *= 5;
+                break;
+            case 'B':
+            case 'b':
+                break;
+            default:
+                throw SqlException.position(position)
+                        .put("invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
+        }
+        if (size < 1 || size > GeoHashes.MAX_BITS_LENGTH) {
+            throw SqlException.position(position)
+                    .put("invalid GEOHASH type precision range, mast be [1, 60] bits, provided=")
+                    .put(size);
+        }
+        return size;
     }
 
     private @NotNull CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {

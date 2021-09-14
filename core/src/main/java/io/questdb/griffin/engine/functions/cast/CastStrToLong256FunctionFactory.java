@@ -55,27 +55,7 @@ public class CastStrToLong256FunctionFactory implements FunctionFactory {
         }
 
         private static Long256Impl Z(CharSequence text, int len, Long256Impl long256) {
-            if (Long256Util.isValidString(text, len)) {
-                try {
-                    final long a = Numbers.parseHexLong(text, 2, Math.min(len, 18));
-                    long b = 0;
-                    long c = 0;
-                    long d = 0;
-                    if (len > 18) {
-                        b = Numbers.parseHexLong(text, 18, Math.min(len, 34));
-                    }
-                    if (len > 34) {
-                        c = Numbers.parseHexLong(text, 34, Math.min(len, 42));
-                    }
-                    if (len > 42) {
-                        d = Numbers.parseHexLong(text, 42, Math.min(len, 66));
-                    }
-                    long256.setAll(a, b, c, d);
-                    return long256;
-                } catch (NumericException ignored) {
-                }
-            }
-            return Long256Impl.NULL_LONG256;
+            return Numbers.parseLong256(text, len, long256);
         }
 
         @Override

@@ -61,6 +61,9 @@ public class AbstractCairoTest {
     protected static long configOverrideCommitLag = -1;
     protected static int configOverrideMaxUncommittedRows = -1;
     protected static Metrics metrics = Metrics.enabled();
+    protected static int capacity = -1;
+    protected static int sampleByIndexSearchPageSize;
+    protected static CharSequence defaultMapType;
 
     @Rule
     public TestName testName = new TestName();
@@ -87,6 +90,11 @@ public class AbstractCairoTest {
             }
 
             @Override
+            public int getCopyPoolCapacity() {
+                return capacity == -1 ? super.getCopyPoolCapacity() : capacity;
+            }
+
+            @Override
             public MicrosecondClock getMicrosecondClock() {
                 return testMicrosClock;
             }
@@ -106,6 +114,18 @@ public class AbstractCairoTest {
             public int getMaxUncommittedRows() {
                 if (configOverrideMaxUncommittedRows >= 0) return configOverrideMaxUncommittedRows;
                 return super.getMaxUncommittedRows();
+            }
+
+            public int getSampleByIndexSearchPageSize() {
+                return sampleByIndexSearchPageSize > 0 ? sampleByIndexSearchPageSize : super.getSampleByIndexSearchPageSize();
+            }
+
+            @Override
+            public CharSequence getDefaultMapType() {
+                if (defaultMapType == null) {
+                    return super.getDefaultMapType();
+                }
+                return defaultMapType;
             }
         };
         engine = new CairoEngine(configuration);
@@ -134,6 +154,8 @@ public class AbstractCairoTest {
         configOverrideMaxUncommittedRows = -1;
         configOverrideCommitLag = -1;
         currentMicros = -1;
+        sampleByIndexSearchPageSize = -1;
+        defaultMapType = null;
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {

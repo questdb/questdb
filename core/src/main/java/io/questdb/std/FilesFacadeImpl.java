@@ -31,7 +31,7 @@ import io.questdb.std.str.Path;
 public class FilesFacadeImpl implements FilesFacade {
 
     public static final FilesFacade INSTANCE = new FilesFacadeImpl();
-    private static final int _16M = 16 * 1024 * 1024;
+    public static final int _16M = 16 * 1024 * 1024;
     private long mapPageSize = 0;
 
     @Override
@@ -207,6 +207,15 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public long openRW(LPSZ name) {
         return Files.openRW(name);
+    }
+
+    @Override
+    public long openCleanRW(LPSZ name, long size) {
+        // Open files and if file exists, try exclusively lock it
+        // If exclusive lock worked the file will be cleaned and allocated to the given size
+        // Shared lock will be left on the file which will be removed when file descriptor is closed
+        // If file did not exist, it will be allocated to the size and shared lock set
+        return Files.openCleanRW(name, size);
     }
 
     @Override

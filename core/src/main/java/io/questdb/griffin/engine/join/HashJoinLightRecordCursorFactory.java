@@ -24,12 +24,16 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.std.Misc;
@@ -76,7 +80,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
         try {
             buildMapOfSlaveRecords(slaveCursor, executionContext.getSqlExecutionInterruptor());

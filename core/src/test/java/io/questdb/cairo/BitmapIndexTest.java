@@ -25,9 +25,14 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
 import io.questdb.cairo.vm.PagedSlidingReadOnlyMemory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
+import io.questdb.griffin.engine.table.LatestByArguments;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -49,8 +54,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public static void create(CairoConfiguration configuration, Path path, CharSequence name, int valueBlockCapacity) {
         int plen = path.length();
         try {
-            FilesFacade ff = configuration.getFilesFacade();
-            try (AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory(ff, BitmapIndexUtils.keyFileName(path, name), ff.getPageSize())) {
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (MemoryA mem = Vm.getSmallAInstance(ff, BitmapIndexUtils.keyFileName(path, name))) {
                 BitmapIndexWriter.initKeyMemory(mem, Numbers.ceilPow2(valueBlockCapacity));
             }
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), name));
@@ -187,10 +192,10 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", 0)) {
 
-                try (PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory()) {
+                try (MemoryMARW mem = Vm.getMARWInstance()) {
                     try (Path path = new Path()) {
                         path.of(configuration.getRoot()).concat("x").put(".k").$();
-                        mem.of(configuration.getFilesFacade(), path, configuration.getFilesFacade().getPageSize());
+                        mem.wholeFile(configuration.getFilesFacade(), path);
                     }
 
                     long offset = BitmapIndexUtils.getKeyEntryOffset(0);
@@ -220,7 +225,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testBackwardReaderConstructorBadSig() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (AppendOnlyVirtualMemory mem = openKey()) {
+            try (MemoryA mem = openKey()) {
                 mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED);
             }
             assertBackwardReaderConstructorFail("Unknown format");
@@ -308,11 +313,12 @@ public class BitmapIndexTest extends AbstractCairoTest {
             Assert.assertEquals(1000, cursor.next());
             Assert.assertFalse(cursor.hasNext());
 
-            try (Path path = new Path();
-                 PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory(
-                         configuration.getFilesFacade(),
-                         path.of(root).concat("x").put(".k").$(),
-                         configuration.getFilesFacade().getPageSize())
+            try (
+                    Path path = new Path();
+                    MemoryCMARW mem = Vm.getSmallCMARWInstance(
+                            configuration.getFilesFacade(),
+                            path.of(root).concat("x").put(".k").$()
+                    )
             ) {
                 // change sequence but not sequence check
                 long seq = mem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
@@ -366,6 +372,237 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCppLatestByIndexReader() {
+        final int valueBlockCapacity = 256;
+        final long keyCount = 5;
+        create(configuration, path.trimTo(plen), "x", valueBlockCapacity);
+
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
+            for (int i = 0; i < keyCount; i++) {
+                for (int j = 0; j <= i; j++) {
+                    writer.add(i, j);
+                }
+            }
+        }
+
+        DirectLongList rows = new DirectLongList(keyCount);
+
+        rows.extend(keyCount);
+        rows.setPos(rows.getCapacity());
+        GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
+
+        try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", 0)) {
+            long argsAddress = LatestByArguments.allocateMemory();
+            LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
+            LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
+
+            LatestByArguments.setKeyLo(argsAddress, 0);
+            LatestByArguments.setKeyHi(argsAddress, keyCount);
+            LatestByArguments.setRowsSize(argsAddress, 0);
+
+            BitmapIndexUtilsNative.latestScanBackward(
+                    reader.getKeyBaseAddress(),
+                    reader.getKeyMemorySize(),
+                    reader.getValueBaseAddress(),
+                    reader.getValueMemorySize(),
+                    argsAddress,
+                    reader.getUnIndexedNullCount(),
+                    Long.MAX_VALUE, 0,
+                    0, valueBlockCapacity - 1
+            );
+
+            long rowCount = LatestByArguments.getRowsSize(argsAddress);
+            Assert.assertEquals(keyCount, rowCount);
+            long keyLo = LatestByArguments.getKeyLo(argsAddress);
+            Assert.assertEquals(0, keyLo); // we do not update key range anymore
+            long keyHi = LatestByArguments.getKeyHi(argsAddress);
+            Assert.assertEquals(keyCount, keyHi);
+
+            LatestByArguments.releaseMemory(argsAddress);
+
+            for (int i = 0; i < rows.getCapacity(); ++i) {
+                Assert.assertEquals(i, Rows.toLocalRowID(rows.get(i) - 1));
+            }
+        }
+        rows.close();
+    }
+
+    @Test
+    public void testCppLatestByIndexReaderIgnoreUpdates() {
+        final int valueBlockCapacity = 32;
+        final long keyCount = 1024;
+
+        create(configuration, path.trimTo(plen), "x", valueBlockCapacity);
+
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
+            for (int i = 0; i < keyCount; i++) {
+                for (int j = 0; j <= i; j++) {
+                    writer.add(i, j);
+                }
+            }
+        }
+
+        DirectLongList rows = new DirectLongList(keyCount);
+
+        rows.extend(keyCount);
+        rows.setPos(rows.getCapacity());
+        GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
+
+        //fixing memory mapping here
+        BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", 0);
+
+        // we should ignore this update
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
+            for (int i = (int) keyCount; i < keyCount * 2; i++) {
+                writer.add(i, 2L * i);
+            }
+        }
+        // and this one
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
+            for (int i = 0; i < keyCount; i++) {
+                writer.add((int) keyCount - 1, 10L * i);
+            }
+        }
+
+        long argsAddress = LatestByArguments.allocateMemory();
+        LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
+        LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
+
+        LatestByArguments.setKeyLo(argsAddress, 0);
+        LatestByArguments.setKeyHi(argsAddress, keyCount);
+        LatestByArguments.setRowsSize(argsAddress, 0);
+
+        BitmapIndexUtilsNative.latestScanBackward(
+                reader.getKeyBaseAddress(),
+                reader.getKeyMemorySize(),
+                reader.getValueBaseAddress(),
+                reader.getValueMemorySize(),
+                argsAddress,
+                reader.getUnIndexedNullCount(),
+                Long.MAX_VALUE, 0,
+                0, valueBlockCapacity - 1
+        );
+
+        long rowCount = LatestByArguments.getRowsSize(argsAddress);
+        Assert.assertEquals(keyCount, rowCount);
+        long keyLo = LatestByArguments.getKeyLo(argsAddress);
+        Assert.assertEquals(0, keyLo);
+        long keyHi = LatestByArguments.getKeyHi(argsAddress);
+        Assert.assertEquals(keyCount, keyHi);
+
+        LatestByArguments.releaseMemory(argsAddress);
+
+        for (int i = 0; i < rows.getCapacity(); ++i) {
+            Assert.assertEquals(i, Rows.toLocalRowID(rows.get(i) - 1));
+        }
+        rows.close();
+        reader.close();
+    }
+
+    @Test
+    public void testCppLatestByIndexReaderIndexedWithTruncate() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int timestampIncrement = 1000000 * 60 * 5;
+            final int M = 1000;
+            final int N = 100;
+            final int indexBlockCapacity = 32;
+            // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
+                    col("a", ColumnType.STRING).
+                    col("b", ColumnType.SYMBOL).indexed(true, indexBlockCapacity).
+                    col("i", ColumnType.INT).
+                    timestamp()
+            ) {
+                CairoTestUtils.create(model);
+            }
+
+            final Rnd rnd = new Rnd();
+            final String[] symbols = new String[N];
+
+            for (int i = 0; i < N; i++) {
+                symbols[i] = rnd.nextChars(8).toString();
+            }
+
+            // prepare the data
+            long timestamp = 0;
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                for (int i = 0; i < M; i++) {
+                    TableWriter.Row row = writer.newRow(timestamp += timestampIncrement);
+                    row.putStr(0, rnd.nextChars(20));
+                    row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
+                    row.putInt(2, rnd.nextInt());
+                    row.append();
+                }
+                writer.commit();
+                rnd.reset();
+
+                writer.addColumn(
+                        "c",
+                        ColumnType.SYMBOL,
+                        Numbers.ceilPow2(N),
+                        true,
+                        true,
+                        indexBlockCapacity,
+                        false
+                );
+                for (int i = 0; i < M; i++) {
+                    TableWriter.Row row = writer.newRow(timestamp += timestampIncrement);
+                    row.putStr(0, rnd.nextChars(20));
+                    row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
+                    row.putInt(2, rnd.nextInt());
+                    row.putSym(4, symbols[rnd.nextPositiveInt() % N]);
+                    row.append();
+                }
+                writer.commit();
+                DirectLongList rows = new DirectLongList(N);
+
+                rows.setPos(rows.getCapacity());
+                GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
+
+                try (TableReader tableReader = new TableReader(configuration, "x")) {
+                    tableReader.openPartition(0);
+                    final int columnBase = tableReader.getColumnBase(0);
+                    final int columnIndex = tableReader.getMetadata().getColumnIndex("c");
+                    BitmapIndexReader reader = tableReader.getBitmapIndexReader(0,
+                            columnBase, columnIndex, BitmapIndexReader.DIR_BACKWARD);
+
+                    long columnTop = tableReader.getColumnTop(columnBase, columnIndex);
+
+                    long argsAddress = LatestByArguments.allocateMemory();
+
+                    LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
+                    LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
+
+                    LatestByArguments.setKeyLo(argsAddress, 0);
+                    LatestByArguments.setKeyHi(argsAddress, N);
+                    LatestByArguments.setRowsSize(argsAddress, 0);
+                    BitmapIndexUtilsNative.latestScanBackward(
+                            reader.getKeyBaseAddress(),
+                            reader.getKeyMemorySize(),
+                            reader.getValueBaseAddress(),
+                            reader.getValueMemorySize(),
+                            argsAddress,
+                            columnTop,
+                            Long.MAX_VALUE, 0,
+                            0, indexBlockCapacity - 1
+                    );
+
+                    long rowCount = LatestByArguments.getRowsSize(argsAddress);
+                    Assert.assertEquals(N, rowCount);
+                    long keyLo = LatestByArguments.getKeyLo(argsAddress);
+                    Assert.assertEquals(0, keyLo);
+                    long keyHi = LatestByArguments.getKeyHi(argsAddress);
+                    Assert.assertEquals(N, keyHi);
+
+                    LatestByArguments.releaseMemory(argsAddress);
+                    Assert.assertEquals(columnTop - 1, Rows.toLocalRowID(rows.get(0) - 1));
+                }
+                rows.close();
+            }
+        });
+    }
+
+    @Test
     public void testEmptyCursor() {
         RowCursor cursor = new EmptyRowCursor();
         Assert.assertFalse(cursor.hasNext());
@@ -383,10 +620,10 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", 0)) {
 
-                try (PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory()) {
+                try (MemoryMARW mem = Vm.getMARWInstance()) {
                     try (Path path = new Path()) {
                         path.of(configuration.getRoot()).concat("x").put(".k").$();
-                        mem.of(configuration.getFilesFacade(), path, configuration.getFilesFacade().getPageSize());
+                        mem.smallFile(configuration.getFilesFacade(), path);
                     }
 
                     long offset = BitmapIndexUtils.getKeyEntryOffset(0);
@@ -475,11 +712,12 @@ public class BitmapIndexTest extends AbstractCairoTest {
             Assert.assertEquals(1000, cursor.next());
             Assert.assertFalse(cursor.hasNext());
 
-            try (Path path = new Path();
-                 PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory(
-                         configuration.getFilesFacade(),
-                         path.of(root).concat("x").put(".k").$(),
-                         configuration.getFilesFacade().getPageSize())
+            try (
+                    Path path = new Path();
+                    MemoryCMARW mem = Vm.getSmallCMARWInstance(
+                            configuration.getFilesFacade(),
+                            path.of(root).concat("x").put(".k").$()
+                    )
             ) {
                 // change sequence but not sequence check
                 long seq = mem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
@@ -533,9 +771,9 @@ public class BitmapIndexTest extends AbstractCairoTest {
         int N = 100000000;
         final int MOD = 1024;
         TestUtils.assertMemoryLeak(() -> {
-            try (AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory()) {
+            try (MemoryMAR mem = Vm.getMARInstance()) {
 
-                mem.of(configuration.getFilesFacade(), path.concat("x.dat").$(), configuration.getFilesFacade().getMapPageSize());
+                mem.wholeFile(configuration.getFilesFacade(), path.concat("x.dat").$());
 
                 for (int i = 0; i < N; i++) {
                     mem.putInt(rnd.nextPositiveInt() & (MOD - 1));
@@ -786,7 +1024,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testWriterConstructorBadSig() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (AppendOnlyVirtualMemory mem = openKey()) {
+            try (MemoryA mem = openKey()) {
                 mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED);
             }
             assertWriterConstructorFail("Unknown format");
@@ -804,7 +1042,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testWriterConstructorIncorrectValueCount() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (AppendOnlyVirtualMemory mem = openKey()) {
+            try (MemoryA mem = openKey()) {
+                mem.jumpTo(0);
                 mem.putByte(BitmapIndexUtils.SIGNATURE);
                 mem.skip(9);
                 mem.putLong(1000);
@@ -820,7 +1059,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testWriterConstructorKeyMismatch() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (AppendOnlyVirtualMemory mem = openKey()) {
+            try (MemoryA mem = openKey()) {
                 mem.putByte(BitmapIndexUtils.SIGNATURE);
                 mem.skip(20);
                 mem.putLong(300);
@@ -908,18 +1147,22 @@ public class BitmapIndexTest extends AbstractCairoTest {
             new BitmapIndexWriter(configuration, path.trimTo(plen), "x");
             Assert.fail();
         } catch (CairoException e) {
-            Assert.assertTrue(Chars.contains(e.getMessage(), contains));
+            TestUtils.assertContains(e.getFlyweightMessage(), contains);
         }
     }
 
-    private AppendOnlyVirtualMemory openKey() {
+    private MemoryA openKey() {
         try (Path path = new Path()) {
-            return new AppendOnlyVirtualMemory(configuration.getFilesFacade(), path.of(configuration.getRoot()).concat("x").put(".k").$(), configuration.getFilesFacade().getPageSize());
+            return Vm.getSmallCMARWInstance(
+                    configuration.getFilesFacade(),
+                    path.of(configuration.getRoot()).concat("x").put(".k").$()
+            );
         }
     }
 
     private void setupIndexHeader() {
-        try (AppendOnlyVirtualMemory mem = openKey()) {
+        try (MemoryA mem = openKey()) {
+            mem.jumpTo(0);
             mem.putByte(BitmapIndexUtils.SIGNATURE);
             mem.putLong(10); // sequence
             mem.putLong(0); // value mem size

@@ -68,7 +68,8 @@ public class SendAndReceiveRequestBuilder {
     private boolean expectDisconnect;
     private int requestCount = 1;
     private int compareLength = -1;
-    private final int maxWaitTimeoutMs = 5000;
+    private final int maxWaitTimeoutMs = 30000;
+    private boolean expectSendDisconnect;
 
     public void execute(
             String request,
@@ -80,13 +81,10 @@ public class SendAndReceiveRequestBuilder {
             long sockAddr = nf.sockaddr("127.0.0.1", 9001);
             try {
                 Assert.assertTrue(fd > -1);
-                long ret = nf.connect(fd, sockAddr);
-                if (ret != 0) {
-                    Assert.fail("could not connect: " + nf.errno());
-                }
+                TestUtils.assertConnect(nf, fd, sockAddr);
                 Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
                 if (!expectDisconnect) {
-                    NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
+                    nf.configureNonBlocking(fd);
                 }
 
                 executeWithSocket(request, response, fd);
@@ -103,11 +101,7 @@ public class SendAndReceiveRequestBuilder {
         nf.configureNoLinger(fd);
         long sockAddr = nf.sockaddr("127.0.0.1", 9001);
         try {
-            Assert.assertTrue(fd > -1);
-            long ret = nf.connect(fd, sockAddr);
-            if (ret != 0) {
-                Assert.fail("could not connect: " + nf.errno());
-            }
+            TestUtils.assertConnect(fd, sockAddr);
             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
             if (!expectDisconnect) {
                 NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
@@ -132,13 +126,23 @@ public class SendAndReceiveRequestBuilder {
         }
     }
 
-    public void executeExplicit(String request, long fd, CharSequence expectedResponse, final int len, long ptr, HttpClientStateListener listener) throws InterruptedException {
+    public void executeExplicit(
+            String request,
+            long fd,
+            CharSequence expectedResponse,
+            final int len,
+            long ptr,
+            HttpClientStateListener listener
+    ) throws InterruptedException {
         long timestamp = System.currentTimeMillis();
         int sent = 0;
         int reqLen = request.length();
         Chars.asciiStrCpy(request, reqLen, ptr);
         while (sent < reqLen) {
             int n = nf.send(fd, ptr + sent, reqLen - sent);
+            if (n < 0 && expectSendDisconnect){
+                return;
+            }
             Assert.assertTrue(n > -1);
             sent += n;
         }
@@ -180,6 +184,7 @@ public class SendAndReceiveRequestBuilder {
                 }
             }
         }
+
         byte[] receivedBytes = new byte[receivedByteList.size()];
         for (int i = 0; i < receivedByteList.size(); i++) {
             receivedBytes[i] = (byte) receivedByteList.getQuick(i);
@@ -198,14 +203,14 @@ public class SendAndReceiveRequestBuilder {
                     expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
                     actual = actual.length() > 0 ? actual.substring(0, Math.min(compareLength, actual.length()) - 1) : actual;
                 }
-                TestUtils.assertEquals(disconnected ? "Server disconnected" : null, expected, actual);
+                if (!expectSendDisconnect) {
+                    // expectSendDisconnect means that test expect disconnect during send or straight after
+                    TestUtils.assertEquals(disconnected ? "Server disconnected" : null, expected, actual);
+                }
             }
-        } else {
-            System.out.println("actual");
-            System.out.println(actual);
         }
 
-        if (disconnected && !expectDisconnect) {
+        if (disconnected && !expectDisconnect && !expectSendDisconnect) {
             LOG.error().$("disconnected?").$();
             Assert.fail();
         }
@@ -290,13 +295,10 @@ public class SendAndReceiveRequestBuilder {
         try {
             long sockAddr = nf.sockaddr("127.0.0.1", 9001);
             Assert.assertTrue(fd > -1);
-            long ret = nf.connect(fd, sockAddr);
-            if (ret != 0) {
-                Assert.fail("could not connect: " + nf.errno());
-            }
+            TestUtils.assertConnect(nf, fd, sockAddr);
             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
             if (!expectDisconnect) {
-                NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
+                nf.configureNonBlocking(fd);
             }
 
             try {
@@ -328,6 +330,11 @@ public class SendAndReceiveRequestBuilder {
 
     public SendAndReceiveRequestBuilder withExpectDisconnect(boolean expectDisconnect) {
         this.expectDisconnect = expectDisconnect;
+        return this;
+    }
+
+    public SendAndReceiveRequestBuilder withExpectSendDisconnect(boolean expectDisconnect) {
+        this.expectSendDisconnect = expectDisconnect;
         return this;
     }
 

@@ -25,21 +25,14 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableNoSizeRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
-public class SampleByFillNoneNotKeyedRecordCursorFactory implements RecordCursorFactory {
-    protected final RecordCursorFactory base;
+public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
     private final SampleByFillNoneNotKeyedRecordCursor cursor;
-    private final RecordMetadata metadata;
-    private final ObjList<Function> recordFunctions;
 
     public SampleByFillNoneNotKeyedRecordCursorFactory(
             RecordCursorFactory base,
@@ -48,58 +41,29 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory implements RecordCursor
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             int valueCount,
-            int timestampIndex
+            int timestampIndex,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) {
+        super(base, groupByMetadata, recordFunctions);
         final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
-        this.recordFunctions = recordFunctions;
-
-        try {
-            this.base = base;
-            this.metadata = groupByMetadata;
-            this.cursor = new SampleByFillNoneNotKeyedRecordCursor(
-                    simpleMapValue,
-                    groupByFunctions,
-                    recordFunctions,
-                    timestampIndex,
-                    timestampSampler
-            );
-        } catch (Throwable e) {
-            Misc.freeObjList(recordFunctions);
-            throw e;
-        }
+        this.cursor = new SampleByFillNoneNotKeyedRecordCursor(
+                simpleMapValue,
+                groupByFunctions,
+                recordFunctions,
+                timestampIndex,
+                timestampSampler,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
+        );
     }
 
     @Override
-    public void close() {
-        Misc.freeObjList(recordFunctions);
-        Misc.free(base);
-    }
-
-    @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        final RecordCursor baseCursor = base.getCursor(executionContext);
-        if (baseCursor.hasNext()) {
-            return initFunctionsAndCursor(executionContext, baseCursor);
-        }
-        baseCursor.close();
-        return EmptyTableNoSizeRecordCursor.INSTANCE;
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
-    }
-
-    @NotNull
-    protected RecordCursor initFunctionsAndCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) {
-        cursor.of(baseCursor, executionContext);
-        // init all record function for this cursor, in case functions require metadata and/or symbol tables
-        Function.init(recordFunctions, baseCursor, executionContext);
+    protected AbstractNoRecordSampleByCursor getRawCursor() {
         return cursor;
     }
 }

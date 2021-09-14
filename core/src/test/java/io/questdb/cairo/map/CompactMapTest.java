@@ -27,7 +27,7 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.vm.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -308,7 +308,7 @@ public class CompactMapTest extends AbstractCairoTest {
         // string is always a number and this number will be hash code of string.
         class MockHash implements CompactMap.HashFunction {
             @Override
-            public long hash(ContiguousVirtualMemory mem, long offset, long size) {
+            public long hash(MemoryR mem, long offset, long size) {
                 // we have single key field, which is string
                 // the offset of string is 8 bytes for key cell + 4 bytes for string length, total is 12
                 char c = mem.getChar(offset + 12);
@@ -399,23 +399,6 @@ public class CompactMapTest extends AbstractCairoTest {
     @Test
     public void testValueAccess() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-                model
-                        .col("a", ColumnType.BYTE)
-                        .col("b", ColumnType.SHORT)
-                        .col("c", ColumnType.INT)
-                        .col("d", ColumnType.LONG)
-                        .col("e", ColumnType.DATE)
-                        .col("f", ColumnType.TIMESTAMP)
-                        .col("g", ColumnType.FLOAT)
-                        .col("h", ColumnType.DOUBLE)
-                        .col("i", ColumnType.STRING)
-                        .col("j", ColumnType.SYMBOL)
-                        .col("k", ColumnType.BOOLEAN)
-                        .col("l", ColumnType.BINARY);
-                CairoTestUtils.create(model);
-            }
-
             final int N = 1000;
             final Rnd rnd = new Rnd();
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
@@ -441,6 +424,10 @@ public class CompactMapTest extends AbstractCairoTest {
                                 .add(ColumnType.DATE)
                                 .add(ColumnType.TIMESTAMP)
                                 .add(ColumnType.BOOLEAN)
+                                .add(ColumnType.geohashWithPrecision(5))
+                                .add(ColumnType.geohashWithPrecision(10))
+                                .add(ColumnType.geohashWithPrecision(20))
+                                .add(ColumnType.geohashWithPrecision(40))
                         ,
                         N,
                         0.9,
@@ -453,7 +440,7 @@ public class CompactMapTest extends AbstractCairoTest {
 
                     RecordCursor cursor = reader.getCursor();
                     final Record record = cursor.getRecord();
-                    populateMap(map, rnd2, cursor, sink);
+                    populateMapGeo(map, rnd2, cursor, sink);
 
                     cursor.toTop();
                     rnd2.reset();
@@ -472,7 +459,79 @@ public class CompactMapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd2.nextLong(), value.getDate(6));
                         Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
                         Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
+                        Assert.assertEquals((byte)Math.abs(rnd2.nextByte()), value.getGeoHashByte(9));
+                        Assert.assertEquals((short)Math.abs(rnd2.nextShort()), value.getGeoHashShort(10));
+                        Assert.assertEquals(Math.abs(rnd2.nextInt()), value.getGeoHashInt(11));
+                        Assert.assertEquals(Math.abs(rnd2.nextLong()), value.getGeoHashLong(12));
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGeoHashValueAccess() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int precisionBits = 10;
+            int geohashType = ColumnType.geohashWithPrecision(precisionBits);
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
+                model
+                        .col("a", ColumnType.LONG)
+                        .col("b", geohashType);
+                CairoTestUtils.create(model);
+            }
+
+            BytecodeAssembler asm = new BytecodeAssembler();
+            final int N = 1000;
+            final Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row row = writer.newRow();
+                    long rndGeohash = GeoHashes.fromCoordinates(rnd.nextDouble() * 180 - 90, rnd.nextDouble() * 360 - 180, precisionBits);
+                    row.putLong(0, i);
+                    row.putGeoHash(1, rndGeohash);
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = new TableReader(configuration, "x")) {
+                EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
+                entityColumnFilter.of(reader.getMetadata().getColumnCount());
+
+                try (CompactMap map = new CompactMap(
+                        1024 * 1024,
+                        new SymbolAsStrTypes(reader.getMetadata()),
+                        new ArrayColumnTypes().add(ColumnType.LONG)
+                        ,
+                        N,
+                        0.9,
+                        1, Integer.MAX_VALUE)) {
+
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
+                    RecordCursor cursor = reader.getCursor();
+
+                    long counter = 0;
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        MapKey key = map.withKey();
+                        key.put(record, sink);
+                        MapValue value = key.createValue();
+                        Assert.assertTrue(value.isNew());
+                        value.putLong(0, counter++);
+                    }
+
+                    cursor.toTop();
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        MapKey key = map.withKey();
+                        key.put(record, sink);
+                        MapValue value = key.findValue();
+                        Assert.assertNotNull(value);
+                        Assert.assertEquals(count++, value.getLong(0));
+                    }
+
+                    Assert.assertEquals(N, count);
                 }
             }
         });
@@ -694,6 +753,30 @@ public class CompactMapTest extends AbstractCairoTest {
         }
     }
 
+    private void populateMapGeo(CompactMap map, Rnd rnd2, RecordCursor cursor, RecordSink sink) {
+        long counter = 0;
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            MapKey key = map.withKey();
+            key.put(record, sink);
+            MapValue value = key.createValue();
+            Assert.assertTrue(value.isNew());
+            value.putLong(0, ++counter);
+            value.putInt(1, rnd2.nextInt());
+            value.putShort(2, rnd2.nextShort());
+            value.putByte(3, rnd2.nextByte());
+            value.putFloat(4, rnd2.nextFloat());
+            value.putDouble(5, rnd2.nextDouble());
+            value.putDate(6, rnd2.nextLong());
+            value.putTimestamp(7, rnd2.nextLong());
+            value.putBool(8, rnd2.nextBoolean());
+            value.putByte(9, (byte) Math.abs(rnd2.nextByte()));
+            value.putShort(10, (short) Math.abs(rnd2.nextShort()));
+            value.putInt(11, Math.abs(rnd2.nextInt()));
+            value.putLong(12, Math.abs(rnd2.nextLong()));
+        }
+    }
+
     private void testUnableToFindFreeSlot0(Rnd rnd, int n, int m, StringSink sink, CompactMap map) {
         long target = map.getKeyCapacity();
 
@@ -724,7 +807,7 @@ public class CompactMapTest extends AbstractCairoTest {
     // we need decent spread of hash codes making single character not enough
     private static class MockHash implements CompactMap.HashFunction {
         @Override
-        public long hash(ContiguousVirtualMemory mem, long offset, long size) {
+        public long hash(MemoryR mem, long offset, long size) {
             // string begins after 8-byte cell for key value
             CharSequence cs = mem.getStr(offset + 8);
             try {

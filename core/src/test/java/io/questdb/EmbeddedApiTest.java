@@ -90,7 +90,7 @@ public class EmbeddedApiTest {
                         compiler.compile("create table abc (g double, ts timestamp) timestamp(ts) partition by DAY", ctx);
 
                         long timestamp = 0;
-                        try (TableWriter writer = engine.getWriter(ctx.getCairoSecurityContext(), "abc")) {
+                        try (TableWriter writer = engine.getWriter(ctx.getCairoSecurityContext(), "abc", "testing")) {
                             for (int i = 0; i < 10_000_000; i++) {
                                 TableWriter.Row row = writer.newRow(timestamp);
                                 row.putDouble(0, rnd.nextDouble());
@@ -129,7 +129,7 @@ public class EmbeddedApiTest {
                     final SqlCompiler compiler = new SqlCompiler(engine)
             ) {
                 compiler.compile("create table abc (a int, b byte, c short, d long, e float, g double, h date, i symbol, j string, k boolean, ts timestamp) timestamp(ts)", ctx);
-                try (TableWriter writer = engine.getWriter(ctx.getCairoSecurityContext(), "abc")) {
+                try (TableWriter writer = engine.getWriter(ctx.getCairoSecurityContext(), "abc", "testing")) {
                     for (int i = 0; i < 10; i++) {
                         TableWriter.Row row = writer.newRow(Os.currentTimeMicros());
                         row.putInt(0, 123);

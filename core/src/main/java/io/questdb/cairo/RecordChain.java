@@ -27,8 +27,8 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.AnalyticSPI;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.vm.ContiguousVirtualMemory;
-import io.questdb.cairo.vm.VmUtils;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Mutable;
@@ -40,7 +40,7 @@ import java.io.Closeable;
 public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI, AnalyticSPI {
 
     private final long[] columnOffsets;
-    private final ContiguousVirtualMemory mem;
+    private final MemoryARW mem;
     private final RecordChainRecord recordA = new RecordChainRecord();
     private final RecordChainRecord recordB = new RecordChainRecord();
     private final long varOffset;
@@ -52,7 +52,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     private RecordCursor symbolTableResolver;
 
     public RecordChain(@Transient ColumnTypes columnTypes, RecordSink recordSink, long pageSize, int maxPages) {
-        this.mem = new ContiguousVirtualMemory(pageSize, maxPages);
+        this.mem = Vm.getARWInstance(pageSize, maxPages);
         this.recordSink = recordSink;
         int count = columnTypes.getColumnCount();
         long varOffset = 0L;
@@ -61,17 +61,12 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         this.columnOffsets = new long[count];
         for (int i = 0; i < count; i++) {
             int type = columnTypes.getColumnType(i);
-
-            switch (type) {
-                case ColumnType.STRING:
-                case ColumnType.BINARY:
-                    columnOffsets[i] = varOffset;
-                    varOffset += 8;
-                    break;
-                default:
-                    columnOffsets[i] = fixOffset;
-                    fixOffset += ColumnType.sizeOf(type);
-                    break;
+            if (ColumnType.isVariableLength(type)) {
+                columnOffsets[i] = varOffset;
+                varOffset += 8;
+            } else {
+                columnOffsets[i] = fixOffset;
+                fixOffset += ColumnType.sizeOf(type);
             }
         }
         this.varOffset = varOffset;
@@ -104,6 +99,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         mem.close();
         nextRecordOffset = -1L;
         varAppendOffset = 0L;
+    }
+
+    @Override
+    public long getAddress(long recordOffset, int columnIndex) {
+        return addressOf(getOffsetOfColumn(recordOffset, columnIndex));
     }
 
     public long getOffsetOfColumn(long recordOffset, int columnIndex) {
@@ -177,11 +177,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
-    public long getAddress(long recordOffset, int columnIndex) {
-        return addressOf(getOffsetOfColumn(recordOffset, columnIndex));
-    }
-
-    @Override
     public void putBool(boolean value) {
         mem.putBool(value);
     }
@@ -237,7 +232,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
             recordOffset += 8;
             mem.putStr(varAppendOffset, value);
-            varAppendOffset += VmUtils.getStorageLength(value.length());
+            varAppendOffset += Vm.getStorageLength(value.length());
         } else {
             putNull();
         }
@@ -249,7 +244,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
         recordOffset += 8;
         mem.putStr(varAppendOffset, value, lo, len);
-        varAppendOffset += VmUtils.getStorageLength(len);
+        varAppendOffset += Vm.getStorageLength(len);
     }
 
     @Override
@@ -385,6 +380,30 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         @Override
         public CharSequence getSymB(int col) {
             return symbolTableResolver.getSymbolTable(col).valueBOf(getInt(col));
+        }
+
+        @Override
+        public byte getGeoHashByte(int col) {
+            // No column tops, return byte from mem.
+            return mem.getByte(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public short getGeoHashShort(int col) {
+            // No column tops, return short from mem.
+            return mem.getShort(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public int getGeoHashInt(int col) {
+            // No column tops, return int from mem.
+            return mem.getInt(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public long getGeoHashLong(int col) {
+            // No column tops, return long from mem.
+            return mem.getLong(fixedWithColumnOffset(col));
         }
 
         private long fixedWithColumnOffset(int index) {

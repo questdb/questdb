@@ -46,6 +46,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.test.tools.TestUtils.getSendDelayNetworkFacade;
+
 // These test the retry behaviour of IODispatcher, HttpConnectionContext
 // They run the same test multiple times in order to test concurrent retry executions
 // If a test becomes unstable (fails sometimes on build server or local run), increase number of iterations
@@ -105,6 +107,7 @@ public class RetryIODispatcherTest {
             "B00014,2017-02-01 00:45:00,,,\r\n" +
             "\r\n" +
             "--------------------------27d997ca93d2689d--";
+
     private final String ValidImportResponse = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -314,25 +317,18 @@ public class RetryIODispatcherTest {
                         if (i == 0) {
                             new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                                     "GET /query?query=create+table+copy+as+(select+*+from+%22fhv_tripdata_2017-02.csv%22)&count=true HTTP/1.1\r\n",
-                                    "0c\r\n" +
-                                            "{\"ddl\":\"OK\"}\r\n" +
-                                            "00\r\n" +
-                                            "\r\n");
+                                    IODispatcherTest.JSON_DDL_RESPONSE
+                            );
                         } else {
                             new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                                     "GET /query?query=insert+into+copy+select+*+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
-                                    "0c\r\n" +
-                                            "{\"ddl\":\"OK\"}\r\n" +
-                                            "00\r\n" +
-                                            "\r\n");
+                                    IODispatcherTest.JSON_DDL_RESPONSE
+                            );
                         }
 
                         new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                                 "GET /query?query=drop+table+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
-                                "0c\r\n" +
-                                        "{\"ddl\":\"OK\"}\r\n" +
-                                        "00\r\n" +
-                                        "\r\n"
+                                IODispatcherTest.JSON_DDL_RESPONSE
                         );
                     }
                 });
@@ -426,10 +422,7 @@ public class RetryIODispatcherTest {
                     // create table
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n",
-                            "0c\r\n" +
-                                    "{\"ddl\":\"OK\"}\r\n" +
-                                    "00\r\n" +
-                                    "\r\n"
+                            IODispatcherTest.JSON_DDL_RESPONSE
                     );
 
                     TableWriter writer = lockWriter(engine, "balances_x");
@@ -445,10 +438,7 @@ public class RetryIODispatcherTest {
                                     try {
                                         new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                                                 "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n",
-                                                "0c\r\n" +
-                                                        "{\"ddl\":\"OK\"}\r\n" +
-                                                        "00\r\n" +
-                                                        "\r\n"
+                                                IODispatcherTest.JSON_DDL_RESPONSE
                                         );
                                     } catch (AssertionError ase) {
                                         fails.incrementAndGet();
@@ -493,10 +483,7 @@ public class RetryIODispatcherTest {
                     // create table
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n",
-                            "0c\r\n" +
-                                    "{\"ddl\":\"OK\"}\r\n" +
-                                    "00\r\n" +
-                                    "\r\n"
+                            IODispatcherTest.JSON_DDL_RESPONSE
                     );
 
                     TableWriter writer = lockWriter(engine, "balances_x");
@@ -511,10 +498,7 @@ public class RetryIODispatcherTest {
                                     try {
                                         new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                                                 "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n",
-                                                "0c\r\n" +
-                                                        "{\"ddl\":\"OK\"}\r\n" +
-                                                        "00\r\n" +
-                                                        "\r\n"
+                                                IODispatcherTest.JSON_DDL_RESPONSE
                                         );
                                     } catch (Exception e) {
                                         LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
@@ -636,10 +620,7 @@ public class RetryIODispatcherTest {
                     // create table
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n",
-                            "0c\r\n" +
-                                    "{\"ddl\":\"OK\"}\r\n" +
-                                    "00\r\n" +
-                                    "\r\n"
+                            IODispatcherTest.JSON_DDL_RESPONSE
                     );
 
                     TableWriter writer = lockWriter(engine, "balances_x");
@@ -783,10 +764,7 @@ public class RetryIODispatcherTest {
                     // create table
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n",
-                            "0c\r\n" +
-                                    "{\"ddl\":\"OK\"}\r\n" +
-                                    "00\r\n" +
-                                    "\r\n"
+                            IODispatcherTest.JSON_DDL_RESPONSE
                     );
 
                     TableWriter writer = lockWriter(engine, "balances_x");
@@ -797,10 +775,7 @@ public class RetryIODispatcherTest {
                                 // Rename table
                                 new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                                         "GET /query?query=rename+table+%27balances_x%27+to+%27balances_y%27&limit=0%2C1000&count=true HTTP/1.1\r\n",
-                                        "0c\r\n" +
-                                                "{\"ddl\":\"OK\"}\r\n" +
-                                                "00\r\n" +
-                                                "\r\n"
+                                        IODispatcherTest.JSON_DDL_RESPONSE
                                 );
                             } catch (Exception e) {
                                 LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
@@ -822,38 +797,11 @@ public class RetryIODispatcherTest {
     }
 
     @NotNull
-    private NetworkFacade getSendDelayNetworkFacade(int startDelayDelayAfter) {
-        return new NetworkFacadeImpl() {
-            final AtomicInteger totalSent = new AtomicInteger();
-
-            @Override
-            public int send(long fd, long buffer, int bufferLen) {
-                if (startDelayDelayAfter == 0) {
-                    return super.send(fd, buffer, bufferLen);
-                }
-
-                int sentNow = totalSent.get();
-                if (bufferLen > 0) {
-                    if (sentNow >= startDelayDelayAfter) {
-                        totalSent.set(0);
-                        return 0;
-                    }
-
-                    int result = super.send(fd, buffer, Math.min(bufferLen, startDelayDelayAfter - sentNow));
-                    totalSent.addAndGet(result);
-                    return result;
-                }
-                return 0;
-            }
-        };
-    }
-
-    @NotNull
     private TableWriter lockWriter(CairoEngine engine, String tableName) throws InterruptedException {
         TableWriter writer = null;
         for (int i = 0; i < 10; i++) {
             try {
-                writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName);
+                writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing");
                 break;
             } catch (EntryUnavailableException e) {
                 Thread.sleep(10);

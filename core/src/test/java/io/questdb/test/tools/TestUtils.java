@@ -33,13 +33,18 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 
 import java.io.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class TestUtils {
 
@@ -59,6 +64,29 @@ public final class TestUtils {
             if (a.byteAt(i) != b.byteAt(i)) return false;
         }
         return true;
+    }
+
+    public static void assertConnect(long fd, long sockAddr, boolean noLinger) {
+        Assert.assertTrue(fd > -1);
+        if (noLinger) {
+            Net.configureNoLinger(fd);
+        }
+        long rc = Net.connect(fd, sockAddr);
+        if (rc != 0) {
+            Assert.fail("could not connect, errno=" + Os.errno());
+        }
+    }
+
+    public static void assertConnect(long fd, long sockAddr) {
+        assertConnect(fd, sockAddr, true);
+    }
+
+    public static void assertConnect(NetworkFacade nf, long fd, long ilpSockAddr) {
+        nf.configureNoLinger(fd);
+        long rc = nf.connect(fd, ilpSockAddr);
+        if (rc != 0) {
+            Assert.fail("could not connect, errno=" + nf.errno());
+        }
     }
 
     public static void assertContains(CharSequence _this, CharSequence that) {
@@ -86,7 +114,9 @@ public final class TestUtils {
             for (int i = 0; i < metadataExpected.getColumnCount(); i++) {
                 String columnName = metadataExpected.getColumnName(i);
                 try {
-                    switch (metadataExpected.getColumnType(i)) {
+                    int columnType = metadataExpected.getColumnType(i);
+                    int tagType = ColumnType.storageTag(columnType);
+                    switch (tagType) {
                         case ColumnType.DATE:
                             Assert.assertEquals(r.getDate(i), l.getDate(i));
                             break;
@@ -102,6 +132,9 @@ public final class TestUtils {
                         case ColumnType.INT:
                             Assert.assertEquals(r.getInt(i), l.getInt(i));
                             break;
+                        case ColumnType.GEOINT:
+                            Assert.assertEquals(r.getGeoHashInt(i), l.getGeoHashInt(i));
+                            break;
                         case ColumnType.STRING:
                             TestUtils.assertEquals(r.getStr(i), l.getStr(i));
                             break;
@@ -114,8 +147,17 @@ public final class TestUtils {
                         case ColumnType.CHAR:
                             Assert.assertEquals(r.getChar(i), l.getChar(i));
                             break;
+                        case ColumnType.GEOSHORT:
+                            Assert.assertEquals(r.getGeoHashShort(i), l.getGeoHashShort(i));
+                            break;
                         case ColumnType.LONG:
                             Assert.assertEquals(r.getLong(i), l.getLong(i));
+                            break;
+                        case ColumnType.GEOLONG:
+                            Assert.assertEquals(r.getGeoHashLong(i), l.getGeoHashLong(i));
+                            break;
+                        case ColumnType.GEOBYTE:
+                            Assert.assertEquals(r.getGeoHashByte(i), l.getGeoHashByte(i));
                             break;
                         case ColumnType.BYTE:
                             Assert.assertEquals(r.getByte(i), l.getByte(i));
@@ -463,7 +505,7 @@ public final class TestUtils {
         StringBuilder sql = new StringBuilder();
         sql.append("create table ").append(tableName).append(" as (").append(Misc.EOL).append("select").append(Misc.EOL);
         for (int i = 0; i < tableModel.getColumnCount(); i++) {
-            int colType = tableModel.getColumnType(i);
+            int colType = ColumnType.tagOf(tableModel.getColumnType(i));
             CharSequence colName = tableModel.getColumnName(i);
             switch (colType) {
                 case ColumnType.INT:
@@ -651,6 +693,33 @@ public final class TestUtils {
             Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
             Assert.assertEquals("Column type " + i, metadataExpected.getColumnType(i), metadataActual.getColumnType(i));
         }
+    }
+
+    @NotNull
+    public static NetworkFacade getSendDelayNetworkFacade(int startDelayDelayAfter) {
+        return new NetworkFacadeImpl() {
+            final AtomicInteger totalSent = new AtomicInteger();
+
+            @Override
+            public int send(long fd, long buffer, int bufferLen) {
+                if (startDelayDelayAfter == 0) {
+                    return super.send(fd, buffer, bufferLen);
+                }
+
+                int sentNow = totalSent.get();
+                if (bufferLen > 0) {
+                    if (sentNow >= startDelayDelayAfter) {
+                        totalSent.set(0);
+                        return 0;
+                    }
+
+                    int result = super.send(fd, buffer, Math.min(bufferLen, startDelayDelayAfter - sentNow));
+                    totalSent.addAndGet(result);
+                    return result;
+                }
+                return 0;
+            }
+        };
     }
 
     @FunctionalInterface

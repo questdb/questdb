@@ -25,7 +25,6 @@
 #include <cstring>
 #include "util.h"
 #include "simd.h"
-#include "asmlib/asmlib.h"
 #include "ooo_dispatch.h"
 
 #ifdef OOO_CPP_PROFILE_TIMING
@@ -145,7 +144,7 @@ void radix_sort_long_index_asc_in_place(T *array, uint64_t size, T *cpy) {
     memset(&counts, 0, 256 * 8 * sizeof(uint64_t));
     uint64_t o8 = 0, o7 = 0, o6 = 0, o5 = 0, o4 = 0, o3 = 0, o2 = 0, o1 = 0;
     uint64_t t8, t7, t6, t5, t4, t3, t2, t1;
-    int64_t x;
+    uint64_t x;
 
     // calculate counts
     MM_PREFETCH_NTA(counts.c8);
@@ -405,9 +404,10 @@ JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memcpy0
     );
 }
 
+DECLARE_DISPATCHER(platform_memmove);
 JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memmove
         (JNIEnv *e, jclass cl, jlong dst, jlong src, jlong len) {
-    memmove(
+    platform_memmove(
             reinterpret_cast<void *>(dst),
             reinterpret_cast<void *>(src),
             __JLONG_REINTERPRET_CAST__(int64_t, len)
@@ -504,14 +504,15 @@ Java_io_questdb_std_Vect_sortULongAscInPlace(JNIEnv *env, jclass cl, jlong pLong
 }
 
 JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_mergeLongIndexesAsc(JAVA_STATIC, jlong pIndexStructArray, jint count) {
+Java_io_questdb_std_Vect_mergeLongIndexesAsc(JAVA_STATIC, jlong pIndexStructArray, jint cnt) {
     // prepare merge entries
     // they need to have mutable current position "pos" in index
 
-    if (count < 1) {
+    if (cnt < 1) {
         return 0;
     }
 
+    auto count = static_cast<uint32_t>(cnt);
     const java_index_entry_t *java_entries = reinterpret_cast<java_index_entry_t *>(pIndexStructArray);
     if (count == 1) {
         return reinterpret_cast<jlong>(java_entries[0].index);
@@ -520,7 +521,7 @@ Java_io_questdb_std_Vect_mergeLongIndexesAsc(JAVA_STATIC, jlong pIndexStructArra
     uint32_t size = ceil_pow_2(count);
     index_entry_t entries[size];
     uint64_t merged_index_size = 0;
-    for (jint i = 0; i < count; i++) {
+    for (uint32_t i = 0; i < count; i++) {
         entries[i].index = java_entries[i].index;
         entries[i].pos = 0;
         entries[i].size = java_entries[i].size;

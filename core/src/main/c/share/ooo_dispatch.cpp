@@ -23,11 +23,9 @@
  ******************************************************************************/
 
 
-#include <cstring>
 #include "util.h"
 #include "simd.h"
 
-#include "asmlib/asmlib.h"
 #include "vcl/vectorclass.h"
 #include <x86intrin.h>
 #include <xmmintrin.h>
@@ -69,7 +67,7 @@ inline void run_vec_bulk(T *dest,
     constexpr int64_t iteration_increment = sizeof(T);
     if (unaligned % iteration_increment == 0) {
 
-        const auto head_iteration_count = unaligned > 0 ? (alignment - unaligned) / iteration_increment : 0;
+        const int64_t head_iteration_count = unaligned > 0 ? (alignment - unaligned) / iteration_increment : 0;
         constexpr int64_t increment = TVec::size();
         const int64_t bulk_stop = count - increment + 1;
 
@@ -241,6 +239,10 @@ void MULTI_VERSION_NAME (platform_memcpy)(void *dst, const void *src, const size
 
 void MULTI_VERSION_NAME (platform_memset)(void *dst, const int val, const size_t len) {
     __MEMSET(dst, val, len);
+}
+
+void MULTI_VERSION_NAME (platform_memmove)(void *dst, const void *src, const size_t len) {
+    __MEMMOVE(dst, src, len);
 }
 
 // 0

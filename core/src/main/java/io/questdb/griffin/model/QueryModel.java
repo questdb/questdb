@@ -43,6 +43,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int JOIN_ASOF = 4;
     public static final int JOIN_SPLICE = 5;
     public static final int JOIN_LT = 6;
+    public static final int JOIN_MAX = JOIN_LT;
     public static final String SUB_QUERY_ALIAS_PREFIX = "_xQdbA";
     public static final int SELECT_MODEL_NONE = 0;
     public static final int SELECT_MODEL_CHOOSE = 1;
@@ -84,6 +85,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
+    private ExpressionNode sampleByTimezoneName = null;
+    private ExpressionNode sampleByOffset = null;
     private final ObjList<ExpressionNode> latestBy = new ObjList<>();
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntList orderByDirectionAdvice = new IntList();
@@ -111,6 +114,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int setOperationType;
     private int modelPosition = 0;
     private int orderByAdviceMnemonic;
+    private int tableId;
 
     private QueryModel() {
         joinModels.add(this);
@@ -224,6 +228,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         selectModelType = SELECT_MODEL_NONE;
         columnNameToAliasMap.clear();
         tableNameFunction = null;
+        tableId = -1;
         tableVersion = -1;
         bottomUpColumnNames.clear();
         expressionModels.clear();
@@ -251,6 +256,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void clearSampleBy() {
         sampleBy = null;
         sampleByFill.clear();
+        sampleByTimezoneName = null;
+        sampleByOffset = null;
     }
 
     public void copyColumnsFrom(
@@ -302,6 +309,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ExpressionNode getAlias() {
         return alias;
+    }
+
+    public int getTableId() {
+        return tableId;
     }
 
     public void moveAliasFrom(QueryModel that) {
@@ -514,6 +525,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.sampleBy = sampleBy;
     }
 
+    public ExpressionNode getSampleByTimezoneName() {
+        return sampleByTimezoneName;
+    }
+
+    public void setSampleByTimezoneName(ExpressionNode sampleByTimezoneName) {
+        this.sampleByTimezoneName = sampleByTimezoneName;
+    }
+
+    public ExpressionNode getSampleByOffset() {
+        return sampleByOffset;
+    }
+
+    public void setSampleByOffset(ExpressionNode sampleByOffset) {
+        this.sampleByOffset = sampleByOffset;
+    }
+
     public ObjList<ExpressionNode> getSampleByFill() {
         return sampleByFill;
     }
@@ -536,6 +563,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ExpressionNode getTableName() {
         return tableName;
+    }
+
+    public void setTableId(int id) {
+        this.tableId = id;
     }
 
     public void setTableName(ExpressionNode tableName) {
@@ -630,6 +661,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.sampleBy = model.sampleBy;
         this.sampleByFill.clear();
         this.sampleByFill.addAll(model.sampleByFill);
+        this.sampleByTimezoneName = model.sampleByTimezoneName;
+        this.sampleByOffset = model.sampleByOffset;
 
         // clear the source
         model.clearSampleBy();
@@ -907,6 +940,19 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                     }
                 }
                 sink.put(')');
+            }
+
+            if (sampleByTimezoneName != null || sampleByOffset != null) {
+                sink.put(" align to calendar");
+                if (sampleByTimezoneName != null) {
+                    sink.put(" time zone ");
+                    sink.put(sampleByTimezoneName);
+                }
+
+                if(sampleByOffset != null) {
+                    sink.put(" with offset ");
+                    sink.put(sampleByOffset);
+                }
             }
         }
 

@@ -65,8 +65,10 @@ public class GroupByUtils {
 
             if (node.type != ExpressionNode.LITERAL) {
                 // this can fail
+                ExpressionNode columnAst = column.getAst();
+
                 final Function function = functionParser.parseFunction(
-                        column.getAst(),
+                        columnAst,
                         metadata,
                         executionContext
                 );
@@ -78,7 +80,7 @@ public class GroupByUtils {
                 GroupByFunction func = (GroupByFunction) function;
                 func.pushValueTypes(valueTypes);
                 groupByFunctions.add(func);
-                groupByFunctionPositions.add(column.getAst().position);
+                groupByFunctionPositions.add(columnAst.position);
             }
         }
     }
@@ -134,7 +136,7 @@ public class GroupByUtils {
                     }
 
                     final Function fun;
-                    switch (type) {
+                    switch (ColumnType.tagOf(type)) {
                         case ColumnType.BOOLEAN:
                             fun = BooleanColumn.newInstance(keyColumnIndex - 1);
                             break;
@@ -191,7 +193,7 @@ public class GroupByUtils {
                     if (groupByMetadata.getTimestampIndex() == -1) {
                         groupByMetadata.setTimestampIndex(i);
                     }
-                    assert type == ColumnType.TIMESTAMP;
+                    assert ColumnType.tagOf(type) == ColumnType.TIMESTAMP;
                 }
 
                 // and finish with populating metadata for this factory

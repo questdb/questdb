@@ -35,10 +35,10 @@ import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import io.questdb.std.str.Path;
 
 public class LineTcpServer implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpServer.class);
@@ -120,12 +120,15 @@ public class LineTcpServer implements Closeable {
         public LineTcpConnectionContextFactory(LineTcpReceiverConfiguration configuration) {
             ObjectFactory<LineTcpConnectionContext> factory;
             if (null == configuration.getAuthDbPath()) {
-                if (configuration.isIOAggressiveRecv()) {
+                if (configuration.getAggressiveReadRetryCount() > 0) {
+                    LOG.info().$("using aggressive context").$();
                     factory = () -> new AggressiveRecvLineTcpConnectionContext(configuration, scheduler);
                 } else {
+                    LOG.info().$("using default context").$();
                     factory = () -> new LineTcpConnectionContext(configuration, scheduler);
                 }
             } else {
+                LOG.info().$("using authenticating context").$();
                 AuthDb authDb = new AuthDb(configuration);
                 factory = () -> new LineTcpAuthConnectionContext(configuration, authDb, scheduler);
             }

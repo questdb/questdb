@@ -25,28 +25,49 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByAllIndexedFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
+    protected final DirectLongList prefixes;
+
     public LatestByAllIndexedFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
+            int hashColumnIndex,
+            int hashColumnType,
             @Nullable Function filter,
-            @NotNull IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull CharSequenceHashSet prefixes
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
-        if (filter == null) {
-            this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, rows, columnIndexes);
-        } else {
-            this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, rows, filter, columnIndexes);
+
+        this.prefixes = new DirectLongList(64);
+        if (hashColumnIndex > -1 && ColumnType.isGeoHash(hashColumnType)) {
+            GeoHashes.fromStringToBits(prefixes, hashColumnType, this.prefixes);
         }
+
+        if (filter == null) {
+            this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, hashColumnIndex, hashColumnType, rows, columnIndexes, this.prefixes);
+        } else {
+            this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, hashColumnIndex, hashColumnType, rows, filter, columnIndexes, this.prefixes);
+        }
+    }
+
+    @Override
+    public void close() {
+        super.close();
+        prefixes.close();
     }
 
     @Override

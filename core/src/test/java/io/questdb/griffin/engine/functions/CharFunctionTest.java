@@ -116,4 +116,24 @@ public class CharFunctionTest {
     public void testLong256B() {
         function.getLong256B(null);
     }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoHash() {
+        function.getGeoHashLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoHashInt() {
+        function.getGeoHashInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoHashByte() {
+        function.getGeoHashByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoHashShor() {
+        function.getGeoHashShort(null);
+    }
 }

@@ -53,7 +53,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     }
 
     @Override
-    public LongList calculateIntervals(SqlExecutionContext sqlContext) {
+    public LongList calculateIntervals(SqlExecutionContext sqlContext) throws SqlException {
         if (isStatic()) {
             return intervals;
         }
@@ -109,7 +109,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         Misc.freeObjList(dynamicRangeList);
     }
 
-    private void addEvaluateDynamicIntervals(LongList outIntervals, SqlExecutionContext sqlContext) {
+    private void addEvaluateDynamicIntervals(LongList outIntervals, SqlExecutionContext sqlContext) throws SqlException {
         int size = intervals.size();
         int dynamicStart = size - dynamicRangeList.size() * STATIC_LONGS_PER_DYNAMIC_INTERVAL;
         int dynamicIndex = 0;
@@ -238,7 +238,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     }
 
     private long getTimestamp(Function dynamicFunction) {
-        if (dynamicFunction.getType() == ColumnType.STRING) {
+        if (ColumnType.isString(dynamicFunction.getType())) {
             CharSequence value = dynamicFunction.getStr(null);
             try {
                 return IntervalUtils.parseFloorPartialDate(value);

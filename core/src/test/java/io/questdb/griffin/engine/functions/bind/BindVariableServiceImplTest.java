@@ -51,7 +51,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setBin(0, null);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(),"bind variable at 0 is already defined as LONG");
+            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is already defined as LONG");
         }
     }
 
@@ -73,7 +73,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setBoolean(0, false);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(),"bind variable at 0 is defined as LONG and cannot accept BOOLEAN");
+            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG and cannot accept BOOLEAN");
         }
     }
 
@@ -297,7 +297,7 @@ public class BindVariableServiceImplTest {
     @Test
     public void testLongIndexedOverride() throws SqlException {
         bindVariableService.setInt(0, 10);
-            bindVariableService.setLong(0, 5);
+        bindVariableService.setLong(0, 5);
         Assert.assertEquals(5, bindVariableService.getFunction(0).getInt(null));
     }
 
@@ -391,12 +391,7 @@ public class BindVariableServiceImplTest {
     @Test
     public void testNamedSetLong256ToLong256AsObj() throws SqlException {
         final Long256Impl long256 = new Long256Impl();
-
-        long256.setLong0(888);
-        long256.setLong1(999);
-        long256.setLong2(777);
-        long256.setLong3(111);
-
+        long256.setAll(888, 999, 777, 111);
         bindVariableService.setLong256("x");
         bindVariableService.setLong256("x", long256);
         final StringSink sink = new StringSink();
@@ -442,7 +437,7 @@ public class BindVariableServiceImplTest {
         try {
             bindVariableService.setStr(0, "21.2");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(),"bind variable at 0 is defined as BINARY and cannot accept STRING");
+            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as BINARY and cannot accept STRING");
         }
     }
 
@@ -453,7 +448,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setByte(0, (byte) 10);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(),"bind variable at 0 is defined as BOOLEAN and cannot accept BYTE");
+            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as BOOLEAN and cannot accept BYTE");
         }
     }
 

@@ -24,7 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
@@ -35,7 +36,7 @@ public class TableModel implements TableStructure, Closeable {
     private static final long COLUMN_FLAG_INDEXED = 2L;
     private final String name;
     private final int partitionBy;
-    private final AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory();
+    private final MemoryMARW mem = Vm.getMARWInstance();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final LongList columnBits = new LongList();
     private final Path path = new Path();
@@ -51,7 +52,7 @@ public class TableModel implements TableStructure, Closeable {
     public TableModel cached(boolean cached) {
         int last = columnBits.size() - 1;
         assert last > 0;
-        assert ((int) columnBits.getQuick(last - 1) == ColumnType.SYMBOL);
+        assert (ColumnType.isSymbol((int)columnBits.getQuick(last - 1)));
         long bits = columnBits.getQuick(last);
         if (cached) {
             columnBits.setQuick(last, bits | COLUMN_FLAG_CACHED);
@@ -114,7 +115,7 @@ public class TableModel implements TableStructure, Closeable {
         return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_INDEXED) == COLUMN_FLAG_INDEXED;
     }
 
-    public AppendOnlyVirtualMemory getMem() {
+    public MemoryMARW getMem() {
         return mem;
     }
 
@@ -163,7 +164,7 @@ public class TableModel implements TableStructure, Closeable {
         int pos = columnBits.size() - 2;
         assert pos > -1;
         long bits = columnBits.getQuick(pos);
-        assert ((int) bits == ColumnType.SYMBOL);
+        assert (ColumnType.isSymbol((int) bits));
         bits = (((long) capacity) << 32) | (int) bits;
         columnBits.setQuick(pos, bits);
         return this;

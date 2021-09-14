@@ -24,42 +24,14 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 
-public class NullColumn implements MappedReadOnlyMemory {
+public class NullColumn implements MemoryMR {
 
     public static final NullColumn INSTANCE = new NullColumn();
-
-    @Override
-    public void close() {
-    }
-
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long pageSize, long size) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long pageSize) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean isDeleted() {
-        return true;
-    }
-
-    @Override
-    public long getFd() {
-        return -1;
-    }
-
-    @Override
-    public void growToFileSize() {
-    }
 
     @Override
     public BinarySequence getBin(long offset) {
@@ -112,7 +84,7 @@ public class NullColumn implements MappedReadOnlyMemory {
     }
 
     @Override
-    public long getPageSize(int pageIndex) {
+    public long getPageSize() {
         return 0;
     }
 
@@ -156,11 +128,65 @@ public class NullColumn implements MappedReadOnlyMemory {
     }
 
     @Override
-    public void grow(long size) {
+    public void extend(long size) {
     }
 
     @Override
     public long size() {
         return 0;
+    }
+
+    @Override
+    public long addressOf(long offset) {
+        return 0;
+    }
+
+    @Override
+    public long offsetInPage(long offset) {
+        return offset;
+    }
+
+    @Override
+    public int pageIndex(long offset) {
+        return 0;
+    }
+
+    @Override
+    public long getGrownLength() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public FilesFacade getFilesFacade() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void close() {
+    }
+
+    @Override
+    public long getFd() {
+        return -1;
+    }
+
+    @Override
+    public boolean isDeleted() {
+        return true;
+    }
+
+    @Override
+    public boolean isMapped(long offset, long len) {
+        return false;
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void wholeFile(FilesFacade ff, LPSZ name) {
+        throw new UnsupportedOperationException();
     }
 }

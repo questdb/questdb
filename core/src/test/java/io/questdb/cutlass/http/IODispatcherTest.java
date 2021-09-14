@@ -24,11 +24,31 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.Metrics;
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+
+import java.io.InputStream;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
+
 import io.questdb.cairo.*;
+import io.questdb.std.*;
+import org.jetbrains.annotations.NotNull;
+import org.junit.*;
+import org.junit.rules.TemporaryFolder;
+
+import io.questdb.Metrics;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.NetUtils;
-import io.questdb.cutlass.http.processors.*;
+import io.questdb.cutlass.http.processors.HealthCheckProcessor;
+import io.questdb.cutlass.http.processors.JsonQueryProcessor;
+import io.questdb.cutlass.http.processors.QueryCache;
+import io.questdb.cutlass.http.processors.StaticContentProcessor;
+import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -37,9 +57,25 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.network.IOContext;
+import io.questdb.network.IOContextFactory;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.IODispatchers;
+import io.questdb.network.IOOperation;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.AbstractCharSequence;
@@ -47,28 +83,18 @@ import io.questdb.std.str.ByteSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
-
-import java.io.InputStream;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.LockSupport;
-
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class IODispatcherTest {
+    public static final String JSON_DDL_RESPONSE = "0d\r\n" +
+            "{\"ddl\":\"OK\"}\n\r\n" +
+            "00\r\n" +
+            "\r\n";
+
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
     private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
     };
     private static final RecordCursorPrinter printer = new RecordCursorPrinter();
+    private static final Metrics metrics = Metrics.enabled();
     private final String ValidImportResponse = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -96,7 +122,6 @@ public class IODispatcherTest {
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
-    private static Metrics metrics = Metrics.enabled();
 
     public static void createTestTable(CairoConfiguration configuration, int n) {
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
@@ -156,6 +181,11 @@ public class IODispatcherTest {
                         public int getInitialBias() {
                             return IODispatcherConfiguration.BIAS_WRITE;
                         }
+
+                        @Override
+                        public boolean getPeerNoLinger() {
+                            return false;
+                        }
                     },
                     (fd, dispatcher1) -> {
                         connectLatch.countDown();
@@ -172,7 +202,7 @@ public class IODispatcherTest {
                                 (operation, context) -> {
                                     if (operation == IOOperation.WRITE) {
                                         Assert.assertEquals(1024, Net.send(context.getFd(), context.buffer, 1024));
-                                        context.dispatcher.disconnect(context);
+                                        context.dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
                                     }
                                 }
                         );
@@ -185,28 +215,28 @@ public class IODispatcherTest {
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
-                        Assert.assertTrue(fd > -1);
-                        Assert.assertEquals(0, Net.connect(fd, sockAddr));
-
-                        connectLatch.await();
-
-                        long buffer = Unsafe.malloc(2048);
                         try {
-                            Assert.assertEquals(1024, Net.recv(fd, buffer, 1024));
+                            TestUtils.assertConnect(fd, sockAddr);
+
+                            connectLatch.await();
+
+                            long buffer = Unsafe.malloc(2048);
+                            try {
+                                Assert.assertEquals(1024, Net.recv(fd, buffer, 1024));
+                            } finally {
+                                Unsafe.free(buffer, 2048);
+                            }
+
+
+                            Assert.assertEquals(0, Net.close(fd));
+                            LOG.info().$("closed [fd=").$(fd).$(']').$();
+                            fd = -1;
+
+                            contextClosedLatch.await();
                         } finally {
-                            Unsafe.free(buffer, 2048);
+                            serverRunning.set(false);
+                            serverHaltLatch.await();
                         }
-
-
-                        Assert.assertEquals(0, Net.close(fd));
-                        LOG.info().$("closed [fd=").$(fd).$(']').$();
-                        fd = -1;
-
-                        contextClosedLatch.await();
-
-                        serverRunning.set(false);
-                        serverHaltLatch.await();
-
                         Assert.assertEquals(0, dispatcher.getConnectionCount());
                     } finally {
                         Net.freeSockAddr(sockAddr);
@@ -215,6 +245,78 @@ public class IODispatcherTest {
                     if (fd != -1) {
                         Net.close(fd);
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCannotSetNonBlocking() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpContextConfiguration httpContextConfiguration = new DefaultHttpContextConfiguration();
+            final NetworkFacade nf = new NetworkFacadeImpl() {
+                long theFd;
+
+                @Override
+                public long accept(long serverFd) {
+                    long fd = super.accept(serverFd);
+                    theFd = fd;
+                    return fd;
+                }
+
+                @Override
+                public int configureNonBlocking(long fd) {
+                    if (fd == theFd) {
+                        return -1;
+                    }
+                    return super.configureNonBlocking(fd);
+                }
+            };
+
+
+            try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
+                    new DefaultIODispatcherConfiguration() {
+                        @Override
+                        public NetworkFacade getNetworkFacade() {
+                            return nf;
+                        }
+                    },
+                    (fd, dispatcher1) -> new HttpConnectionContext(httpContextConfiguration).of(fd, dispatcher1)
+            )) {
+
+                // spin up dispatcher thread
+                AtomicBoolean dispatcherRunning = new AtomicBoolean(true);
+                SOCountDownLatch dispatcherHaltLatch = new SOCountDownLatch(1);
+
+                new Thread(() -> {
+                    while (dispatcherRunning.get()) {
+                        dispatcher.run(0);
+                    }
+                    dispatcherHaltLatch.countDown();
+                }).start();
+
+                try {
+
+                    long socketAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), 9001);
+                    long fd = Net.socketTcp(true);
+                    try {
+                        TestUtils.assertConnect(fd, socketAddr);
+
+                        int bufLen = 512;
+                        long mem = Unsafe.malloc(bufLen);
+                        try {
+                            Assert.assertEquals(-2, Net.recv(fd, mem, bufLen));
+                        } finally {
+                            Unsafe.free(mem, bufLen);
+                        }
+                    } finally {
+                        Net.close(fd);
+                        Net.freeSockAddr(socketAddr);
+                    }
+
+                } finally {
+                    dispatcherRunning.set(false);
+                    dispatcherHaltLatch.await();
                 }
             }
         });
@@ -290,20 +392,21 @@ public class IODispatcherTest {
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
-                        Assert.assertTrue(fd > -1);
-                        Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                        try {
+                            TestUtils.assertConnect(fd, sockAddr);
 
-                        connectLatch.await();
+                            connectLatch.await();
 
-                        Assert.assertEquals(0, Net.close(fd));
-                        LOG.info().$("closed [fd=").$(fd).$(']').$();
-                        fd = -1;
+                            Assert.assertEquals(0, Net.close(fd));
+                            LOG.info().$("closed [fd=").$(fd).$(']').$();
+                            fd = -1;
 
-                        contextClosedLatch.await();
+                            contextClosedLatch.await();
 
-                        serverRunning.set(false);
-                        serverHaltLatch.await();
-
+                        } finally {
+                            serverRunning.set(false);
+                            serverHaltLatch.await();
+                        }
                         Assert.assertEquals(0, dispatcher.getConnectionCount());
                     } finally {
                         Net.freeSockAddr(sockAddr);
@@ -484,7 +587,7 @@ public class IODispatcherTest {
             // upload file
             NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
 
-            try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, "sample.csv", TableUtils.ANY_TABLE_VERSION)) {
+            try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, "sample.csv", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                 StringSink sink = new StringSink();
                 reader.getMetadata().toJson(sink);
                 TestUtils.assertEquals(expectedTableMetadata, sink);
@@ -551,7 +654,7 @@ public class IODispatcherTest {
             // upload file
             NetUtils.playScript(NetworkFacadeImpl.INSTANCE, uploadScript, "127.0.0.1", 9001);
 
-            try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, "sample.csv", TableUtils.ANY_TABLE_VERSION)) {
+            try (TableReader reader = cairoEngine.getReader(AllowAllCairoSecurityContext.INSTANCE, "sample.csv", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                 StringSink sink = new StringSink();
                 reader.getMetadata().toJson(sink);
                 TestUtils.assertEquals(expectedTableMetadata, sink);
@@ -573,6 +676,17 @@ public class IODispatcherTest {
             boolean expectDisconnect,
             int requestCount
     ) throws Exception {
+        testImport(response, request, nf,null, expectDisconnect, requestCount);
+    }
+
+    public void testImport(
+            String response,
+            String request,
+            NetworkFacade nf,
+            CairoConfiguration configuration,
+            boolean expectDisconnect,
+            int requestCount
+    ) throws Exception {
 
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
@@ -585,15 +699,16 @@ public class IODispatcherTest {
                                 .withHttpProtocolVersion("HTTP/1.1 ")
                                 .withServerKeepAlive(true)
                 )
-                .run(engine -> sendAndReceive(
-                        nf,
-                        request,
-                        response,
-                        requestCount,
-                        0,
-                        false,
-                        expectDisconnect
-                ));
+                .run(configuration,
+                        engine -> sendAndReceive(
+                                nf,
+                                request,
+                                response,
+                                requestCount,
+                                0,
+                                false,
+                                expectDisconnect
+                        ));
     }
 
     @Test
@@ -1610,6 +1725,393 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testImportSettingCommitLagAndMaxUncommittedRows1() throws Exception {
+        importWithCommitLagAndMaxUncommittedRowsTableNotExists(
+                240_000_000, // 4 minutes, micro precision
+                3,
+                240_000_000, // 4 minutes, micro precision
+                3,
+                0,
+                6,
+                "ts,int\r\n" +
+                        "2021-01-01 00:04:00,3\r\n" +
+                        "2021-01-01 00:05:00,4\r\n" +
+                        "2021-01-02 00:05:31,6\r\n" +
+                        "2021-01-01 00:01:00,1\r\n" +
+                        "2021-01-01 00:01:30,2\r\n" +
+                        "2021-01-02 00:00:30,5\r\n",
+                "2021-01-01T00:01:00.000000Z\t1\n" +
+                        "2021-01-01T00:01:30.000000Z\t2\n" +
+                        "2021-01-01T00:04:00.000000Z\t3\n" +
+                        "2021-01-01T00:05:00.000000Z\t4\n" +
+                        "2021-01-02T00:00:30.000000Z\t5\n" +
+                        "2021-01-02T00:05:31.000000Z\t6\n"
+        );
+    }
+
+    @Test
+    public void testImportSettingCommitLagAndMaxUncommittedRows2() throws Exception {
+        importWithCommitLagAndMaxUncommittedRowsTableNotExists(
+                120_000_000, // 2 minutes, micro precision
+                1,
+                120_000_000,
+                1,
+                0,
+                5,
+                "ts,int\r\n" +
+                        "2021-01-01 00:05:00,3\r\n" +
+                        "2021-01-01 00:01:00,1\r\n" +
+                        "2021-01-02 00:05:31,5\r\n" +
+                        "2021-01-01 00:01:30,2\r\n" +
+                        "2021-01-02 00:00:30,4\r\n",
+                "2021-01-01T00:01:00.000000Z\t1\n" +
+                        "2021-01-01T00:01:30.000000Z\t2\n" +
+                        "2021-01-01T00:05:00.000000Z\t3\n" +
+                        "2021-01-02T00:00:30.000000Z\t4\n" +
+                        "2021-01-02T00:05:31.000000Z\t5\n"
+        );
+    }
+
+    @Test
+    public void testCannotUpdateCommitLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsFalse() throws Exception {
+        importWithCommitLagAndMaxUncommittedRowsTableExists(
+                false,
+                true,
+                PartitionBy.DAY,
+                3_600_000_000L, // 1 hour, micro precision
+                1,
+                0,
+                1000);
+    }
+
+    @Test
+    public void testUpdateCommitLagAndMaxUncommittedRowsIsIgnoredIfValuesAreSmallerThanZero() throws Exception {
+        importWithCommitLagAndMaxUncommittedRowsTableExists(
+                true,
+                true,
+                PartitionBy.DAY,
+                -1,
+                -1,
+                0,
+                1000);
+    }
+
+    @Test
+    public void testUpdateCommitLagAndMaxUncommittedRowsIsIgnoredIfPartitionByIsNONE() throws Exception {
+        importWithCommitLagAndMaxUncommittedRowsTableExists(
+                true,
+                false,
+                PartitionBy.NONE,
+                180_000_000,
+                1,
+                0,
+                1000);
+    }
+
+    @Test
+    public void testCanUpdateCommitLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsTrue() throws Exception {
+        importWithCommitLagAndMaxUncommittedRowsTableExists(
+                true,
+                true,
+                PartitionBy.DAY,
+                180_000_000,
+                721,
+                180_000_000,
+                721);
+    }
+
+    @Test
+    public void testCanUpdateCommitLagAndMaxUncommittedRowsToZeroIfTableExistsAndOverwriteIsTrue() throws Exception {
+        importWithCommitLagAndMaxUncommittedRowsTableExists(
+                true,
+                false,
+                PartitionBy.DAY,
+                0,
+                0,
+                0,
+                0);
+    }
+
+    private void importWithCommitLagAndMaxUncommittedRowsTableNotExists(long commitLag,
+                                                                        int maxUncommittedRows,
+                                                                        long expectedCommitLag,
+                                                                        int expectedMaxUncommittedRows,
+                                                                        int expectedRejectedRows,
+                                                                        int expectedImportedRows,
+                                                                        String data,
+                                                                        String expectedData) throws Exception {
+        String tableName = "test_table";
+        String command = "POST /upload?fmt=json&" +
+                "overwrite=false&" +
+                "forceHeader=true&" +
+                "timestamp=ts&" +
+                "partitionBy=DAY&" +
+                "commitLag=" + commitLag + "&" +
+                "maxUncommittedRows=" + maxUncommittedRows + "&" +
+                "name=" + tableName + " HTTP/1.1\r\n";
+
+        String expectedMetadata = "{\"status\":\"OK\"," +
+                "\"location\":\"" + tableName + "\"," +
+                "\"rowsRejected\":" + expectedRejectedRows + "," +
+                "\"rowsImported\":" + expectedImportedRows + "," +
+                "\"header\":true," +
+                "\"columns\":[" +
+                "{\"name\":\"ts\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
+                "{\"name\":\"int\",\"type\":\"INT\",\"size\":4,\"errors\":0}" +
+                "]}\r\n";
+
+        testImport(
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "c8\r\n" +
+                        expectedMetadata +
+                        "00\r\n" +
+                        "\r\n",
+                command +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Content-Length: 832\r\n" +
+                        "Accept: */*\r\n" +
+                        "Origin: http://localhost:9000\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"schema\"\r\n" +
+                        "\r\n" +
+                        "[{\"name\":\"ts\",\"type\":\"TIMESTAMP\", \"pattern\": \"yyyy-MM-dd HH:mm:ss\"}," +
+                        "{\"name\":\"int\",\"type\":\"INT\"}]\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        data +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                NetworkFacadeImpl.INSTANCE,
+                false,
+                1
+        );
+
+        assertMetadataAndData(
+                tableName,
+                expectedCommitLag,
+                expectedMaxUncommittedRows,
+                expectedRejectedRows,
+                expectedImportedRows,
+                expectedData);
+    }
+
+    private void importWithCommitLagAndMaxUncommittedRowsTableExists(boolean overwrite,
+                                                                     boolean durable,
+                                                                     int partitionBy,
+                                                                     long commitLag,
+                                                                     int maxUncommittedRows,
+                                                                     long expectedCommitLag,
+                                                                     int expectedMaxUncommittedRows) throws Exception {
+        final AtomicInteger msyncCallCount = new AtomicInteger();
+        final String baseDir = temp.getRoot().getAbsolutePath();
+        CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return new FilesFacadeImpl() {
+                    @Override
+                    public int msync(long addr, long len, boolean async) {
+                        msyncCallCount.incrementAndGet();
+                        return Files.msync(addr, len, async);
+                    }
+                };
+            }
+        };
+
+        String tableName = "test_table";
+        try (TableModel model = new TableModel(configuration, tableName, partitionBy)
+                .timestamp("ts")
+                .col("int", ColumnType.INT)) {
+            CairoTestUtils.create(model);
+        }
+
+        String command = "POST /upload?fmt=json&" +
+                String.format("overwrite=%b&", overwrite) +
+                String.format("durable=%b&", durable) +
+                "forceHeader=true&" +
+                "timestamp=ts&" +
+                String.format("partitionBy=%s&", PartitionBy.toString(partitionBy)) +
+                "commitLag=" + commitLag + "&" +
+                "maxUncommittedRows=" + maxUncommittedRows + "&" +
+                "name=" + tableName + " HTTP/1.1\r\n";
+
+        String expectedMetadata = "{\"status\":\"OK\"," +
+                "\"location\":\"" + tableName + "\"," +
+                "\"rowsRejected\":0," +
+                "\"rowsImported\":1," +
+                "\"header\":true," +
+                "\"columns\":[" +
+                "{\"name\":\"ts\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," +
+                "{\"name\":\"int\",\"type\":\"INT\",\"size\":4,\"errors\":0}" +
+                "]}\r\n";
+
+        testImport(
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "c8\r\n" +
+                        expectedMetadata +
+                        "00\r\n" +
+                        "\r\n",
+                command +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Content-Length: 832\r\n" +
+                        "Accept: */*\r\n" +
+                        "Origin: http://localhost:9000\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"schema\"\r\n" +
+                        "\r\n" +
+                        "[{\"name\":\"ts\",\"type\":\"TIMESTAMP\", \"pattern\": \"yyyy-MM-dd HH:mm:ss\"}," +
+                        "{\"name\":\"int\",\"type\":\"INT\"}]\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        "ts,int\r\n" +
+                        "2021-01-01 00:01:00,1\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                NetworkFacadeImpl.INSTANCE,
+                configuration,
+                false,
+                1
+        );
+
+        Assert.assertTrue((durable && msyncCallCount.get() > 0) || (!durable && msyncCallCount.get() == 0));
+
+        assertMetadataAndData(
+                tableName,
+                expectedCommitLag,
+                expectedMaxUncommittedRows,
+                0,
+                1,
+                "2021-01-01T00:01:00.000000Z\t1\n");
+    }
+
+    private void assertMetadataAndData(String tableName,
+                                       long expectedCommitLag,
+                                       int expectedMaxUncommittedRows,
+                                       int expectedRejectedRows,
+                                       int expectedImportedRows,
+                                       String expectedData) {
+        final String baseDir = temp.getRoot().getAbsolutePath();
+        DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
+        try (TableReader reader = new TableReader(configuration, tableName)) {
+            Assert.assertEquals(expectedCommitLag, reader.getCommitLag());
+            Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
+            Assert.assertEquals(expectedImportedRows, reader.size());
+            Assert.assertEquals(expectedRejectedRows, expectedImportedRows - reader.size());
+            StringSink sink = new StringSink();
+            TestUtils.assertCursor(expectedData, reader.getCursor(), reader.getMetadata(), false, sink);
+        }
+    }
+
+    @Test
+    public void testFailsOnBadCommitLag() throws Exception {
+        String command = "POST /upload?fmt=json&" +
+                "commitLag=2seconds+please&" +
+                "name=test HTTP/1.1\r\n";
+        testImport(
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "2e\r\n" +
+                        "{\"status\":\"invalid commitLag, must be a long\"}\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                command +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Content-Length: 832\r\n" +
+                        "Accept: */*\r\n" +
+                        "Origin: http://localhost:9000\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        "2021-01-01 00:00:00,1\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                NetworkFacadeImpl.INSTANCE,
+                true,
+                1
+        );
+    }
+
+    @Test
+    public void testFailsOnBadMaxUncommittedRows() throws Exception {
+        String command = "POST /upload?fmt=json&" +
+                "maxUncommittedRows=two&" +
+                "name=test HTTP/1.1\r\n";
+        testImport(
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "37\r\n" +
+                        "{\"status\":\"invalid maxUncommittedRows, must be an int\"}\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                command +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Content-Length: 832\r\n" +
+                        "Accept: */*\r\n" +
+                        "Origin: http://localhost:9000\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        "2021-01-01 00:00:00,1\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                NetworkFacadeImpl.INSTANCE,
+                true,
+                1
+        );
+    }
+
+    @Test
     public void testJsonQueryAndDisconnectWithoutWaitingForResult() throws Exception {
         assertMemoryLeak(() -> {
 
@@ -1839,10 +2341,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -1870,10 +2369,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -1938,10 +2434,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -1969,10 +2462,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -2031,10 +2521,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -2096,10 +2583,7 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0c\r\n" +
-                        "{\"ddl\":\"OK\"}\r\n" +
-                        "00\r\n" +
-                        "\r\n",
+                        JSON_DDL_RESPONSE,
                 1
         );
     }
@@ -2183,8 +2667,7 @@ public class IODispatcherTest {
                     try {
                         long sockAddr = NetworkFacadeImpl.INSTANCE.sockaddr("127.0.0.1", 9001);
                         try {
-                            Assert.assertTrue(fd > -1);
-                            Assert.assertEquals(0, NetworkFacadeImpl.INSTANCE.connect(fd, sockAddr));
+                            TestUtils.assertConnect(fd, sockAddr);
                             Assert.assertEquals(0, NetworkFacadeImpl.INSTANCE.setTcpNoDelay(fd, true));
 
                             final int len = request.length() * 2;
@@ -2248,10 +2731,7 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0c\r\n" +
-                        "{\"ddl\":\"OK\"}\r\n" +
-                        "00\r\n" +
-                        "\r\n",
+                        JSON_DDL_RESPONSE,
                 1
         );
     }
@@ -2750,8 +3230,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0bda\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[false,-727724771,-13027,8920866532787660373,\"-51129-02-11T06:38:29.397464Z\",\"-169665660-01-09T01:58:28.119Z\",null,null,\"EHNRX\",\"ZSX\",80,[]],[false,-303295973,-11105,6854658259142399220,\"273652-10-24T01:16:04.499209Z\",null,0.38179755,0.9687423276940171,\"EDRQQ\",\"LOF\",30,[]],[true,1985398001,4635,7522482991756933150,\"20093-07-24T16:56:53.198086Z\",\"279864478-12-31T01:58:35.932Z\",null,0.05384400312338511,\"HVUVS\",\"OTS\",-79,[]],[false,-1966408995,-4628,-2406077911451945242,\"-254163-09-17T05:33:54.251307Z\",null,0.81233966,null,\"IKJSM\",\"SUQ\",70,[]],[false,2011884585,-15119,4641238585508069993,\"186548-11-05T05:57:55.827139Z\",\"-277437004-09-03T08:55:41.803Z\",0.89989215,0.6583311519893554,\"ZIMNZ\",\"RMF\",-97,[]],[false,-907794648,30294,null,null,null,0.13264287,null,\"OHNZH\",null,-9,[]],[true,-1510166985,-1315,6056145309392106540,null,null,0.54669005,null,\"MZVQE\",\"NDC\",-94,[]],[false,null,-30006,750145151786158348,\"-279681-08-19T06:26:33.186955Z\",\"-144112168-08-02T20:50:38.542Z\",0.8977236,0.5691053034055052,\"WIFFL\",\"BRO\",-97,[]],[false,null,-5079,6793615437970356479,\"171291-08-24T10:16:32.229138Z\",\"63572238-04-24T11:00:13.287Z\",null,0.7215959171612961,\"KWZLU\",\"GXH\",58,[]],[false,null,30698,-9219078548506735248,\"197633-02-20T09:12:49.579955Z\",\"286623354-12-11T19:15:45.735Z\",null,0.8001632261203552,null,\"KFM\",37,[]],[false,-485549586,10024,null,\"122137-10-05T20:22:21.831563Z\",\"278802275-11-05T23:22:18.593Z\",0.5780819,0.18586435581637295,\"DYOPH\",\"IMY\",109,[]],[false,-1604266757,-13852,4598876523645326656,\"204480-04-27T20:21:01.380246Z\",null,0.19736767,0.11591855759299885,\"DMIGQ\",\"VKH\",-44,[]],[true,-861621212,-20937,-6446120489339099836,\"79287-08-03T02:05:46.962686Z\",null,0.4349324,0.11296257318851766,\"CGFNW\",null,17,[]],[false,1772084256,-23044,-5828188148408093893,\"-252298-10-09T07:11:36.011048Z\",\"-270365729-01-24T04:33:47.165Z\",null,0.5764439692141042,\"BQQEM\",null,-104,[]],[true,-159178348,0,null,null,\"81404961-06-19T18:10:11.037Z\",0.5598187,0.5900836401674938,null,\"HPZ\",-99,[]],[false,-238129044,-32768,-8851773155849999621,\"-90192-03-24T17:45:15.784841Z\",\"-152632412-11-30T22:15:09.334Z\",0.7806183,null,\"CLNXF\",\"UWP\",-127,[]],[true,1665107665,0,-8306574409611146484,\"-109765-04-18T07:45:05.739795Z\",\"-243146933-02-10T16:15:15.931Z\",0.52387,null,\"NIJEE\",\"RUG\",-59,[]],[false,21764960,-32768,-5708280760166173503,\"-248236-04-27T14:06:03.509521Z\",null,0.77833515,0.533524384058538,\"VOCUG\",\"UNE\",69,[]],[true,null,0,5637967617527425113,null,null,null,0.5815065874358148,null,\"EVQ\",56,[]],[true,-416467698,-32768,null,\"201101-10-20T07:35:25.133598Z\",\"-175203601-12-02T01:02:02.378Z\",null,0.7430101994511517,\"DXCBJ\",null,58,[]]],\"count\":20}\r\n" +
+                        "0bdd\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[false,-727724771,24814,8920866532787660373,\"-51129-02-11T06:38:29.397464Z\",\"-169665660-01-09T01:58:28.119Z\",null,null,\"EHNRX\",\"ZSX\",80,[]],[false,-303295973,32312,6854658259142399220,\"273652-10-24T01:16:04.499209Z\",null,0.38179755,0.9687423276940171,\"EDRQQ\",\"LOF\",30,[]],[true,1985398001,-21442,7522482991756933150,\"20093-07-24T16:56:53.198086Z\",\"279864478-12-31T01:58:35.932Z\",null,0.05384400312338511,\"HVUVS\",\"OTS\",-79,[]],[false,-1966408995,-29572,-2406077911451945242,\"-254163-09-17T05:33:54.251307Z\",null,0.81233966,null,\"IKJSM\",\"SUQ\",70,[]],[false,2011884585,15913,4641238585508069993,\"186548-11-05T05:57:55.827139Z\",\"-277437004-09-03T08:55:41.803Z\",0.89989215,0.6583311519893554,\"ZIMNZ\",\"RMF\",-97,[]],[false,-907794648,5991,null,null,null,0.13264287,null,\"OHNZH\",null,-9,[]],[true,-1510166985,30598,6056145309392106540,null,null,0.54669005,null,\"MZVQE\",\"NDC\",-94,[]],[false,null,-11913,750145151786158348,\"-279681-08-19T06:26:33.186955Z\",\"-144112168-08-02T20:50:38.542Z\",0.8977236,0.5691053034055052,\"WIFFL\",\"BRO\",-97,[]],[false,null,7132,6793615437970356479,\"171291-08-24T10:16:32.229138Z\",\"63572238-04-24T11:00:13.287Z\",null,0.7215959171612961,\"KWZLU\",\"GXH\",58,[]],[false,null,7618,-9219078548506735248,\"197633-02-20T09:12:49.579955Z\",\"286623354-12-11T19:15:45.735Z\",null,0.8001632261203552,null,\"KFM\",37,[]],[false,-485549586,-8207,null,\"122137-10-05T20:22:21.831563Z\",\"278802275-11-05T23:22:18.593Z\",0.5780819,0.18586435581637295,\"DYOPH\",\"IMY\",109,[]],[false,-1604266757,21057,4598876523645326656,\"204480-04-27T20:21:01.380246Z\",null,0.19736767,0.11591855759299885,\"DMIGQ\",\"VKH\",-44,[]],[true,-861621212,23522,-6446120489339099836,\"79287-08-03T02:05:46.962686Z\",null,0.4349324,0.11296257318851766,\"CGFNW\",null,17,[]],[false,1772084256,12160,-5828188148408093893,\"-252298-10-09T07:11:36.011048Z\",\"-270365729-01-24T04:33:47.165Z\",null,0.5764439692141042,\"BQQEM\",null,-104,[]],[true,-159178348,-7837,null,null,\"81404961-06-19T18:10:11.037Z\",0.5598187,0.5900836401674938,null,\"HPZ\",-99,[]],[false,-238129044,5343,-8851773155849999621,\"-90192-03-24T17:45:15.784841Z\",\"-152632412-11-30T22:15:09.334Z\",0.7806183,null,\"CLNXF\",\"UWP\",-127,[]],[true,1665107665,-10912,-8306574409611146484,\"-109765-04-18T07:45:05.739795Z\",\"-243146933-02-10T16:15:15.931Z\",0.52387,null,\"NIJEE\",\"RUG\",-59,[]],[false,21764960,4771,-5708280760166173503,\"-248236-04-27T14:06:03.509521Z\",null,0.77833515,0.533524384058538,\"VOCUG\",\"UNE\",69,[]],[true,null,-17784,5637967617527425113,null,null,null,0.5815065874358148,null,\"EVQ\",56,[]],[true,-416467698,29019,null,\"201101-10-20T07:35:25.133598Z\",\"-175203601-12-02T01:02:02.378Z\",null,0.7430101994511517,\"DXCBJ\",null,58,[]]],\"count\":20}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -2843,10 +3323,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -2901,10 +3378,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -2970,6 +3444,51 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testJsonQueryGeoHashColumnChars() throws Exception {
+        new HttpQueryTestBuilder()
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
+                        .withSendBufferSize(16 * 1024)
+                        .withConfiguredMaxQueryResponseRowLimit(configuredMaxQueryResponseRowLimit)
+                )
+                .withTempFolder(temp)
+                .run(engine -> {
+                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
+                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                        compiler.compile("create table y as (\n" +
+                                "select\n" +
+                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(1c)) geo1,\n" +
+                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(3c)) geo2,\n" +
+                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(6c)) geo4,\n" +
+                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(12c)) geo8," +
+                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(1b)) geo01\n" +
+                                "from long_sequence(3)\n" +
+                                ")", executionContext);
+
+                        String request = "SELECT+*+FROM+y";
+                        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                "GET /query?query=" + request + " HTTP/1.1\r\n",
+                                "0166\r\n" +
+                                        "{\"query\":\"SELECT * FROM y\",\"columns\":[" +
+                                        "{\"name\":\"geo1\",\"type\":\"GEOHASH(1c)\"}," +
+                                        "{\"name\":\"geo2\",\"type\":\"GEOHASH(3c)\"}," +
+                                        "{\"name\":\"geo4\",\"type\":\"GEOHASH(6c)\"}," +
+                                        "{\"name\":\"geo8\",\"type\":\"GEOHASH(12c)\"}," +
+                                        "{\"name\":\"geo01\",\"type\":\"GEOHASH(1b)\"}" +
+                                        "],\"dataset\":[" +
+                                        "[null,null,\"questd\",\"u10m99dd3pbj\",\"1\"]," +
+                                        "[\"u\",\"u10\",\"questd\",null,\"1\"]," +
+                                        "[\"q\",\"u10\",\"questd\",\"questdb12345\",\"1\"]" +
+                                        "],\"count\":3}\r\n" +
+                                        "00\r\n"+
+                                        "\r\n"
+
+                        );
+                    }
+                });
+    }
+
+    @Test
     public void testJsonQuerySelectAlterSelect() throws Exception {
         testJsonQuery0(1, engine -> {
 
@@ -2995,10 +3514,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -3026,10 +3542,7 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            JSON_DDL_RESPONSE,
                     1,
                     0,
                     false
@@ -3088,8 +3601,8 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
+                            "0d\r\n" +
+                            "{\"ddl\":\"OK\"}\n\r\n" +
                             "00\r\n" +
                             "\r\n",
                     1,
@@ -3441,11 +3954,14 @@ public class IODispatcherTest {
                             false,
                             true
                     );
-                }, false,
-                true);
+                },
+                false,
+                true
+        );
     }
 
     @Test
+    @Ignore
     public void testJsonQueryWithCompressedResults1() throws Exception {
         Zip.init();
         assertMemoryLeak(() -> {
@@ -3538,6 +4054,7 @@ public class IODispatcherTest {
     }
 
     @Test
+    @Ignore
     public void testJsonQueryWithCompressedResults2() throws Exception {
         Zip.init();
         assertMemoryLeak(() -> {
@@ -3562,7 +4079,8 @@ public class IODispatcherTest {
             });
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+            ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -3745,8 +4263,7 @@ public class IODispatcherTest {
                     try {
                         long sockAddr = nf.sockaddr("127.0.0.1", 9001);
                         try {
-                            Assert.assertTrue(fd > -1);
-                            Assert.assertEquals(0, nf.connect(fd, sockAddr));
+                            TestUtils.assertConnect(fd, sockAddr);
                             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
                             refClientFd.set(fd);
                             nf.configureNonBlocking(fd);
@@ -3838,6 +4355,157 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testJsonSelectNull() throws Exception {
+        testJsonQuery(0, "GET /query?query=select+null+from+long_sequence(1)&count=true&src=con HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.392867896.1580123365\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "76\r\n" +
+                        "{\"query\":\"select null from long_sequence(1)\",\"columns\":[{\"name\":\"null\",\"type\":\"STRING\"}],\"dataset\":[[null]],\"count\":1}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+                , 1);
+    }
+
+    @Test
+    public void testJsonExpNull() throws Exception {
+        testJsonQuery(0, "GET /exp?query=select+null+from+long_sequence(1)&limit=1&src=con HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.392867896.1580123365\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0a\r\n" +
+                        "\"null\"\r\n" +
+                        "\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+                , 1);
+    }
+
+    @Test
+    public void testJsonQueryCreateInsertNull() throws Exception {
+        testJsonQuery0(1, engine -> {
+            // create table
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=create+table+xx+(value+long256,+ts+timestamp)+timestamp(ts)&count=true HTTP/1.1\r\n" +
+                            "Host: localhost:9000\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Accept: */*\r\n" +
+                            "X-Requested-With: XMLHttpRequest\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                            "Sec-Fetch-Site: same-origin\r\n" +
+                            "Sec-Fetch-Mode: cors\r\n" +
+                            "Referer: http://localhost:9000/index.html\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            JSON_DDL_RESPONSE,
+                    1,
+                    0,
+                    false
+            );
+            // insert one record
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=insert+into+xx+values(null,+0)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                            "Host: localhost:9000\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Accept: */*\r\n" +
+                            "X-Requested-With: XMLHttpRequest\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                            "Sec-Fetch-Site: same-origin\r\n" +
+                            "Sec-Fetch-Mode: cors\r\n" +
+                            "Referer: http://localhost:9000/index.html\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            JSON_DDL_RESPONSE,
+                    1,
+                    0,
+                    false
+            );
+            // check if we have one record
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=select+*+from+xx+latest+by+ts&count=true HTTP/1.1\r\n" +
+                            "Host: localhost:9000\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Accept: */*\r\n" +
+                            "X-Requested-With: XMLHttpRequest\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                            "Sec-Fetch-Site: same-origin\r\n" +
+                            "Sec-Fetch-Mode: cors\r\n" +
+                            "Referer: http://localhost:9000/index.html\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "b1\r\n" +
+                            "{\"query\":\"select * from xx latest by ts\",\"columns\":[{\"name\":\"value\",\"type\":\"LONG256\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[\"\",\"1970-01-01T00:00:00.000000Z\"]],\"count\":1}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    false
+            );
+        }, false);
+    }
+
+    @Test
     public void testJsonUtf8EncodedQuery() throws Exception {
         testJsonQuery(
                 0,
@@ -3870,13 +4538,13 @@ public class IODispatcherTest {
 
     @Test
     public void testMaxConnections() throws Exception {
-
         LOG.info().$("started maxConnections").$();
-
         assertMemoryLeak(() -> {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
-            int N = 15;
+            final int listenBackLog = 10;
+            final int activeConnectionLimit = 5;
+            final int nExcessConnections = 20;
 
             AtomicInteger openCount = new AtomicInteger(0);
             AtomicInteger closeCount = new AtomicInteger(0);
@@ -3884,13 +4552,24 @@ public class IODispatcherTest {
             final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
                 @Override
                 public int getActiveConnectionLimit() {
-                    return N;
+                    return activeConnectionLimit;
+                }
+
+                @Override
+                public int getListenBacklog() {
+                    return listenBackLog;
+                }
+
+                @Override
+                public long getQueuedConnectionTimeout() {
+                    return 300_000;
                 }
             };
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     configuration,
                     new IOContextFactory<HttpConnectionContext>() {
+                        @SuppressWarnings("resource")
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             openCount.incrementAndGet();
@@ -3925,29 +4604,38 @@ public class IODispatcherTest {
                 SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
 
                 new Thread(() -> {
-                    do {
-                        dispatcher.run(0);
-                        dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
-                        );
-                    } while (serverRunning.get());
-                    serverHaltLatch.countDown();
+                    try {
+                        do {
+                            dispatcher.run(0);
+                            dispatcher.processIOQueue(
+                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                            );
+                        } while (serverRunning.get());
+                    } finally {
+                        serverHaltLatch.countDown();
+                    }
                 }).start();
 
                 LongList openFds = new LongList();
+                LongHashSet closedFds = new LongHashSet();
 
                 final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                 final long buf = Unsafe.malloc(4096);
+                final int N = activeConnectionLimit + listenBackLog;
                 try {
                     for (int i = 0; i < N; i++) {
                         long fd = Net.socketTcp(true);
-                        Assert.assertTrue(fd > -1);
-                        Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                        TestUtils.assertConnect(fd, sockAddr);
                         openFds.add(fd);
                     }
 
                     // let dispatcher catchup
-                    while (dispatcher.getConnectionCount() < N) {
+                    long startNanos = System.nanoTime();
+                    while (dispatcher.isListening()) {
+                        long endNanos = System.nanoTime();
+                        if (TimeUnit.NANOSECONDS.toSeconds(endNanos - startNanos) > 30) {
+                            Assert.fail("Timed out waiting for despatcher to stop listening");
+                        }
                         LockSupport.parkNanos(1);
                     }
 
@@ -3961,41 +4649,253 @@ public class IODispatcherTest {
                             "Accept-Language: en-US,en;q=0.8\r\n" +
                             "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                             "\r\n";
-
                     long mem = TestUtils.toMemory(request);
+
+                    // Active connection limit is reached and backlog is full, check we get connection closed
+                    for (int i = 0; i < nExcessConnections; i++) {
+                        long fd = Net.socketTcp(true);
+                        if (fd > 0) {
+                            int nSent = Net.send(fd, mem, request.length());
+                            Assert.assertTrue(nSent < 0);
+                            Net.close(fd);
+                        }
+                    }
+
                     try {
                         for (int i = 0; i < N; i++) {
+                            if (i == activeConnectionLimit) {
+                                for (int j = 0; j < activeConnectionLimit; j++) {
+                                    long fd = openFds.getQuick(j);
+                                    Net.close(fd);
+                                    closedFds.add(fd);
+                                }
+                            }
+
                             long fd = openFds.getQuick(i);
                             Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));
                             // ensure we have response from server
                             Assert.assertTrue(0 < Net.recv(fd, buf, 64));
-                        }
 
-                        long fd = Net.socketTcp(true);
-                        try {
-                            Net.connect(fd, sockAddr);
-
-                            Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));
-                            // ensure we got disconnected
-                            Assert.assertTrue(0 > Net.recv(fd, buf, 64));
-
-                        } finally {
-                            Net.close(fd);
+                            if (i < activeConnectionLimit) {
+                                // dont close any connections until the first connections have been processed and check that the dispatcher
+                                // is not listening
+                                Assert.assertFalse(dispatcher.isListening());
+                            } else {
+                                Net.close(fd);
+                                closedFds.add(fd);
+                            }
                         }
                     } finally {
-                        // close all fds we built up so far
-                        for (int i = 0; i < N; i++) {
-                            Net.close(openFds.getQuick(i));
-                        }
                         Unsafe.free(mem, request.length());
                     }
                 } finally {
+                    for (int i = 0; i < openFds.size(); i++) {
+                        long fd = openFds.getQuick(i);
+                        if (!closedFds.contains(fd)) {
+                            Net.close(fd);
+                        }
+                    }
                     Net.freeSockAddr(sockAddr);
                     Unsafe.free(buf, 4096);
                     Assert.assertFalse(configuration.getActiveConnectionLimit() < dispatcher.getConnectionCount());
                     serverRunning.set(false);
                     serverHaltLatch.await();
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testQueuedConnectionTimeout() throws Exception {
+        LOG.info().$("started testQueuedConnectionTimeout").$();
+        assertMemoryLeak(() -> {
+            final int listenBackLog = 10;
+            final int activeConnectionLimit = 5;
+            final long queuedConnectionTimeoutInMs = 250;
+
+            final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
+                @Override
+                public int getActiveConnectionLimit() {
+                    return activeConnectionLimit;
+                }
+
+                @Override
+                public int getListenBacklog() {
+                    return listenBackLog;
+                }
+
+                @Override
+                public long getQueuedConnectionTimeout() {
+                    return queuedConnectionTimeoutInMs;
+                }
+            };
+
+            final AtomicInteger nConnected = new AtomicInteger();
+            final LongHashSet serverConnectedFds = new LongHashSet();
+            final LongHashSet clientActiveFds = new LongHashSet();
+            IOContextFactory<IOContext> contextFactory = new IOContextFactory<IOContext>() {
+                @Override
+                public IOContext newInstance(long fd, IODispatcher<IOContext> dispatcher) {
+                    LOG.info().$(fd).$(" connected").$();
+                    serverConnectedFds.add(fd);
+                    nConnected.incrementAndGet();
+                    return new IOContext() {
+                        @Override
+                        public boolean invalid() {
+                            return !serverConnectedFds.contains(fd);
+                        }
+
+                        @Override
+                        public long getFd() {
+                            return fd;
+                        }
+
+                        @Override
+                        public IODispatcher<?> getDispatcher() {
+                            return dispatcher;
+                        }
+
+                        @Override
+                        public void close() {
+                            LOG.info().$(fd).$(" disconnected").$();
+                            serverConnectedFds.remove(fd);
+                        }
+                    };
+                }
+            };
+            final String request = "\n";
+            long mem = TestUtils.toMemory(request);
+
+            final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+            Thread serverThread = null;
+            final CountDownLatch serverLatch = new CountDownLatch(1);
+            try (IODispatcher<IOContext> dispatcher = IODispatchers.create(configuration, contextFactory)) {
+                serverThread = new Thread("test-io-dispatcher") {
+                    @Override
+                    public void run() {
+                        long smem = Unsafe.malloc(1);
+                        try {
+                            IORequestProcessor<IOContext> requestProcessor = new IORequestProcessor<IOContext>() {
+                                @Override
+                                public void onRequest(int operation, IOContext context) {
+                                    long fd = context.getFd();
+                                    int rc;
+                                    switch (operation) {
+                                        case IOOperation.READ:
+                                            rc = Net.recv(fd, smem, 1);
+                                            if (rc == 1) {
+                                                dispatcher.registerChannel(context, IOOperation.WRITE);
+                                            } else {
+                                                dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                            }
+                                            break;
+                                        case IOOperation.WRITE:
+                                            rc = Net.send(fd, smem, 1);
+                                            if (rc == 1) {
+                                                dispatcher.registerChannel(context, IOOperation.READ);
+                                            } else {
+                                                dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                            }
+                                            break;
+                                        default:
+                                            dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
+                                    }
+                                }
+                            };
+                            do {
+                                dispatcher.run(0);
+                                dispatcher.processIOQueue(requestProcessor);
+                                Thread.yield();
+                            } while (!isInterrupted());
+                        } finally {
+                            Unsafe.free(smem, 1);
+                            serverLatch.countDown();
+                        }
+                    }
+                };
+                serverThread.setDaemon(true);
+                serverThread.start();
+
+                // Connect exactly the right amount of clients to fill the active connection and connection backlog, after the
+                // queuedConnectionTimeoutInMs the connections in the backlog should get refused
+                int nClientConnects = 0;
+                int nClientConnectRefused = 0;
+                for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
+                    long fd = Net.socketTcp(true);
+                    Assert.assertTrue(fd > -1);
+                    clientActiveFds.add(fd);
+                    if (Net.connect(fd, sockAddr) != 0) {
+                        nClientConnectRefused++;
+                        continue;
+                    }
+                    int rc = Net.send(fd, mem, request.length());
+                    if (rc < 0) {
+                        nClientConnectRefused++;
+                        continue;
+                    }
+                    rc = Net.recv(fd, mem, request.length());
+                    if (rc < 0) {
+                        nClientConnectRefused++;
+                    } else {
+                        nClientConnects++;
+                    }
+                }
+                Assert.assertEquals(activeConnectionLimit, nClientConnects);
+                Assert.assertEquals(listenBackLog, nClientConnectRefused);
+                Assert.assertFalse(dispatcher.isListening());
+
+                // Close all connections and wait for server to resume listening
+                while (clientActiveFds.size() > 0) {
+                    long fd = clientActiveFds.get(0);
+                    clientActiveFds.remove(fd);
+                    Net.close(fd);
+                }
+                long timeoutMs = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(1);
+                while (!dispatcher.isListening()) {
+                    if (System.currentTimeMillis() > timeoutMs) {
+                        Assert.fail("Timeout waiting for server to start listening again");
+                    }
+                }
+
+                // Try connections again to make sure server is listening
+                nClientConnects = 0;
+                nClientConnectRefused = 0;
+                for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
+                    long fd = Net.socketTcp(true);
+                    Assert.assertTrue(fd > -1);
+                    clientActiveFds.add(fd);
+                    if (Net.connect(fd, sockAddr) != 0) {
+                        nClientConnectRefused++;
+                        continue;
+                    }
+                    int rc = Net.send(fd, mem, request.length());
+                    if (rc < 0) {
+                        nClientConnectRefused++;
+                        continue;
+                    }
+                    rc = Net.recv(fd, mem, request.length());
+                    if (rc < 0) {
+                        nClientConnectRefused++;
+                    } else {
+                        nClientConnects++;
+                    }
+                }
+                Assert.assertEquals(activeConnectionLimit, nClientConnects);
+                Assert.assertEquals(listenBackLog, nClientConnectRefused);
+                Assert.assertFalse(dispatcher.isListening());
+
+                // Close all remaining client connections
+                for (int n = 0; n < clientActiveFds.size(); n++) {
+                    long fd = clientActiveFds.get(n);
+                    Net.close(fd);
+                }
+                serverThread.interrupt();
+                if (!serverLatch.await(1, TimeUnit.MINUTES)) {
+                    Assert.fail("Timeout waiting for server to end");
+                }
+            } finally {
+                Net.freeSockAddr(sockAddr);
+                Unsafe.free(mem, request.length());
             }
         });
     }
@@ -4108,8 +5008,7 @@ public class IODispatcherTest {
             try {
                 long sockAddr = NetworkFacadeImpl.INSTANCE.sockaddr("127.0.0.1", 9001);
                 try {
-                    Assert.assertTrue(fd > -1);
-                    Assert.assertEquals(0, NetworkFacadeImpl.INSTANCE.connect(fd, sockAddr));
+                    TestUtils.assertConnect(fd, sockAddr);
                     Assert.assertEquals(0, NetworkFacadeImpl.INSTANCE.setTcpNoDelay(fd, true));
 
                     final String request = "GET HTTP/1.1\r\n" +
@@ -4300,8 +5199,7 @@ public class IODispatcherTest {
 
                                 for (int j = 0; j < 10; j++) {
                                     long fd = Net.socketTcp(true);
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request, fd, buffer);
                                         assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
@@ -4331,8 +5229,7 @@ public class IODispatcherTest {
 
                                 for (int i = 0; i < 3; i++) {
                                     long fd = Net.socketTcp(true);
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request2, fd, buffer);
                                         assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
@@ -4344,8 +5241,7 @@ public class IODispatcherTest {
                                 // couple more full downloads after 304
                                 for (int j = 0; j < 2; j++) {
                                     long fd = Net.socketTcp(true);
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request, fd, buffer);
                                         assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
@@ -4445,8 +5341,7 @@ public class IODispatcherTest {
                         try {
                             long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                             try {
-                                Assert.assertTrue(fd > -1);
-                                Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                TestUtils.assertConnect(fd, sockAddr);
 
                                 int netBufferLen = 4 * 1024;
                                 long buffer = Unsafe.calloc(netBufferLen);
@@ -4476,7 +5371,7 @@ public class IODispatcherTest {
                                         sendRequest(request, fd, buffer);
                                         assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971667);
                                     }
-//
+
                                     // send few requests to receive 304
                                     final String request2 = "GET /questdb-temp.txt HTTP/1.1\r\n" +
                                             "Host: localhost:9000\r\n" +
@@ -4558,7 +5453,15 @@ public class IODispatcherTest {
     public void testSCPHttp10() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(NetworkFacadeImpl.INSTANCE, baseDir, 16 * 1024, false, false, false, "HTTP/1.0 ");
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(
+                    NetworkFacadeImpl.INSTANCE,
+                    baseDir,
+                    16 * 1024,
+                    false,
+                    false,
+                    false,
+                    "HTTP/1.0 "
+            );
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -4598,8 +5501,6 @@ public class IODispatcherTest {
 
                         writeRandomFile(path, rnd, 122222212222L);
 
-//                        httpServer.getStartedLatch().await();
-
                         long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                         try {
                             int netBufferLen = 4 * 1024;
@@ -4629,11 +5530,18 @@ public class IODispatcherTest {
 
                                 for (int j = 0; j < 1; j++) {
                                     long fd = Net.socketTcp(true);
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
+                                        assertDownloadResponse(
+                                                fd,
+                                                rnd,
+                                                buffer,
+                                                netBufferLen,
+                                                diskBufferLen,
+                                                expectedResponseHeader,
+                                                20971670
+                                        );
                                     } finally {
                                         Net.close(fd);
                                     }
@@ -4661,8 +5569,7 @@ public class IODispatcherTest {
 
                                 for (int i = 0; i < 3; i++) {
                                     long fd = Net.socketTcp(true);
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request2, fd, buffer);
                                         assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
@@ -4674,8 +5581,7 @@ public class IODispatcherTest {
                                 // couple more full downloads after 304
                                 for (int j = 0; j < 2; j++) {
                                     long fd = Net.socketTcp(true);
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request, fd, buffer);
                                         assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
@@ -4712,8 +5618,7 @@ public class IODispatcherTest {
 
                                 for (int i = 0; i < 4; i++) {
                                     long fd = Net.socketTcp(true);
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request3, fd, buffer);
                                         assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader3, expectedResponseHeader3.length());
@@ -4726,8 +5631,7 @@ public class IODispatcherTest {
 
                                 for (int i = 0; i < 3; i++) {
                                     long fd = Net.socketTcp(true);
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    TestUtils.assertConnect(fd, sockAddr);
                                     try {
                                         sendRequest(request2, fd, buffer);
                                         assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
@@ -4861,8 +5765,7 @@ public class IODispatcherTest {
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
-                        Assert.assertTrue(fd > -1);
-                        Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                        TestUtils.assertConnect(fd, sockAddr);
 
                         connectLatch.await();
 
@@ -5035,8 +5938,7 @@ public class IODispatcherTest {
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
-                        Assert.assertTrue(fd > -1);
-                        Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                        TestUtils.assertConnect(fd, sockAddr);
 
                         connectLatch.await();
 
@@ -5120,6 +6022,11 @@ public class IODispatcherTest {
                             // 0.5s idle timeout
                             return 500;
                         }
+
+                        @Override
+                        public boolean getPeerNoLinger() {
+                            return false;
+                        }
                     },
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
@@ -5191,8 +6098,7 @@ public class IODispatcherTest {
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
-                        Assert.assertTrue(fd > -1);
-                        Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                        TestUtils.assertConnect(fd, sockAddr);
                         Net.setTcpNoDelay(fd, true);
 
                         connectLatch.await();
@@ -5232,6 +6138,37 @@ public class IODispatcherTest {
                 Assert.assertEquals(1, closeCount.get());
             }
         });
+    }
+
+    @Test
+    public void testTextQueryCreateTable() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /exp?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0c\r\n" +
+                        "DDL Success\n\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                1
+        );
     }
 
     @Test
@@ -5308,7 +6245,7 @@ public class IODispatcherTest {
     }
 
     @Test
-    // this test is ignore for the time being because it is unstable on OSX and I
+    // this test is ignored for the time being because it is unstable on OSX and I
     // have not figured out the reason yet. I would like to see if this test
     // runs any different on Linux, just to narrow the problem down to either
     // dispatcher or Http parser.
@@ -5339,7 +6276,7 @@ public class IODispatcherTest {
                 "cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                 "\r\n";
 
-        final int N = 1000;
+        final int N = 100;
         final int serverThreadCount = 2;
         final int senderCount = 2;
 
@@ -5362,136 +6299,142 @@ public class IODispatcherTest {
                 SCSequence subSeq = new SCSequence();
                 pubSeq.then(subSeq).then(pubSeq);
 
-                AtomicBoolean serverRunning = new AtomicBoolean(true);
+                final AtomicBoolean serverRunning = new AtomicBoolean(true);
+                final SOCountDownLatch serverHaltLatch = new SOCountDownLatch(serverThreadCount);
 
-                SOCountDownLatch serverHaltLatch = new SOCountDownLatch(serverThreadCount);
-                for (int j = 0; j < serverThreadCount; j++) {
-                    new Thread(() -> {
-                        final StringSink sink = new StringSink();
-                        final long responseBuf = Unsafe.malloc(32);
-                        Unsafe.getUnsafe().putByte(responseBuf, (byte) 'A');
+                try {
+                    for (int j = 0; j < serverThreadCount; j++) {
+                        new Thread(() -> {
+                            final StringSink sink = new StringSink();
+                            final long responseBuf = Unsafe.malloc(32);
+                            Unsafe.getUnsafe().putByte(responseBuf, (byte) 'A');
 
-                        final HttpRequestProcessor processor = new HttpRequestProcessor() {
-                            @Override
-                            public void onHeadersReady(HttpConnectionContext context) {
-                                HttpRequestHeader headers = context.getRequestHeader();
-                                sink.clear();
-                                sink.put(headers.getMethodLine());
-                                sink.put("\r\n");
-                                ObjList<CharSequence> headerNames = headers.getHeaderNames();
-                                for (int i = 0, n = headerNames.size(); i < n; i++) {
-                                    sink.put(headerNames.getQuick(i)).put(':');
-                                    sink.put(headers.getHeader(headerNames.getQuick(i)));
+                            final HttpRequestProcessor processor = new HttpRequestProcessor() {
+                                @Override
+                                public void onHeadersReady(HttpConnectionContext context) {
+                                    HttpRequestHeader headers = context.getRequestHeader();
+                                    sink.clear();
+                                    sink.put(headers.getMethodLine());
                                     sink.put("\r\n");
-                                }
-                                sink.put("\r\n");
-
-                                boolean result;
-                                try {
-                                    TestUtils.assertEquals(expected, sink);
-                                    result = true;
-                                } catch (Exception e) {
-                                    result = false;
-                                }
-
-                                while (true) {
-                                    long cursor = pubSeq.next();
-                                    if (cursor < 0) {
-                                        continue;
+                                    ObjList<CharSequence> headerNames = headers.getHeaderNames();
+                                    for (int i = 0, n = headerNames.size(); i < n; i++) {
+                                        sink.put(headerNames.getQuick(i)).put(':');
+                                        sink.put(headers.getHeader(headerNames.getQuick(i)));
+                                        sink.put("\r\n");
                                     }
-                                    queue.get(cursor).valid = result;
-                                    pubSeq.done(cursor);
-                                    break;
-                                }
+                                    sink.put("\r\n");
 
-                                requestsReceived.incrementAndGet();
-
-                                nf.send(context.getFd(), responseBuf, 1);
-                            }
-                        };
-
-                        HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
-
-                            @Override
-                            public HttpRequestProcessor select(CharSequence url) {
-                                return null;
-                            }
-
-                            @Override
-                            public HttpRequestProcessor getDefaultProcessor() {
-                                return processor;
-                            }
-
-                            @Override
-                            public void close() {
-                            }
-                        };
-
-                        while (serverRunning.get()) {
-                            dispatcher.run(0);
-                            dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
-                            );
-                        }
-
-                        Unsafe.free(responseBuf, 32);
-                        serverHaltLatch.countDown();
-                    }).start();
-                }
-
-                AtomicInteger completedCount = new AtomicInteger();
-                for (int j = 0; j < senderCount; j++) {
-                    int k = j;
-                    new Thread(() -> {
-                        long sockAddr = Net.sockaddr("127.0.0.1", 9001);
-                        try {
-                            for (int i = 0; i < N && !finished.get(); i++) {
-                                long fd = Net.socketTcp(true);
-                                try {
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
-
-                                    int len = request.length();
-                                    long buffer = TestUtils.toMemory(request);
+                                    boolean result;
                                     try {
-                                        Assert.assertEquals(len, Net.send(fd, buffer, len));
-                                        Assert.assertEquals("fd=" + fd + ", i=" + i, 1, Net.recv(fd, buffer, 1));
-                                        LOG.info().$("i=").$(i).$(", j=").$(k).$();
-                                        Assert.assertEquals('A', Unsafe.getUnsafe().getByte(buffer));
-                                    } finally {
-                                        Unsafe.free(buffer, len);
+                                        TestUtils.assertEquals(expected, sink);
+                                        result = true;
+                                    } catch (Exception e) {
+                                        result = false;
                                     }
-                                } finally {
-                                    Net.close(fd);
+
+                                    while (true) {
+                                        long cursor = pubSeq.next();
+                                        if (cursor < 0) {
+                                            continue;
+                                        }
+                                        queue.get(cursor).valid = result;
+                                        pubSeq.done(cursor);
+                                        break;
+                                    }
+
+                                    requestsReceived.incrementAndGet();
+
+                                    nf.send(context.getFd(), responseBuf, 1);
                                 }
+                            };
+
+                            HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
+
+                                @Override
+                                public HttpRequestProcessor select(CharSequence url) {
+                                    return null;
+                                }
+
+                                @Override
+                                public HttpRequestProcessor getDefaultProcessor() {
+                                    return processor;
+                                }
+
+                                @Override
+                                public void close() {
+                                }
+                            };
+
+                            while (serverRunning.get()) {
+                                dispatcher.run(0);
+                                dispatcher.processIOQueue(
+                                        (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
+                                );
                             }
-                        } finally {
-                            completedCount.incrementAndGet();
-                            Net.freeSockAddr(sockAddr);
-                            senderHalt.countDown();
-                        }
-                    }).start();
-                }
 
-                int receiveCount = 0;
-                while (receiveCount < N * senderCount) {
-                    long cursor = subSeq.next();
-                    if (cursor < 0) {
-                        if (cursor == -1 && completedCount.get() == senderCount) {
-                            Assert.fail("Not all requests successful, test failed, see previous failures");
-                            break;
-                        }
-                        Thread.yield();
-                        continue;
+                            Unsafe.free(responseBuf, 32);
+                            serverHaltLatch.countDown();
+                        }).start();
                     }
-                    boolean valid = queue.get(cursor).valid;
-                    subSeq.done(cursor);
-                    Assert.assertTrue(valid);
-                    receiveCount++;
-                }
 
-                serverRunning.set(false);
-                serverHaltLatch.await();
+                    AtomicInteger completedCount = new AtomicInteger();
+                    for (int j = 0; j < senderCount; j++) {
+                        int k = j;
+                        new Thread(() -> {
+                            long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+                            try {
+                                for (int i = 0; i < N && !finished.get(); i++) {
+                                    long fd = Net.socketTcp(true);
+                                    try {
+                                        TestUtils.assertConnect(fd, sockAddr);
+                                        int len = request.length();
+                                        long buffer = TestUtils.toMemory(request);
+                                        try {
+                                            Assert.assertEquals(len, Net.send(fd, buffer, len));
+                                            Assert.assertEquals("fd=" + fd + ", i=" + i, 1, Net.recv(fd, buffer, 1));
+                                            LOG.info().$("i=").$(i).$(", j=").$(k).$();
+                                            Assert.assertEquals('A', Unsafe.getUnsafe().getByte(buffer));
+                                        } finally {
+                                            Unsafe.free(buffer, len);
+                                        }
+                                    } finally {
+                                        Net.close(fd);
+                                    }
+                                }
+                            } finally {
+                                completedCount.incrementAndGet();
+                                Net.freeSockAddr(sockAddr);
+                                senderHalt.countDown();
+                            }
+                        }).start();
+                    }
+
+                    int receiveCount = 0;
+                    while (receiveCount < N * senderCount) {
+                        long cursor = subSeq.next();
+                        if (cursor < 0) {
+                            if (cursor == -1 && completedCount.get() == senderCount) {
+                                Assert.fail("Not all requests successful, test failed, see previous failures");
+                                break;
+                            }
+                            Thread.yield();
+                            continue;
+                        }
+                        boolean valid = queue.get(cursor).valid;
+                        subSeq.done(cursor);
+                        Assert.assertTrue(valid);
+                        receiveCount++;
+                    }
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    throw e;
+                } finally {
+                    serverRunning.set(false);
+                    serverHaltLatch.await();
+                }
+            } catch (Throwable e) {
+                e.printStackTrace();
+                throw e;
             } finally {
                 finished.set(true);
                 senderHalt.await();

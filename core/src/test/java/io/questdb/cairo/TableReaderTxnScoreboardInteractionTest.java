@@ -43,7 +43,7 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
                 Assert.assertEquals(0, reader.getTxn());
             }
 
-            try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+            try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
                 addRow(w);
                 TxnScoreboard txnScoreboard;
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {

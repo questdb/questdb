@@ -939,15 +939,19 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         String[] aggregateFunctions = {"first", "last"};
         TypeVal[] aggregateColTypes = {
                 new TypeVal(ColumnType.SYMBOL, ":SYMBOL"),
-                new TypeVal(ColumnType.BYTE, "NaN:INT"),
+                new TypeVal(ColumnType.BYTE, "0:BYTE"),
                 new TypeVal(ColumnType.CHAR, ":CHAR"),
-                new TypeVal(ColumnType.SHORT, "NaN:INT"),
+                new TypeVal(ColumnType.SHORT, "0:SHORT"),
                 new TypeVal(ColumnType.INT, "NaN:INT"),
                 new TypeVal(ColumnType.LONG, "NaN:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE"),
                 new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP"),
                 new TypeVal(ColumnType.FLOAT, "NaN:FLOAT"),
-                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE")};
+                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE"),
+                new TypeVal(ColumnType.geohashWithPrecision(3), ":GEOHASH(3b)"),
+                new TypeVal(ColumnType.geohashWithPrecision(10), ":GEOHASH(2c)"),
+                new TypeVal(ColumnType.geohashWithPrecision(20), ":GEOHASH(4c)"),
+                new TypeVal(ColumnType.geohashWithPrecision(60), ":GEOHASH(12c)")};
 
         testAggregations(aggregateFunctions, aggregateColTypes);
     }
@@ -1053,10 +1057,11 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 resultHeader.setLength(0);
                 resultData.setLength(0);
 
-                sql.append(func).append("(").append(colType.funcArg).append(") ").append(func).append(ColumnType.nameOf(colType.columnType));
+                String typeStr = getColumnName(colType.columnType);
+                sql.append(func).append("(").append(colType.funcArg).append(") ").append(func).append(typeStr);
                 sql.append(" from tt1");
 
-                resultHeader.append(func).append(ColumnType.nameOf(colType.columnType));
+                resultHeader.append(func).append(typeStr);
                 resultData.append(colType.emtpyValue);
 
                 String expected = resultHeader.append("\n").append(resultData).append("\n").toString();
@@ -1068,19 +1073,17 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         }
     }
 
+    private static String getColumnName(int type) {
+        String typeStr = ColumnType.nameOf(type);
+        return "c" + typeStr.replace("(", "").replace(")", "");
+    }
+
     private static class TypeVal {
         public TypeVal(int type, String val) {
             columnType = type;
             emtpyValue = val;
-            this.colName = "c" + ColumnType.nameOf(type);
+            this.colName = getColumnName(type);
             this.funcArg = this.colName;
-        }
-
-        public TypeVal(int type, String val, String funcArg) {
-            columnType = type;
-            emtpyValue = val;
-            this.colName = "c" + ColumnType.nameOf(type);
-            this.funcArg = funcArg;
         }
 
         public final int columnType;

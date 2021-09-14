@@ -24,42 +24,26 @@
 
 package io.questdb.cutlass.line.udp;
 
-import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
-import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
-
-import java.io.Closeable;
-
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableStructure;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cutlass.line.CachedCharSequence;
-import io.questdb.cutlass.line.CairoLineProtoParserSupport;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
-import io.questdb.cutlass.line.CharSequenceCache;
-import io.questdb.cutlass.line.LineProtoParser;
-import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.LongList;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.Sinkable;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 
+import java.io.Closeable;
+
+import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
+import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
+
 public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final static Log LOG = LogFactory.getLog(CairoLineProtoParser.class);
+    private static final String WRITER_LOCK_REASON = "ilpUdp";
     private static final LineEndParser NOOP_LINE_END = cache -> {
     };
     private static final FieldValueParser NOOP_FIELD_VALUE = (value, cache) -> {
@@ -75,7 +59,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final LongList columnNameType = new LongList();
     private final LongList columnIndexAndType = new LongList();
     private final LongList columnValues = new LongList();
-    private final AppendOnlyVirtualMemory appendMemory = new AppendOnlyVirtualMemory();
+    private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final MicrosecondClock clock;
     private final FieldNameParser MY_NEW_FIELD_NAME = this::parseFieldNameNewTable;
     private final FieldValueParser MY_NEW_TAG_VALUE = this::parseTagValueNewTable;
@@ -118,7 +102,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     @Override
     public void close() {
         Misc.free(path);
-        Misc.free(appendMemory);
+        Misc.free(ddlMem);
         for (int i = 0, n = writerCache.size(); i < n; i++) {
             Misc.free(writerCache.valueQuick(i).writer);
         }
@@ -188,7 +172,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     private void appendFirstRowAndCacheWriter(CharSequenceCache cache) {
-        TableWriter writer = engine.getWriter(cairoSecurityContext, cache.get(tableName));
+        TableWriter writer = engine.getWriter(cairoSecurityContext, cache.get(tableName), WRITER_LOCK_REASON);
         this.writer = writer;
         this.metadata = writer.getMetadata();
         this.columnCount = metadata.getColumnCount();
@@ -240,7 +224,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
     private void cacheWriter(CacheEntry entry, CachedCharSequence tableName) {
         try {
-            entry.writer = engine.getWriter(cairoSecurityContext, tableName);
+            entry.writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
             this.tableName = tableName.getCacheAddress();
             createState(entry);
             LOG.info().$("cached writer [name=").$(tableName).$(']').$();
@@ -280,7 +264,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private void createTableAndAppendRow(CharSequenceCache cache) {
         engine.createTable(
                 cairoSecurityContext,
-                appendMemory,
+                ddlMem,
                 path,
                 tableStructureAdapter.of(cache)
         );
@@ -365,25 +349,31 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         assert valueType > -1;
         if (columnType > -1) {
             boolean valid;
-            switch (valueType) {
+            final int valueTypeTag = ColumnType.tagOf(valueType);
+            final int columnTypeTag = ColumnType.tagOf(columnType);
+            switch (valueTypeTag) {
                 case ColumnType.LONG:
-                    valid = columnType == ColumnType.LONG || columnType == ColumnType.INT || columnType == ColumnType.SHORT || columnType == ColumnType.BYTE
-                            || columnType == ColumnType.TIMESTAMP || columnType == ColumnType.DATE;
+                    valid = columnTypeTag == ColumnType.LONG
+                            || columnTypeTag == ColumnType.INT
+                            || columnTypeTag == ColumnType.SHORT
+                            || columnTypeTag == ColumnType.BYTE
+                            || columnTypeTag == ColumnType.TIMESTAMP
+                            || columnTypeTag == ColumnType.DATE;
                     break;
                 case ColumnType.BOOLEAN:
-                    valid = columnType == ColumnType.BOOLEAN;
+                    valid = columnTypeTag == ColumnType.BOOLEAN;
                     break;
                 case ColumnType.STRING:
-                    valid = columnType == ColumnType.STRING;
+                    valid = columnTypeTag == ColumnType.STRING;
                     break;
                 case ColumnType.DOUBLE:
-                    valid = columnType == ColumnType.DOUBLE || columnType == ColumnType.FLOAT;
+                    valid = columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT;
                     break;
                 case ColumnType.SYMBOL:
-                    valid = columnType == ColumnType.SYMBOL;
+                    valid = columnTypeTag == ColumnType.SYMBOL;
                     break;
                 case ColumnType.LONG256:
-                    valid = columnType == ColumnType.LONG256;
+                    valid = columnTypeTag == ColumnType.LONG256;
                     break;
                 default:
                     valid = false;

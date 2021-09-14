@@ -24,10 +24,10 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MappedReadWriteMemory;
-import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
-import io.questdb.cairo.vm.PagedVirtualMemory;
-import io.questdb.cairo.vm.ReadWriteVirtualMemory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -41,6 +41,7 @@ import static io.questdb.cairo.TableUtils.*;
 public class EngineMigration {
     public static final int VERSION_TX_STRUCT_UPDATE_1 = 418;
     public static final int VERSION_TBL_META_COMMIT_LAG = 419;
+    public static final int VERSION_COLUMN_TYPE_ENCODING_CHANGED = 420;
 
     // All offsets hardcoded here in case TableUtils offset calculation changes
     // in future code version
@@ -66,9 +67,11 @@ public class EngineMigration {
         int tempMemSize = 8;
         long mem = Unsafe.malloc(tempMemSize);
 
-        try (PagedVirtualMemory virtualMem = new PagedVirtualMemory(ff.getPageSize(), 8);
-             Path path = new Path();
-             PagedMappedReadWriteMemory rwMemory = new PagedMappedReadWriteMemory()) {
+        try (
+                MemoryARW virtualMem = Vm.getARWInstance(ff.getPageSize(), 8);
+                Path path = new Path();
+                MemoryMARW rwMemory = Vm.getMARWInstance()
+        ) {
 
             MigrationContext context = new MigrationContext(mem, tempMemSize, virtualMem, rwMemory);
             path.of(configuration.getRoot());
@@ -123,6 +126,35 @@ public class EngineMigration {
         MIGRATIONS_CRITICALITY.extendAndSet(version - MIGRATIONS_LIST_OFFSET, criticality);
     }
 
+    private static void backupFile(FilesFacade ff, Path src, Path toTemp, String backupName, int version) {
+        // make a copy
+        int copyPathLen = toTemp.length();
+        try {
+            toTemp.concat(backupName).put(".v").put(version);
+            for (int i = 1; ff.exists(toTemp.$()); i++) {
+                // if backup file already exists
+                // add .<num> at the end until file name is unique
+                LOG.info().$("back up file exists, [path=").$(toTemp).I$();
+                toTemp.trimTo(copyPathLen);
+                toTemp.concat(backupName).put(".v").put(version).put(".").put(i);
+            }
+
+            LOG.info().$("back up coping file [from=").$(src).$(",to=").$(toTemp).I$();
+            if (ff.copy(src.$(), toTemp.$()) < 0) {
+                throw CairoException.instance(ff.errno()).put("Cannot backup transaction file [to=").put(toTemp).put(']');
+            }
+        } finally {
+            toTemp.trimTo(copyPathLen);
+        }
+    }
+
+    static int readIntAtOffset(FilesFacade ff, Path path, long tempMem4b, long fd) {
+        if (ff.read(fd, tempMem4b, Integer.BYTES, EngineMigration.TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY) != Integer.BYTES) {
+            throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
+        }
+        return Unsafe.getUnsafe().getInt(tempMem4b);
+    }
+
     private boolean upgradeTables(MigrationContext context, int latestVersion) {
         final FilesFacade ff = configuration.getFilesFacade();
         long mem = context.getTempMemory(8);
@@ -167,6 +199,7 @@ public class EngineMigration {
                                                 if (migration != null) {
                                                     LOG.info().$("upgrading table [path=").$(path).$(",toVersion=").$(i).I$();
                                                     migration.migrate(context);
+                                                    path.trimTo(plen);
                                                 }
                                             } catch (Exception e) {
                                                 LOG.error().$("failed to upgrade table path=")
@@ -213,38 +246,9 @@ public class EngineMigration {
         return updateSuccess;
     }
 
-    private static void backupFile(FilesFacade ff, Path src, Path toTemp, String backupName, int version) {
-        // make a copy
-        int copyPathLen = toTemp.length();
-        try {
-            toTemp.concat(backupName).put(".v").put(version);
-            for (int i = 1; ff.exists(toTemp.$()); i++) {
-                // if backup file already exists
-                // add .<num> at the end until file name is unique
-                LOG.info().$("back up file exists, [path=").$(toTemp).I$();
-                toTemp.trimTo(copyPathLen);
-                toTemp.concat(backupName).put(".v").put(version).put(".").put(i);
-            }
-
-            LOG.info().$("back up coping file [from=").$(src).$(",to=").$(toTemp).I$();
-            if (ff.copy(src.$(), toTemp.$()) < 0) {
-                throw CairoException.instance(ff.errno()).put("Cannot backup transaction file [to=").put(toTemp).put(']');
-            }
-        } finally {
-            toTemp.trimTo(copyPathLen);
-        }
-    }
-
     @FunctionalInterface
     interface MigrationAction {
         void migrate(MigrationContext context);
-    }
-
-    static int readIntAtOffset(FilesFacade ff, Path path, long tempMem4b, long fd) {
-        if (ff.read(fd, tempMem4b, Integer.BYTES, EngineMigration.TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY) != Integer.BYTES) {
-            throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
-        }
-        return Unsafe.getUnsafe().getInt(tempMem4b);
     }
 
     private static class MigrationActions {
@@ -299,11 +303,10 @@ public class EngineMigration {
             backupFile(ff, path, migrationContext.getTablePath2(), TXN_FILE_NAME, VERSION_TX_STRUCT_UPDATE_1 - 1);
 
             LOG.debug().$("opening for rw [path=").$(path).I$();
-            MappedReadWriteMemory txMem = migrationContext.createRwMemoryOf(ff, path.$(), ff.getPageSize());
+            MemoryMARW txMem = migrationContext.createRwMemoryOf(ff, path.$());
             long tempMem8b = migrationContext.getTempMemory(8);
 
-            PagedVirtualMemory txFileUpdate = migrationContext.getTempVirtualMem();
-            txFileUpdate.clear();
+            MemoryARW txFileUpdate = migrationContext.getTempVirtualMem();
             txFileUpdate.jumpTo(0);
 
             try {
@@ -332,8 +335,8 @@ public class EngineMigration {
                 long writeOffset = TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + Integer.BYTES;
                 txMem.jumpTo(writeOffset);
 
-                for (int i = 0, size = txFileUpdate.getPageCount(); i < size && updateSize > 0; i++) {
-                    long writeSize = Math.min(updateSize, txFileUpdate.getPageSize(i));
+                for (int i = 0, size = 1; i < size && updateSize > 0; i++) {
+                    long writeSize = Math.min(updateSize, txFileUpdate.getPageSize());
                     txMem.putBlockOfBytes(txFileUpdate.getPageAddress(i), writeSize);
                     updateSize -= writeSize;
                 }
@@ -348,10 +351,10 @@ public class EngineMigration {
                 FilesFacade ff,
                 long tempMem8b,
                 Path path,
-                MappedReadWriteMemory txMem,
+                MemoryMARW txMem,
                 int partitionBy,
                 int symbolsCount,
-                PagedVirtualMemory writeTo
+                MemoryARW writeTo
         ) {
             int rootLen = path.length();
 
@@ -385,7 +388,7 @@ public class EngineMigration {
             writeTo.putLong(0);
         }
 
-        private static boolean removedPartitionsIncludes(long ts, ReadWriteVirtualMemory txMem, int symbolsCount) {
+        private static boolean removedPartitionsIncludes(long ts, MemoryR txMem, int symbolsCount) {
             long removedPartitionLo = TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + (symbolsCount + 1L) * Integer.BYTES;
             long removedPartitionCount = txMem.getInt(removedPartitionLo);
             long removedPartitionsHi = removedPartitionLo + Long.BYTES * removedPartitionCount;
@@ -398,22 +401,63 @@ public class EngineMigration {
             }
             return false;
         }
+
+        public static void updateColumnTypeIds(MigrationContext migrationContext) {
+            final FilesFacade ff = migrationContext.getFf();
+            Path path = migrationContext.getTablePath();
+            path.concat(META_FILE_NAME).$();
+
+            if (!ff.exists(path)) {
+                LOG.error().$("meta file does not exist, nothing to migrate [path=").$(path).I$();
+                return;
+            }
+
+            // Metadata file should already be backed up
+            final MemoryMARW rwMem = migrationContext.rwMemory;
+            rwMem.of(ff, path, ff.getPageSize());
+
+            // column count
+            final int columnCount = rwMem.getInt(TableUtils.META_OFFSET_COUNT);
+            rwMem.putInt(TableUtils.META_OFFSET_VERSION, ColumnType.VERSION);
+
+            long offset = TableUtils.META_OFFSET_COLUMN_TYPES;
+            for (int i = 0; i < columnCount; i++) {
+                final byte oldTypeId = rwMem.getByte(offset);
+                final long oldFlags = rwMem.getLong(offset + 1);
+                final int blockCapacity = rwMem.getInt(offset + 1 + 8);
+                // column type id is int now
+                // we grabbed 3 reserved bytes for extra type info
+                // extra for old types is zeros
+                rwMem.putInt(offset, oldTypeId + 1); // ColumnType.VERSION_420 - ColumnType.VERSION_419 = 1
+                rwMem.putLong(offset + 4, oldFlags);
+                rwMem.putInt(offset + 4 + 8, blockCapacity);
+                offset += TableUtils.META_COLUMN_DATA_SIZE;
+            }
+            rwMem.close();
+        }
     }
 
     class MigrationContext {
         private final long tempMemory;
         private final int tempMemoryLen;
-        private final PagedVirtualMemory tempVirtualMem;
-        private final MappedReadWriteMemory rwMemory;
+        private final MemoryARW tempVirtualMem;
+        private final MemoryMARW rwMemory;
         private Path tablePath;
         private long metadataFd;
         private Path tablePath2;
 
-        public MigrationContext(long mem, int tempMemSize, PagedVirtualMemory tempVirtualMem, MappedReadWriteMemory rwMemory) {
+        public MigrationContext(long mem, int tempMemSize, MemoryARW tempVirtualMem, MemoryMARW rwMemory) {
             this.tempMemory = mem;
             this.tempMemoryLen = tempMemSize;
             this.tempVirtualMem = tempVirtualMem;
             this.rwMemory = rwMemory;
+        }
+
+        public MemoryMARW createRwMemoryOf(FilesFacade ff, Path path) {
+            // re-use same rwMemory
+            // assumption that it is re-usable after the close() and then of()  methods called.
+            rwMemory.smallFile(ff, path);
+            return rwMemory;
         }
 
         public CairoConfiguration getConfiguration() {
@@ -430,13 +474,6 @@ public class EngineMigration {
 
         public int getNextTableId() {
             return (int) engine.getNextTableId();
-        }
-
-        public MappedReadWriteMemory createRwMemoryOf(FilesFacade ff, Path path, long pageSize) {
-            // re-use same rwMemory
-            // assumption that it is re-usable after the close() and then of()  methods called.
-            rwMemory.of(ff, path, pageSize);
-            return rwMemory;
         }
 
         public Path getTablePath() {
@@ -458,7 +495,7 @@ public class EngineMigration {
                     + " is available");
         }
 
-        public PagedVirtualMemory getTempVirtualMem() {
+        public MemoryARW getTempVirtualMem() {
             return tempVirtualMem;
         }
 
@@ -475,5 +512,6 @@ public class EngineMigration {
         setByVersion(VERSION_THAT_ADDED_TABLE_ID, MigrationActions::assignTableId, 1);
         setByVersion(VERSION_TX_STRUCT_UPDATE_1, MigrationActions::rebuildTransactionFile, 0);
         setByVersion(VERSION_TBL_META_COMMIT_LAG, MigrationActions::addTblMetaCommitLag, 0);
+        setByVersion(VERSION_COLUMN_TYPE_ENCODING_CHANGED, MigrationActions::updateColumnTypeIds, 1);
     }
 }

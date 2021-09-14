@@ -27,10 +27,12 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastSymbolToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.model.ExpressionNode;
@@ -43,6 +45,7 @@ import org.jetbrains.annotations.NotNull;
 import java.util.ArrayDeque;
 
 import static io.questdb.griffin.SqlKeywords.isNullKeyword;
+import static io.questdb.griffin.SqlKeywords.startsWithGeoHashKeyword;
 
 public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private static final Log LOG = LogFactory.getLog(FunctionParser.class);
@@ -79,7 +82,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             throw SqlException.invalidColumn(position, name);
         }
 
-        switch (metadata.getColumnType(index)) {
+        int columnType = metadata.getColumnType(index);
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
                 return BooleanColumn.newInstance(index);
             case ColumnType.BYTE:
@@ -108,8 +112,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 return TimestampColumn.newInstance(index);
             case ColumnType.RECORD:
                 return new RecordColumn(index, metadata.getMetadata(index));
-            default:
+            case ColumnType.GEOHASH:
+                return GeoHashColumn.newInstance(index, columnType);
+            case ColumnType.NULL:
+                return NullConstant.NULL;
+            case ColumnType.LONG256:
                 return Long256Column.newInstance(index);
+            default:
+                throw SqlException.position(position)
+                        .put("unsupported column type ")
+                        .put(ColumnType.nameOf(columnType));
         }
     }
 
@@ -124,7 +136,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     return new StrConstant(name);
             }
         }
-        return StrConstant.NULL;
+        return NullConstant.NULL;
     }
 
     public Function createBindVariable0(int position, CharSequence name) throws SqlException {
@@ -138,7 +150,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         Function function = getBindVariableService().getFunction(variableIndex);
         if (function == null) {
             // bind variable is undefined
-            return new IndexedParameterLinkFunction(variableIndex, -1, position);
+            return new IndexedParameterLinkFunction(variableIndex, ColumnType.UNDEFINED, position);
         }
         return new IndexedParameterLinkFunction(variableIndex, function.getType(), position);
     }
@@ -389,7 +401,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         final int len = tok.length();
 
         if (isNullKeyword(tok)) {
-            return StrConstant.NULL;
+            return NullConstant.NULL;
         }
 
         if (Chars.isQuoted(tok)) {
@@ -441,15 +453,20 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
         // type constant for 'CAST' operation
 
-        final int columnType = ColumnType.columnTypeOf(tok);
+        final short columnType = ColumnType.tagOf(tok);
 
-        if (columnType > -1) {
+        if (columnType >= ColumnType.BOOLEAN && columnType <= ColumnType.BINARY) {
             return Constants.getTypeConstant(columnType);
+        }
+
+        // geohash?
+        if (startsWithGeoHashKeyword(tok)) {
+            int bits = SqlParser.parseGeoHashSize(position, 7, tok);
+            return GeoHashTypeConstant.getInstanceByPrecision(bits);
         }
 
         throw SqlException.position(position).put("invalid constant: ").put(tok);
     }
-
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
         return new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
@@ -465,13 +482,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             throw invalidFunction(node, args);
         }
 
-        final int argCount;
-        if (args == null) {
-            argCount = 0;
-        } else {
-            argCount = args.size();
-        }
-
+        final int argCount = args == null ? 0 : args.size();
         FunctionFactory candidate = null;
         FunctionFactoryDescriptor candidateDescriptor = null;
         boolean candidateSigVarArgConst = false;
@@ -497,9 +508,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             final boolean sigVarArg;
             final boolean sigVarArgConst;
 
-            if (candidateDescriptor == null) {
-                candidateDescriptor = descriptor;
-            }
 
             if (sigArgCount > 0) {
                 final int lastSigArgMask = descriptor.getArgTypeMask(sigArgCount - 1);
@@ -520,6 +528,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             }
 
             // otherwise, is number of arguments the same?
+            if (candidateDescriptor == null) {
+                candidateDescriptor = descriptor;
+            }
             if (sigArgCount == argCount || (sigVarArg && argCount >= sigArgCount)) {
                 int match = MATCH_NO_MATCH; // no match
                 if (sigArgCount == 0) {
@@ -529,7 +540,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 int sigArgTypeSum = 0;
                 for (int k = 0; k < sigArgCount; k++) {
                     final Function arg = args.getQuick(k);
-                    final boolean undefined = arg.isUndefined();
                     final int sigArgTypeMask = descriptor.getArgTypeMask(k);
 
                     if (FunctionFactoryDescriptor.isConstant(sigArgTypeMask) && !arg.isConstant()) {
@@ -544,10 +554,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         break;
                     }
 
-                    final int sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
+                    final short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
+                    final int argType = arg.getType();
+                    final short argTypeTag = ColumnType.tagOf(argType);
+                    final short sigArgTypeTag = ColumnType.tagOf(sigArgType);
 
-
-                    if (sigArgType == arg.getType()) {
+                    if (sigArgTypeTag == argTypeTag) {
                         switch (match) {
                             case MATCH_NO_MATCH: // was it no match
                                 match = MATCH_EXACT_MATCH;
@@ -562,35 +574,44 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         continue;
                     }
 
-                    final int argType = arg.getType();
-
-                    int overloadDistance = ColumnType.overloadDistance(argType, sigArgType);
+                    int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgType); // NULL to any is 0
                     sigArgTypeSum += overloadDistance;
                     // Overload with cast to higher precision
                     boolean overloadPossible = overloadDistance != ColumnType.NO_OVERLOAD;
 
                     // Overload when arg is double NaN to func which accepts INT, LONG
-                    overloadPossible |= argType == ColumnType.DOUBLE &&
+                    overloadPossible |= argTypeTag == ColumnType.DOUBLE &&
                             arg.isConstant() &&
                             Double.isNaN(arg.getDouble(null)) &&
-                            (sigArgType == ColumnType.LONG || sigArgType == ColumnType.INT);
+                            (sigArgTypeTag == ColumnType.LONG || sigArgTypeTag == ColumnType.INT);
 
                     // Implicit cast from CHAR to STRING
-                    overloadPossible |= argType == ColumnType.CHAR &&
-                            sigArgType == ColumnType.STRING;
+                    overloadPossible |= argTypeTag == ColumnType.CHAR &&
+                            sigArgTypeTag == ColumnType.STRING;
 
                     // Implicit cast from STRING to TIMESTAMP
-                    overloadPossible |= argType == ColumnType.STRING &&
-                            sigArgType == ColumnType.TIMESTAMP && !factory.isGroupBy();
+                    overloadPossible |= argTypeTag == ColumnType.STRING &&
+                            sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
+                    // Implicit cast from STRING to GEOHASH
+                    overloadPossible |= argTypeTag == ColumnType.STRING &&
+                            sigArgTypeTag == ColumnType.GEOHASH && !factory.isGroupBy();
 
-                    overloadPossible |= undefined;
+                    // Implicit cast from SYMBOL to TIMESTAMP
+                    overloadPossible |= argTypeTag == ColumnType.SYMBOL &&
+                            sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
+
+                    overloadPossible |= arg.isUndefined();
 
                     // can we use overload mechanism?
                     if (overloadPossible) {
                         switch (match) {
                             case MATCH_NO_MATCH: // no match?
-                                match = MATCH_FUZZY_MATCH; // upgrade to fuzzy match
+                                if (argTypeTag == ColumnType.NULL) {
+                                    match = MATCH_PARTIAL_MATCH;
+                                } else {
+                                    match = MATCH_FUZZY_MATCH; // upgrade to fuzzy match
+                                }
                                 break;
                             case MATCH_EXACT_MATCH: // was it full match so far? ? oh, well, fuzzy now
                                 match = MATCH_PARTIAL_MATCH; // downgrade
@@ -649,18 +670,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             }
         }
 
-        // substitute NaNs with appropriate types
-        for (int k = 0; k < candidateSigArgCount; k++) {
-            final Function arg = args.getQuick(k);
-            final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k));
-            if (arg.getType() == ColumnType.DOUBLE && arg.isConstant() && Double.isNaN(arg.getDouble(null))) {
-                if (sigArgType == ColumnType.LONG) {
-                    args.setQuick(k, LongConstant.NULL);
-                } else if (sigArgType == ColumnType.INT) {
-                    args.setQuick(k, IntConstant.NULL);
-                }
-            }
-        }
 
         // it is possible that we have more undefined variables than
         // args in the descriptor, in case of vararg for example
@@ -674,17 +683,32 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             }
         }
 
-        // convert arguments if necessary
         for (int k = 0; k < candidateSigArgCount; k++) {
             final Function arg = args.getQuick(k);
-            final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k));
-            if (arg.getType() == ColumnType.STRING && sigArgType == ColumnType.TIMESTAMP) {
+            final short sigArgTypeTag = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k));
+            final short argTypeTag = ColumnType.tagOf(arg.getType());
+
+            if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Double.isNaN(arg.getDouble(null))) {
+                // substitute NaNs with appropriate types
+                if (sigArgTypeTag == ColumnType.LONG) {
+                    args.setQuick(k, LongConstant.NULL);
+                } else if (sigArgTypeTag == ColumnType.INT) {
+                    args.setQuick(k, IntConstant.NULL);
+                }
+            } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL) && sigArgTypeTag == ColumnType.TIMESTAMP) {
+                // convert arguments if necessary
                 int position = argPositions.getQuick(k);
                 if (arg.isConstant()) {
                     long timestamp = convertToTimestamp(arg.getStr(null), position);
                     args.set(k, TimestampConstant.newInstance(timestamp));
                 } else {
-                    args.set(k, new CastStrToTimestampFunctionFactory.Func(position, arg));
+                    AbstractUnaryTimestampFunction castFn;
+                    if (argTypeTag == ColumnType.STRING) {
+                        castFn = new CastStrToTimestampFunctionFactory.Func(position, arg);
+                    } else {
+                        castFn = new CastSymbolToTimestampFunctionFactory.Func(arg);
+                    }
+                    args.set(k, castFn);
                 }
             }
         }
@@ -694,7 +718,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     private Function functionToConstant(Function function) {
-        switch (function.getType()) {
+        int type = function.getType();
+        switch (ColumnType.tagOf(type)) {
             case ColumnType.INT:
                 if (function instanceof IntConstant) {
                     return function;
@@ -748,6 +773,21 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     return function;
                 } else {
                     return new Long256Constant(function.getLong256A(null));
+                }
+            case ColumnType.GEOHASH:
+                if (function instanceof GeoHashConstant) {
+                    return function;
+                } else {
+                    switch (ColumnType.sizeOf(type)) {
+                        case Byte.BYTES:
+                            return GeoHashConstant.newInstance(function.getGeoHashByte(null), type);
+                        case Short.BYTES:
+                            return GeoHashConstant.newInstance(function.getGeoHashShort(null), type);
+                        case Integer.BYTES:
+                            return GeoHashConstant.newInstance(function.getGeoHashInt(null), type);
+                        default:
+                            return GeoHashConstant.newInstance(function.getGeoHashLong(null), type);
+                    }
                 }
             case ColumnType.DATE:
                 if (function instanceof DateConstant) {

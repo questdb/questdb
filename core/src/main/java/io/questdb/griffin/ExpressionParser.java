@@ -50,6 +50,7 @@ class ExpressionParser {
     private static final int BRANCH_LEFT_BRACKET = 15;
     private static final int BRANCH_RIGHT_BRACKET = 16;
     private static final int BRANCH_DOT_DEREFERENCE = 17;
+    private static final int BRANCH_GEOHASH = 18;
 
     private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final LowerCaseAsciiCharSequenceObjHashMap<CharSequence> allFunctions = new LowerCaseAsciiCharSequenceObjHashMap<>();
@@ -126,7 +127,7 @@ class ExpressionParser {
                 thisChar = tok.charAt(0);
                 prevBranch = thisBranch;
                 boolean processDefaultBranch = false;
-                int position = lexer.lastTokenPosition();
+                final int position = lexer.lastTokenPosition();
                 switch (thisChar) {
                     case '-':
                     case '+':
@@ -287,6 +288,37 @@ class ExpressionParser {
 
                         break;
 
+                    case 'g':
+                    case 'G':
+                        if (SqlKeywords.isGeoHashKeyword(tok)) {
+                            CharSequence geohashTok = GenericLexer.immutableOf(tok);
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok == null || tok.charAt(0) != '(') {
+                                lexer.backTo(position + 7, geohashTok);
+                                tok = geohashTok;
+                                processDefaultBranch = true;
+                                break;
+                            }
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok != null && tok.charAt(0) != ')') {
+                                opStack.push(expressionNodePool.next().of(
+                                        ExpressionNode.CONSTANT,
+                                        lexer.immutablePairOf(geohashTok, tok),
+                                        Integer.MIN_VALUE,
+                                        position));
+                                tok = SqlUtil.fetchNext(lexer);
+                                if (tok == null || tok.charAt(0) != ')') {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "invalid GEOHASH, missing ')'");
+                                }
+                            } else {
+                                throw SqlException.$(lexer.lastTokenPosition(), "invalid GEOHASH, invalid type precision");
+                            }
+                            thisBranch = BRANCH_GEOHASH;
+                        } else {
+                            processDefaultBranch = true;
+                        }
+                        break;
+
                     case '(':
                         if (prevBranch == BRANCH_RIGHT_BRACE) {
                             throw SqlException.$(position, "not a method call");
@@ -352,14 +384,15 @@ class ExpressionParser {
                                 argStackDepth = onNode(listener, node, 2);
                             } else {
                                 if (thisWasCast) {
-                                    // validate type
-                                    final int columnType = ColumnType.columnTypeOf(node.token);
-
-                                    if ((columnType < 0 || columnType > ColumnType.LONG256) && !asPoppedNull) {
-                                        throw SqlException.$(node.position, "invalid type");
+                                    if (prevBranch != BRANCH_GEOHASH) {
+                                        // validate type
+                                        final short columnTypeTag = ColumnType.tagOf(node.token);
+                                        if (((columnTypeTag < ColumnType.BOOLEAN || columnTypeTag > ColumnType.LONG256) && !asPoppedNull) ||
+                                                (columnTypeTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL)) {
+                                            throw SqlException.$(node.position, "invalid type");
+                                        }
+                                        node.type = ExpressionNode.CONSTANT;
                                     }
-
-                                    node.type = ExpressionNode.CONSTANT;
                                 }
                                 argStackDepth = onNode(listener, node, argStackDepth);
                             }
@@ -508,7 +541,7 @@ class ExpressionParser {
                     case 'E':
 
                         if (prevBranch != BRANCH_DOT_DEREFERENCE) {
-//                         check if this is E'str'
+                            // check if this is E'str'
                             if (thisChar == 'E' && (tok.length() < 3 || tok.charAt(1) != '\'')) {
                                 processDefaultBranch = true;
                                 break;
@@ -564,8 +597,8 @@ class ExpressionParser {
                                     // timestamp with time zone '2005-04-02 12:00:00-07'
 
                                     // validate type
-                                    final int columnType = ColumnType.columnTypeOf(prevNode.token);
-                                    if (columnType < 0 || columnType > ColumnType.LONG256) {
+                                    final short columnType = ColumnType.tagOf(prevNode.token);
+                                    if (columnType < ColumnType.BOOLEAN || columnType > ColumnType.LONG256) {
                                         throw SqlException.$(prevNode.position, "invalid type");
                                     } else {
                                         ExpressionNode stringLiteral = expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, position);

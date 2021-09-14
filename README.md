@@ -7,19 +7,15 @@
   <a href="https://slack.questdb.io">
     <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
   </a>
-  <a href="https://github.com/questdb/questdb/blob/master/LICENSE.txt">
-    <img src="https://img.shields.io/github/license/questdb/questdb" alt="Apache 2.0 licence"/>
-  </a>
   <a href="#contribute">
     <img src="https://img.shields.io/github/all-contributors/questdb/questdb" alt="QuestDB open source contributors"/>
-  </a>
-  <a href="https://dev.azure.com/questdb/questdb">
-    <img src="https://dev.azure.com/questdb/questdb/_apis/build/status/Build%20and%20upload%20snapshot%20%28Linux%29?branchName=master" alt="Azure pipeline status"/>
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
     <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>
   </a>
 </p>
+
+English | [简体中文](./i18n/README.zh-cn.md)
 
 # QuestDB
 
@@ -39,7 +35,7 @@ is 100% free from garbage collection.
 
 <div align="center">
   <a href="https://demo.questdb.io">
-    <img alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart" src=".github/console.png" width="600" />
+    <img alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
   </a>
 </div>
 
@@ -52,7 +48,7 @@ query.
 To run QuestDB, Docker can be used to get started quickly:
 
 ```bash
-docker run -p 9000:9000 -p 8812:8812 questdb/questdb
+docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
 macOS users can use Homebrew:
@@ -80,14 +76,13 @@ You can interact with QuestDB using the following interfaces:
 
 ## How QuestDB compares to other open source TSDBs
 
-Here are ingestion results of the
-[Time Series Benchmark Suite](https://github.com/timescale/tsbs) `cpu-only` use
-case with up to fourteen workers on an AWS EC2 `m5.8xlarge` instance with
-sixteen cores:
+Here are high-cardinality
+[Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
+results using the `cpu-only` use case with 6 workers on an AMD Ryzen 3970X:
 
 <div align="center">
-  <a href="https://questdb.io/blog/2021/05/10/questdb-release-6-0-tsbs-benchmark/">
-    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png" width="700"/>
+  <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
+    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png"/>
   </a>
 </div>
 
@@ -98,7 +93,7 @@ The following table shows query execution time of a billion rows run on a
 | --------------------------------------------------------- | ---------- |
 | `SELECT sum(double) FROM 1bn`                             | 0.061 secs |
 | `SELECT tag, sum(double) FROM 1bn`                        | 0.179 secs |
-| `SELECT tag, sum(double) FROM 1bn WHERE timestamp='2019'` | 0.05 secs  |
+| `SELECT tag, sum(double) FROM 1bn WHERE timestamp in '2019'` | 0.05 secs  |
 
 ## Documentation & resources
 
@@ -106,14 +101,15 @@ The following table shows query execution time of a billion rows run on a
   how to run and configure QuestDB with technical references.
 - [Our Slack workspace](https://slack.questdb.io) is a great place for technical
   discussions and to meet other users. :wave:
+- [GitHub discussions](https://github.com/questdb/questdb/discussions) is where
+  our users share ideas for features, ask questions, and show what they've built.
+- [GitHub issues](https://github.com/questdb/questdb/issues) are for bug reports.
+- [The project milestones](https://github.com/questdb/questdb/milestones) lists
+  the tasks and features we're working on for upcoming releases.
 - [Tutorials](https://questdb.io/tutorial/) written by our community members
   show what's possible with QuestDB.
 - [QuestDB on Stack Overflow](https://stackoverflow.com/questions/tagged/questdb)
   has common troubleshooting solutions.
-- [GitHub issues](https://github.com/questdb/questdb/issues) are used to track
-  bug reports and feature requests.
-- [The product roadmap](https://github.com/questdb/questdb/projects/3) lists the
-  tasks and features we're currently working on.
 
 ## Contribute
 
@@ -196,6 +192,24 @@ QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
   </tr>
   <tr>
     <td align="center"><a href="https://github.com/snenkov"><img src="https://avatars.githubusercontent.com/u/13110986?v=4" width="100px;" alt=""/><br /><sub><b>snenkov</b></sub></a><br /><a href="#userTesting-snenkov" title="User Testing">📓</a> <a href="https://github.com/questdb/questdb/issues?q=author%3Asnenkov" title="Bug reports">🐛</a> <a href="#ideas-snenkov" title="Ideas, Planning, & Feedback">🤔</a></td>
+    <td align="center"><a href="https://www.linkedin.com/in/marregui"><img src="https://avatars.githubusercontent.com/u/255796?v=4" width="100px;" alt=""/><br /><sub><b>marregui</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=marregui" title="Code">💻</a> <a href="#ideas-marregui" title="Ideas, Planning, & Feedback">🤔</a></td>
+    <td align="center"><a href="https://github.com/bratseth"><img src="https://avatars.githubusercontent.com/u/16574012?v=4" width="100px;" alt=""/><br /><sub><b>bratseth</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=bratseth" title="Code">💻</a> <a href="#ideas-bratseth" title="Ideas, Planning, & Feedback">🤔</a> <a href="#userTesting-bratseth" title="User Testing">📓</a></td>
+    <td align="center"><a href="https://medium.com/@wellytambunan/"><img src="https://avatars.githubusercontent.com/u/242694?v=4" width="100px;" alt=""/><br /><sub><b>welly87</b></sub></a><br /><a href="#ideas-welly87" title="Ideas, Planning, & Feedback">🤔</a></td>
+    <td align="center"><a href="http://johnleung.com"><img src="https://avatars.githubusercontent.com/u/20699?v=4" width="100px;" alt=""/><br /><sub><b>fuzzthink</b></sub></a><br /><a href="#ideas-fuzzthink" title="Ideas, Planning, & Feedback">🤔</a> <a href="#userTesting-fuzzthink" title="User Testing">📓</a></td>
+    <td align="center"><a href="https://github.com/nexthack"><img src="https://avatars.githubusercontent.com/u/6803956?v=4" width="100px;" alt=""/><br /><sub><b>nexthack</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=nexthack" title="Code">💻</a></td>
+    <td align="center"><a href="https://github.com/g-metan"><img src="https://avatars.githubusercontent.com/u/88013490?v=4" width="100px;" alt=""/><br /><sub><b>g-metan</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Ag-metan" title="Bug reports">🐛</a></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://github.com/tim2skew"><img src="https://avatars.githubusercontent.com/u/54268285?v=4" width="100px;" alt=""/><br /><sub><b>tim2skew</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Atim2skew" title="Bug reports">🐛</a> <a href="#userTesting-tim2skew" title="User Testing">📓</a></td>
+    <td align="center"><a href="https://github.com/ospqsp"><img src="https://avatars.githubusercontent.com/u/84992434?v=4" width="100px;" alt=""/><br /><sub><b>ospqsp</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Aospqsp" title="Bug reports">🐛</a></td>
+    <td align="center"><a href="https://github.com/SuperFluffy"><img src="https://avatars.githubusercontent.com/u/701177?v=4" width="100px;" alt=""/><br /><sub><b>SuperFluffy</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3ASuperFluffy" title="Bug reports">🐛</a></td>
+    <td align="center"><a href="https://github.com/nu11ptr"><img src="https://avatars.githubusercontent.com/u/3615587?v=4" width="100px;" alt=""/><br /><sub><b>nu11ptr</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Anu11ptr" title="Bug reports">🐛</a></td>
+    <td align="center"><a href="https://github.com/comunidadio"><img src="https://avatars.githubusercontent.com/u/10286013?v=4" width="100px;" alt=""/><br /><sub><b>comunidadio</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Acomunidadio" title="Bug reports">🐛</a></td>
+    <td align="center"><a href="https://github.com/mugendi"><img src="https://avatars.githubusercontent.com/u/5348246?v=4" width="100px;" alt=""/><br /><sub><b>mugendi</b></sub></a><br /><a href="#ideas-mugendi" title="Ideas, Planning, & Feedback">🤔</a> <a href="https://github.com/questdb/questdb/issues?q=author%3Amugendi" title="Bug reports">🐛</a> <a href="https://github.com/questdb/questdb/commits?author=mugendi" title="Documentation">📖</a></td>
+    <td align="center"><a href="https://github.com/paulwoods222"><img src="https://avatars.githubusercontent.com/u/86227717?v=4" width="100px;" alt=""/><br /><sub><b>paulwoods222</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Apaulwoods222" title="Bug reports">🐛</a></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://github.com/mingodad"><img src="https://avatars.githubusercontent.com/u/462618?v=4" width="100px;" alt=""/><br /><sub><b>mingodad</b></sub></a><br /><a href="#ideas-mingodad" title="Ideas, Planning, & Feedback">🤔</a> <a href="https://github.com/questdb/questdb/issues?q=author%3Amingodad" title="Bug reports">🐛</a> <a href="https://github.com/questdb/questdb/commits?author=mingodad" title="Documentation">📖</a></td>
   </tr>
 </table>
 

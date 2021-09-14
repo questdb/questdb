@@ -143,7 +143,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             value.init(symbolTableSource, executionContext);
             pattern.init(symbolTableSource, executionContext);
             // this is bind variable, we can use it as constant

@@ -24,9 +24,9 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.cairo.vm.PagedSlidingReadOnlyMemory;
-import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -55,11 +55,6 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     }
 
     @Override
-    public BitmapIndexWriter getWriter() {
-        return writer;
-    }
-
-    @Override
     public long getFd() {
         return mem.getFd();
     }
@@ -76,15 +71,19 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     }
 
     @Override
-    public void index(ReadOnlyVirtualMemory mem, long loRow, long hiRow) {
+    public void index(MemoryR mem, long loRow, long hiRow) {
         // while we may have to read column starting with zero offset
         // index values have to be adjusted to partition-level row id
         writer.rollbackConditionally(loRow);
-        final long lim = hiRow + columnTop;
-        for (long lo = loRow; lo < lim; lo++) {
+        for (long lo = loRow; lo < hiRow; lo++) {
             writer.add(TableUtils.toIndexKey(mem.getInt((lo - columnTop) * Integer.BYTES)), lo);
         }
-        writer.setMaxValue(lim - 1);
+        writer.setMaxValue(hiRow - 1);
+    }
+
+    @Override
+    public BitmapIndexWriter getWriter() {
+        return writer;
     }
 
     @Override
@@ -97,7 +96,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
             CairoConfiguration configuration,
             Path path,
             CharSequence name,
-            AppendOnlyVirtualMemory columnMem,
+            MemoryMA columnMem,
             long columnTop
     ) {
         this.columnTop = columnTop;

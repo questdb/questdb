@@ -24,46 +24,22 @@
 
 package io.questdb.griffin;
 
-import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
-import static io.questdb.griffin.model.ExpressionNode.LITERAL;
-
-import java.util.ArrayDeque;
-
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.model.AnalyticColumn;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.JoinContext;
-import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.CharSequenceIntHashMap;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.IntHashSet;
-import io.questdb.std.IntList;
-import io.questdb.std.IntPriorityQueue;
-import io.questdb.std.LowerCaseCharSequenceIntHashMap;
-import io.questdb.std.LowerCaseCharSequenceObjHashMap;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
-import io.questdb.std.Transient;
+import io.questdb.griffin.model.*;
+import io.questdb.std.*;
 import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.ArrayDeque;
+
+import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
+import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 class SqlOptimiser {
 
@@ -703,7 +679,7 @@ class SqlOptimiser {
             int index = m.getColumnIndexQuiet(timestamp.token);
             if (index == -1) {
                 throw SqlException.invalidColumn(timestamp.position, timestamp.token);
-            } else if (m.getColumnType(index) != ColumnType.TIMESTAMP) {
+            } else if (!ColumnType.isTimestamp(m.getColumnType(index))) {
                 throw SqlException.$(timestamp.position, "not a TIMESTAMP");
             }
         }
@@ -1854,9 +1830,11 @@ class SqlOptimiser {
         try (TableReader r = engine.getReader(
                 executionContext.getCairoSecurityContext(),
                 tableLookupSequence.of(tableName, lo, hi - lo),
+                TableUtils.ANY_TABLE_ID,
                 TableUtils.ANY_TABLE_VERSION
         )) {
             model.setTableVersion(r.getVersion());
+            model.setTableId(r.getMetadata().getId());
             copyColumnsFromMetadata(model, r.getMetadata());
         } catch (EntryLockedException e) {
             throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableLookupSequence);
@@ -2148,7 +2126,7 @@ class SqlOptimiser {
     private void parseFunctionAndEnumerateColumns(@NotNull QueryModel model, @NotNull SqlExecutionContext executionContext) throws SqlException {
         assert model.getTableNameFunction() == null;
         final Function function = functionParser.parseFunction(model.getTableName(), AnyRecordMetadata.INSTANCE, executionContext);
-        if (function.getType() != ColumnType.CURSOR) {
+        if (!ColumnType.isCursor(function.getType())) {
             throw SqlException.$(model.getTableName().position, "function must return CURSOR");
         }
         model.setTableNameFunction(function);

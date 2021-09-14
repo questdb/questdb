@@ -390,6 +390,87 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastGeoHashCastStrWithCharsPrecision() throws SqlException {
+        x("'sp052w92'geohash6ccast", "cast('sp052w92' as geohash(6c))");
+    }
+
+    @Test
+    public void testCastGeoHashCastStrWithBitsPrecision() throws SqlException {
+        x("'sp052w92'geohash60bcast", "cast('sp052w92' as geohash(60b))");
+    }
+
+    @Test
+    public void testCastGeoHashCastMissingSize1() {
+        assertFail("cast('sp052w92' as geohash())",
+                27,
+                "invalid GEOHASH, invalid type precision");
+    }
+
+    @Test
+    public void testCastGeoHashCastMissingSize2() {
+        assertFail("cast('sp052w92' as geohash)",
+                19,
+                "invalid type");
+    }
+
+    @Test
+    public void testCastGeoHashCastMissingSize3() {
+        assertFail("cast('sp052w92' as geohash(21b)",
+                4,
+                "unbalanced (");
+    }
+
+    @Test
+    public void testCastGeoHashCastMissingSize6() {
+        assertFail("cast('sp052w92' as geohash(8c",
+                27,
+                "invalid GEOHASH, missing ')'");
+    }
+
+    @Test
+    public void testGeoHash1() throws SqlException {
+        x("geohash6c", "geohash(6c)");
+    }
+
+    @Test
+    public void testGeoHash2() throws SqlException {
+        x("geohash31b", "geohash(31b)");
+    }
+
+    @Test
+    public void testGeoHash3() throws SqlException {
+        x("GEOHASH", "GEOHASH");
+    }
+
+    @Test
+    public void testGeoHash4() throws SqlException {
+        x("geohash6c", "geohash ( 6c" +
+                "-- this is a comment, as you can see" +
+                "\n\n\r)");
+    }
+
+    @Test
+    public void testGeoHash5() throws SqlException {
+        x("geohash6c", " geohash\r\n  (\n 6c\n" +
+                "-- this is a comment, as you can see" +
+                "\n\n\r)-- my tralala");
+    }
+
+    @Test
+    public void testGeoHashFail1() {
+        assertFail("GEOHASH(",
+                7,
+                "invalid GEOHASH, invalid type precision");
+    }
+
+    @Test
+    public void testGeoHashFail2() {
+        assertFail("GEOHASH()",
+                8,
+                "invalid GEOHASH, invalid type precision");
+    }
+
+    @Test
     public void testCastLambda() throws SqlException {
         x("(select-choose a, b, c from (x))1+longcast", "cast((select a,b,c from x)+1 as long)");
     }
@@ -953,5 +1034,4 @@ public class ExpressionParserTest extends AbstractCairoTest {
         compiler.testParseExpression(content, rpnBuilder);
         TestUtils.assertEquals(expectedRpn, rpnBuilder.rpn());
     }
-
 }

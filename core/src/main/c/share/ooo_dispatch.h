@@ -31,11 +31,11 @@ typedef struct index_t {
     uint64_t ts;
     uint64_t i;
 
-    bool operator<(int64_t other) const {
+    bool operator<(uint64_t other) const {
         return ts < other;
     }
 
-    bool operator>(int64_t other) const {
+    bool operator>(uint64_t other) const {
         return ts > other;
     }
 
@@ -43,7 +43,7 @@ typedef struct index_t {
         return ts == other.ts;
     }
 
-    bool operator==(int64_t other) const {
+    bool operator==(uint64_t other) const {
         return ts == other;
     }
 
@@ -115,6 +115,7 @@ DECLARE_DISPATCHER_TYPE(platform_memcpy, void *dst, const void *src, const size_
 
 DECLARE_DISPATCHER_TYPE(platform_memset, void *dst, const int val, const size_t len);
 
+DECLARE_DISPATCHER_TYPE(platform_memmove, void *dst, const void *src, const size_t len);
 // 8 - 11
 template<typename T>
 inline void

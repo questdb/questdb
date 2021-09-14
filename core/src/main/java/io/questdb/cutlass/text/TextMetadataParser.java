@@ -140,7 +140,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                         name = copy(tag);
                         break;
                     case P_TYPE:
-                        type = ColumnType.columnTypeOf(tag);
+                        type = ColumnType.tagOf(tag);
                         if (type == -1) {
                             throw JsonException.$(position, "Invalid type");
                         }
@@ -220,7 +220,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
 
         columnNames.add(name);
 
-        switch (type) {
+        switch (ColumnType.tagOf(type)) {
             case ColumnType.DATE:
                 DateLocale dateLocale = locale == null ? this.dateLocale : dateLocaleFactory.getLocale(locale);
 

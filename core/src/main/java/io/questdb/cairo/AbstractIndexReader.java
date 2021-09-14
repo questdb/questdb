@@ -24,8 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
@@ -38,8 +38,8 @@ import java.util.concurrent.locks.LockSupport;
 public abstract class AbstractIndexReader implements BitmapIndexReader {
     public static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
     protected final static Log LOG = LogFactory.getLog(BitmapIndexBwdReader.class);
-    protected final MappedReadOnlyMemory keyMem = new SinglePageMappedReadOnlyPageMemory();
-    protected final MappedReadOnlyMemory valueMem = new SinglePageMappedReadOnlyPageMemory();
+    protected final MemoryMR keyMem = Vm.getMRInstance();
+    protected final MemoryMR valueMem = Vm.getMRInstance();
     protected int blockValueCountMod;
     protected int blockCapacity;
     protected long spinLockTimeoutUs;
@@ -66,16 +66,38 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         return keyMem.getFd() != -1;
     }
 
+    public long getKeyBaseAddress() {
+        return keyMem.addressOf(0);
+    }
+
+    public long getKeyMemorySize() {
+        return keyMem.size();
+    }
+
+    public long getValueBaseAddress() {
+        return valueMem.addressOf(0);
+    }
+
+    public long getValueMemorySize() {
+        return valueMem.size();
+    }
+
+    public long getUnIndexedNullCount() {
+        return unIndexedNullCount;
+    }
+
+    public int getValueBlockCapacity() {
+        return blockValueCountMod;
+    }
+
     public void of(CairoConfiguration configuration, Path path, CharSequence name, long unIndexedNullCount, long partitionTxn) {
         this.unIndexedNullCount = unIndexedNullCount;
         TableUtils.txnPartitionConditionally(path, partitionTxn);
         final int plen = path.length();
-        final long pageSize = configuration.getFilesFacade().getMapPageSize();
         this.spinLockTimeoutUs = configuration.getSpinLockTimeoutUs();
 
         try {
-            this.keyMem.of(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name), pageSize, 0);
-            this.keyMem.grow(configuration.getFilesFacade().length(this.keyMem.getFd()));
+            this.keyMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name));
             this.clock = configuration.getMicrosecondClock();
 
             // key file should already be created at least with header
@@ -125,8 +147,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
             if (unIndexedNullCount > 0) {
                 this.keyCountIncludingNulls++;
             }
-            this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize, 0);
-            this.valueMem.grow(configuration.getFilesFacade().length(this.valueMem.getFd()));
+            this.valueMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name));
         } catch (Throwable e) {
             close();
             throw e;

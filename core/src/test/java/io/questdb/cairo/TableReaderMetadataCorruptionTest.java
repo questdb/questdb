@@ -24,7 +24,9 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -43,9 +45,8 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 names,
                 types,
                 names.length + 1,
-                PartitionBy.NONE,
                 5,
-                "outside of file boundary"
+                "Index flag is only supported for SYMBOL" //failed validation on garbage flags value
         );
     }
 
@@ -58,7 +59,6 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 names,
                 types,
                 names.length,
-                PartitionBy.NONE,
                 5,
                 "Duplicate"
         );
@@ -73,7 +73,6 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 names,
                 types,
                 names.length,
-                PartitionBy.NONE,
                 23,
                 "Timestamp"
         );
@@ -88,7 +87,6 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 names,
                 types,
                 names.length,
-                PartitionBy.NONE,
                 -2,
                 "Timestamp"
         );
@@ -105,7 +103,6 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 names,
                 types,
                 names.length,
-                PartitionBy.NONE,
                 timestampIndex,
                 "STRING"
         );
@@ -120,7 +117,6 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 names,
                 types,
                 names.length,
-                PartitionBy.NONE,
                 5,
                 "Invalid column type"
         );
@@ -135,7 +131,6 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 names,
                 types,
                 names.length,
-                PartitionBy.NONE,
                 5,
                 "NULL column"
         );
@@ -157,12 +152,12 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         assertTransitionIndexValidation(Integer.MAX_VALUE - 1);
     }
 
-    private void assertMetaConstructorFailure(String[] names, int[] types, int columnCount, int partitionType, int timestampIndex, String contains) throws Exception {
-        assertMetaConstructorFailure(names, types, columnCount, partitionType, timestampIndex, contains, FilesFacadeImpl.INSTANCE.getPageSize());
-        assertMetaConstructorFailure(names, types, columnCount, partitionType, timestampIndex, contains, 65536);
+    private void assertMetaConstructorFailure(String[] names, int[] types, int columnCount, int timestampIndex, String contains) throws Exception {
+        assertMetaConstructorFailure(names, types, columnCount, timestampIndex, contains, FilesFacadeImpl.INSTANCE.getPageSize());
+        assertMetaConstructorFailure(names, types, columnCount, timestampIndex, contains, 65536);
     }
 
-    private void assertMetaConstructorFailure(String[] names, int[] types, int columnCount, int partitionType, int timestampIndex, String contains, long pageSize) throws Exception {
+    private void assertMetaConstructorFailure(String[] names, int[] types, int columnCount, int timestampIndex, String contains, long pageSize) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 path.of(root).concat("x");
@@ -171,21 +166,20 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                     throw CairoException.instance(FilesFacadeImpl.INSTANCE.errno()).put("Cannot create dir: ").put(path);
                 }
 
-                try (AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory()) {
+                try (MemoryMA mem = Vm.getMAInstance()) {
 
                     mem.of(FilesFacadeImpl.INSTANCE, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), pageSize);
 
                     mem.putInt(columnCount);
-                    mem.putInt(partitionType);
+                    mem.putInt(PartitionBy.NONE);
                     mem.putInt(timestampIndex);
                     mem.putInt(ColumnType.VERSION);
                     mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
                     for (int i = 0; i < names.length; i++) {
-                        mem.putByte((byte) types[i]);
+                        mem.putInt(types[i]);
                         mem.putLong(0);
                         mem.putInt(0);
-                        mem.skip(TableUtils.META_COLUMN_DATA_RESERVED);
                     }
                     for (int i = 0; i < names.length; i++) {
                         mem.putStr(names[i]);
@@ -213,8 +207,9 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 long len = FilesFacadeImpl.INSTANCE.length(path);
 
                 try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path)) {
-                    try (AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory()) {
-                        mem.of(FilesFacadeImpl.INSTANCE, path, FilesFacadeImpl.INSTANCE.getPageSize());
+                    try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                        mem.smallFile(FilesFacadeImpl.INSTANCE, path);
+                        mem.jumpTo(0);
                         mem.putInt(columnCount);
                         mem.skip(len - 4);
                     }

@@ -90,6 +90,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private static final int COMMIT_TRANSACTION = 2;
     private static final int ERROR_TRANSACTION = 3;
     private static final int ROLLING_BACK_TRANSACTION = 4;
+    private static final String WRITER_LOCK_REASON = "pgConnection";
+    private static final int PROTOCOL_TAIL_COMMAND_LENGTH = 64;
     private final long recvBuffer;
     private final long sendBuffer;
     private final int recvBufferSize;
@@ -149,7 +151,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private long rowCount;
     private boolean completed = true;
     private boolean isEmptyQuery;
+    private final PGResumeProcessor resumeCommandCompleteRef = this::resumeCommandComplete;
     private int transactionState = NO_TRANSACTION;
+    private final PGResumeProcessor resumeQueryCompleteRef = this::resumeQueryComplete;
     private NamedStatementWrapper wrapper;
     private AssociativeCache<TypesAndSelect> typesAndSelectCache;
     private WeakAutoClosableObjectPool<TypesAndSelect> typesAndSelectPool;
@@ -157,8 +161,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private IntList activeBindVariableTypes;
     private boolean sendParameterDescription;
     private PGResumeProcessor resumeProcessor;
-    private final PGResumeProcessor resumeCursorRef = this::resumeCursor;
     private long maxRows;
+    private final PGResumeProcessor resumeCursorExecuteRef = this::resumeCursorExecute;
+    private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
 
     public PGConnectionContext(
             CairoEngine engine,
@@ -276,6 +281,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         namedPortalMap.clear();
         bindVariableService.clear();
         bindVariableTypes.clear();
+        resumeProcessor = null;
+        completed = true;
+        clearCursorAndFactory();
     }
 
     public void clearWriters() {
@@ -313,12 +321,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     @Override
-    public TableWriter getWriter(CairoSecurityContext context, CharSequence name) {
+    public TableWriter getWriter(CairoSecurityContext context, CharSequence name, CharSequence lockReason) {
         final int index = pendingWriters.keyIndex(name);
         if (index < 0) {
             return pendingWriters.valueAt(index);
         }
-        return engine.getWriter(context, name);
+        return engine.getWriter(context, name, lockReason);
     }
 
     public void handleClientOperation(
@@ -374,7 +382,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     } while (recvBufferReadOffset < recvBufferWriteOffset);
                     clearRecvBuffer();
                 }
-            } while (keepReceiving&&operation==IOOperation.READ);
+            } while (keepReceiving && operation == IOOperation.READ);
         } catch (SqlException e) {
             reportError(e.getPosition(), e.getFlyweightMessage());
         } catch (CairoException e) {
@@ -553,9 +561,14 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void appendCharColumn(Record record, int columnIndex) {
-        long a = responseAsciiSink.skip();
-        responseAsciiSink.putUtf8(record.getChar(columnIndex));
-        responseAsciiSink.putLenEx(a);
+        final char charValue = record.getChar(columnIndex);
+        if (charValue == 0) {
+            responseAsciiSink.setNullValue();
+        } else {
+            long a = responseAsciiSink.skip();
+            responseAsciiSink.putUtf8(charValue);
+            responseAsciiSink.putLenEx(a);
+        }
     }
 
     private void appendDateColumn(Record record, int columnIndex) {
@@ -647,9 +660,16 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     private void appendLong256Column(Record record, int columnIndex) {
         final Long256 long256Value = record.getLong256A(columnIndex);
-        final long a = responseAsciiSink.skip();
-        Numbers.appendLong256(long256Value.getLong0(), long256Value.getLong1(), long256Value.getLong2(), long256Value.getLong3(), responseAsciiSink);
-        responseAsciiSink.putLenEx(a);
+        if (long256Value.getLong0() == Numbers.LONG_NaN &&
+                long256Value.getLong1() == Numbers.LONG_NaN &&
+                long256Value.getLong2() == Numbers.LONG_NaN &&
+                long256Value.getLong3() == Numbers.LONG_NaN) {
+            responseAsciiSink.setNullValue();
+        } else {
+            final long a = responseAsciiSink.skip();
+            Numbers.appendLong256(long256Value.getLong0(), long256Value.getLong1(), long256Value.getLong2(), long256Value.getLong3(), responseAsciiSink);
+            responseAsciiSink.putLenEx(a);
+        }
     }
 
     private void appendLongColumn(Record record, int columnIndex) {
@@ -678,13 +698,18 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final long offset = responseAsciiSink.skip();
         responseAsciiSink.putNetworkShort((short) columnCount);
         for (int i = 0; i < columnCount; i++) {
-            switch (activeSelectColumnTypes.getQuick(i)) {
+            final int type = activeSelectColumnTypes.getQuick(i);
+            final short columnBinaryFlag = getColumnBinaryFlag(type);
+            final int typeTag = ColumnType.tagOf(type);
+            final int tagWithFlag = toColumnBinaryType(columnBinaryFlag, typeTag);
+            switch (tagWithFlag) {
                 case BINARY_TYPE_INT:
                     appendIntColumnBin(record, i);
                     break;
                 case ColumnType.INT:
                     appendIntCol(record, i);
                     break;
+                case ColumnType.NULL:
                 case ColumnType.STRING:
                 case BINARY_TYPE_STRING:
                     appendStrColumn(record, i);
@@ -756,6 +781,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
         }
         responseAsciiSink.putLen(offset);
+        rowCount += 1;
     }
 
     private void appendShortColumn(Record record, int columnIndex) {
@@ -768,6 +794,17 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final short value = record.getShort(columnIndex);
         responseAsciiSink.putNetworkInt(Short.BYTES);
         responseAsciiSink.putNetworkShort(value);
+    }
+
+    private void appendSingleRecord(Record record, int columnCount) throws SqlException {
+        try {
+            appendRecord(record, columnCount);
+        } catch (NoSpaceLeftInResponseBufferException e1) {
+            // oopsie, buffer is too small for single record
+            LOG.error().$("not enough space in buffer for row data [buffer=").$(sendBufferSize).I$();
+            responseAsciiSink.reset();
+            throw CairoException.instance(0).put("server configuration error: not enough space in send buffer for row data");
+        }
     }
 
     private void appendStrColumn(Record record, int columnIndex) {
@@ -1128,7 +1165,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    private void executeInsert() {
+    private void executeInsert() throws SqlException {
         final TableWriter w;
         try {
             switch (transactionState) {
@@ -1198,19 +1235,15 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 break;
             default:
                 break;
-
-
         }
     }
 
-    private CharSequence getString(long lo, long hi, CharSequence errorMessage) throws BadProtocolException {
-        CharacterStoreEntry e = characterStore.newEntry();
-        if (Chars.utf8Decode(lo, hi, e)) {
-            return characterStore.toImmutable();
-        } else {
-            LOG.error().$(errorMessage).$();
-            throw BadProtocolException.INSTANCE;
+    @Nullable
+    private CharSequence getPortalName(long lo, long hi) throws BadProtocolException {
+        if (hi - lo > 0) {
+            return getString(lo, hi, "invalid UTF8 bytes in portal name");
         }
+        return null;
     }
 
     @Nullable
@@ -1221,12 +1254,14 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         return null;
     }
 
-    @Nullable
-    private CharSequence getPortalName(long lo, long hi) throws BadProtocolException {
-        if (hi - lo > 0) {
-            return getString(lo, hi, "invalid UTF8 bytes in portal name");
+    private CharSequence getString(long lo, long hi, CharSequence errorMessage) throws BadProtocolException {
+        CharacterStoreEntry e = characterStore.newEntry();
+        if (Chars.utf8Decode(lo, hi, e)) {
+            return characterStore.toImmutable();
+        } else {
+            LOG.error().$(errorMessage).$();
+            throw BadProtocolException.INSTANCE;
         }
-        return null;
     }
 
     /**
@@ -1303,7 +1338,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 processBind(msgLo, msgLimit, compiler);
                 break;
             case 'E': // execute
-                processExec(msgLo, msgLimit);
+                processExec(msgLo, msgLimit, compiler);
                 break;
             case 'S': // sync
                 processSyncActions();
@@ -1377,13 +1412,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    void prepareSuspended() {
-        LOG.debug().$("suspended").$();
-        responseAsciiSink.put(MESSAGE_TYPE_PORTAL_SUSPENDED);
-        responseAsciiSink.putIntDirect(INT_BYTES_X);
-    }
-
-
     private void prepareDescribePortalResponse() {
         if (typesAndSelect != null) {
             try {
@@ -1424,8 +1452,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void prepareForNewQuery() {
-        LOG.debug().$("prepare for new query").$();
-        if(completed) {
+        if (completed) {
+            LOG.debug().$("prepare for new query").$();
             isEmptyQuery = false;
             characterStore.clear();
             bindVariableService.clear();
@@ -1507,12 +1535,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         sink.putNetworkShort((short) n);
         for (int i = 0; i < n; i++) {
             final int typeFlag = activeSelectColumnTypes.getQuick(i);
-            final int columnType = toColumnType(typeFlag);
+            final int columnType = toColumnType(ColumnType.isNull(typeFlag) ? ColumnType.STRING : typeFlag);
             sink.encodeUtf8Z(metadata.getColumnName(i));
             sink.putIntDirect(0); //tableOid ?
             sink.putNetworkShort((short) (i + 1)); //column number, starting from 1
-            sink.putNetworkInt(TYPE_OIDS.get(columnType)); // type
-            if (columnType < ColumnType.STRING) {
+            sink.putNetworkInt(PGOids.getTypeOid(columnType)); // type
+            if (ColumnType.tagOf(columnType) < ColumnType.STRING) {
                 // type size
                 // todo: cache small endian type sizes and do not check if type is valid - its coming from metadata, must be always valid
                 sink.putNetworkShort((short) ColumnType.sizeOf(columnType));
@@ -1525,13 +1553,19 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             sink.putIntDirect(INT_NULL_X);
             // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
             // format code
-            sink.putNetworkShort(typeFlag == ColumnType.BINARY ? 1 : getColumnBinaryFlag(typeFlag)); // format code
+            sink.putNetworkShort(ColumnType.isBinary(columnType) ? 1 : getColumnBinaryFlag(typeFlag)); // format code
         }
         sink.putLen(addr);
     }
 
     private void prepareSslResponse() {
         responseAsciiSink.put('N');
+    }
+
+    void prepareSuspended() {
+        LOG.debug().$("suspended").$();
+        responseAsciiSink.put(MESSAGE_TYPE_PORTAL_SUSPENDED);
+        responseAsciiSink.putIntDirect(INT_BYTES_X);
     }
 
     private void processBind(long lo, long msgLimit, @Transient SqlCompiler compiler)
@@ -1600,9 +1634,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                         // good to go
                         for (int i = 0; i < columnCount; i++) {
                             lo += Short.BYTES;
-                            activeSelectColumnTypes.setQuick(i, toColumnBinaryType(getShortUnsafe(lo), m.getColumnType(i)));
+                            final short code = getShortUnsafe(lo);
+                            activeSelectColumnTypes.setQuick(i, toColumnBinaryType(code, m.getColumnType(i)));
                         }
                     } else if (columnFormatCodeCount == 1) {
+                        lo += Short.BYTES;
                         final short code = getShortUnsafe(lo);
                         for (int i = 0; i < columnCount; i++) {
                             activeSelectColumnTypes.setQuick(i, toColumnBinaryType(code, m.getColumnType(i)));
@@ -1676,13 +1712,13 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         CharSequence target = getPortalName(lo + 1, hi);
         LOG.debug().$("describe [name=").$(target).$(']').$();
         if (isPortal && target != null) {
-           Portal p = namedPortalMap.get(target);
-           if (p != null) {
-               target = p.statementName;
-           } else {
-               LOG.error().$("invalid portal [name=").$(target).$(']').$();
-               throw BadProtocolException.INSTANCE;
-           }
+            Portal p = namedPortalMap.get(target);
+            if (p != null) {
+                target = p.statementName;
+            } else {
+                LOG.error().$("invalid portal [name=").$(target).$(']').$();
+                throw BadProtocolException.INSTANCE;
+            }
         }
 
         configureContextFromNamedStatement(target, compiler);
@@ -1692,7 +1728,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         if (sendParameterDescription && n > 0 && activeBindVariableTypes.size() == 0) {
             activeBindVariableTypes.setPos(n);
             for (int i = 0; i < n; i++) {
-                activeBindVariableTypes.setQuick(i, Numbers.bswap(TYPE_OIDS.getQuick(bindVariableService.getFunction(i).getType())));
+                activeBindVariableTypes.setQuick(i, Numbers.bswap(PGOids.getTypeOid(bindVariableService.getFunction(i).getType())));
             }
         }
         if (isPortal) {
@@ -1702,7 +1738,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    private void processExec(long lo, long msgLimit) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException, BadProtocolException {
+    private void processExec(long lo, long msgLimit, SqlCompiler compiler)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException, BadProtocolException {
         final long hi = getStringLength(lo, msgLimit, "bad portal name length");
         final CharSequence portalName = getPortalName(lo, hi);
         if (portalName != null) {
@@ -1713,15 +1750,15 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final int maxRows = getInt(lo, msgLimit, "could not read max rows value");
 
         processSyncActions();
-        processExecute(maxRows);
+        processExecute(maxRows, compiler);
         wrapper = null;
     }
 
-    private void processExecute(int maxRows) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+    private void processExecute(int maxRows, SqlCompiler compiler) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         if (typesAndSelect != null) {
             LOG.debug().$("executing query").$();
-            setupFactoryAndCursor();
-            sendCursor(maxRows);
+            setupFactoryAndCursor(compiler);
+            sendCursor(maxRows, resumeCursorExecuteRef, resumeCommandCompleteRef);
         } else if (typesAndInsert != null) {
             LOG.debug().$("executing insert").$();
             executeInsert();
@@ -1880,17 +1917,16 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             buildSelectColumnTypes();
             assert queryText != null;
             queryTag = TAG_SELECT;
-            setupFactoryAndCursor();
+            setupFactoryAndCursor(compiler);
             prepareRowDescription();
-            sendCursor(0);
+            sendCursor(0, resumeCursorQueryRef, resumeQueryCompleteRef);
         } else if (typesAndInsert != null) {
             executeInsert();
         } else {
             executeTag();
             prepareCommandComplete(false);
         }
-        prepareReadyForQuery();
-        sendAndReset();
+        sendReadyForNewQuery();
     }
 
     private void processSyncActions() {
@@ -1954,17 +1990,38 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     private void reportError(int position, CharSequence flyweightMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareError(position, flyweightMessage);
-        prepareReadyForQuery();
-        sendAndReset();
+        sendReadyForNewQuery();
         clearRecvBuffer();
     }
 
-    private void resumeCursor() throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+    private void resumeCommandComplete() {
+        prepareCommandComplete(true);
+    }
+
+    private void resumeCursorExecute() throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         final Record record = currentCursor.getRecord();
         final int columnCount = currentFactory.getMetadata().getColumnCount();
         responseAsciiSink.bookmark();
         appendSingleRecord(record, columnCount);
-        sendCursor0(record, columnCount);
+        sendCursor0(record, columnCount, resumeCommandCompleteRef);
+    }
+
+    private void resumeCursorQuery() throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+        resumeCursorQuery0();
+        sendReadyForNewQuery();
+    }
+
+    private void resumeCursorQuery0() throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+        final Record record = currentCursor.getRecord();
+        final int columnCount = currentFactory.getMetadata().getColumnCount();
+        responseAsciiSink.bookmark();
+        appendSingleRecord(record, columnCount);
+        sendCursor0(record, columnCount, resumeQueryCompleteRef);
+    }
+
+    private void resumeQueryComplete() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        prepareCommandComplete(true);
+        sendReadyForNewQuery();
     }
 
     private void sendAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1973,19 +2030,20 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void sendCopyInResponse(CairoEngine engine, TextLoader textLoader) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (TableUtils.TABLE_EXISTS == engine.getStatus(
-                sqlExecutionContext.getCairoSecurityContext(),
-                path,
-                textLoader.getTableName()
-        )) {
+        if (
+                TableUtils.TABLE_EXISTS == engine.getStatus(
+                        sqlExecutionContext.getCairoSecurityContext(),
+                        path,
+                        textLoader.getTableName()
+                )) {
             responseAsciiSink.put(MESSAGE_TYPE_COPY_IN_RESPONSE);
             long addr = responseAsciiSink.skip();
             responseAsciiSink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
-            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), textLoader.getTableName())) {
+            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), textLoader.getTableName(), WRITER_LOCK_REASON)) {
                 RecordMetadata metadata = writer.getMetadata();
                 responseAsciiSink.putNetworkShort((short) metadata.getColumnCount());
                 for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    responseAsciiSink.putNetworkShort((short) TYPE_OIDS.get(metadata.getColumnType(i)));
+                    responseAsciiSink.putNetworkShort((short) PGOids.getTypeOid(metadata.getColumnType(i)));
                 }
             }
             responseAsciiSink.putLen(addr);
@@ -1997,8 +2055,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         sendAndReset();
     }
 
-    private void sendCursor(int maxRows) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        // the assumption for now is that any  will fit into response buffer. This of course precludes us from
+    private void sendCursor(
+            int maxRows,
+            PGResumeProcessor cursorResumeProcessor,
+            PGResumeProcessor commandCompleteResumeProcessor
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+        // the assumption for now is that any record will fit into response buffer. This of course precludes us from
         // streaming large BLOBs, but, and its a big one, PostgreSQL protocol for DataRow does not allow for
         // streaming anyway. On top of that Java PostgreSQL driver downloads data row fully. This simplifies our
         // approach for general queries. For streaming protocol we will code something else. PostgreSQL Java driver is
@@ -2010,12 +2072,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final int columnCount = metadata.getColumnCount();
         final long cursorRowCount = currentCursor.size();
         this.maxRows = maxRows > 0 ? Long.min(maxRows, cursorRowCount) : Long.MAX_VALUE;
-        resumeProcessor = resumeCursorRef;
-        sendCursor0(record, columnCount);
+        this.resumeProcessor = cursorResumeProcessor;
+        sendCursor0(record, columnCount, commandCompleteResumeProcessor);
     }
 
-    private void sendCursor0(Record record, int columnCount) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-
+    private void sendCursor0(Record record, int columnCount, PGResumeProcessor commandCompleteResumeProcessor)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         while (currentCursor.hasNext()) {
             // create checkpoint to which we can undo the buffer in case
             // current DataRow will does not fit fully.
@@ -2023,7 +2085,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             try {
                 try {
                     appendRecord(record, columnCount);
-                    if(rowCount++ > maxRows) break;
+                    if (rowCount >= maxRows) break;
                 } catch (NoSpaceLeftInResponseBufferException e) {
                     responseAsciiSink.resetToBookmark();
                     sendAndReset();
@@ -2037,47 +2099,60 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
         completed = maxRows <= 0 || rowCount < maxRows;
         if (completed) {
-            resumeProcessor = null;
-            currentCursor = Misc.free(currentCursor);
-            // do not free factory, it will be cached
-            currentFactory = null;
-            // we we resumed the cursor send the typeAndSelect will be null
-            // we do not want to overwrite cache entries and potentially
-            // leak memory
-            if (typesAndSelect != null) {
-                typesAndSelectCache.put(queryText, typesAndSelect);
-                // clear selectAndTypes so that context doesn't accidentally
-                // free the factory when context finishes abnormally
-                this.typesAndSelect = null;
+            clearCursorAndFactory();
+            // at this point buffer can contain unsent data
+            // and it may not have enough space for the command
+            if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
+                resumeProcessor = commandCompleteResumeProcessor;
+                sendAndReset();
             }
             prepareCommandComplete(true);
-        } else  {
+        } else {
             prepareSuspended();
         }
     }
 
-    private void appendSingleRecord(Record record, int columnCount) throws SqlException {
-        try {
-            appendRecord(record, columnCount);
-        } catch (NoSpaceLeftInResponseBufferException e1) {
-            // oopsie, buffer is too small for single record
-            LOG.error().$("not enough space in buffer for row data [buffer=").$(sendBufferSize).I$();
-            responseAsciiSink.reset();
-            throw CairoException.instance(0).put("server configuration error: not enough space in send buffer for row data");
+    private void clearCursorAndFactory() {
+        resumeProcessor = null;
+        currentCursor = Misc.free(currentCursor);
+        // do not free factory, it will be cached
+        currentFactory = null;
+        // we we resumed the cursor send the typeAndSelect will be null
+        // we do not want to overwrite cache entries and potentially
+        // leak memory
+        if (typesAndSelect != null) {
+            typesAndSelectCache.put(queryText, typesAndSelect);
+            // clear selectAndTypes so that context doesn't accidentally
+            // free the factory when context finishes abnormally
+            this.typesAndSelect = null;
         }
     }
 
-    private void setupFactoryAndCursor() {
+    private void sendReadyForNewQuery() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        prepareReadyForQuery();
+        sendAndReset();
+    }
+
+    private void setupFactoryAndCursor(SqlCompiler compiler) throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
         if (currentCursor == null) {
-            currentFactory = typesAndSelect.getFactory();
-            try {
-                currentCursor = currentFactory.getCursor(sqlExecutionContext);
-                // cache random if it was replaced
-                this.rnd = sqlExecutionContext.getRandom();
-            } catch (Throwable e) {
-                currentFactory = Misc.free(currentFactory);
-                throw e;
-            }
+            boolean recompileStale = true;
+            do {
+                currentFactory = typesAndSelect.getFactory();
+                try {
+                    currentCursor = currentFactory.getCursor(sqlExecutionContext);
+                    recompileStale = false;
+                    // cache random if it was replaced
+                    this.rnd = sqlExecutionContext.getRandom();
+                } catch (ReaderOutOfDateException e) {
+                    LOG.info().$(e.getFlyweightMessage()).$();
+                    currentFactory = Misc.free(currentFactory);
+                    compileQuery(compiler);
+                    buildSelectColumnTypes();
+                } catch (Throwable e) {
+                    currentFactory = Misc.free(currentFactory);
+                    throw e;
+                }
+            } while (recompileStale);
         }
     }
 
@@ -2131,6 +2206,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     public static class Portal implements Mutable {
         public CharSequence statementName = null;
+
+        @Override
         public void clear() {
             statementName = null;
         }
@@ -2142,6 +2219,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         public final IntList selectColumnTypes = new IntList();
         public CharSequence queryText = null;
 
+        @Override
         public void clear() {
             queryText = null;
             bindVariableTypes.clear();

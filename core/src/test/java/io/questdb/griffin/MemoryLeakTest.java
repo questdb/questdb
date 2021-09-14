@@ -86,7 +86,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
             compiler.compile("create table users (sequence long, event binary, timestamp timestamp, id long) timestamp(timestamp)", executionContext);
             long buffer = Unsafe.malloc(1024);
             try {
-                try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), "users")) {
+                try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), "users", "testing")) {
                     for (int i = 0; i < n; i++) {
                         long sequence = 20 + i * 2L;
                         TableWriter.Row row = writer.newRow(Os.currentTimeMicros());

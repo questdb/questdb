@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -272,6 +273,46 @@ public interface Record {
      */
     default long getTimestamp(int col) {
         return getLong(col);
+    }
+
+    /**
+     * Gets the value of a byte geohash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default byte getGeoHashByte(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the value of a short geohash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default short getGeoHashShort(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the value of an int geohash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default int getGeoHashInt(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the value of a long geohash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default long getGeoHashLong(int col) {
+        throw new UnsupportedOperationException();
     }
 
     @FunctionalInterface

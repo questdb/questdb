@@ -24,8 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.VmUtils;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
@@ -38,7 +38,7 @@ public class TableWriterMetadata extends BaseRecordMetadata {
     private int maxUncommittedRows;
     private long commitLag;
 
-    public TableWriterMetadata(FilesFacade ff, MappedReadOnlyMemory metaMem) {
+    public TableWriterMetadata(FilesFacade ff, MemoryMR metaMem) {
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
         this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap(columnCount);
         this.version = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
@@ -66,10 +66,10 @@ public class TableWriterMetadata extends BaseRecordMetadata {
                             null
                     )
             );
-            if (type == ColumnType.SYMBOL) {
+            if (ColumnType.isSymbol(type)) {
                 symbolMapCount++;
             }
-            offset += VmUtils.getStorageLength(name);
+            offset += Vm.getStorageLength(name);
         }
     }
 
@@ -91,7 +91,7 @@ public class TableWriterMetadata extends BaseRecordMetadata {
                 )
         );
         columnCount++;
-        if (type == ColumnType.SYMBOL) {
+        if (ColumnType.isSymbol(type)) {
             symbolMapCount++;
         }
     }
@@ -99,7 +99,7 @@ public class TableWriterMetadata extends BaseRecordMetadata {
     void removeColumn(CharSequence name) {
         int index = columnNameIndexMap.keyIndex(name);
         int columnIndex = columnNameIndexMap.valueAt(index);
-        if (columnMetadata.getQuick(columnIndex).getType() == ColumnType.SYMBOL) {
+        if (ColumnType.isSymbol(columnMetadata.getQuick(columnIndex).getType())) {
             symbolMapCount--;
         }
         columnMetadata.remove(columnIndex);

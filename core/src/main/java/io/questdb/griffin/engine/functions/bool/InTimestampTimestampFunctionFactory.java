@@ -48,11 +48,13 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         boolean allConst = true;
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
-            switch (func.getType()) {
+            switch (ColumnType.tagOf(func.getType())) {
+                case ColumnType.NULL:
                 case ColumnType.TIMESTAMP:
                 case ColumnType.LONG:
                 case ColumnType.INT:
                 case ColumnType.STRING:
+                case ColumnType.SYMBOL:
                     break;
                 default:
                     throw SqlException.position(0).put("cannot compare TIMESTAMP with type ").put(ColumnType.nameOf(func.getType()));
@@ -67,7 +69,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             return new InTimestampConstFunction(args.getQuick(0), parseToTs(args, argPositions));
         }
 
-        if (args.size() == 2 && args.get(1).getType() == ColumnType.STRING) {
+        if (args.size() == 2 && ColumnType.isString(args.get(1).getType())) {
             // special case - one argument and it a string
             return new InTimestampStrFunctionFactory.EqTimestampStrFunction(args.get(0), args.get(1));
         }
@@ -83,13 +85,14 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
             long val = Numbers.LONG_NaN;
-            switch (func.getType()) {
+            switch (ColumnType.tagOf(func.getType())) {
                 case ColumnType.TIMESTAMP:
                 case ColumnType.LONG:
                 case ColumnType.INT:
                     val = func.getTimestamp(null);
                     break;
                 case ColumnType.STRING:
+                case ColumnType.SYMBOL:
                     CharSequence tsValue = func.getStr(null);
                     val = (tsValue != null) ? tryParseTimestamp(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NaN;
                     break;
@@ -131,7 +134,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             for (int i = 1, n = args.size(); i < n; i++) {
                 Function func = args.getQuick(i);
                 long val = Numbers.LONG_NaN;
-                switch (func.getType()) {
+                switch (ColumnType.tagOf(func.getType())) {
                     case ColumnType.TIMESTAMP:
                     case ColumnType.LONG:
                     case ColumnType.INT:

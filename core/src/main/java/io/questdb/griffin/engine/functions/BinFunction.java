@@ -135,6 +135,26 @@ public abstract class BinFunction implements ScalarFunction {
     }
 
     @Override
+    public byte getGeoHashByte(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getGeoHashShort(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getGeoHashInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getGeoHashLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final int getType() {
         return ColumnType.BINARY;
     }

@@ -88,12 +88,19 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
         return cachedInstance ? nullCursor : new NullCursor();
     }
 
-    private class Cursor implements RowCursor {
+    private class Cursor implements RowCursor, IndexFrameCursor {
         protected long valueCount;
         protected long minValue;
         protected long next;
         private long valueBlockOffset;
+        private final IndexFrame indexFrame = new IndexFrame();
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
+
+        @Override
+        public IndexFrame getNext() {
+            // See BitmapIndexFwdReader if needs implementing
+            throw new UnsupportedOperationException();
+        }
 
         @Override
         public boolean hasNext() {
@@ -131,7 +138,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
         }
 
         private void jumpToPreviousValueBlock() {
-            // we don't need to grow valueMem because we going from farthest block back to start of file
+            // we don't need to extend valueMem because we going from farthest block back to start of file
             // to closes, e.g. valueBlockOffset is decreasing.
             valueBlockOffset = getPreviousBlock(valueBlockOffset);
         }
@@ -142,7 +149,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
             } else {
                 assert key > -1 : "key must be positive integer: " + key;
                 long offset = BitmapIndexUtils.getKeyEntryOffset(key);
-                keyMem.grow(offset + BitmapIndexUtils.KEY_ENTRY_SIZE);
+                keyMem.extend(offset + BitmapIndexUtils.KEY_ENTRY_SIZE);
                 // Read value count and last block offset atomically. In that we must orderly read value count first and
                 // value count check last. If they match - everything we read between those holds true. We must retry
                 // should these values do not match.
@@ -168,7 +175,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
                     }
                 }
 
-                valueMem.grow(valueBlockOffset + blockCapacity);
+                valueMem.extend(valueBlockOffset + blockCapacity);
 
                 if (valueCount > 0) {
                     BitmapIndexUtils.seekValueBlockRTL(valueCount, valueBlockOffset, valueMem, maxValue, blockValueCountMod, SEEKER);

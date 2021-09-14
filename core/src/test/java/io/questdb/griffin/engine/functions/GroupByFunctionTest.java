@@ -193,6 +193,26 @@ public class GroupByFunctionTest {
         }
 
         @Override
+        public byte getGeoHashByte(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public short getGeoHashShort(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public int getGeoHashInt(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public long getGeoHashLong(Record rec) {
+            return 0;
+        }
+
+        @Override
         public int getType() {
             return 0;
         }

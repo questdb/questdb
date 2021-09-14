@@ -41,11 +41,15 @@ public class RecordValueSinkFactory {
         int interfaceClassIndex = asm.poolClass(RecordValueSink.class);
 
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
+        int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoHashInt", "(I)I");
         int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
+        int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoHashLong", "(I)J");
         int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
         int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
+        int rGetGeoByte = asm.poolInterfaceMethod(Record.class, "getGeoHashByte", "(I)B");
         int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
+        int rGetGeoShort = asm.poolInterfaceMethod(Record.class, "getGeoHashShort", "(I)S");
         int rGetChar = asm.poolInterfaceMethod(Record.class, "getChar", "(I)C");
         int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
         int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
@@ -84,14 +88,23 @@ public class RecordValueSinkFactory {
             asm.aload(1);
             asm.iconst(index);
 
-            switch (columnTypes.getColumnType(index)) {
+            int columnType = columnTypes.getColumnType(index);
+            switch (ColumnType.storageTag(columnType)) {
                 case ColumnType.INT:
                 case ColumnType.SYMBOL:
                     asm.invokeInterface(rGetInt, 1);
                     asm.invokeInterface(wPutInt, 2);
                     break;
+                case ColumnType.GEOINT:
+                    asm.invokeInterface(rGetGeoInt, 1);
+                    asm.invokeInterface(wPutInt, 2);
+                    break;
                 case ColumnType.LONG:
                     asm.invokeInterface(rGetLong, 1);
+                    asm.invokeInterface(wPutLong, 3);
+                    break;
+                case ColumnType.GEOLONG:
+                    asm.invokeInterface(rGetGeoLong, 1);
                     asm.invokeInterface(wPutLong, 3);
                     break;
                 case ColumnType.DATE:
@@ -106,8 +119,16 @@ public class RecordValueSinkFactory {
                     asm.invokeInterface(rGetByte, 1);
                     asm.invokeInterface(wPutByte, 2);
                     break;
+                case ColumnType.GEOBYTE:
+                    asm.invokeInterface(rGetGeoByte, 1);
+                    asm.invokeInterface(wPutByte, 2);
+                    break;
                 case ColumnType.SHORT:
                     asm.invokeInterface(rGetShort, 1);
+                    asm.invokeInterface(wPutShort, 2);
+                    break;
+                case ColumnType.GEOSHORT:
+                    asm.invokeInterface(rGetGeoShort, 1);
                     asm.invokeInterface(wPutShort, 2);
                     break;
                 case ColumnType.CHAR:

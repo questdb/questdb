@@ -75,6 +75,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSampleByIndexSearchPageSize() {
+        return 0;
+    }
+
+    @Override
     public int getSqlCopyBufferSize() {
         return 1024 * 1024;
     }
@@ -160,11 +165,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public NanosecondClock getNanosecondClock() {
-        return NanosecondClockImpl.INSTANCE;
-    }
-
-    @Override
     public int getMkDirMode() {
         return 509;
     }
@@ -211,7 +211,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getSpinLockTimeoutUs() {
-        return 1000000;
+        return 5000000;
     }
 
     @Override
@@ -544,5 +544,10 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isO3QuickSortEnabled() {
         return false;
+    }
+
+    @Override
+    public int getLatestByQueueCapacity() {
+        return 32;
     }
 }

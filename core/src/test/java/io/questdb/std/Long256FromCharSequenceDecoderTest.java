@@ -125,7 +125,7 @@ public class Long256FromCharSequenceDecoderTest {
     public void before() {
         decoder = new Long256FromCharSequenceDecoder() {
             @Override
-            public void onDecoded(long l0, long l1, long l2, long l3) {
+            public void setAll(long l0, long l1, long l2, long l3) {
                 Long256FromCharSequenceDecoderTest.this.l0 = l0;
                 Long256FromCharSequenceDecoderTest.this.l1 = l1;
                 Long256FromCharSequenceDecoderTest.this.l2 = l2;

@@ -104,6 +104,10 @@ public class Rnd {
         return nextPositiveInt() % boundary;
     }
 
+    public long nextLong(long boundary) {
+        return nextPositiveLong() % boundary;
+    }
+
     public long nextLong() {
         long l1 = s0;
         long l0 = s1;

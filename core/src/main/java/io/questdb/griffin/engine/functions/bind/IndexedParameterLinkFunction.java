@@ -156,12 +156,32 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public byte getGeoHashByte(Record rec) {
+        return getBase().getGeoHashByte(rec);
+    }
+
+    @Override
+    public short getGeoHashShort(Record rec) {
+        return getBase().getGeoHashShort(rec);
+    }
+
+    @Override
+    public int getGeoHashInt(Record rec) {
+        return getBase().getGeoHashInt(rec);
+    }
+
+    @Override
+    public long getGeoHashLong(Record rec) {
+        return getBase().getGeoHashLong(rec);
+    }
+
+    @Override
     public int getType() {
         return type;
     }
 
     @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         base = executionContext.getBindVariableService().getFunction(variableIndex);
         if (base == null) {
             throw CairoException.instance(0).put("undefined bind variable: ").put(variableIndex);

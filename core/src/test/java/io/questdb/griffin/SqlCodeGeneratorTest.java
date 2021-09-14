@@ -545,7 +545,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 compiler.compile("create table y as (x), cast(col as symbol cache)", sqlExecutionContext);
 
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_VERSION)) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                     Assert.assertTrue(reader.getSymbolMapReader(0).isCached());
                 }
             }
@@ -575,7 +575,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
             compiler.compile("create table y as (x), cast(col as symbol nocache)", sqlExecutionContext);
 
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_VERSION)) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                 Assert.assertFalse(reader.getSymbolMapReader(0).isCached());
             }
         });
@@ -637,23 +637,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 null,
                 true
         );
-    }
-
-    @Test
-    public void testGroupByConstantMatchingColumnName() throws Exception {
-        assertQuery(
-                "nts\tmin\nnts\t\n",
-                "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
-                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
-                null,
-                "insert into tt " +
-                        "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
-                        "from long_sequence(2L)",
-                "nts\tmin\n" +
-                        "nts\t2020-01-01T00:00:00.000010Z\n",
-                false,
-                false,
-                true);
     }
 
     @Test
@@ -1606,6 +1589,23 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupByConstantMatchingColumnName() throws Exception {
+        assertQuery(
+                "nts\tmin\nnts\t\n",
+                "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
+                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
+                null,
+                "insert into tt " +
+                        "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
+                        "from long_sequence(2L)",
+                "nts\tmin\n" +
+                        "nts\t2020-01-01T00:00:00.000010Z\n",
+                false,
+                false,
+                true);
+    }
+
+    @Test
     public void testInsertMissingQuery() throws Exception {
         assertFailure(
                 "insert into x (a,b)",
@@ -1613,74 +1613,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 19,
                 "'select' or 'values' expected"
         );
-    }
-
-    @Test
-    public void testJoinWhereExecutionOrder() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table l as( select x from long_sequence(100) )", sqlExecutionContext);
-            compiler.compile("create table rr as( select x + 50 as y from long_sequence(100) )", sqlExecutionContext);
-
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "select x, y\n" +
-                            "from l left join rr on l.x = rr.y\n" +
-                            "where y > 0 or y > 10",
-                    sink,
-                    "x\ty\n" +
-                            "51\t51\n" +
-                            "52\t52\n" +
-                            "53\t53\n" +
-                            "54\t54\n" +
-                            "55\t55\n" +
-                            "56\t56\n" +
-                            "57\t57\n" +
-                            "58\t58\n" +
-                            "59\t59\n" +
-                            "60\t60\n" +
-                            "61\t61\n" +
-                            "62\t62\n" +
-                            "63\t63\n" +
-                            "64\t64\n" +
-                            "65\t65\n" +
-                            "66\t66\n" +
-                            "67\t67\n" +
-                            "68\t68\n" +
-                            "69\t69\n" +
-                            "70\t70\n" +
-                            "71\t71\n" +
-                            "72\t72\n" +
-                            "73\t73\n" +
-                            "74\t74\n" +
-                            "75\t75\n" +
-                            "76\t76\n" +
-                            "77\t77\n" +
-                            "78\t78\n" +
-                            "79\t79\n" +
-                            "80\t80\n" +
-                            "81\t81\n" +
-                            "82\t82\n" +
-                            "83\t83\n" +
-                            "84\t84\n" +
-                            "85\t85\n" +
-                            "86\t86\n" +
-                            "87\t87\n" +
-                            "88\t88\n" +
-                            "89\t89\n" +
-                            "90\t90\n" +
-                            "91\t91\n" +
-                            "92\t92\n" +
-                            "93\t93\n" +
-                            "94\t94\n" +
-                            "95\t95\n" +
-                            "96\t96\n" +
-                            "97\t97\n" +
-                            "98\t98\n" +
-                            "99\t99\n" +
-                            "100\t100\n"
-            );
-        });
     }
 
     @Test
@@ -1745,6 +1677,74 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "48\tNaN\n" +
                             "49\tNaN\n" +
                             "50\tNaN\n" +
+                            "51\t51\n" +
+                            "52\t52\n" +
+                            "53\t53\n" +
+                            "54\t54\n" +
+                            "55\t55\n" +
+                            "56\t56\n" +
+                            "57\t57\n" +
+                            "58\t58\n" +
+                            "59\t59\n" +
+                            "60\t60\n" +
+                            "61\t61\n" +
+                            "62\t62\n" +
+                            "63\t63\n" +
+                            "64\t64\n" +
+                            "65\t65\n" +
+                            "66\t66\n" +
+                            "67\t67\n" +
+                            "68\t68\n" +
+                            "69\t69\n" +
+                            "70\t70\n" +
+                            "71\t71\n" +
+                            "72\t72\n" +
+                            "73\t73\n" +
+                            "74\t74\n" +
+                            "75\t75\n" +
+                            "76\t76\n" +
+                            "77\t77\n" +
+                            "78\t78\n" +
+                            "79\t79\n" +
+                            "80\t80\n" +
+                            "81\t81\n" +
+                            "82\t82\n" +
+                            "83\t83\n" +
+                            "84\t84\n" +
+                            "85\t85\n" +
+                            "86\t86\n" +
+                            "87\t87\n" +
+                            "88\t88\n" +
+                            "89\t89\n" +
+                            "90\t90\n" +
+                            "91\t91\n" +
+                            "92\t92\n" +
+                            "93\t93\n" +
+                            "94\t94\n" +
+                            "95\t95\n" +
+                            "96\t96\n" +
+                            "97\t97\n" +
+                            "98\t98\n" +
+                            "99\t99\n" +
+                            "100\t100\n"
+            );
+        });
+    }
+
+    @Test
+    public void testJoinWhereExecutionOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table l as( select x from long_sequence(100) )", sqlExecutionContext);
+            compiler.compile("create table rr as( select x + 50 as y from long_sequence(100) )", sqlExecutionContext);
+
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "select x, y\n" +
+                            "from l left join rr on l.x = rr.y\n" +
+                            "where y > 0 or y > 10",
+                    sink,
+                    "x\ty\n" +
                             "51\t51\n" +
                             "52\t52\n" +
                             "53\t53\n" +
@@ -1946,6 +1946,316 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         );
     }
 
+
+    @Test
+    public void testLatestByAllIndexedGeoHash1c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(1);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.150000Z\tXXX\tf\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
+                                    "2021-05-12T00:00:00.186000Z\tZZZ\tv\n",
+                            "select * from pos latest by uuid where hash within('f', 'z', 'v')",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHash2c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
+                                    "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
+                            "select * from pos latest by uuid where hash within('f9', 'z3', 've')",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHash4c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(4);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.150000Z\tXXX\tf91t\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
+                                    "2021-05-12T00:00:00.186000Z\tZZZ\tvepe\n",
+                            "select * from pos latest by uuid where hash within('f91', 'z31w', 'vepe')",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHash8c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(8);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.150000Z\tXXX\tf91t48s7\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n" +
+                                    "2021-05-12T00:00:00.186000Z\tZZZ\tvepe7h62\n",
+                            "select * from pos latest by uuid where hash within('f91', 'z31w', 'vepe7h')",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashExcludeLongPrefix() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" ,
+                            "select * from pos latest by uuid where hash within('f9', 'z3', 'vepe7h')",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashTimeRange1c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(1);
+                    assertQuery(
+                            "time\tuuid\thash\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
+                                    "2021-05-11T00:00:00.111000Z\tddd\tb\n",
+                            "select * from pos latest by uuid where time in '2021-05-11' and hash within ('z','b')",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashTimeRange2c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    assertQuery(
+                            "time\tuuid\thash\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
+                                    "2021-05-11T00:00:00.111000Z\tddd\tbc\n",
+                            "select * from pos latest by uuid where time in '2021-05-11' and hash within ('z','b')",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashTimeRange4c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(4);
+                    assertQuery(
+                            "time\tuuid\thash\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
+                                    "2021-05-11T00:00:00.111000Z\tddd\tbcnk\n",
+                            "select * from pos latest by uuid where time in '2021-05-11' and hash within ('z','b')",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashTimeRange8c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(8);
+                    assertQuery(
+                            "time\tuuid\thash\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n",
+                            "select * from pos latest by uuid where time in '2021-05-11' and hash within ('z31','bbx')",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashRnd1c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createRndGeoHashTable();
+                    assertQuery(
+                            "geo1\tts\n" +
+                                    "x\t1970-01-17T21:43:20.000000Z\n" +
+                                    "x\t1970-01-18T02:38:20.000000Z\n" +
+                                    "y\t1970-01-18T03:03:20.000000Z\n" +
+                                    "x\t1970-01-18T03:06:40.000000Z\n" +
+                                    "y\t1970-01-18T05:53:20.000000Z\n" +
+                                    "y\t1970-01-18T07:41:40.000000Z\n" +
+                                    "y\t1970-01-18T08:18:20.000000Z\n" +
+                                    "z\t1970-01-18T08:35:00.000000Z\n",
+                            "select geo1, ts from x latest by s where geo1 within('x', 'y', 'z')",
+                            "ts",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashRnd2c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createRndGeoHashTable();
+                    assertQuery(
+                            "geo2\tts\n" +
+                                    "z7g\t1970-01-17T18:45:00.000000Z\n" +
+                                    "xzu\t1970-01-17T21:06:40.000000Z\n" +
+                                    "yyg\t1970-01-18T01:36:40.000000Z\n" +
+                                    "yds\t1970-01-18T01:56:40.000000Z\n" +
+                                    "yjx\t1970-01-18T05:03:20.000000Z\n" +
+                                    "ymx\t1970-01-18T05:53:20.000000Z\n" +
+                                    "y8x\t1970-01-18T06:45:00.000000Z\n" +
+                                    "y25\t1970-01-18T06:48:20.000000Z\n" +
+                                    "yvh\t1970-01-18T06:55:00.000000Z\n" +
+                                    "y1n\t1970-01-18T07:28:20.000000Z\n" +
+                                    "zs4\t1970-01-18T08:03:20.000000Z\n",
+                            "select geo2, ts from x latest by s where geo2 within('x', 'y', 'z')",
+                            "ts",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashRnd4c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createRndGeoHashTable();
+                    assertQuery(
+                            "geo4\tts\n" +
+                                    "zd4gu\t1970-01-17T20:06:40.000000Z\n" +
+                                    "xwnjg\t1970-01-18T01:36:40.000000Z\n" +
+                                    "yv6gp\t1970-01-18T02:48:20.000000Z\n" +
+                                    "z4wbx\t1970-01-18T05:51:40.000000Z\n" +
+                                    "zejr0\t1970-01-18T06:43:20.000000Z\n" +
+                                    "ybsge\t1970-01-18T06:45:00.000000Z\n" +
+                                    "zdhfv\t1970-01-18T06:53:20.000000Z\n" +
+                                    "z4t7w\t1970-01-18T07:45:00.000000Z\n" +
+                                    "xxusm\t1970-01-18T07:55:00.000000Z\n" +
+                                    "x1dse\t1970-01-18T08:18:20.000000Z\n" +
+                                    "zmt6j\t1970-01-18T08:38:20.000000Z\n",
+                            "select geo4, ts from x latest by s where geo4 within('x', 'y', 'z')",
+                            "ts",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashRnd8c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createRndGeoHashTable();
+                    assertQuery(
+                            "geo4\tts\n" +
+                                    "yv6gp\t1970-01-18T02:48:20.000000Z\n" +
+                                    "z4wbx\t1970-01-18T05:51:40.000000Z\n" +
+                                    "ybsge\t1970-01-18T06:45:00.000000Z\n" +
+                                    "z4t7w\t1970-01-18T07:45:00.000000Z\n" +
+                                    "xxusm\t1970-01-18T07:55:00.000000Z\n",
+                            "select geo4, ts from x latest by s where geo4 within('xx', 'y', 'z4')",
+                            "ts",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    private void createRndGeoHashTable() throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol(113, 4, 4, 2) s," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_geohash(5) geo1," +
+                        " rnd_geohash(15) geo2," +
+                        " rnd_geohash(25) geo4," +
+                        " rnd_geohash(40) geo8" +
+                        " from long_sequence(10000)" +
+                        "), index(s) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+    }
+
+    private void createGeoHashTable(int chars) throws SqlException {
+        compiler.compile(
+                String.format("create table pos(time timestamp, uuid symbol, hash geohash(%dc))", chars) +
+                ", index(uuid) timestamp(time) partition by DAY",
+                sqlExecutionContext
+        );
+        executeInsert("insert into pos values('2021-05-10T23:59:59.150000Z','XXX','f91t48s7')");
+        executeInsert("insert into pos values('2021-05-10T23:59:59.322000Z','ddd','bbqyzfp6')");
+        executeInsert("insert into pos values('2021-05-10T23:59:59.351000Z','bbb','9egcyrxq')");
+        executeInsert("insert into pos values('2021-05-10T23:59:59.439000Z','bbb','ewef1vk8')");
+        executeInsert("insert into pos values('2021-05-10T00:00:00.016000Z','aaa','vb2wg49h')");
+        executeInsert("insert into pos values('2021-05-10T00:00:00.042000Z','ccc','bft3gn89')");
+        executeInsert("insert into pos values('2021-05-10T00:00:00.055000Z','aaa','z6cf5j85')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.066000Z','ddd','vcunv6j7')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.072000Z','ccc','edez0n5y')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.074000Z','aaa','fds32zgc')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.083000Z','YYY','z31wzd5w')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.092000Z','ddd','v9nwc4ny')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.107000Z','ccc','f6yb1yx9')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.111000Z','ddd','bcnktpnw')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.123000Z','aaa','z3t2we5z')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.127000Z','aaa','bgn1yt4y')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.144000Z','aaa','fuetk3k6')");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.167000Z','ccc','bchx5x14')");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.167000Z','ZZZ','bbxwb5jj')");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.186000Z','ZZZ','vepe7h62')");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.241000Z','bbb','bchxpmmg')");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.245000Z','ddd','f90z3bs5')");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.247000Z','bbb','bftqreuh')");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.295000Z','ddd','u2rqgy9s')");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.304000Z','aaa','w23bhjd2')");
+    }
+
     @Test
     public void testLatestByAllIndexed() throws Exception {
         final String expected = "a\tb\tk\n" +
@@ -2050,15 +2360,15 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_double(0)*100," +
                         " rnd_double(0)*100," +
                         " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
+                        " 46.578761277152225," +
                         " 'VTJW'" +
                         " from long_sequence(1)" +
                         ") timestamp (t)",
                 "a\tk\tb\n" +
-                        "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
                         "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
                         "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
-                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n",
+                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
+                        "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n",
                 true,
                 true,
                 true
@@ -2090,7 +2400,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp (t)",
                 "a\tb\tc\tk\n" +
-                        "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n" +
                         "94.41658975532606\tVTJW\tSXUX\t2019-01-01T00:00:00.000000Z\n",
                 true,
                 true,
@@ -2139,7 +2448,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             sink,
                             "id\tvendor\tts\n" +
                                     "1878619626\tKK\t1970-01-01T00:01:39.200000Z\n" +
-                                    "801241758\tTT\t1970-01-01T00:01:39.800000Z\n" +
                                     "371958898\tDD\t1970-01-02T00:01:39.900000Z\n" +
                                     "1699760758\tPP\t1970-01-03T00:01:39.100000Z\n"
                     );
@@ -3516,6 +3824,100 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 false,
                 true);
+    }
+
+    @Test
+    public void testLeftJoinDoesNotRequireTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE sensors (ID LONG, make STRING, city STRING);", sqlExecutionContext);
+            compiler.compile(
+                    "INSERT INTO sensors\n" +
+                            "SELECT\n" +
+                            "    x ID, --increasing integer\n" +
+                            "    rnd_str('Eberle', 'Honeywell', 'Omron', 'United Automation', 'RS Pro') make,\n" +
+                            "    rnd_str('New York', 'Miami', 'Boston', 'Chicago', 'San Francisco') city\n" +
+                            "FROM long_sequence(10000) x;",
+                    sqlExecutionContext
+            );
+
+            compiler.compile(
+                    "CREATE TABLE readings\n" +
+                            "AS(\n" +
+                            "    SELECT\n" +
+                            "        x ID,\n" +
+                            "        timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), rnd_long(1,10,2) * 100000L) ts,\n" +
+                            "        rnd_double(0)*8 + 15 temp,\n" +
+                            "        rnd_long(0, 10000, 0) sensorId\n" +
+                            "    FROM long_sequence(10000000) x)\n" +
+                            "TIMESTAMP(ts)\n" +
+                            "PARTITION BY MONTH;",
+                    sqlExecutionContext
+            );
+
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "SELECT ts, a.city, a.make, avg(temp)\n" +
+                            "FROM readings timestamp(ts)\n" +
+                            "JOIN\n" +
+                            "    (SELECT ID sensId, city, make\n" +
+                            "    FROM sensors\n" +
+                            "    WHERE city='Miami' AND make='Omron') a\n" +
+                            "ON readings.sensorId = a.sensId\n" +
+                            "WHERE ts in '2019-10-21;1d'\n" +
+                            "SAMPLE BY 1h;",
+                    sink,
+                    "ts\tcity\tmake\tavg\n" +
+                            "2019-10-21T00:00:15.500000Z\tMiami\tOmron\t18.932522082097226\n" +
+                            "2019-10-21T01:00:15.500000Z\tMiami\tOmron\t19.15925478107482\n" +
+                            "2019-10-21T02:00:15.500000Z\tMiami\tOmron\t19.159665531591223\n" +
+                            "2019-10-21T03:00:15.500000Z\tMiami\tOmron\t19.010622605362947\n" +
+                            "2019-10-21T04:00:15.500000Z\tMiami\tOmron\t18.97741743469738\n" +
+                            "2019-10-21T05:00:15.500000Z\tMiami\tOmron\t19.06602720501639\n" +
+                            "2019-10-21T06:00:15.500000Z\tMiami\tOmron\t19.0154539187458\n" +
+                            "2019-10-21T07:00:15.500000Z\tMiami\tOmron\t19.090575502276064\n" +
+                            "2019-10-21T08:00:15.500000Z\tMiami\tOmron\t19.058070616124247\n" +
+                            "2019-10-21T09:00:15.500000Z\tMiami\tOmron\t18.867127969081405\n" +
+                            "2019-10-21T10:00:15.500000Z\tMiami\tOmron\t19.06682985165929\n" +
+                            "2019-10-21T11:00:15.500000Z\tMiami\tOmron\t19.22028310819655\n" +
+                            "2019-10-21T12:00:15.500000Z\tMiami\tOmron\t18.80882810933519\n" +
+                            "2019-10-21T13:00:15.500000Z\tMiami\tOmron\t19.14103324474202\n" +
+                            "2019-10-21T14:00:15.500000Z\tMiami\tOmron\t18.95574759642734\n" +
+                            "2019-10-21T15:00:15.500000Z\tMiami\tOmron\t19.048820770397864\n" +
+                            "2019-10-21T16:00:15.500000Z\tMiami\tOmron\t18.870082747356754\n" +
+                            "2019-10-21T17:00:15.500000Z\tMiami\tOmron\t19.070063390729352\n" +
+                            "2019-10-21T18:00:15.500000Z\tMiami\tOmron\t18.800281301245974\n" +
+                            "2019-10-21T19:00:15.500000Z\tMiami\tOmron\t19.06787535086026\n" +
+                            "2019-10-21T20:00:15.500000Z\tMiami\tOmron\t18.991759766316864\n" +
+                            "2019-10-21T21:00:15.500000Z\tMiami\tOmron\t19.037181603168655\n" +
+                            "2019-10-21T22:00:15.500000Z\tMiami\tOmron\t18.872801496558417\n" +
+                            "2019-10-21T23:00:15.500000Z\tMiami\tOmron\t18.83742694955379\n" +
+                            "2019-10-22T00:00:15.500000Z\tMiami\tOmron\t18.86576729294054\n" +
+                            "2019-10-22T01:00:15.500000Z\tMiami\tOmron\t19.147747156078424\n" +
+                            "2019-10-22T02:00:15.500000Z\tMiami\tOmron\t19.285711244931413\n" +
+                            "2019-10-22T03:00:15.500000Z\tMiami\tOmron\t19.098624194171673\n" +
+                            "2019-10-22T04:00:15.500000Z\tMiami\tOmron\t18.773860641442706\n" +
+                            "2019-10-22T05:00:15.500000Z\tMiami\tOmron\t19.123521509981906\n" +
+                            "2019-10-22T06:00:15.500000Z\tMiami\tOmron\t18.84440182119623\n" +
+                            "2019-10-22T07:00:15.500000Z\tMiami\tOmron\t18.759557276148946\n" +
+                            "2019-10-22T08:00:15.500000Z\tMiami\tOmron\t19.211618604307823\n" +
+                            "2019-10-22T09:00:15.500000Z\tMiami\tOmron\t18.93353049132073\n" +
+                            "2019-10-22T10:00:15.500000Z\tMiami\tOmron\t18.87472683854936\n" +
+                            "2019-10-22T11:00:15.500000Z\tMiami\tOmron\t19.243116585499656\n" +
+                            "2019-10-22T12:00:15.500000Z\tMiami\tOmron\t18.95200734422105\n" +
+                            "2019-10-22T13:00:15.500000Z\tMiami\tOmron\t18.936687869662595\n" +
+                            "2019-10-22T14:00:15.500000Z\tMiami\tOmron\t19.017821082620944\n" +
+                            "2019-10-22T15:00:15.500000Z\tMiami\tOmron\t18.94411857118302\n" +
+                            "2019-10-22T16:00:15.500000Z\tMiami\tOmron\t19.02323124842833\n" +
+                            "2019-10-22T17:00:15.500000Z\tMiami\tOmron\t19.22329319385733\n" +
+                            "2019-10-22T18:00:15.500000Z\tMiami\tOmron\t19.04591977492699\n" +
+                            "2019-10-22T19:00:15.500000Z\tMiami\tOmron\t19.02326158364971\n" +
+                            "2019-10-22T20:00:15.500000Z\tMiami\tOmron\t19.084012685666192\n" +
+                            "2019-10-22T21:00:15.500000Z\tMiami\tOmron\t19.11105909280177\n" +
+                            "2019-10-22T22:00:15.500000Z\tMiami\tOmron\t18.937124396725192\n" +
+                            "2019-10-22T23:00:15.500000Z\tMiami\tOmron\t19.0127371108151\n"
+            );
+        });
     }
 
     @Test
@@ -5282,6 +5684,20 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSymbolStrB() throws Exception {
+        assertQuery("a\nC\nC\nB\nA\nA\n",
+                "select cast(a as string) a from x order by 1 desc",
+                "create table x as (select rnd_symbol('A','B','C') a, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
+                null,
+                null,
+                null,
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testTimestampCrossReference() throws Exception {
         compiler.compile("create table x (val double, t timestamp)", sqlExecutionContext);
         compiler.compile("create table y (timestamp timestamp, d double)", sqlExecutionContext);
@@ -5410,17 +5826,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testVectorSumAvgDoubleRndColumnWithNullsParallel() throws Exception {
 
         Sequence seq = engine.getMessageBus().getVectorAggregateSubSeq();
-        // consume sequence fully and do nothing
-        // this might be needed to make sure we don't consume things other tests publish here
-        while (true) {
-            long cursor = seq.next();
-            if (cursor == -1) {
-                break;
-            } else if (cursor > -1) {
-                seq.done(cursor);
-            }
-        }
-
         final AtomicBoolean running = new AtomicBoolean(true);
         final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
         final GroupByJob job = new GroupByJob(engine.getMessageBus());

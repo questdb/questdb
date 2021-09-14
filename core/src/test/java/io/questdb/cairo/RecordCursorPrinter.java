@@ -117,7 +117,8 @@ public class RecordCursorPrinter {
     }
 
     protected void printColumn(Record r, RecordMetadata m, int i, CharSink sink) {
-        switch (m.getColumnType(i)) {
+        final int columnType = m.getColumnType(i);
+        switch (ColumnType.tagOf(columnType)) {
             case ColumnType.DATE:
                 DateFormatUtils.appendDateTime(sink, r.getDate(i));
                 break;
@@ -132,6 +133,9 @@ public class RecordCursorPrinter {
                 break;
             case ColumnType.INT:
                 sink.put(r.getInt(i));
+                break;
+            case ColumnType.NULL:
+                sink.put("null");
                 break;
             case ColumnType.STRING:
                 r.getStr(i, sink);
@@ -151,6 +155,18 @@ public class RecordCursorPrinter {
             case ColumnType.LONG:
                 sink.put(r.getLong(i));
                 break;
+            case ColumnType.GEOHASH:
+                int bitsPrecision = GeoHashes.getBitsPrecision(m.getColumnType(i));
+                long hash = getGeoHash(r, i, m.getColumnType(i));
+                if (hash == GeoHashes.NULL) {
+                    break; // optimisation
+                }
+                if (bitsPrecision % 5 == 0) {
+                    GeoHashes.toString(hash, bitsPrecision / 5, sink);
+                } else {
+                    GeoHashes.toBitString(hash, bitsPrecision, sink);
+                }
+                break;
             case ColumnType.BYTE:
                 sink.put(r.getByte(i));
                 break;
@@ -167,7 +183,20 @@ public class RecordCursorPrinter {
                 break;
         }
         if (printTypes) {
-            sink.put(':').put(ColumnType.nameOf(m.getColumnType(i)));
+            sink.put(':').put(ColumnType.nameOf(columnType));
+        }
+    }
+
+    private long getGeoHash(Record r, int column, int columnType) {
+        switch (ColumnType.sizeOf(columnType)) {
+            case 1:
+                return r.getGeoHashByte(column);
+            case 2:
+                return r.getGeoHashShort(column);
+            case 4:
+                return r.getGeoHashInt(column);
+            default:
+                return r.getGeoHashLong(column);
         }
     }
 }

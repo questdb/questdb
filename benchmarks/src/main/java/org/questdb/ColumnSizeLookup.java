@@ -66,7 +66,7 @@ public class ColumnSizeLookup {
     }
 
     private int switchBased(int type) {
-        switch (type) {
+        switch (ColumnType.tagOf(type)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
                 return 1;

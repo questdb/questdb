@@ -26,7 +26,8 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.types.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -39,10 +40,11 @@ import java.io.Closeable;
 
 public class CairoTextWriter implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(CairoTextWriter.class);
+    private static final String WRITER_LOCK_REASON = "textWriter";
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final LongList columnErrorCounts = new LongList();
-    private final AppendOnlyVirtualMemory appendMemory = new AppendOnlyVirtualMemory();
+    private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final Path path;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final TypeManager typeManager;
@@ -54,6 +56,8 @@ public class CairoTextWriter implements Closeable, Mutable {
     private boolean durable;
     private int atomicity;
     private int partitionBy;
+    private long commitLag = -1;
+    private int maxUncommittedRows = -1;
     private int timestampIndex = -1;
     private CharSequence importedTimestampColumnName;
     private CharSequence designatedTimestampColumnName;
@@ -91,7 +95,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     @Override
     public void close() {
         clear();
-        appendMemory.close();
+        ddlMem.close();
     }
 
     public void closeWriter() {
@@ -100,11 +104,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     public void commit() {
         if (writer != null) {
-            if (durable) {
-                assert false;
-            } else {
-                writer.commit();
-            }
+            writer.commit(durable ? CommitMode.SYNC : CommitMode.NOSYNC);
         }
     }
 
@@ -118,6 +118,14 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     public int getPartitionBy() {
         return partitionBy;
+    }
+
+    public void setCommitLag(long commitLag) {
+        this.commitLag = commitLag;
+    }
+
+    public void setMaxUncommittedRows(int maxUncommittedRows) {
+        this.maxUncommittedRows = maxUncommittedRows;
     }
 
     public CharSequence getTableName() {
@@ -174,8 +182,15 @@ public class CairoTextWriter implements Closeable, Mutable {
                 if (onField(line, dbcs, w, i)) return;
             }
             w.append();
+            checkMaxAndCommitLag();
         } catch (Exception e) {
             logError(line, timestampIndex, dbcs);
+        }
+    }
+
+    private void checkMaxAndCommitLag() {
+        if (writer != null && maxUncommittedRows > 0 && writer.getO3RowCount() >= maxUncommittedRows) {
+            writer.checkMaxAndCommitLag(durable ? CommitMode.SYNC : CommitMode.NOSYNC);
         }
     }
 
@@ -186,7 +201,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     ) throws TextException {
         engine.createTable(
                 cairoSecurityContext,
-                appendMemory,
+                ddlMem,
                 path,
                 tableStructureAdapter.of(names, detectedTypes)
         );
@@ -232,7 +247,7 @@ public class CairoTextWriter implements Closeable, Mutable {
             ObjList<TypeAdapter> detectedTypes
     ) {
 
-        TableWriter writer = engine.getWriter(cairoSecurityContext, tableName);
+        TableWriter writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
         RecordMetadata metadata = writer.getMetadata();
 
         // now, compare column count.
@@ -258,7 +273,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 // when DATE type is mis-detected as STRING we
                 // wouldn't have neither date format nor locale to
                 // use when populating this field
-                switch (columnType) {
+                switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.DATE:
                         logTypeError(i);
                         this.types.setQuick(i, BadDateAdapter.INSTANCE);
@@ -294,17 +309,22 @@ public class CairoTextWriter implements Closeable, Mutable {
             throw CairoException.instance(0).put("cannot determine text structure");
         }
 
+        boolean canUpdateMetadata = true;
         switch (engine.getStatus(cairoSecurityContext, path, tableName)) {
             case TableUtils.TABLE_DOES_NOT_EXIST:
                 createTable(names, detectedTypes, cairoSecurityContext);
-                writer = engine.getWriter(cairoSecurityContext, tableName);
+                writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
+                designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
+                designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
+                partitionBy = writer.getPartitionBy();
                 break;
             case TableUtils.TABLE_EXISTS:
                 if (overwrite) {
                     engine.remove(cairoSecurityContext, path, tableName);
                     createTable(names, detectedTypes, cairoSecurityContext);
-                    writer = engine.getWriter(cairoSecurityContext, tableName);
+                    writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
                 } else {
+                    canUpdateMetadata = false;
                     writer = openWriterAndOverrideImportTypes(cairoSecurityContext, detectedTypes);
                     designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
                     designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
@@ -322,9 +342,25 @@ public class CairoTextWriter implements Closeable, Mutable {
             default:
                 throw CairoException.instance(0).put("name is reserved [table=").put(tableName).put(']');
         }
+        if (canUpdateMetadata) {
+            if (partitionBy == PartitionBy.NONE && (commitLag >= 0 || maxUncommittedRows >= 0)) {
+                LOG.info().$("parameters commitLag and maxUncommittedRows have no effect when partitionBy is NONE").$();
+            } else {
+                if (commitLag >= 0) {
+                    writer.setMetaCommitLag(commitLag);
+                    LOG.info().$("updating metadata attribute commitLag to ").$(commitLag).$(", table=").utf8(tableName).$();
+                }
+                if (maxUncommittedRows >= 0) {
+                    writer.setMetaMaxUncommittedRows(maxUncommittedRows);
+                    LOG.info().$("updating metadata attribute maxUncommittedRows to ").$(maxUncommittedRows).$(", table=").utf8(tableName).$();
+                }
+            }
+        } else {
+            LOG.info().$("cannot update metadata attributes commitLag and maxUncommittedRows when the table exists and parameter overwrite is false").$();
+        }
         _size = writer.size();
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);
-        if (timestampIndex != -1 && types.getQuick(timestampIndex).getType() == ColumnType.TIMESTAMP) {
+        if (timestampIndex != -1 && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
             timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
         } else {
             timestampAdapter = null;
@@ -421,7 +457,8 @@ public class CairoTextWriter implements Closeable, Mutable {
 
             if (timestampIndex > -1) {
                 final TypeAdapter timestampAdapter = types.getQuick(timestampIndex);
-                if ((timestampAdapter.getType() != ColumnType.LONG && timestampAdapter.getType() != ColumnType.TIMESTAMP) || timestampAdapter == BadTimestampAdapter.INSTANCE) {
+                final int typeTag = ColumnType.tagOf(timestampAdapter.getType());
+                if ((typeTag != ColumnType.LONG && typeTag != ColumnType.TIMESTAMP) || timestampAdapter == BadTimestampAdapter.INSTANCE) {
                     throw TextException.$("not a timestamp '").put(importedTimestampColumnName).put('\'');
                 }
             }

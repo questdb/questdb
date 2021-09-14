@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 class MicroTimestampSampler implements TimestampSampler {
     private final long bucket;
+    private long start;
 
     MicroTimestampSampler(long bucket) {
         this.bucket = bucket;
@@ -43,11 +44,16 @@ class MicroTimestampSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        return value - value % bucket;
+        return start  + ((value - start) / bucket) * bucket;
     }
 
     @Override
     public long getBucketSize() {
         return this.bucket;
+    }
+
+    @Override
+    public void setStart(long timestamp) {
+        this.start = timestamp;
     }
 }

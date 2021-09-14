@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -43,9 +44,22 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
-            TimestampSampler timestampSampler
+            TimestampSampler timestampSampler,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) {
-        super(recordFunctions, timestampIndex, timestampSampler, groupByFunctions);
+        super(
+                recordFunctions,
+                timestampIndex,
+                timestampSampler,
+                groupByFunctions,
+                timezoneNameFunc,
+                timezoneNameFuncPos,
+                offsetFunc,
+                offsetFuncPos
+        );
         this.map = map;
         this.keyMapSink = keyMapSink;
         this.record.of(map.getRecord());
@@ -54,7 +68,47 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
 
     @Override
     public boolean hasNext() {
-        return mapHasNext() || baseRecord != null && computeNextBatch();
+        if (mapCursor.hasNext()) {
+            return true;
+        }
+
+        if (baseRecord == null) {
+            return false;
+
+        }
+        this.map.clear();
+
+        this.sampleLocalEpoch = this.localEpoch;
+        long next = timestampSampler.nextTimestamp(this.localEpoch);
+
+        // looks like we need to populate key map
+        // at the start of this loop 'lastTimestamp' will be set to timestamp
+        // of first record in base cursor
+        int n = groupByFunctions.size();
+        do {
+            long timestamp = getBaseRecordTimestamp();
+            if (timestamp < next) {
+                adjustDSTInFlight(timestamp - tzOffset);
+                final MapKey key = map.withKey();
+                keyMapSink.copy(baseRecord, key);
+                GroupByUtils.updateFunctions(groupByFunctions, n, key.createValue(), baseRecord);
+                interruptor.checkInterrupted();
+            } else {
+                // map value is conditional and only required when clock goes back
+                // we override base method for when this happens
+                // see: updateValueWhenClockMovesBack()
+                timestamp = adjustDST(timestamp, n, null, next);
+                if (timestamp != Long.MIN_VALUE) {
+                    nextSamplePeriod(timestamp);
+                    return createMapCursor();
+                }
+            }
+        } while (base.hasNext());
+
+        // we ran out of data, make sure hasNext() returns false at the next
+        // opportunity, after we stream map that is.
+        baseRecord = null;
+        return createMapCursor();
     }
 
     @Override
@@ -62,44 +116,15 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
         super.toTop();
         if (base.hasNext()) {
             baseRecord = base.getRecord();
-            this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
-            this.lastTimestamp = this.nextTimestamp;
             map.clear();
         }
     }
 
-    private boolean computeNextBatch() {
-        this.lastTimestamp = this.nextTimestamp;
-        this.map.clear();
-
-        // looks like we need to populate key map
-        // at the start of this loop 'lastTimestamp' will be set to timestamp
-        // of first record in base cursor
-        int n = groupByFunctions.size();
-        do {
-            final long timestamp = getBaseRecordTimestamp();
-            if (lastTimestamp == timestamp) {
-                final MapKey key = map.withKey();
-                keyMapSink.copy(baseRecord, key);
-                GroupByUtils.updateFunctions(groupByFunctions, n, key.createValue(), baseRecord);
-            } else {
-                // timestamp changed, make sure we keep the value of 'lastTimestamp'
-                // unchanged. Timestamp columns uses this variable
-                // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
-                // and build another map
-                this.nextTimestamp = timestamp;
-
-                // get group by function to top to indicate that they have a new pass over the data set
-                GroupByUtils.toTop(groupByFunctions);
-                return createMapCursor();
-            }
-            interruptor.checkInterrupted();
-        } while (base.hasNext());
-
-        // we ran out of data, make sure hasNext() returns false at the next
-        // opportunity, after we stream map that is.
-        baseRecord = null;
-        return createMapCursor();
+    @Override
+    protected void updateValueWhenClockMovesBack(MapValue value, int n) {
+        final MapKey key = map.withKey();
+        keyMapSink.copy(baseRecord, key);
+        super.updateValueWhenClockMovesBack(key.createValue(), n);
     }
 
     private boolean createMapCursor() {

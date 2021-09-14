@@ -49,12 +49,15 @@ public class TypeOfFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         if (args != null && args.size() == 1) {
-            return TYPE_NAMES[args.getQuick(0).getType()];
+            final Function arg = args.getQuick(0);
+            final int argType = arg.getType();
+            return ColumnType.isNull(argType) ? NULL : TYPE_NAMES[arg.getType()];
         }
         throw SqlException.$(position, "exactly one argument expected");
     }
 
-    static Function[] TYPE_NAMES;
+    static final Function NULL = new StrConstant("NULL");
+    static final Function[] TYPE_NAMES;
 
     static {
         TYPE_NAMES = new Function[ColumnType.MAX + 1];

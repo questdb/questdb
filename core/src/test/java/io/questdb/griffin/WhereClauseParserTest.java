@@ -50,7 +50,10 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
     private final PostOrderTreeTraversalAlgo.Visitor rpnBuilderVisitor = rpn::onNode;
     private final QueryModel queryModel = QueryModel.FACTORY.newInstance();
-    private final FunctionParser functionParser = new FunctionParser(configuration, new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class)));
+    private final FunctionParser functionParser = new FunctionParser(
+            configuration,
+            new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader()))
+    );
     protected BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
     private SqlCompiler compiler;
     private SqlExecutionContext sqlExecutionContext;
@@ -213,6 +216,22 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         testBadOperator("<=");
         testBadOperator("=");
         testBadOperator("!=");
+    }
+
+    @Test
+    public void testTimestampFollowedByIntrinsicOperatorWithNull() throws SqlException {
+        modelOf("timestamp = null");
+        modelOf("timestamp != null");
+        modelOf("timestamp in (null)");
+        modelOf("timestamp in (null, null)");
+        modelOf("timestamp not in (null)");
+        modelOf("timestamp not in (null, null)");
+        modelOf("timestamp >= null");
+        modelOf("timestamp > null");
+        modelOf("timestamp <= null");
+        modelOf("timestamp < null");
+        modelOf("timestamp between null and null");
+        modelOf("timestamp not between null and null");
     }
 
     @Test
@@ -1687,7 +1706,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals(expected, toRpn(m.filter));
     }
 
-    private CharSequence intervalToString(IntrinsicModel model) {
+    private CharSequence intervalToString(IntrinsicModel model) throws SqlException {
         if (!model.hasIntervalFilters()) return "";
         RuntimeIntrinsicIntervalModel sm = model.buildIntervalModel();
         return GriffinParserTestUtils.intervalToString(sm.calculateIntervals(sqlExecutionContext));

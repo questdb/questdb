@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.MessageBus;
+import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
@@ -32,9 +33,9 @@ import io.questdb.cairo.TableBlockWriter.TableBlockWriterJob;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
+import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.Metrics;
 import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
@@ -187,6 +188,7 @@ public class HttpServer implements Closeable {
         workerPool.assign(new ColumnIndexerJob(messageBus));
         workerPool.assign(new GroupByJob(messageBus));
         workerPool.assign(new TableBlockWriterJob(messageBus));
+        workerPool.assign(new LatestByAllIndexedJob(messageBus));
     }
 
     @Nullable

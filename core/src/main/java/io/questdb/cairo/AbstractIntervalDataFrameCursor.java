@@ -26,7 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
+import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.LongList;
@@ -101,13 +102,13 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         return reader.getSymbolMapReader(columnIndex);
     }
 
-    public void of(TableReader reader, SqlExecutionContext sqlContext) {
+    public void of(TableReader reader, SqlExecutionContext sqlContext) throws SqlException {
         this.reader = reader;
         this.intervals = this.intervalsModel.calculateIntervals(sqlContext);
         calculateRanges(intervals);
     }
 
-    protected static long search(ReadOnlyVirtualMemory column, long value, long low, long high, int increment) {
+    protected static long search(MemoryR column, long value, long low, long high, int increment) {
         while (low < high) {
             long mid = (low + high - 1) >>> 1;
             long midVal = column.getLong(mid * 8);
@@ -160,7 +161,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
             long rowCount = reader.openPartition(partitionLo);
             if (rowCount > 0) {
 
-                final ReadOnlyVirtualMemory column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionLo), timestampIndex));
+                final MemoryR column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionLo), timestampIndex));
                 final long intervalLo = intervals.getQuick(intervalsLo * 2);
                 final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);
 
@@ -281,7 +282,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
 
         @Override
         public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
-            return reader.getBitmapIndexReader(partitionIndex, reader.getColumnBase(partitionIndex), columnIndex, direction);
+            return reader.getBitmapIndexReader(partitionIndex, columnIndex, direction);
         }
 
         @Override

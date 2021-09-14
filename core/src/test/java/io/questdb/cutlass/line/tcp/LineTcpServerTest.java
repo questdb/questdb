@@ -32,6 +32,7 @@ import io.questdb.cutlass.line.LineProtoSender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
@@ -43,6 +44,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -59,8 +61,6 @@ public class LineTcpServerTest extends AbstractCairoTest {
     private final static String AUTH_KEY_ID2 = "testUser2";
     private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("lwJi3TSb4G6UcHxFJmPhOTWa4BLwJOOiK76wT6Uk7pI");
     private static final long TEST_TIMEOUT_IN_MS = 120000;
-    private int maxMeasurementSize = 50;
-
     private final WorkerPool sharedWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
         private final int[] affinity = {-1, -1};
 
@@ -91,9 +91,11 @@ public class LineTcpServerTest extends AbstractCairoTest {
             return bindPort;
         }
     };
+    private int maxMeasurementSize = 50;
     private String authKeyId = null;
     private int msgBufferSize = 1024;
     private long minIdleMsBeforeWriterRelease = 30000;
+    private int aggressiveReadRetryCount = 0;
     private final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
         public IODispatcherConfiguration getNetDispatcherConfiguration() {
@@ -113,6 +115,11 @@ public class LineTcpServerTest extends AbstractCairoTest {
         @Override
         public int getWriterQueueCapacity() {
             return 4;
+        }
+
+        @Override
+        public MicrosecondClock getMicrosecondClock() {
+            return testMicrosClock;
         }
 
         @Override
@@ -147,8 +154,8 @@ public class LineTcpServerTest extends AbstractCairoTest {
         }
 
         @Override
-        public MicrosecondClock getMicrosecondClock() {
-            return testMicrosClock;
+        public int getAggressiveReadRetryCount() {
+            return aggressiveReadRetryCount;
         }
     };
 
@@ -176,69 +183,291 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
 
-            send(lineData, "weather", true);
-
             int iterations = 8;
             int threadCount = 8;
-            SOCountDownLatch threadPushFinished = new SOCountDownLatch(threadCount);
-            for (int i = 0; i < threadCount; i++) {
-                final String threadTable = "weather" + i;
-                final String lineDataThread = lineData.replace("weather", threadTable);
-                send(lineDataThread, threadTable, false);
-                new Thread(() -> {
-                    try {
-                        for (int n = 0; n < iterations; n++) {
-                            Thread.sleep(minIdleMsBeforeWriterRelease - 50);
-                            send(lineDataThread, threadTable, false);
+            CharSequenceObjHashMap<SOUnboundedCountDownLatch> tableIndex = new CharSequenceObjHashMap<>();
+            tableIndex.put("weather", new SOUnboundedCountDownLatch());
+            for (int i = 1; i < threadCount; i++) {
+                tableIndex.put("weather" + i, new SOUnboundedCountDownLatch());
+            }
+
+            // One engine hook for all writers
+            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                    tableIndex.get(name).countDown();
+                }
+            });
+
+            try {
+                sendAndWait(lineData, tableIndex, 1);
+                SOCountDownLatch threadPushFinished = new SOCountDownLatch(threadCount - 1);
+                for (int i = 1; i < threadCount; i++) {
+                    final String threadTable = "weather" + i;
+                    final String lineDataThread = lineData.replace("weather", threadTable);
+                    sendNoWait(threadTable, lineDataThread);
+                    new Thread(() -> {
+                        try {
+                            for (int n = 0; n < iterations; n++) {
+                                Thread.sleep(minIdleMsBeforeWriterRelease - 50);
+                                send(lineDataThread, threadTable, false);
+                            }
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        } finally {
+                            threadPushFinished.countDown();
                         }
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    } finally {
-                        threadPushFinished.countDown();
+                    }).start();
+                }
+
+                sendAndWait(lineData, tableIndex, 2);
+                try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather", "testing")) {
+                    w.truncate();
+                }
+                sendAndWait(lineData, tableIndex, 4);
+
+                String header = "location\ttemperature\ttimestamp\n";
+                String[] lines = {"us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n",
+                        "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n",
+                        "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"};
+                String expected = header + lines[0] + lines[1] + lines[2];
+                assertTable(expected, "weather");
+
+                // Concatenate iterations + 1 of identical insert results
+                // to assert against weather 1-8 tables
+                StringBuilder expectedSB = new StringBuilder(header);
+                for (int l = 0; l < lines.length; l++) {
+                    expectedSB.append(Chars.repeat(lines[l], iterations + 1));
+                }
+
+                // Wait async ILP send threads to finish.
+                threadPushFinished.await();
+                for (int i = 1; i < threadCount; i++) {
+                    // Wait writer to be released and check.
+                    String tableName = "weather" + i;
+                    try {
+                        try {
+                            assertTable(expectedSB, tableName);
+                        } catch (AssertionError e) {
+                            int releasedCount = -tableIndex.get(tableName).getCount();
+                            // Wait one more writer release before re-trying to compare
+                            wait(tableIndex.get(tableName), releasedCount + 1, minIdleMsBeforeWriterRelease);
+                            assertTable(expectedSB, tableName);
+                        }
+                    } catch (Throwable err) {
+                        LOG.error().$("Error '").$(err.getMessage()).$("' comparing table: ").$(tableName).$();
+                        throw err;
                     }
-                }).start();
-            }
-
-            send(lineData, "weather", true);
-
-            try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather")) {
-                w.truncate();
-            }
-
-            String lineData2 = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
-                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
-                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
-            send(lineData2, "weather");
-
-            String line1 = "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n";
-            String line2 = "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n";
-            String line3 = "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
-            String header = "location\ttemperature\ttimestamp\n";
-            String[] lines = {line1, line2, line3 };
-            String expected = header + line1 + line2 + line3;
-            assertTable(expected, "weather");
-
-            StringBuilder expectedSB = new StringBuilder(header);
-            for(int l = 0; l < lines.length; l++) {
-                for (int it = 0; it < iterations + 2; it++) {
-                    expectedSB.append(lines[l]);
-                }            }
-            String expected2 = expectedSB.toString();
-
-            threadPushFinished.await();
-            for (int i = 0; i < threadCount; i++) {
-                // Wait writer to be released and check.
-                String tableName = "weather" + i;
-                final String lineDataThread = lineData.replace("weather", tableName);
-                send(lineDataThread, tableName, true);
-                assertTable(expected2, tableName);
+                }
+            } finally {
+                // Clean engine hook
+                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                });
             }
         });
+    }
+
+    private void wait(SOUnboundedCountDownLatch latch, int value, long iterations) {
+        while (-latch.getCount() < value && iterations-- > 0) {
+            try {
+                Thread.sleep(20);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+                return;
+            }
+        }
     }
 
     @Test
     public void testUnauthenticated() throws Exception {
         test(null, null, 200, 1_000, false);
+    }
+
+    @Test
+    public void testUnauthenticatedAggressive() throws Exception {
+        aggressiveReadRetryCount = 1;
+        test(null, null, 200, 1_000, false);
+    }
+
+    @Test
+    public void testWriter17Fields() throws Exception {
+        int defaultMeasurementSize = maxMeasurementSize;
+        String lineData = "tableCRASH,tag_n_1=1,tag_n_2=2,tag_n_3=3,tag_n_4=4,tag_n_5=5,tag_n_6=6," +
+                "tag_n_7=7,tag_n_8=8,tag_n_9=9,tag_n_10=10,tag_n_11=11,tag_n_12=12,tag_n_13=13," +
+                "tag_n_14=14,tag_n_15=15,tag_n_16=16,tag_n_17=17 value=42.4 1619509249714000000\n";
+        try {
+            maxMeasurementSize = lineData.length();
+            runInContext(() -> {
+                send(lineData, "tableCRASH", true, false);
+
+                String expected = "tag_n_1\ttag_n_2\ttag_n_3\ttag_n_4\ttag_n_5\ttag_n_6\ttag_n_7\ttag_n_8\ttag_n_9\ttag_n_10\ttag_n_11\ttag_n_12\ttag_n_13\ttag_n_14\ttag_n_15\ttag_n_16\ttag_n_17\tvalue\ttimestamp\n" +
+                        "1\t2\t3\t4\t5\t6\t7\t8\t9\t10\t11\t12\t13\t14\t15\t16\t17\t42.400000000000006\t2021-04-27T07:40:49.714000Z\n";
+                assertTable(expected, "tableCRASH");
+            });
+        } finally {
+            maxMeasurementSize = defaultMeasurementSize;
+        }
+    }
+
+    @Test
+    public void testFieldsReduced() throws Exception {
+        String lineData =
+                "weather windspeed=1.0 631150000000000000\n" +
+                        "weather windspeed=2.0 631152000000000000\n" +
+                        "weather timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
+                        "weather windspeed=4.0 631170000000000000\n";
+
+        runInContext(() -> {
+            send(lineData, "weather", true, false);
+
+            String expected =
+                    "windspeed\ttimestamp\ttimetocycle\n" +
+                            "1.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
+                            "2.0\t1990-01-01T00:00:00.000000Z\tNaN\n" +
+                            "3.0\t1990-01-01T02:13:20.000000Z\t0.0\n" +
+                            "4.0\t1990-01-01T05:00:00.000000Z\tNaN\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testFieldsReducedO3() throws Exception {
+        String lineData =
+                "weather windspeed=1.0 631152000000000000\n" +
+                        "weather windspeed=2.0 631150000000000000\n" +
+                        "weather timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
+                        "weather windspeed=4.0 631170000000000000\n";
+
+        runInContext(() -> {
+            send(lineData, "weather", true, false);
+
+            String expected =
+                    "windspeed\ttimestamp\ttimetocycle\n" +
+                            "2.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
+                            "1.0\t1990-01-01T00:00:00.000000Z\tNaN\n" +
+                            "3.0\t1990-01-01T02:13:20.000000Z\t0.0\n" +
+                            "4.0\t1990-01-01T05:00:00.000000Z\tNaN\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testFieldsReducedNonPartitioned() throws Exception {
+        try (TableModel m = new TableModel(configuration, "weather", PartitionBy.NONE)) {
+            m.col("windspeed", ColumnType.DOUBLE).timestamp();
+            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+        }
+
+        String lineData =
+            "weather windspeed=2.0 631150000000000000\n" +
+            "weather timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
+            "weather windspeed=4.0 631170000000000000\n";
+
+        runInContext(() -> {
+            send(lineData, "weather", true, false);
+
+            String expected =
+                    "windspeed\ttimestamp\ttimetocycle\n" +
+                            "2.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
+                            "3.0\t1990-01-01T02:13:20.000000Z\t0.0\n" +
+                            "4.0\t1990-01-01T05:00:00.000000Z\tNaN\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testFieldsReducedO3VarLen() throws Exception {
+        String lineData =
+                "weather dir=\"NA\",windspeed=1.0 631152000000000000\n" +
+                "weather dir=\"South\",windspeed=2.0 631150000000000000\n" +
+                "weather dir=\"North\",windspeed=3.0,timetocycle=0.0 631160000000000000\n" +
+                "weather dir=\"SSW\",windspeed=4.0 631170000000000000\n";
+
+        runInContext(() -> {
+            send(lineData, "weather", true, false);
+
+            String expected =
+                    "dir\twindspeed\ttimestamp\ttimetocycle\n" +
+                    "South\t2.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
+                    "NA\t1.0\t1990-01-01T00:00:00.000000Z\tNaN\n" +
+                    "North\t3.0\t1990-01-01T02:13:20.000000Z\t0.0\n" +
+                    "SSW\t4.0\t1990-01-01T05:00:00.000000Z\tNaN\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testWindowsAccessDenied() throws Exception {
+        try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
+            m.timestamp("ReceiveTime")
+                    .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
+                    .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
+                    .col("Length", ColumnType.INT);
+            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+        }
+
+        String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
+
+        runInContext(() -> {
+            send(lineData, "table_a", true, false);
+
+            String expected = "ReceiveTime\tSequenceNumber\tMessageType\tLength\ttest\n" +
+                    "2016-06-13T17:43:50.100400Z\t1\tB\t92\t1.5\n";
+            assertTable(expected, "table_a");
+        });
+    }
+
+    @Test
+    public void testWrterCommitFails() throws Exception {
+        try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
+            m.timestamp("ReceiveTime")
+                    .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
+                    .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
+                    .col("Length", ColumnType.INT);
+            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+        }
+
+        runInContext(() -> {
+            ff = new FilesFacadeImpl() {
+                @Override
+                public int rmdir(Path path) {
+                    return 5;
+                }
+            };
+
+            String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
+            send(lineData, "table_a", true, false);
+
+            String expected = "ReceiveTime\tSequenceNumber\tMessageType\tLength\n";
+            assertTable(expected, "table_a");
+        });
+    }
+
+    @Test
+    public void testWriterAllLongs() throws Exception {
+        currentMicros = 1;
+        try (TableModel m = new TableModel(configuration, "messages", PartitionBy.MONTH)) {
+            m.timestamp("ts")
+                    .col("id", ColumnType.LONG)
+                    .col("author", ColumnType.LONG)
+                    .col("guild", ColumnType.LONG)
+                    .col("channel", ColumnType.LONG)
+                    .col("flags", ColumnType.BYTE);
+            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+        }
+
+        int defaultMeasurementSize = maxMeasurementSize;
+        String lineData = "messages id=843530699759026177i,author=820703963477180437i,guild=820704412095479830i,channel=820704412095479833i,flags=6i\n";
+        try {
+            maxMeasurementSize = lineData.length();
+            runInContext(() -> {
+                send(lineData, "messages");
+                String expected = "ts\tid\tauthor\tguild\tchannel\tflags\n" +
+                        "1970-01-01T00:00:00.000001Z\t843530699759026177\t820703963477180437\t820704412095479830\t820704412095479833\t6\n";
+                assertTable(expected, "messages");
+            });
+        } finally {
+            maxMeasurementSize = defaultMeasurementSize;
+        }
     }
 
     @Test
@@ -274,7 +503,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
             send(lineData, "weather");
 
-            try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather")) {
+            try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather", "testing")) {
                 w.truncate();
             }
 
@@ -359,54 +588,6 @@ public class LineTcpServerTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testWriter17Fields() throws Exception {
-        int defautlMeasurementSize = maxMeasurementSize;
-        String lineData = "tableCRASH,tag_n_1=1,tag_n_2=2,tag_n_3=3,tag_n_4=4,tag_n_5=5,tag_n_6=6," +
-                "tag_n_7=7,tag_n_8=8,tag_n_9=9,tag_n_10=10,tag_n_11=11,tag_n_12=12,tag_n_13=13," +
-                "tag_n_14=14,tag_n_15=15,tag_n_16=16,tag_n_17=17 value=42.4 1619509249714000000\n";
-        try {
-            maxMeasurementSize = lineData.length();
-            runInContext(() -> {
-                send(lineData, "tableCRASH");
-
-                String expected = "tag_n_1\ttag_n_2\ttag_n_3\ttag_n_4\ttag_n_5\ttag_n_6\ttag_n_7\ttag_n_8\ttag_n_9\ttag_n_10\ttag_n_11\ttag_n_12\ttag_n_13\ttag_n_14\ttag_n_15\ttag_n_16\ttag_n_17\tvalue\ttimestamp\n" +
-                        "1\t2\t3\t4\t5\t6\t7\t8\t9\t10\t11\t12\t13\t14\t15\t16\t17\t42.400000000000006\t2021-04-27T07:40:49.714000Z\n";
-                assertTable(expected, "tableCRASH");
-            });
-        } finally {
-            maxMeasurementSize = defautlMeasurementSize;
-        }
-    }
-
-    @Test
-    public void testWriterAllLongs() throws Exception {
-        currentMicros = 1;
-        try (TableModel m = new TableModel(configuration, "messages", PartitionBy.MONTH)) {
-            m.timestamp("ts")
-                    .col("id", ColumnType.LONG)
-                    .col("author", ColumnType.LONG)
-                    .col("guild", ColumnType.LONG)
-                    .col("channel", ColumnType.LONG)
-                    .col("flags", ColumnType.BYTE);
-            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
-        }
-
-        int defautlMeasurementSize = maxMeasurementSize;
-        String lineData = "messages id=843530699759026177i,author=820703963477180437i,guild=820704412095479830i,channel=820704412095479833i,flags=6i\n";
-        try {
-            maxMeasurementSize = lineData.length();
-            runInContext(() -> {
-                send(lineData, "messages");
-                String expected = "ts\tid\tauthor\tguild\tchannel\tflags\n" +
-                        "1970-01-01T00:00:00.000001Z\t843530699759026177\t820703963477180437\t820704412095479830\t820704412095479833\t6\n";
-                assertTable(expected, "messages");
-            });
-        } finally {
-            maxMeasurementSize = defautlMeasurementSize;
-        }
-    }
-
     private void assertTable(CharSequence expected, CharSequence tableName) {
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
             assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
@@ -417,14 +598,21 @@ public class LineTcpServerTest extends AbstractCairoTest {
         minIdleMsBeforeWriterRelease = 250;
         assertMemoryLeak(() -> {
             path = new Path(4096);
-            try {
-                LineTcpServer tcpServer = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine);
+            try (LineTcpServer ignored = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine)) {
                 sharedWorkerPool.assignCleaner(Path.CLEANER);
                 sharedWorkerPool.start(LOG);
-                r.run();
-                sharedWorkerPool.halt();
-                Misc.free(tcpServer);
-                Path.clearThreadLocals();
+                try {
+                    r.run();
+                } catch (Throwable err) {
+                    LOG.error().$("Stopping ILP worker pool because of an error").$();
+                    throw err;
+                } finally {
+                    sharedWorkerPool.halt();
+                    Path.clearThreadLocals();
+                }
+            } catch (Throwable err) {
+                LOG.error().$("Stopping ILP server because of an error").$();
+                throw err;
             } finally {
                 Misc.free(path);
             }
@@ -432,6 +620,10 @@ public class LineTcpServerTest extends AbstractCairoTest {
     }
 
     private void send(String lineData, String tableName, boolean wait) {
+        send(lineData, tableName, wait, true);
+    }
+
+    private void send(String lineData, String tableName, boolean wait, boolean noLinger) {
         SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
         if (wait) {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
@@ -447,20 +639,23 @@ public class LineTcpServerTest extends AbstractCairoTest {
             int ipv4address = Net.parseIPv4("127.0.0.1");
             long sockaddr = Net.sockaddr(ipv4address, bindPort);
             long fd = Net.socketTcp(true);
-            if (Net.connect(fd, sockaddr) != 0) {
-                throw NetworkError.instance(Os.errno(), "could not connect to ").ip(ipv4address);
+            try {
+                TestUtils.assertConnect(fd, sockaddr, noLinger);
+                byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
+                long bufaddr = Unsafe.malloc(lineDataBytes.length);
+                try {
+                    for (int n = 0; n < lineDataBytes.length; n++) {
+                        Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
+                    }
+                    int rc = Net.send(fd, bufaddr, lineDataBytes.length);
+                    Assert.assertEquals(lineDataBytes.length, rc);
+                } finally {
+                    Unsafe.free(bufaddr, lineDataBytes.length);
+                }
+            } finally {
+                Net.close(fd);
+                Net.freeSockAddr(sockaddr);
             }
-            byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
-            long bufaddr = Unsafe.malloc(lineDataBytes.length);
-            for (int n = 0; n < lineDataBytes.length; n++) {
-                Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
-            }
-            int rc = Net.send(fd, bufaddr, lineDataBytes.length);
-            Unsafe.free(bufaddr, lineDataBytes.length);
-            Net.close(fd);
-            Net.freeSockAddr(sockaddr);
-            Assert.assertEquals(lineDataBytes.length, rc);
-
             if (wait) {
                 releaseLatch.await();
             }
@@ -475,6 +670,19 @@ public class LineTcpServerTest extends AbstractCairoTest {
         send(lineData, tableName, true);
     }
 
+    private void sendAndWait(
+            String lineData,
+            CharSequenceObjHashMap<SOUnboundedCountDownLatch> tableIndex,
+            int expectedReleaseCount
+    ) {
+        send(lineData, "weather", false);
+        tableIndex.get("weather").await(expectedReleaseCount);
+    }
+
+    private void sendNoWait(String threadTable, String lineDataThread) {
+        send(lineDataThread, threadTable, false);
+    }
+
     private void test(
             String authKeyId,
             PrivateKey authPrivateKey,
@@ -485,7 +693,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
         this.authKeyId = authKeyId;
         this.msgBufferSize = msgBufferSize;
         assertMemoryLeak(() -> {
-            final String[] locations = {"london", "paris", "rome"};
+            final String[] locations = {"x london", "paris", "rome"};
 
             final CharSequenceHashSet tables = new CharSequenceHashSet();
             tables.add("weather1");
@@ -613,4 +821,5 @@ public class LineTcpServerTest extends AbstractCairoTest {
             }
         });
     }
+
 }

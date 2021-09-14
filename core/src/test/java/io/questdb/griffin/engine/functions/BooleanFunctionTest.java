@@ -182,4 +182,24 @@ public class BooleanFunctionTest {
     public void testLong256B() {
         functionA.getLong256B(null);
     }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoHash() {
+        functionA.getGeoHashLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoHashInt() {
+        functionA.getGeoHashInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoHashByte() {
+        functionA.getGeoHashByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoHashShor() {
+        functionA.getGeoHashShort(null);
+    }
 }

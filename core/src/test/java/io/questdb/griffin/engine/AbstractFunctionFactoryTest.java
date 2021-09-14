@@ -278,7 +278,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
     protected abstract FunctionFactory getFunctionFactory();
 
     private boolean isNegative(int argType, Object arg) {
-        switch (argType) {
+        switch (ColumnType.tagOf(argType)) {
             case ColumnType.INT:
                 return (int) arg < 0 && (int) arg != Numbers.INT_NaN;
             case ColumnType.LONG:
@@ -338,7 +338,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             printConstant(argType, expression2, arg);
         } else {
             expression1.put(columnName);
-            if (argType == ColumnType.SYMBOL || argType == ColumnType.BINARY || isNegative(argType, arg)) {
+            if (ColumnType.isSymbol(argType) || ColumnType.isBinary(argType) || isNegative(argType, arg)) {
                 // above types cannot be expressed as constant in SQL
                 expression2.put(columnName);
             } else {
@@ -348,7 +348,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
     }
 
     private void printConstant(int type, StringSink sink, Object value) {
-        switch (type) {
+        switch (ColumnType.tagOf(type)) {
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
                 if (value == null) {
@@ -417,10 +417,11 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         public void andAssert(boolean expected) {
             Assert.assertEquals(expected, function1.getBool(record));
             Assert.assertEquals(expected, function2.getBool(record));
+            closeFunctions();
         }
 
         public void andAssert(CharSequence expected) {
-            if (function1.getType() == ColumnType.STRING) {
+            if (ColumnType.tagOf(function1.getType()) == ColumnType.STRING) {
                 assertString(function1, expected);
                 assertString(function2, expected);
             }
@@ -513,7 +514,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
     private static class TestRecord implements Record {
         private final Object[] args;
-        private final TestBinarySequence byteSequence = new TestBinarySequence();
 
         public TestRecord(Object[] args) {
             this.args = args;
@@ -525,6 +525,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             if (o == null) {
                 return null;
             }
+            TestBinarySequence byteSequence = new TestBinarySequence();
             return byteSequence.of((byte[]) o);
         }
 

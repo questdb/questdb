@@ -52,9 +52,9 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     createX();
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                         try {
-                            reader.getBitmapIndexReader(0, reader.getColumnBase(0), reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD);
+                            reader.getBitmapIndexReader(0, reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD);
                             Assert.fail();
                         } catch (CairoException ignored) {
                         }
@@ -62,8 +62,8 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(ALTER, compiler.compile("alter table x alter column ik add index", sqlExecutionContext).getType());
 
-                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
-                        Assert.assertNotNull(reader.getBitmapIndexReader(0, reader.getColumnBase(0), reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD));
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                        Assert.assertNotNull(reader.getBitmapIndexReader(0, reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD));
                     }
                 }
         );
@@ -92,7 +92,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
                 CyclicBarrier startBarrier = new CyclicBarrier(2);
                 CountDownLatch haltLatch = new CountDownLatch(1);
                 new Thread(() -> {
-                    try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+                    try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
                         // make sure writer is locked before test begins
                         startBarrier.await();
                         // make sure we don't release writer until main test finishes

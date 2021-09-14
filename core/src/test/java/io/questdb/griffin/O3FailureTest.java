@@ -52,9 +52,21 @@ public class O3FailureTest extends AbstractO3Test {
     private final static AtomicInteger counter = new AtomicInteger(0);
 
     private static final FilesFacade ffAllocateFailure = new FilesFacadeImpl() {
+        private boolean failNextAlloc = false;
+
+        @Override
+        public long length(long fd) {
+            if (counter.decrementAndGet() == 0) {
+                failNextAlloc = true;
+                return 0;
+            }
+            return super.length(fd);
+        }
+
         @Override
         public boolean allocate(long fd, long size) {
-            if (counter.decrementAndGet() == 0) {
+            if (failNextAlloc) {
+                failNextAlloc = false;
                 return false;
             }
             return super.allocate(fd, size);
@@ -64,6 +76,16 @@ public class O3FailureTest extends AbstractO3Test {
     private static final FilesFacade ffIndexAllocateFailure = new FilesFacadeImpl() {
 
         long theFd = 0;
+        boolean failNextAlloc = false;
+
+        @Override
+        public long length(long fd) {
+            if (fd == theFd) {
+                failNextAlloc = true;
+                return 0;
+            }
+            return super.length(fd);
+        }
 
         @Override
         public long openRW(LPSZ name) {
@@ -76,9 +98,10 @@ public class O3FailureTest extends AbstractO3Test {
 
         @Override
         public boolean allocate(long fd, long size) {
-            if (fd == theFd) {
+            if (fd == theFd && failNextAlloc) {
                 // don't forget to set this to 0 so that next attempt doesn't fail
                 theFd = 0;
+                failNextAlloc = false;
                 return false;
             }
             return super.allocate(fd, size);
@@ -194,6 +217,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     private static final FilesFacade ffFailToAllocateIndex = new FilesFacadeImpl() {
         long theFd;
+        boolean failNextAlloc = false;
 
         @Override
         public boolean close(long fd) {
@@ -201,6 +225,15 @@ public class O3FailureTest extends AbstractO3Test {
                 theFd = -1;
             }
             return super.close(fd);
+        }
+
+        @Override
+        public long length(long fd) {
+            if (fd == theFd && counter.decrementAndGet() == 0) {
+                failNextAlloc = true;
+                return 0L;
+            }
+            return super.length(fd);
         }
 
         @Override
@@ -214,7 +247,8 @@ public class O3FailureTest extends AbstractO3Test {
 
         @Override
         public boolean allocate(long fd, long size) {
-            if (fd == theFd && counter.decrementAndGet() == 0) {
+            if (fd == theFd && failNextAlloc) {
+                failNextAlloc = false;
                 return false;
             }
             return super.allocate(fd, size);
@@ -622,7 +656,7 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testFailOnResizingIndexContended() throws Exception {
         // this places break point on resize of key file
-        counter.set(107);
+        counter.set(197);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -668,6 +702,16 @@ public class O3FailureTest extends AbstractO3Test {
                 return super.truncate(fd, size);
             }
         });
+    }
+
+    @Test
+    public void testInsertAsSelectNegativeTimestamp() throws Exception {
+        executeWithPool(0, O3FailureTest::testInsertAsSelectNegativeTimestamp0);
+    }
+
+    @Test
+    public void testInsertAsSelectNulls() throws Exception {
+        executeWithPool(0, O3FailureTest::testInsertAsSelectNulls0);
     }
 
     @Test
@@ -865,13 +909,13 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTail() throws Exception {
-        counter.set(110);
+        counter.set(200);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailContended() throws Exception {
-        counter.set(110);
+        counter.set(221);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -889,25 +933,25 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailParallel() throws Exception {
-        counter.set(110);
+        counter.set(221);
         executeWithPool(2, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODatThenRegularAppend() throws Exception {
-        counter.set(150);
+        counter.set(260);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODatThenRegularAppend0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOOData() throws Exception {
-        counter.set(150);
+        counter.set(260);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataContended() throws Exception {
-        counter.set(150);
+        counter.set(260);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
@@ -967,13 +1011,13 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallel() throws Exception {
-        counter.set(170);
+        counter.set(262);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallelNoReopen() throws Exception {
-        counter.set(170);
+        counter.set(254);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetryNoReopen, ffAllocateFailure);
     }
 
@@ -1032,16 +1076,6 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testTwoRowsConsistency() throws Exception {
         executeWithPool(0, O3FailureTest::testTwoRowsConsistency0);
-    }
-
-    @Test
-    public void testInsertAsSelectNulls() throws Exception {
-        executeWithPool(0, O3FailureTest::testInsertAsSelectNulls0);
-    }
-
-    @Test
-    public void testInsertAsSelectNegativeTimestamp() throws Exception {
-        executeWithPool(0, O3FailureTest::testInsertAsSelectNegativeTimestamp0);
     }
 
     private static void testInsertAsSelectNulls0(

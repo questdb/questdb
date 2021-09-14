@@ -30,18 +30,11 @@ import io.questdb.std.str.CharSink;
 //#else
 import jdk.internal.math.FDBigInteger;
 //#endif
-
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
 public final class Numbers {
-    //#if jdk.version!=8
-    static {
-        Module currentModule = Numbers.class.getModule();
-        Unsafe.addExports(Unsafe.JAVA_BASE_MODULE, currentModule, "jdk.internal.math");
-    }
-    //#endif
-
     public static final int INT_NaN = Integer.MIN_VALUE;
     public static final long LONG_NaN = Long.MIN_VALUE;
     public static final double TOLERANCE = 1E-15d;
@@ -76,7 +69,6 @@ public final class Numbers {
     static final long EXP_ONE = ((long) EXP_BIAS) << EXP_SHIFT; // exponent of 1.0
     private static final long FRACT_HOB = (1L << EXP_SHIFT); // assumed High-Order bit
     private static final int[] insignificantDigitsNumber = new int[]{0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 9, 9, 10, 10, 10, 11, 11, 11, 12, 12, 12, 12, 13, 13, 13, 14, 14, 14, 15, 15, 15, 15, 16, 16, 16, 17, 17, 17, 18, 18, 18, 19};
-
     private Numbers() {
     }
 
@@ -525,12 +517,12 @@ public final class Numbers {
         return Integer.compare(anotherBits, thisBits);                          // (0.0, -0.0) or (NaN, !NaN)
     }
 
-    public static short decodeHighShort(int val) {
-        return (short) (val >> 16);
-    }
-
     public static int decodeHighInt(long val) {
         return (int) (val >> 32);
+    }
+
+    public static short decodeHighShort(int val) {
+        return (short) (val >> 16);
     }
 
     public static int decodeLowInt(long val) {
@@ -998,6 +990,31 @@ public final class Numbers {
         return parseLong0(sequence, p, lim);
     }
 
+    @NotNull
+    public static Long256Impl parseLong256(CharSequence text, int len, Long256Impl long256) {
+        if (Long256Util.isValidString(text, len)) {
+            try {
+                final long a = parseHexLong(text, 2, Math.min(len, 18));
+                long b = 0;
+                long c = 0;
+                long d = 0;
+                if (len > 18) {
+                    b = parseHexLong(text, 18, Math.min(len, 34));
+                }
+                if (len > 34) {
+                    c = parseHexLong(text, 34, Math.min(len, 42));
+                }
+                if (len > 42) {
+                    d = parseHexLong(text, 42, Math.min(len, 66));
+                }
+                long256.setAll(a, b, c, d);
+                return long256;
+            } catch (NumericException ignored) {
+            }
+        }
+        return Long256Impl.NULL_LONG256;
+    }
+
     public static long parseLongQuiet(CharSequence sequence) {
         if (sequence == null) {
             return Long.MIN_VALUE;
@@ -1366,8 +1383,6 @@ public final class Numbers {
         sink.put(hexDigits[(int) ((value) & 0xf)]);
     }
 
-    //////////////////////
-
     private static void appendLongHexPad(CharSink sink, char hexDigit) {
         sink.put('0');
         sink.put(hexDigit);
@@ -1376,6 +1391,8 @@ public final class Numbers {
     private static double roundHalfUp0(double value, int scale) {
         return scale > 0 ? roundHalfUp0PosScale(value, scale) : roundHalfUp0NegScale(value, -scale);
     }
+
+    //////////////////////
 
     private static void appendInt10(CharSink sink, int i) {
         int c;
@@ -2360,6 +2377,13 @@ public final class Numbers {
     private interface LongHexAppender {
         void append(CharSink sink, long value);
     }
+
+    //#if jdk.version!=8
+    static {
+        Module currentModule = Numbers.class.getModule();
+        Unsafe.addExports(Unsafe.JAVA_BASE_MODULE, currentModule, "jdk.internal.math");
+    }
+    //#endif
 
     static {
         pow10 = new long[20];

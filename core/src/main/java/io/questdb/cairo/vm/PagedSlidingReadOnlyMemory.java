@@ -25,19 +25,20 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 
-public class PagedSlidingReadOnlyMemory extends PagedVirtualMemory {
+public class PagedSlidingReadOnlyMemory extends MemoryPARWImpl {
     private static final Log LOG = LogFactory.getLog(PagedSlidingReadOnlyMemory.class);
     private FilesFacade ff;
     private long fd = -1;
     private long size = 0;
     private long pageAddress;
     private int pageIndex;
-    private AppendOnlyVirtualMemory parent;
+    private MemoryMA parent;
 
     @Override
     public void close() {
@@ -52,25 +53,25 @@ public class PagedSlidingReadOnlyMemory extends PagedVirtualMemory {
     }
 
     @Override
-    public long getPageSize(int page) {
-        return getMapPageSize();
+    public long getPageSize() {
+        return getExtendSegmentSize();
     }
 
     @Override
     protected long mapWritePage(int page) {
-        throw new UnsupportedOperationException("Cannot jump() read-only memory. Use grow() instead.");
+        throw new UnsupportedOperationException("Cannot jump() read-only memory. Use extend() instead.");
     }
 
     public long getFd() {
         return fd;
     }
 
-    public void of(AppendOnlyVirtualMemory parent) {
+    public void of(MemoryMA parent) {
         close();
         this.ff = parent.getFilesFacade();
         this.fd = parent.getFd();
         this.parent = parent;
-        this.setPageSize(parent.getMapPageSize());
+        this.setExtendSegmentSize(parent.getExtendSegmentSize());
         updateSize();
         this.pageIndex = -1;
         LOG.debug().$("open [fd=").$(fd).$(", size=").$(this.size).$(']').$();
@@ -78,7 +79,7 @@ public class PagedSlidingReadOnlyMemory extends PagedVirtualMemory {
 
     public void updateSize() {
         if (parent != null) {
-            this.size = pageOffset(pageIndex(parent.getAppendOffset())) + getMapPageSize();
+            this.size = pageOffset(pageIndex(parent.getAppendOffset())) + getExtendSegmentSize();
         }
     }
 
@@ -104,16 +105,15 @@ public class PagedSlidingReadOnlyMemory extends PagedVirtualMemory {
         long sz = size - offset;
 
         if (sz > 0) {
-            sz = getMapPageSize();
-
-            long address = ff.mmap(fd, sz, offset, Files.MAP_RO);
-            if (address == -1L) {
+            try {
+                long address = TableUtils.mapRO(ff, fd, getExtendSegmentSize(), offset);
+                this.pageIndex = page;
+                this.pageAddress = address;
+                return address;
+            } catch (Throwable e) {
                 invalidateCurrentPage();
-                throw CairoException.instance(ff.errno()).put("Cannot map read-only page. fd=").put(fd).put(", offset=").put(offset).put(", size=").put(this.size).put(", page=").put(sz);
+                throw e;
             }
-            this.pageIndex = page;
-            this.pageAddress = address;
-            return address;
         }
         invalidateCurrentPage();
         throw CairoException.instance(ff.errno()).put("Trying to map read-only page outside of file boundary. fd=").put(fd).put(", offset=").put(offset).put(", size=").put(this.size).put(", page=").put(sz);
@@ -121,7 +121,7 @@ public class PagedSlidingReadOnlyMemory extends PagedVirtualMemory {
 
     private void releaseCurrentPage() {
         if (pageAddress != 0) {
-            ff.munmap(pageAddress, getMapPageSize());
+            ff.munmap(pageAddress, getExtendSegmentSize());
         }
     }
 

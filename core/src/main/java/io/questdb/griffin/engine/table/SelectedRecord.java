@@ -153,6 +153,26 @@ class SelectedRecord implements Record {
         return base.getTimestamp(getColumnIndex(col));
     }
 
+    @Override
+    public byte getGeoHashByte(int col) {
+        return base.getGeoHashByte(getColumnIndex(col));
+    }
+
+    @Override
+    public short getGeoHashShort(int col) {
+        return base.getGeoHashShort(getColumnIndex(col));
+    }
+
+    @Override
+    public int getGeoHashInt(int col) {
+        return base.getGeoHashInt(getColumnIndex(col));
+    }
+
+    @Override
+    public long getGeoHashLong(int col) {
+        return base.getGeoHashLong(getColumnIndex(col));
+    }
+
     Record getBaseRecord() {
         return base;
     }

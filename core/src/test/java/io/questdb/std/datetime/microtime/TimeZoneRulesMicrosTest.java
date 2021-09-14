@@ -24,9 +24,13 @@
 
 package io.questdb.std.datetime.microtime;
 
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.datetime.TimeZoneRules;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -35,7 +39,28 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
+import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
+
 public class TimeZoneRulesMicrosTest {
+
+    @Test
+    public void testBlah() throws NumericException {
+        String tz = "Europe/Kiev";
+        int timezoneIndex = Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length()));
+        TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(timezoneIndex, RESOLUTION_MICROS);
+
+        long ts1 = TimestampFormatUtils.parseTimestamp("2021-03-28T00:00:00.000000Z");
+        long offset1 = rules.getOffset(ts1);
+        long ts1tz = ts1 + offset1;
+
+        // ts2 = ts1 + 1hr
+        long ts2 = ts1 + Timestamps.MINUTE_MICROS * 60;
+        long offset2 = rules.getOffset(ts2);
+
+        long ts2tz = ts2 + offset1 + (offset2 - offset1);
+
+        System.out.println("ts1tz=" + Timestamps.toString(ts1tz) + ", ts2tz=" + Timestamps.toString(ts2tz));
+    }
 
     @Test
     public void testCompatibility() {
@@ -55,12 +80,10 @@ public class TimeZoneRulesMicrosTest {
         long deadline = Timestamps.toMicros(2115, 12, 31, 0, 0);
 
         while (micros < deadline) {
-            int y = Timestamps.getYear(micros);
-            boolean leap = Timestamps.isLeapYear(y);
-            int m = Timestamps.getMonthOfYear(micros, y, leap);
-            int d = Timestamps.getDayOfMonth(micros, y, m, leap);
+            final int y = Timestamps.getYear(micros);
+            final boolean leap = Timestamps.isLeapYear(y);
 
-            LocalDateTime dt = LocalDateTime.of(y, m, d, 0, 0);
+            Instant dt = Instant.ofEpochMilli(micros / 1000);
 
             for (int i = 0, n = zones.size(); i < n; i++) {
                 ZoneId zone = zones.get(i);
@@ -70,10 +93,6 @@ public class TimeZoneRulesMicrosTest {
 
                 long expected = zdt.getOffset().getTotalSeconds();
                 // find out how much algo added to datetime itself
-                long changed = Timestamps.toMicros(zdt.getYear(), zdt.getMonthValue(), zdt.getDayOfMonth(), zdt.getHour(), zdt.getMinute()) + zdt.getSecond() * Timestamps.SECOND_MICROS;
-                // add any extra time
-                expected += (changed - micros) / Timestamps.SECOND_MICROS;
-
                 long offset = rules.getOffset(micros, y, leap);
 
                 try {

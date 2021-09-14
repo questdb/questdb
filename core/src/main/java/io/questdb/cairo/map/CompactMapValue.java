@@ -24,17 +24,17 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.vm.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.api.MemoryARW;
 
 public class CompactMapValue implements MapValue {
 
-    private final ContiguousVirtualMemory entries;
+    private final MemoryARW entries;
     private final long[] columnOffsets;
     private long currentValueOffset;
     private boolean _new;
     private CompactMapRecord record;
 
-    CompactMapValue(ContiguousVirtualMemory entries, long[] columnOffsets) {
+    CompactMapValue(MemoryARW entries, long[] columnOffsets) {
         this.entries = entries;
         this.columnOffsets = columnOffsets;
     }
@@ -128,6 +128,26 @@ public class CompactMapValue implements MapValue {
     @Override
     public long getTimestamp(int index) {
         return getLong(index);
+    }
+
+    @Override
+    public byte getGeoHashByte(int col) {
+        return getByte(col);
+    }
+
+    @Override
+    public short getGeoHashShort(int col) {
+        return getShort(col);
+    }
+
+    @Override
+    public int getGeoHashInt(int col) {
+        return getInt(col);
+    }
+
+    @Override
+    public long getGeoHashLong(int col) {
+        return getLong(col);
     }
 
     @Override

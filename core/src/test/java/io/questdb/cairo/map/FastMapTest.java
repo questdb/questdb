@@ -51,7 +51,7 @@ public class FastMapTest extends AbstractCairoTest {
         keyTypes.add(ColumnType.STRING);
         keyTypes.add(ColumnType.BOOLEAN);
         keyTypes.add(ColumnType.DATE);
-
+        keyTypes.add(ColumnType.geohashWithPrecision(3));
 
         valueTypes.add(ColumnType.BYTE);
         valueTypes.add(ColumnType.SHORT);
@@ -61,6 +61,7 @@ public class FastMapTest extends AbstractCairoTest {
         valueTypes.add(ColumnType.DOUBLE);
         valueTypes.add(ColumnType.BOOLEAN);
         valueTypes.add(ColumnType.DATE);
+        valueTypes.add(ColumnType.geohashWithPrecision(20));
 
         try (FastMap map = new FastMap(64, keyTypes, valueTypes, 64, 0.8, 24)) {
             final int N = 100000;
@@ -79,7 +80,7 @@ public class FastMapTest extends AbstractCairoTest {
                 }
                 key.putBool(rnd.nextBoolean());
                 key.putDate(rnd.nextLong());
-
+                key.putShort(rnd.nextShort());
 
                 MapValue value = key.createValue();
                 Assert.assertTrue(value.isNew());
@@ -92,8 +93,8 @@ public class FastMapTest extends AbstractCairoTest {
                 value.putDouble(5, rnd.nextDouble());
                 value.putBool(6, rnd.nextBoolean());
                 value.putDate(7, rnd.nextLong());
+                value.putInt(8, rnd.nextInt());
             }
-
 
             rnd.reset();
 
@@ -113,7 +114,7 @@ public class FastMapTest extends AbstractCairoTest {
                 }
                 key.putBool(rnd.nextBoolean());
                 key.putDate(rnd.nextLong());
-
+                key.putShort(rnd.nextShort());
 
                 MapValue value = key.createValue();
                 Assert.assertFalse(value.isNew());
@@ -126,8 +127,8 @@ public class FastMapTest extends AbstractCairoTest {
                 Assert.assertEquals(rnd.nextDouble(), value.getDouble(5), 0.000000001d);
                 Assert.assertEquals(rnd.nextBoolean(), value.getBool(6));
                 Assert.assertEquals(rnd.nextLong(), value.getDate(7));
+                Assert.assertEquals(rnd.nextInt(), value.getInt(8));
             }
-
 
             try (RecordCursor cursor = map.getCursor()) {
                 rnd.reset();
@@ -158,41 +159,28 @@ public class FastMapTest extends AbstractCairoTest {
             final int N = 100000;
             for (int i = 0; i < N; i++) {
                 MapKey key = map.withKey();
-
-                long256.setLong0(rnd.nextLong());
-                long256.setLong1(rnd.nextLong());
-                long256.setLong2(rnd.nextLong());
-                long256.setLong3(rnd.nextLong());
-
+                long256.fromRnd(rnd);
                 key.putLong256(long256);
                 key.putChar(rnd.nextChar());
 
                 MapValue value = key.createValue();
                 Assert.assertTrue(value.isNew());
-
                 value.putDouble(0, rnd.nextDouble());
             }
-
 
             rnd.reset();
 
             // assert that all values are good
             for (int i = 0; i < N; i++) {
                 MapKey key = map.withKey();
-                long256.setLong0(rnd.nextLong());
-                long256.setLong1(rnd.nextLong());
-                long256.setLong2(rnd.nextLong());
-                long256.setLong3(rnd.nextLong());
-
+                long256.fromRnd(rnd);
                 key.putLong256(long256);
                 key.putChar(rnd.nextChar());
-
 
                 MapValue value = key.createValue();
                 Assert.assertFalse(value.isNew());
                 Assert.assertEquals(rnd.nextDouble(), value.getDouble(0), 0.000000001d);
             }
-
 
             try (RecordCursor cursor = map.getCursor()) {
                 rnd.reset();
@@ -491,9 +479,88 @@ public class FastMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGeohashRecordAsKey() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int N = 5000;
+            final Rnd rnd = new Rnd();
+            int precisionBits = 10;
+            int geohashType = ColumnType.geohashWithPrecision(precisionBits);
+
+            BytecodeAssembler asm = new BytecodeAssembler();
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
+                model
+                        .col("a", ColumnType.LONG)
+                        .col("b", geohashType);
+                CairoTestUtils.create(model);
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row row = writer.newRow();
+                    long rndGeohash = GeoHashes.fromCoordinates(rnd.nextDouble() * 180 - 90, rnd.nextDouble() * 360 - 180, precisionBits);
+                    row.putLong(0, i);
+                    row.putGeoHash(1, rndGeohash);
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = new TableReader(configuration, "x")) {
+                EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
+                entityColumnFilter.of(reader.getMetadata().getColumnCount());
+
+                try (FastMap map = new FastMap(
+                        Numbers.SIZE_1MB,
+                        new SymbolAsStrTypes(reader.getMetadata()),
+                        new ArrayColumnTypes()
+                                .add(ColumnType.LONG)
+                                .add(ColumnType.INT)
+                                .add(ColumnType.SHORT)
+                                .add(ColumnType.BYTE)
+                                .add(ColumnType.FLOAT)
+                                .add(ColumnType.DOUBLE)
+                                .add(ColumnType.DATE)
+                                .add(ColumnType.TIMESTAMP)
+                                .add(ColumnType.BOOLEAN)
+                        ,
+                        N,
+                        0.9f, 1)) {
+
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
+                    // this random will be populating values
+                    Rnd rnd2 = new Rnd();
+
+                    RecordCursor cursor = reader.getCursor();
+                    populateMap(map, rnd2, cursor, sink);
+
+                    try (RecordCursor mapCursor = map.getCursor()) {
+                        long c = 0;
+                        rnd.reset();
+                        rnd2.reset();
+                        final Record record = mapCursor.getRecord();
+                        while (mapCursor.hasNext()) {
+                            // value
+                            Assert.assertEquals(++c, record.getLong(0));
+                            Assert.assertEquals(rnd2.nextInt(), record.getInt(1));
+                            Assert.assertEquals(rnd2.nextShort(), record.getShort(2));
+                            Assert.assertEquals(rnd2.nextByte(), record.getByte(3));
+                            Assert.assertEquals(rnd2.nextFloat(), record.getFloat(4), 0.000001f);
+                            Assert.assertEquals(rnd2.nextDouble(), record.getDouble(5), 0.000000001);
+                            Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
+                            Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
+                            Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRowIdAccess() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ColumnTypes types = new SingleColumnType(ColumnType.INT);
+
             final int N = 10000;
             final Rnd rnd = new Rnd();
             try (FastMap map = new FastMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1)) {
@@ -540,23 +607,6 @@ public class FastMapTest extends AbstractCairoTest {
     @Test
     public void testValueAccess() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-                model
-                        .col("a", ColumnType.BYTE)
-                        .col("b", ColumnType.SHORT)
-                        .col("c", ColumnType.INT)
-                        .col("d", ColumnType.LONG)
-                        .col("e", ColumnType.DATE)
-                        .col("f", ColumnType.TIMESTAMP)
-                        .col("g", ColumnType.FLOAT)
-                        .col("h", ColumnType.DOUBLE)
-                        .col("i", ColumnType.STRING)
-                        .col("j", ColumnType.SYMBOL)
-                        .col("k", ColumnType.BOOLEAN)
-                        .col("l", ColumnType.BINARY);
-                CairoTestUtils.create(model);
-            }
-
             final int N = 1000;
             final Rnd rnd = new Rnd();
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
@@ -582,6 +632,10 @@ public class FastMapTest extends AbstractCairoTest {
                                 .add(ColumnType.DATE)
                                 .add(ColumnType.TIMESTAMP)
                                 .add(ColumnType.BOOLEAN)
+                                .add(ColumnType.geohashWithPrecision(5))
+                                .add(ColumnType.geohashWithPrecision(10))
+                                .add(ColumnType.geohashWithPrecision(20))
+                                .add(ColumnType.geohashWithPrecision(40))
                         ,
                         N,
                         0.9f,
@@ -594,7 +648,7 @@ public class FastMapTest extends AbstractCairoTest {
 
                     RecordCursor cursor = reader.getCursor();
                     Record record = cursor.getRecord();
-                    populateMap(map, rnd2, cursor, sink);
+                    populateMapGeo(map, rnd2, cursor, sink);
 
                     cursor.toTop();
                     rnd2.reset();
@@ -613,6 +667,10 @@ public class FastMapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd2.nextLong(), value.getDate(6));
                         Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
                         Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
+                        Assert.assertEquals((byte)Math.abs(rnd2.nextByte()), value.getGeoHashByte(9));
+                        Assert.assertEquals((short)Math.abs(rnd2.nextShort()), value.getGeoHashShort(10));
+                        Assert.assertEquals(Math.abs(rnd2.nextInt()), value.getGeoHashInt(11));
+                        Assert.assertEquals(Math.abs(rnd2.nextLong()), value.getGeoHashLong(12));
                     }
                 }
             }
@@ -708,36 +766,38 @@ public class FastMapTest extends AbstractCairoTest {
     private void assertCursor1(Rnd rnd, RecordCursor cursor) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            Assert.assertEquals(rnd.nextByte(), record.getByte(8));
-            Assert.assertEquals(rnd.nextShort(), record.getShort(9));
-            Assert.assertEquals(rnd.nextInt(), record.getInt(10));
-            Assert.assertEquals(rnd.nextLong(), record.getLong(11));
-            Assert.assertEquals(rnd.nextFloat(), record.getFloat(12), 0.000000001f);
-            Assert.assertEquals(rnd.nextDouble(), record.getDouble(13), 0.000000001d);
+            int col = 9;
+            Assert.assertEquals(rnd.nextByte(), record.getByte(col++));
+            Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
+            Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getLong(col++));
+            Assert.assertEquals(rnd.nextFloat(), record.getFloat(col++), 0.000000001f);
+            Assert.assertEquals(rnd.nextDouble(), record.getDouble(col++), 0.000000001d);
 
 
             if ((rnd.nextPositiveInt() % 4) == 0) {
-                Assert.assertNull(record.getStr(14));
-                Assert.assertEquals(-1, record.getStrLen(14));
+                Assert.assertNull(record.getStr(col));
+                Assert.assertEquals(-1, record.getStrLen(col++));
             } else {
                 CharSequence expected = rnd.nextChars(rnd.nextPositiveInt() % 16);
-                TestUtils.assertEquals(expected, record.getStr(14));
+                TestUtils.assertEquals(expected, record.getStr(col++));
             }
 
-            Assert.assertEquals(rnd.nextBoolean(), record.getBool(15));
-            Assert.assertEquals(rnd.nextLong(), record.getDate(16));
-
+            Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getDate(col++));
+            Assert.assertEquals(rnd.nextShort(), record.getShort(col));
 
             // value part, it comes first in record
-
-            Assert.assertEquals(rnd.nextByte(), record.getByte(0));
-            Assert.assertEquals(rnd.nextShort(), record.getShort(1));
-            Assert.assertEquals(rnd.nextInt(), record.getInt(2));
-            Assert.assertEquals(rnd.nextLong(), record.getLong(3));
-            Assert.assertEquals(rnd.nextFloat(), record.getFloat(4), 0.000000001f);
-            Assert.assertEquals(rnd.nextDouble(), record.getDouble(5), 0.000000001d);
-            Assert.assertEquals(rnd.nextBoolean(), record.getBool(6));
-            Assert.assertEquals(rnd.nextLong(), record.getDate(7));
+            col = 0;
+            Assert.assertEquals(rnd.nextByte(), record.getByte(col++));
+            Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
+            Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getLong(col++));
+            Assert.assertEquals(rnd.nextFloat(), record.getFloat(col++), 0.000000001f);
+            Assert.assertEquals(rnd.nextDouble(), record.getDouble(col++), 0.000000001d);
+            Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getDate(col++));
+            Assert.assertEquals(rnd.nextInt(), record.getInt(col));
         }
     }
 
@@ -836,11 +896,7 @@ public class FastMapTest extends AbstractCairoTest {
     private void assertCursorLong256(Rnd rnd, RecordCursor cursor, Long256Impl long256) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            long256.setLong0(rnd.nextLong());
-            long256.setLong1(rnd.nextLong());
-            long256.setLong2(rnd.nextLong());
-            long256.setLong3(rnd.nextLong());
-
+            long256.fromRnd(rnd);
             Long256 long256a = record.getLong256A(1);
             Long256 long256b = record.getLong256B(1);
 
@@ -991,6 +1047,30 @@ public class FastMapTest extends AbstractCairoTest {
             value.putDate(6, rnd2.nextLong());
             value.putTimestamp(7, rnd2.nextLong());
             value.putBool(8, rnd2.nextBoolean());
+        }
+    }
+
+    private void populateMapGeo(Map map, Rnd rnd2, RecordCursor cursor, RecordSink sink) {
+        long counter = 0;
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            MapKey key = map.withKey();
+            key.put(record, sink);
+            MapValue value = key.createValue();
+            Assert.assertTrue(value.isNew());
+            value.putLong(0, ++counter);
+            value.putInt(1, rnd2.nextInt());
+            value.putShort(2, rnd2.nextShort());
+            value.putByte(3, rnd2.nextByte());
+            value.putFloat(4, rnd2.nextFloat());
+            value.putDouble(5, rnd2.nextDouble());
+            value.putDate(6, rnd2.nextLong());
+            value.putTimestamp(7, rnd2.nextLong());
+            value.putBool(8, rnd2.nextBoolean());
+            value.putByte(9, (byte) Math.abs(rnd2.nextByte()));
+            value.putShort(10, (short) Math.abs(rnd2.nextShort()));
+            value.putInt(11, Math.abs(rnd2.nextInt()));
+            value.putLong(12, Math.abs(rnd2.nextLong()));
         }
     }
 

@@ -25,10 +25,10 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -65,7 +65,7 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             return cursor.of(baseCursor, executionContext);
@@ -118,13 +118,13 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
             return recordsRemaining-- > 0;
         }
 
-        RecordCursor of(RecordCursor baseCursor, SqlExecutionContext executionContext) {
+        RecordCursor of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
             this.baseCursor = baseCursor;
             final SqlExecutionInterruptor interruptor = executionContext.getSqlExecutionInterruptor();
 
             final Record baseRecord = baseCursor.getRecord();
             final int n = groupByFunctions.size();
-            MultiArgFunction.init(groupByFunctions, baseCursor, executionContext);
+            Function.init(groupByFunctions, baseCursor, executionContext);
 
             if (baseCursor.hasNext()) {
                 GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);

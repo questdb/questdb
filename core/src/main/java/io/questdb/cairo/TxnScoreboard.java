@@ -26,10 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -38,43 +38,36 @@ public class TxnScoreboard implements Closeable {
 
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
 
-    private final long fd;
-    private final long mem;
+    private long fd ;
+    private long mem;
     private final long size;
     private final FilesFacade ff;
 
     public TxnScoreboard(FilesFacade ff, @Transient Path root, int entryCount) {
         this.ff = ff;
         root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
-        this.fd = TableUtils.openRW(ff, root, LOG);
         int pow2EntryCount = Numbers.ceilPow2(entryCount);
         this.size = TxnScoreboard.getScoreboardSize(pow2EntryCount);
-        if (!ff.allocate(fd, this.size)) {
-            ff.close(fd);
-            throw CairoException.instance(ff.errno()).put("not enough space on disk? [name=").put(root).put(", size=").put(this.size).put(']') ;
-        }
+        this.fd = openCleanRW(ff, root, this.size);
+
         // truncate is required to give file a size
         // the allocate above does not seem to update file system's size entry
         ff.truncate(fd, this.size);
-        this.mem = ff.mmap(fd, this.size, 0, Files.MAP_RW);
-        if (mem == -1) {
+        try {
+            this.mem = TableUtils.mapRW(ff, fd, this.size);
+            init(mem, pow2EntryCount);
+        } catch (Throwable e) {
             ff.close(fd);
-            throw CairoException.instance(ff.errno())
-                    .put("could not mmap column [fd=").put(fd)
-                    .put(", size=").put(this.size)
-                    .put(']');
+            throw e;
         }
-        init(mem, pow2EntryCount);
     }
 
-    @Override
-    public void close() {
-        ff.munmap(mem, size);
-        ff.close(fd);
-    }
+    public static native long getScoreboardSize(int entryCount);
 
-    public void releaseTxn(long txn) {
-        releaseTxn(mem, txn);
+    public static void releaseTxn(long pTxnScoreboard, long txn) {
+        assert pTxnScoreboard > 0;
+        LOG.debug().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
+        releaseTxn0(pTxnScoreboard, txn);
     }
 
     public void acquireTxn(long txn) {
@@ -82,6 +75,23 @@ public class TxnScoreboard implements Closeable {
             return;
         }
         throw CairoException.instance(0).put("max txn-inflight limit reached [txn=").put(txn).put(", min=").put(getMin()).put(']');
+    }
+
+    @Override
+    public void close() {
+        if (mem != 0) {
+            ff.munmap(mem, size);
+            mem = 0;
+        }
+
+        if (fd != -1) {
+            ff.close(fd);
+            fd = -1;
+        }
+    }
+
+    public long getActiveReaderCount(long txn) {
+        return getCount(mem, txn);
     }
 
     public long getMin() {
@@ -92,20 +102,14 @@ public class TxnScoreboard implements Closeable {
         return isTxnAvailable(mem, nameTxn);
     }
 
-    public long getActiveReaderCount(long txn) {
-        return getCount(mem, txn);
+    public void releaseTxn(long txn) {
+        releaseTxn(mem, txn);
     }
 
     private static boolean acquireTxn(long pTxnScoreboard, long txn) {
         assert pTxnScoreboard > 0;
         LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
         return acquireTxn0(pTxnScoreboard, txn);
-    }
-
-    public static void releaseTxn(long pTxnScoreboard, long txn) {
-        assert pTxnScoreboard > 0;
-        LOG.debug().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
-        releaseTxn0(pTxnScoreboard, txn);
     }
 
     private native static boolean acquireTxn0(long pTxnScoreboard, long txn);
@@ -116,9 +120,16 @@ public class TxnScoreboard implements Closeable {
 
     private static native long getMin(long pTxnScoreboard);
 
-    public static native long getScoreboardSize(int entryCount);
-
     private static native boolean isTxnAvailable(long pTxnScoreboard, long txn);
 
     private static native void init(long pTxnScoreboard, int entryCount);
+
+    static long openCleanRW(FilesFacade ff, LPSZ path, long size) {
+        final long fd = ff.openCleanRW(path, size);
+        if (fd > -1) {
+            LOG.debug().$("open clean [file=").$(path).$(", fd=").$(fd).$(']').$();
+            return fd;
+        }
+        throw CairoException.instance(ff.errno()).put("could not open read-write with clean allocation [file=").put(path).put(']');
+    }
 }

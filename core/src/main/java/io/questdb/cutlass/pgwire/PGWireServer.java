@@ -25,12 +25,12 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.MessageBus;
+import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.Metrics;
 import io.questdb.mp.EagerThreadSetup;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
@@ -41,6 +41,8 @@ import io.questdb.std.WeakObjectPool;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+
+import static io.questdb.network.IODispatcher.*;
 
 public class PGWireServer implements Closeable {
     private static final Log LOG = LogFactory.getLog(PGWireServer.class);
@@ -77,8 +79,10 @@ public class PGWireServer implements Closeable {
                         context.getDispatcher().registerChannel(context, IOOperation.READ);
                     } catch (PeerIsSlowToReadException e) {
                         context.getDispatcher().registerChannel(context, IOOperation.WRITE);
-                    } catch (PeerDisconnectedException | BadProtocolException e) {
-                        context.getDispatcher().disconnect(context);
+                    } catch (PeerDisconnectedException e) {
+                        context.getDispatcher().disconnect(context, operation == IOOperation.READ ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
+                    } catch (BadProtocolException e) {
+                        context.getDispatcher().disconnect(context, DISCONNECT_REASON_PROTOCOL_VIOLATION);
                     }
                 };
 
@@ -144,7 +148,7 @@ public class PGWireServer implements Closeable {
 
         public PGConnectionContextFactory(CairoEngine engine, PGWireConfiguration configuration, @Nullable MessageBus messageBus, int workerCount) {
             this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(() ->
-            new PGConnectionContext(engine, configuration, messageBus, workerCount), configuration.getConnectionPoolInitialCapacity()));
+                    new PGConnectionContext(engine, configuration, messageBus, workerCount), configuration.getConnectionPoolInitialCapacity()));
         }
 
         @Override
@@ -162,7 +166,6 @@ public class PGWireServer implements Closeable {
             if (closed) {
                 Misc.free(context);
             } else {
-                context.of(-1, null);
                 contextPool.get().push(context);
                 LOG.debug().$("pushed").$();
             }

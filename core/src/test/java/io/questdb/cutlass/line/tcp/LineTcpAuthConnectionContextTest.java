@@ -334,13 +334,13 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, false, true, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
-            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
+            recvBuffer = "weather,location=us\\ midwest temperature=82 1465839830100400200\n";
             handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected);
         });
     }
@@ -351,13 +351,13 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, true, true, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
-            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
+            recvBuffer = "weather,location=us\\ midwest temperature=82 1465839830100400200\n";
             handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected);
         });
     }
@@ -368,13 +368,13 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, true, true, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
-            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
+            recvBuffer = "weather,location=us\\ midwest temperature=82 1465839830100400200\n";
             handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected);
         });
     }
@@ -394,13 +394,13 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             }
 
             Assert.assertFalse(disconnected);
-            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
+            recvBuffer = "weather,location=us\\ midwest temperature=82 1465839830100400200\n";
             handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected);
         });
     }
@@ -553,7 +553,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             case QUEUE_FULL:
                 return true;
             case NEEDS_DISCONNECT:
-                context.getDispatcher().disconnect(context);
+                context.getDispatcher().disconnect(context, IODispatcher.DISCONNECT_REASON_PROTOCOL_VIOLATION);
                 return false;
         }
         return false;
@@ -702,13 +702,18 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public void disconnect(LineTcpConnectionContext context) {
+            public void disconnect(LineTcpConnectionContext context, int reason) {
                 disconnected = true;
             }
 
             @Override
             public boolean run(int workerId) {
                 return false;
+            }
+
+            @Override
+            public boolean isListening() {
+                return true;
             }
         };
         Assert.assertNull(context.getDispatcher());

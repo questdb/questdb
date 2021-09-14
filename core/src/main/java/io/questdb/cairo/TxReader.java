@@ -24,9 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.Mappable;
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
@@ -57,7 +56,7 @@ public class TxReader implements Closeable {
     protected int partitionBy;
     protected long partitionTableVersion;
     protected int attachedPartitionsSize = 0;
-    private MappedReadOnlyMemory roTxMem;
+    private MemoryMR roTxMem;
 
     public TxReader(FilesFacade ff, Path path, int partitionBy) {
         this.ff = ff;
@@ -65,7 +64,7 @@ public class TxReader implements Closeable {
         this.path.put(path);
         this.rootLen = path.length();
         try {
-            roTxMem = (MappedReadOnlyMemory) openTxnFile(this.ff, this.path, rootLen);
+            roTxMem = openTxnFile(this.ff, this.path, rootLen);
             this.timestampFloorMethod = partitionBy != PartitionBy.NONE ? getPartitionFloor(partitionBy) : null;
             this.partitionBy = partitionBy;
         } catch (Throwable e) {
@@ -183,7 +182,7 @@ public class TxReader implements Closeable {
     public void readSymbolCounts(IntList symbolCountSnapshot) {
         int symbolMapCount = roTxMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT);
         if (symbolMapCount > 0) {
-            // No need to call grow here, file mapped beyond symbol section already
+            // No need to call setSize here, file mapped beyond symbol section already
             // while reading attached partitions
             for (int i = 0; i < symbolMapCount; i++) {
                 symbolCountSnapshot.add(roTxMem.getInt(TableUtils.getSymbolWriterIndexOffset(i)));
@@ -226,7 +225,7 @@ public class TxReader implements Closeable {
     }
 
     private void copyAttachedPartitionsFromTx(int txAttachedPartitionsSize, int max) {
-        roTxMem.grow(getPartitionTableIndexOffset(symbolsCount, txAttachedPartitionsSize));
+        roTxMem.extend(getPartitionTableIndexOffset(symbolsCount, txAttachedPartitionsSize));
         attachedPartitions.setPos(txAttachedPartitionsSize);
         for (int i = max; i < txAttachedPartitionsSize; i++) {
             attachedPartitions.setQuick(i, roTxMem.getLong(getPartitionTableIndexOffset(symbolsCount, i)));
@@ -288,10 +287,10 @@ public class TxReader implements Closeable {
         }
     }
 
-    protected Mappable openTxnFile(FilesFacade ff, Path path, int rootLen) {
+    protected MemoryMR openTxnFile(FilesFacade ff, Path path, int rootLen) {
         try {
             if (this.ff.exists(this.path.concat(TXN_FILE_NAME).$())) {
-                return new SinglePageMappedReadOnlyPageMemory(ff, path, ff.length(path));
+                return Vm.getMRInstance(ff, path, ff.length(path));
             }
             throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(this.path);
         } finally {
