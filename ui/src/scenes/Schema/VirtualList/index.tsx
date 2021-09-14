@@ -36,6 +36,7 @@ const VirtualList = <DataType,>({ items, itemRenderer }: Props<DataType>) => {
         <div
           style={{
             height: listViewportHeight * 3,
+            width: "100%",
             position: "absolute",
             top: visibleRange[0] * 30,
           }}
