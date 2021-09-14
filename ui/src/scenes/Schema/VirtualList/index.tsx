@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef, useState } from "react"
+import React, { useCallback, useLayoutEffect, useRef, useState } from "react"
 
 type Props<DataType> = {
   items: DataType[]
@@ -10,21 +10,27 @@ const VirtualList = <DataType,>({ items, itemRenderer }: Props<DataType>) => {
   const [visibleRange, setVisibleRange] = useState<[number, number]>([0, 0])
   const [listViewportHeight, setListViewportHeight] = useState(0)
 
+  const updateFirstVisibleElement = useCallback(
+    (index: number) => {
+      setVisibleRange([index, index + listViewportHeight / 30])
+    },
+    [listViewportHeight],
+  )
+
   useLayoutEffect(() => {
     if (elementRef.current) {
       setListViewportHeight(elementRef.current.offsetHeight)
+      updateFirstVisibleElement(0)
     }
-  }, [elementRef])
+  }, [elementRef, updateFirstVisibleElement])
 
-  function handleScroll(e: React.UIEvent<HTMLDivElement>) {
-    const firstElementIndex = Math.floor(e.currentTarget.scrollTop / 30)
-    const lastElementIndex = Math.floor(
-      (e.currentTarget.scrollTop + listViewportHeight) / 30,
-    )
-    setVisibleRange([firstElementIndex, lastElementIndex])
-  }
-
-  console.log(listViewportHeight)
+  const handleScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      const firstElementIndex = Math.floor(e.currentTarget.scrollTop / 30)
+      updateFirstVisibleElement(firstElementIndex)
+    },
+    [updateFirstVisibleElement],
+  )
 
   return (
     <div
