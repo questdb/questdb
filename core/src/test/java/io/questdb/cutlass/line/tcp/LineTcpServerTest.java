@@ -387,6 +387,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
     }
 
     @Test
+    // flapping test
     public void testUnauthenticated() throws Exception {
         test(null, null, 200, 1_000, false);
     }

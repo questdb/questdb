@@ -749,7 +749,7 @@ public class SecurityTest extends AbstractGriffinTest {
                     " timestamp_sequence(0, 1000000000) ts2" +
                     " from long_sequence(10)) timestamp(ts2)", sqlExecutionContext);
             try {
-                compiler.setFullSatJoins(true);
+                compiler.setFullFatJoins(true);
                 assertQuery(
                         "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
                         "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
@@ -767,7 +767,7 @@ public class SecurityTest extends AbstractGriffinTest {
                     Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
                 }
             } finally {
-                compiler.setFullSatJoins(false);
+                compiler.setFullFatJoins(false);
             }
         });
     }
@@ -787,7 +787,7 @@ public class SecurityTest extends AbstractGriffinTest {
                     " timestamp_sequence(0, 1000000000) ts2" +
                     " from long_sequence(10)) timestamp(ts2)", sqlExecutionContext);
             try {
-                compiler.setFullSatJoins(true);
+                compiler.setFullFatJoins(true);
                 assertQuery(
                         "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
                         "select sym1, sym2 from tb1 outer join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
@@ -805,7 +805,7 @@ public class SecurityTest extends AbstractGriffinTest {
                     Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
                 }
             } finally {
-                compiler.setFullSatJoins(false);
+                compiler.setFullFatJoins(false);
             }
         });
     }

@@ -11,7 +11,7 @@ jobs:
           # No PR - cannot detect changed files, default to true
           echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
         else
-          CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PR_ID/files -s  | grep -oP 'filename": "core/*\/\K[^.]+')
+          CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PR_ID/files -s  | grep -oP 'filename": "(core|benchmarks)/*\/\K[^.]+')
           if [ -z "$CHANGED_CORE_FILES" ]
             then
               echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]false"
