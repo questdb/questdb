@@ -1131,7 +1131,7 @@ public class TableWriter implements Closeable {
         for (int i = 0; i < columnCount; i++) {
             getPrimaryColumn(i).truncate();
             MemoryMA mem = getSecondaryColumn(i);
-            if (mem != null) {
+            if (mem != null && mem.isOpen()) {
                 mem.truncate();
                 mem.putLong(0);
             }
@@ -3101,6 +3101,7 @@ public class TableWriter implements Closeable {
             MemoryARW mem2 = o3Columns.getQuick(getSecondaryColumnIndex(i));
             if (mem2 != null) {
                 mem2.jumpTo(0);
+                mem2.putLong(0);
             }
         }
         row.activeColumns = o3Columns;
