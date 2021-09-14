@@ -40,8 +40,8 @@ import io.questdb.std.ObjList;
 public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        // Geohashes are of different lenghts
-        // and can be casted to lower precision
+        // GeoHashes are of different lengths
+        // and can be cast to lower precision
         // for example cast(cast('questdb' as geohash(6c)) as geohash(5c))
         return "cast(Gg)";
     }

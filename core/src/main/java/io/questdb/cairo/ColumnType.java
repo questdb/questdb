@@ -86,7 +86,7 @@ public final class ColumnType {
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     // For function overload the priority is taken from left to right
     private static final short[][] overloadPriority = {
-            /* 0 UNDEFINED  */  {DOUBLE, FLOAT, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
+            /* 0 UNDEFINED  */  {DOUBLE, FLOAT, STRING, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
             /* 1  BOOLEAN   */, {BOOLEAN}
             /* 2  BYTE      */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
             /* 3  SHORT     */, {SHORT, INT, LONG, FLOAT, DOUBLE}
