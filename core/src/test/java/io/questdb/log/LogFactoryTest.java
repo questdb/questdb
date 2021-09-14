@@ -239,6 +239,7 @@ public class LogFactoryTest {
         }
     }
 
+    // todo: this test flaps
     @Test
     public void testRollingFileWriterByDay() throws Exception {
         testRollOnDate("mylog-${date:yyyy-MM-dd}.log", 24 * 60000, "day", "mylog-2015-05");

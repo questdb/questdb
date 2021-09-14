@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
 import io.questdb.cutlass.line.LineProtoSender;
+import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 
 public class LineUdpInsertLongGeoHashTest extends LineUdpInsertGeoHashTest {
@@ -67,8 +68,10 @@ public class LineUdpInsertLongGeoHashTest extends LineUdpInsertGeoHashTest {
                         sender.metric(tableName).field("carrots", "4").$(2000000000L);
                         sender.metric(tableName).field("carrots", "j").$(3000000000L);
                         sender.metric(tableName).field("onions", "hey").$(5000000000L);
+                        sender.metric(tableName).field("carrots", "k").$(4000000000L);
                         sender.flush();
                     }
+                    Os.sleep(50); // let things settle
                     assertReader(tableName,
                             "geohash\ttimestamp\tcarrots\tonions\n" +
                                     "\t1970-01-01T00:00:01.000000Z\t9\t\n" +
