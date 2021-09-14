@@ -1133,6 +1133,7 @@ public class TableWriter implements Closeable {
             MemoryMA mem = getSecondaryColumn(i);
             if (mem != null) {
                 mem.truncate();
+                mem.putLong(0);
             }
         }
 
@@ -1275,7 +1276,7 @@ public class TableWriter implements Closeable {
                     mem1Size = len == -1 ? offset + Long.BYTES : offset + len + Long.BYTES;
                     if (ensureFileSize) {
                         mem1.allocate(mem1Size);
-                        mem2.allocate(actualPosition * Long.BYTES);
+                        mem2.allocate(actualPosition * Long.BYTES + Long.BYTES);
                     }
                     mem1.jumpTo(mem1Size);
                     mem2.jumpTo(actualPosition * Long.BYTES + Long.BYTES);
@@ -1289,7 +1290,7 @@ public class TableWriter implements Closeable {
                     mem1Size = len == -1 ? offset + Integer.BYTES : offset + len * Character.BYTES + Integer.BYTES;
                     if (ensureFileSize) {
                         mem1.allocate(mem1Size);
-                        mem2.allocate(actualPosition * Long.BYTES);
+                        mem2.allocate(actualPosition * Long.BYTES + Long.BYTES);
                     }
                     mem1.jumpTo(mem1Size);
                     mem2.jumpTo(actualPosition * Long.BYTES + Long.BYTES);
@@ -1305,6 +1306,7 @@ public class TableWriter implements Closeable {
         } else {
             mem1.jumpTo(0);
             if (mem2 != null) {
+                mem2.jumpTo(0);
                 mem2.putLong(0);
             }
         }
@@ -1370,13 +1372,19 @@ public class TableWriter implements Closeable {
                 nullers.add(() -> mem1.putChar((char) 0));
                 break;
             case ColumnType.STRING:
-                nullers.add(() -> mem2.putLong(mem1.putNullStr()));
+                nullers.add(() -> {
+                    mem1.putNullStr();
+                    mem2.putLong(mem1.getAppendOffset());
+                });
                 break;
             case ColumnType.SYMBOL:
                 nullers.add(() -> mem1.putInt(SymbolTable.VALUE_IS_NULL));
                 break;
             case ColumnType.BINARY:
-                nullers.add(() -> mem2.putLong(mem1.putNullBin()));
+                nullers.add(() -> {
+                    mem1.putNullBin();
+                    mem2.putLong(mem1.getAppendOffset());
+                });
                 break;
             case ColumnType.GEOBYTE:
                 nullers.add(() -> mem1.putByte(GeoHashes.BYTE_NULL));
@@ -1606,6 +1614,7 @@ public class TableWriter implements Closeable {
                     MemoryMA mem = getSecondaryColumn(i);
                     if (mem != null) {
                         mem.jumpTo(0);
+                        mem.putLong(0);
                     }
                 }
             }
@@ -3631,6 +3640,12 @@ public class TableWriter implements Closeable {
                 indexers.getQuick(columnIndex).configureFollowerAndWriter(configuration, path.trimTo(plen), name, getPrimaryColumn(columnIndex), txFile.getTransientRowCount());
             }
 
+            // configure append position for variable length columns
+            MemoryMA mem2 = getSecondaryColumn(columnCount - 1);
+            if (mem2 != null) {
+                mem2.putLong(0);
+            }
+
         } finally {
             path.trimTo(rootLen);
         }
@@ -4734,12 +4749,14 @@ public class TableWriter implements Closeable {
         }
 
         public void putBin(int index, long address, long len) {
-            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putBin(address, len));
+            getPrimaryColumn(index).putBin(address, len);
+            getSecondaryColumn(index).putLong(getPrimaryColumn(index).getAppendOffset());
             notNull(index);
         }
 
         public void putBin(int index, BinarySequence sequence) {
-            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putBin(sequence));
+            getPrimaryColumn(index).putBin(sequence);
+            getSecondaryColumn(index).putLong(getPrimaryColumn(index).getAppendOffset());
             notNull(index);
         }
 

@@ -1047,7 +1047,7 @@ public class TableWriterTest extends AbstractCairoTest {
             r.putInt(0, rnd.nextInt());
             r.cancel();
 
-            Assert.assertEquals(0L, writer.columns.getQuick(21).getAppendOffset());
+            Assert.assertEquals(Long.BYTES, writer.columns.getQuick(21).getAppendOffset());
 
             // add more data including updating new column
             ts = populateTable2(writer, rnd, N, ts, interval);
