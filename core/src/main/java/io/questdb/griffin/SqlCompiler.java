@@ -833,16 +833,13 @@ public class SqlCompiler implements Closeable {
         return executor.execute(executionContext);
     }
 
-    public long executeAlterCommand(@NotNull CompiledQuery compiledQuery, @NotNull SqlExecutionContext executionContext) throws SqlException {
+    public void executeAlterCommand(@NotNull CompiledQuery compiledQuery, @NotNull SqlExecutionContext executionContext) throws SqlException {
         AlterStatement alterStatement = compiledQuery.getAlterStatement();
         if (alterStatement != null) {
-            try(TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), alterStatement.getTableName(), "Alter table statement")) {
+            try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), alterStatement.getTableName(), "Alter table statement")) {
                 alterStatement.apply(writer);
-            } catch (EntryUnavailableException ex) {
-                return engine.pubTableWriterCommand(alterStatement);
             }
         }
-        return -1L;
     }
 
     public CairoEngine getEngine() {
@@ -993,7 +990,7 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'set' or 'rename' expected");
                 }
             } catch (CairoException e) {
-                LOG.info().$("could not alter table [table=").$(name).$(", ex=").$((Sinkable) e).$();
+                LOG.info().$("could not alter table [table=").$(name).$(", ex=").$(e).$();
                 throw SqlException.$(lexer.lastTokenPosition(), "table '").put(name).put("' could not be altered: ").put(e);
             }
         } else if (SqlKeywords.isSystemKeyword(tok)) {
@@ -1831,7 +1828,7 @@ public class SqlCompiler implements Closeable {
                         writer = createTableFromCursor(createTableModel, executionContext);
                     }
                 } catch (CairoException e) {
-                    LOG.error().$("could not create table [error=").$((Sinkable) e).$(']').$();
+                    LOG.error().$("could not create table [error=").$(e).$(']').$();
                     throw SqlException.$(name.position, "Could not create table. See log for details.");
                 }
             } finally {
@@ -2229,7 +2226,7 @@ public class SqlCompiler implements Closeable {
                 //opening the writer will attempt to fix/repair the table. The writer is now opened inside migrateNullFlag()
                 engine.migrateNullFlag(executionContext.getCairoSecurityContext(), tok);
             } catch (CairoException e) {
-                LOG.info().$("table busy [table=").$(tok).$(", e=").$((Sinkable) e).$(']').$();
+                LOG.info().$("table busy [table=").$(tok).$(", e=").$(e).$(']').$();
                 throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' is busy");
             }
             tok = SqlUtil.fetchNext(lexer);
@@ -2462,7 +2459,7 @@ public class SqlCompiler implements Closeable {
                     try {
                         tableWriters.add(engine.getWriter(executionContext.getCairoSecurityContext(), tok, "truncateTables"));
                     } catch (CairoException e) {
-                        LOG.info().$("table busy [table=").$(tok).$(", e=").$((Sinkable) e).$(']').$();
+                        LOG.info().$("table busy [table=").$(tok).$(", e=").$(e).$(']').$();
                         throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
                     }
                     tok = SqlUtil.fetchNext(lexer);

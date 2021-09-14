@@ -39,24 +39,27 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.MCSequence;
+import io.questdb.mp.RingQueue;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.*;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
 public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
-    private static final LocalValue<FanOut> writerEventFanOut = new LocalValue<>();
-    private static final LocalValue<MCSequence> writerEventConsumerSequence = new LocalValue<>();
+
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessor.class);
     protected final ObjList<QueryExecutor> queryExecutors = new ObjList<>();
     private final SqlCompiler compiler;
+    private final CairoEngine engine;
     private final JsonQueryProcessorConfiguration configuration;
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final Path path = new Path();
@@ -92,6 +95,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     ) {
         this.configuration = configuration;
         this.compiler = sqlCompiler;
+        this.engine = engine;
         final QueryExecutor sendConfirmation = JsonQueryProcessor::sendConfirmation;
         this.queryExecutors.extendAndSet(CompiledQuery.SELECT, this::executeNewSelect);
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
@@ -346,11 +350,22 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CompiledQuery cc,
             CharSequence keepAliveHeader
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, SqlException {
-        long correlationId = compiler.executeAlterCommand(cc, sqlExecutionContext);
-        if (correlationId >= 0) {
+        try {
+            compiler.executeAlterCommand(cc, sqlExecutionContext);
+        } catch (EntryUnavailableException ex) {
             state.info().$("writer busy, will pass execution to writer owner [table=").$(cc.getAlterStatement().getTableName()).I$();
+            final FanOut writerEventFanOut = engine.getMessageBus().getTableWriterEventFanOut();
+            RingQueue<TableWriterTask> tableWriterEventQueue = engine.getMessageBus().getTableWriterEventQueue();
+            MCSequence tableWriterEventSeq = new MCSequence(writerEventFanOut.current(), tableWriterEventQueue.getCapacity());
+            writerEventFanOut.and(tableWriterEventSeq);
+            long commandId = engine.pubTableWriterCommand(cc.getAlterStatement());
+            waitWriterEvent(tableWriterEventSeq, tableWriterEventQueue, commandId);
         }
         sendConfirmation(state, cc, keepAliveHeader);
+    }
+
+    private void waitWriterEvent(MCSequence tableWriterEventSeq, long commandId) {
+
     }
 
     private void executeInsert(
@@ -475,5 +490,4 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 CharSequence keepAliveHeader
         ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException;
     }
-
 }
