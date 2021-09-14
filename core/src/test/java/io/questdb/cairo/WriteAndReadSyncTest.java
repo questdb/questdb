@@ -1,0 +1,116 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2020 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.Path;
+import org.junit.Assert;
+import org.junit.Test;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
+
+public class WriteAndReadSyncTest extends AbstractCairoTest {
+
+    private final static Log LOG = LogFactory.getLog(WriteAndReadSyncTest.class);
+
+    @Test
+    public void testVanilla() throws IOException, BrokenBarrierException, InterruptedException {
+        final SOCountDownLatch readLatch = new SOCountDownLatch(1);
+        final File file = temp.newFile();
+        try (Path path = new Path()) {
+            path.of(file.getAbsolutePath()).$();
+            long pageSize = Files.PAGE_SIZE;
+            long writeCount = pageSize / Long.BYTES;
+            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+
+            final long fd = TableUtils.openRW(ff, path, LOG);
+            try {
+                long mem = TableUtils.mapRW(ff, fd, pageSize);
+                for (int i = 0; i < writeCount; i++) {
+                    Unsafe.getUnsafe().putLong(mem + i * 8L, i);
+                }
+                ff.munmap(mem, pageSize);
+            } finally {
+                ff.close(fd);
+            }
+
+
+            // barrier to make sure both threads kick in at the same time;
+            final CyclicBarrier barrier = new CyclicBarrier(2);
+            final AtomicInteger errorCount = new AtomicInteger();
+
+            // write map page + extra longs
+
+            int extraCount = 16;
+            // have this thread write another page
+            new Thread(() -> {
+                try {
+                    barrier.await();
+                    long fd1 = TableUtils.openRW(ff, path, LOG);
+                    // over allocate
+                    long mem = TableUtils.mapRW(ff, fd1, pageSize * 3);
+                    for (int i = 0; i < writeCount + extraCount; i++) {
+                        Unsafe.getUnsafe().putLong(mem + pageSize + i * 8L, writeCount + i);
+                    }
+                    readLatch.countDown();
+                    ff.truncate(fd1, pageSize * 2 + extraCount * 8);
+                } catch (Throwable e) {
+                    errorCount.incrementAndGet();
+                    e.printStackTrace();
+
+                }
+            }).start();
+
+            barrier.await();
+            readLatch.await();
+
+            long fd2 = TableUtils.openRW(ff, path, LOG);
+            try {
+                long mem = TableUtils.mapRW(ff, fd2, pageSize * 2 + extraCount * 8);
+                try {
+                    long readCount = writeCount * 2 + extraCount;
+                    for (int i = 0; i < readCount; i++) {
+                        Assert.assertEquals(i, Unsafe.getUnsafe().getLong(mem + i * 8L));
+                    }
+                } finally {
+                    ff.munmap(mem, pageSize * 2 + extraCount * 8);
+                }
+            } finally {
+                ff.close(fd2);
+            }
+            Assert.assertEquals(0, errorCount.get());
+        }
+    }
+}
