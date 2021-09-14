@@ -833,13 +833,16 @@ public class SqlCompiler implements Closeable {
         return executor.execute(executionContext);
     }
 
-    public void executeAlterCommand(@NotNull CompiledQuery compiledQuery, @NotNull SqlExecutionContext executionContext) throws SqlException {
+    public long executeAlterCommand(@NotNull CompiledQuery compiledQuery, @NotNull SqlExecutionContext executionContext) throws SqlException {
         AlterStatement alterStatement = compiledQuery.getAlterStatement();
         if (alterStatement != null) {
             try(TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), alterStatement.getTableName(), "Alter table statement")) {
                 alterStatement.apply(writer);
+            } catch (EntryUnavailableException ex) {
+                return engine.pubTableWriterCommand(alterStatement);
             }
         }
+        return -1L;
     }
 
     public CairoEngine getEngine() {

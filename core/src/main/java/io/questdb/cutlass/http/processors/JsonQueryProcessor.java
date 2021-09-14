@@ -37,6 +37,8 @@ import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.FanOut;
+import io.questdb.mp.MCSequence;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -50,6 +52,8 @@ import java.io.Closeable;
 
 public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
+    private static final LocalValue<FanOut> writerEventFanOut = new LocalValue<>();
+    private static final LocalValue<MCSequence> writerEventConsumerSequence = new LocalValue<>();
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessor.class);
     protected final ObjList<QueryExecutor> queryExecutors = new ObjList<>();
     private final SqlCompiler compiler;
@@ -342,11 +346,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CompiledQuery cc,
             CharSequence keepAliveHeader
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, SqlException {
-        try {
-            compiler.executeAlterCommand(cc, sqlExecutionContext);
-        } catch (EntryUnavailableException ex) {
+        long correlationId = compiler.executeAlterCommand(cc, sqlExecutionContext);
+        if (correlationId >= 0) {
             state.info().$("writer busy, will pass execution to writer owner [table=").$(cc.getAlterStatement().getTableName()).I$();
-
         }
         sendConfirmation(state, cc, keepAliveHeader);
     }

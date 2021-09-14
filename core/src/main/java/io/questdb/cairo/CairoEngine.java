@@ -44,6 +44,7 @@ import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class CairoEngine implements Closeable, WriterSource {
     public static final String BUSY_READER = "busyReader";
@@ -61,6 +62,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final long tableIdMemSize;
     private long tableIdFd = -1;
     private long tableIdMem = 0;
+    private final AtomicLong alterCommandCommandCorrelationId = new AtomicLong();
 
     public CairoEngine(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -183,16 +185,19 @@ public class CairoEngine implements Closeable, WriterSource {
         return configuration;
     }
 
-    public void pubTableWriterTask(AlterStatement alterTableStatement) {
+    public long pubTableWriterCommand(AlterStatement alterTableStatement) {
         CharSequence tableName = alterTableStatement.getTableName();
-        long pubCursor = messageBus.getTableWriterEventPubSeq().next();
+        long pubCursor = messageBus.getTableWriterCommandPubSeq().next();
         if (pubCursor > -1) {
-            final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
-            alterTableStatement.serialize(event);
+            final TableWriterTask command = tableWriterCmdQueue.get(pubCursor);
+            long correlationId = alterCommandCommandCorrelationId.incrementAndGet();
+            command.setInstance(correlationId);
+            alterTableStatement.serialize(command);
             messageBus.getTableWriterEventPubSeq().done(pubCursor);
             LOG.info()
                     .$("published ASYNC writer ALTER TABLE task [table=").$(tableName)
                     .I$();
+            return correlationId;
         } else {
             LOG.error()
                     .$("could not publish writer task [table=").$(tableName)

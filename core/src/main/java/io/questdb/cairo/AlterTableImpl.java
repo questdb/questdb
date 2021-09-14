@@ -30,6 +30,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
 
 public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnStatement, AlterStatementRenameColumnStatement, AlterStatementDropColumnStatement, AlterStatementChangePartitionStatement, Mutable {
@@ -38,8 +39,11 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
     private String tableName;
     private int tableId;
     private int tableNamePosition;
+    private CharSequenceList charSequenceList;
+
+    private final ObjCharSequenceList objCharList = new ObjCharSequenceList();
+    private final DirectCharSequenceList directCharList = new DirectCharSequenceList();
     private final LongList longList = new LongList();
-    private final ObjList<CharSequence> nameList = new ObjList<>();
     private final ExceptionSinkAdapter exceptionSinkAdapter = new ExceptionSinkAdapter();
 
     @Override
@@ -105,7 +109,9 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
     @Override
     public void clear() {
         command = DO_NOTHING;
-        nameList.clear();
+        objCharList.clear();
+        directCharList.clear();
+        charSequenceList = objCharList;
         longList.clear();
     }
 
@@ -114,10 +120,36 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
         return tableName;
     }
 
+    public void deserialize(TableWriterTask event) {
+        clear();
+
+        tableName = event.getTableName();
+        long readPtr = event.getData();
+        command = Unsafe.getUnsafe().getShort(readPtr += 2);
+        tableNamePosition = Unsafe.getUnsafe().getInt(readPtr += 4);
+        int longSize = Unsafe.getUnsafe().getInt(readPtr += 4);
+        for(int i = 0; i < longSize; i++) {
+            longList.add(Unsafe.getUnsafe().getLong(readPtr += 8));
+        }
+
+        directCharList.of(readPtr);
+        charSequenceList = directCharList;
+    }
+
     @Override
     public void serialize(TableWriterTask event) {
         event.of(TableWriterTask.TSK_ALTER_TABLE, tableId, tableName);
         event.put(command);
+        event.put(tableNamePosition);
+        event.put(longList.size());
+        for(int i = 0, n = longList.size(); i < n; i++) {
+            event.put(longList.getQuick(i));
+        }
+
+        event.put(objCharList.size());
+        for(int i = 0, n = objCharList.size(); i < n; i++) {
+            event.put(objCharList.getStrA(i));
+        }
     }
 
     public AlterStatement doNothing() {
@@ -140,7 +172,7 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
 
     @Override
     public AlterStatementAddColumnStatement ofAddColumn(CharSequence columnName, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity) {
-        this.nameList.add(columnName);
+        this.objCharList.add(columnName);
         this.longList.add(type);
         this.longList.add(symbolCapacity);
         this.longList.add(cache ? 1 : -1);
@@ -154,7 +186,7 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;
-        this.nameList.add(columnName);
+        this.objCharList.add(columnName);
         this.longList.add(indexValueBlockSize);
         return this;
     }
@@ -172,7 +204,7 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;
-        this.nameList.add(columnName);
+        this.objCharList.add(columnName);
         return this;
     }
 
@@ -183,14 +215,14 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
 
     @Override
     public AlterStatementRenameColumnStatement ofRenameColumn(CharSequence columnName, CharSequence newName) {
-        this.nameList.add(columnName);
-        this.nameList.add(newName);
+        this.objCharList.add(columnName);
+        this.objCharList.add(newName);
         return null;
     }
 
     @Override
     public AlterStatementDropColumnStatement ofDropColumn(CharSequence columnName) {
-        this.nameList.add(columnName);
+        this.objCharList.add(columnName);
         return this;
     }
 
@@ -215,7 +247,7 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;
-        this.nameList.add(columnName);
+        this.objCharList.add(columnName);
         return this;
     }
 
@@ -245,8 +277,8 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
 
     private void applyAddColumn(TableWriter tableWriter) throws SqlException {
         int lParam = 0;
-        for (int i = 0, n = nameList.size(); i < n; i++) {
-            CharSequence columnName = nameList.get(i);
+        for (int i = 0, n = charSequenceList.size(); i < n; i++) {
+            CharSequence columnName = charSequenceList.getStrA(i);
             int type = (int) longList.get(lParam++);
             int symbolCapacity = (int) longList.get(lParam++);
             boolean symbolCacheFlag = longList.get(lParam++) > 0;
@@ -272,7 +304,7 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
     }
 
     private void applyAddIndex(TableWriter tableWriter) throws SqlException {
-        CharSequence columnName = nameList.get(0);
+        CharSequence columnName = charSequenceList.getStrA(0);
         try {
             int indexValueBlockSize = (int) longList.get(0);
             tableWriter.addIndex(columnName, indexValueBlockSize);
@@ -335,8 +367,8 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
     }
 
     private void applyDropColumn(TableWriter writer) throws SqlException {
-        for (int i = 0, n = nameList.size(); i < n; i++) {
-            CharSequence columnName = nameList.get(i);
+        for (int i = 0, n = charSequenceList.size(); i < n; i++) {
+            CharSequence columnName = charSequenceList.getStrA(i);
             RecordMetadata metadata = writer.getMetadata();
             if (metadata.getColumnIndexQuiet(columnName) == -1) {
                 throw SqlException.invalidColumn(tableNamePosition, columnName);
@@ -384,10 +416,10 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
     private void applyRenameColumn(TableWriter writer) throws SqlException {
         // To not store 2 var len fields, store only new name as CharSequence
         // and index of existing column store as
-        int i = 0, n = nameList.size();
+        int i = 0, n = charSequenceList.size();
         while (i < n) {
-            CharSequence columnName = nameList.get(i++);
-            CharSequence newName = nameList.get(i++);
+            CharSequence columnName = charSequenceList.getStrA(i++);
+            CharSequence newName = charSequenceList.getStrB(i++);
             try {
                 writer.renameColumn(columnName, newName);
             } catch (CairoException e) {
@@ -398,7 +430,7 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
     }
 
     private void applySetSymbolCache(TableWriter tableWriter, boolean isCacheOn) throws SqlException {
-        CharSequence columnName = nameList.get(0);
+        CharSequence columnName = charSequenceList.getStrA(0);
         int columnIndex = tableWriter.getMetadata().getColumnIndexQuiet(columnName);
         if (columnIndex == -1) {
             throw SqlException.invalidColumn(tableNamePosition, columnName);
@@ -435,6 +467,81 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
         public CharSink put(int c) {
             ex.put(c);
             return this;
+        }
+    }
+
+    interface CharSequenceList extends Mutable {
+        CharSequence getStrA(int i);
+        CharSequence getStrB(int i);
+        int size();
+    }
+
+    private static class ObjCharSequenceList implements CharSequenceList {
+        private final ObjList<CharSequence> strings = new ObjList<>();
+
+        public void add(CharSequence ch) {
+            strings.add(ch);
+        }
+
+        @Override
+        public void clear() {
+            strings.clear();
+        }
+
+        public CharSequence getStrA(int i) {
+            return strings.get(i);
+        }
+
+        @Override
+        public CharSequence getStrB(int i) {
+            return strings.get(i);
+        }
+
+        @Override
+        public int size() {
+            return strings.size();
+        }
+    }
+
+    private static class DirectCharSequenceList implements CharSequenceList {
+        private final LongList offsets = new LongList();
+        private final DirectCharSequence strA = new DirectCharSequence();
+        private final DirectCharSequence strB = new DirectCharSequence();
+
+        @Override
+        public void clear() {
+            offsets.clear();
+        }
+
+        public long of(long address) {
+            long initialAddress = address;
+            int size = Unsafe.getUnsafe().getInt(address += 4);
+            for(int i = 0; i < size; i++) {
+                int stringSize = Unsafe.getUnsafe().getInt(address += 4);
+                offsets.add(address, address + stringSize);
+                address += stringSize;
+            }
+            return address - initialAddress;
+        }
+
+        public CharSequence getStrA(int i) {
+            long lo = offsets.get(i * 2);
+            long hi = offsets.get(i * 2 + 1);
+            strA.of(lo, hi);
+            return strA;
+        }
+
+        @Override
+        public CharSequence getStrB(int i) {
+            long lo = offsets.get(i * 2);
+            long hi = offsets.get(i * 2 + 1);
+            strB.of(lo, hi);
+            return strB;
+        }
+
+        @Override
+        public int size() {
+            return offsets.size() / 2;
         }
     }
 }

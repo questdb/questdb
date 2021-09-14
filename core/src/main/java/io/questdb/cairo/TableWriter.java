@@ -179,6 +179,7 @@ public class TableWriter implements Closeable {
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
     private int rowActon = ROW_ACTION_OPEN_PARTITION;
+    private final AlterTableImpl alterTableStatement = new AlterTableImpl();
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot());
@@ -1256,6 +1257,29 @@ public class TableWriter implements Closeable {
         if (syncModel != null) {
             replPublishSyncEvent0(syncModel, tableId, dst, dstIP);
         }
+    }
+
+    private void processAlterTableEvent(TableWriterTask cmd, long cursor, Sequence sequence) {
+        final long dst = cmd.getInstance();
+        final long tableId = cmd.getTableId();
+        alterTableStatement.deserialize(cmd);
+        LOG.info()
+                .$("received ALTER TABLE cmd [tableName=").$(tableName)
+                .$(", tableId=").$(tableId)
+                .$(", src=").$(dst)
+                .I$();
+
+        try {
+            alterTableStatement.apply(this);
+        } catch (Throwable th) {
+
+        }
+        // release command queue slot not to hold both queues
+        sequence.done(cursor);
+        replAlterTableEvent0(alterTableStatement, tableId, dst);
+    }
+
+    private void replAlterTableEvent0(AlterTableImpl alterTableStatement, long tableId, long dst) {
     }
 
     public void rollback() {
@@ -3934,6 +3958,9 @@ public class TableWriter implements Closeable {
                 switch (cmd.getType()) {
                     case TableWriterTask.TSK_SLAVE_SYNC:
                         replPublishSyncEvent(cmd, cursor, commandSubSeq);
+                        break;
+                    case TableWriterTask.TSK_ALTER_TABLE:
+                        processAlterTableEvent(cmd, cursor, commandSubSeq);
                         break;
                     default:
                         commandSubSeq.done(cursor);
