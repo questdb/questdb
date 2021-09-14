@@ -79,13 +79,21 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
                 try {
                     barrier.await();
                     long fd1 = TableUtils.openRW(ff, path, LOG);
-                    // over allocate
-                    long mem = TableUtils.mapRW(ff, fd1, pageSize * 3);
-                    for (int i = 0; i < writeCount + extraCount; i++) {
-                        Unsafe.getUnsafe().putLong(mem + pageSize + i * 8L, writeCount + i);
+                    try {
+                        // over allocate
+                        long mem = TableUtils.mapRW(ff, fd1, pageSize * 3);
+                        try {
+                            for (int i = 0; i < writeCount + extraCount; i++) {
+                                Unsafe.getUnsafe().putLong(mem + pageSize + i * 8L, writeCount + i);
+                            }
+                        } finally {
+                            readLatch.countDown();
+                            ff.munmap(mem, pageSize * 3);
+                        }
+                        ff.truncate(fd1, pageSize * 2 + extraCount * 8);
+                    } finally {
+                        ff.close(fd1);
                     }
-                    readLatch.countDown();
-                    ff.truncate(fd1, pageSize * 2 + extraCount * 8);
                 } catch (Throwable e) {
                     errorCount.incrementAndGet();
                     e.printStackTrace();
