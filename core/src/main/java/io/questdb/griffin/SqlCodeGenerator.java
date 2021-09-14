@@ -954,7 +954,7 @@ public class SqlCodeGenerator implements Mutable {
         // 'latest by' clause takes over the filter
         model.setWhereClause(null);
 
-        if (listColumnFilterA.size() == 1) {
+        if (listColumnFilterA.size() > 0) {
             final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
             final boolean indexed = metadata.isColumnIndexed(latestByIndex);
 
@@ -1095,9 +1095,18 @@ public class SqlCodeGenerator implements Mutable {
                         columnIndexes,
                         prefixes
                 );
+            } else {
+                return new LatestByAllFilteredRecordCursorFactory(
+                        metadata,
+                        configuration,
+                        dataFrameCursorFactory,
+                        RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
+                        keyTypes,
+                        filter,
+                        columnIndexes
+                );
             }
         }
-
         return new LatestByAllFilteredRecordCursorFactory(
                 metadata,
                 configuration,
