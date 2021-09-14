@@ -3,33 +3,41 @@ import React, { useCallback, useLayoutEffect, useRef, useState } from "react"
 type Props<DataType> = {
   items: DataType[]
   itemRenderer: (item: DataType) => React.ReactNode
+  rowHeight?: number
 }
 
-const VirtualList = <DataType,>({ items, itemRenderer }: Props<DataType>) => {
+const VirtualList = <DataType,>({
+  items,
+  itemRenderer,
+  rowHeight = 40,
+}: Props<DataType>) => {
   const elementRef = useRef<HTMLDivElement>(null)
   const [visibleRange, setVisibleRange] = useState<[number, number]>([0, 0])
   const [listViewportHeight, setListViewportHeight] = useState(0)
 
-  const updateFirstVisibleElement = useCallback(
-    (index: number) => {
-      setVisibleRange([index, index + listViewportHeight / 30])
+  const updateVisibleRange = useCallback(
+    (offset: number) => {
+      const firstElementIndex = Math.floor(offset / rowHeight)
+      setVisibleRange([
+        firstElementIndex,
+        firstElementIndex + listViewportHeight / rowHeight,
+      ])
     },
-    [listViewportHeight],
+    [listViewportHeight, rowHeight],
   )
 
   useLayoutEffect(() => {
     if (elementRef.current) {
       setListViewportHeight(elementRef.current.offsetHeight)
-      updateFirstVisibleElement(0)
+      updateVisibleRange(0)
     }
-  }, [elementRef, updateFirstVisibleElement])
+  }, [elementRef, updateVisibleRange])
 
   const handleScroll = useCallback(
     (e: React.UIEvent<HTMLDivElement>) => {
-      const firstElementIndex = Math.floor(e.currentTarget.scrollTop / 30)
-      updateFirstVisibleElement(firstElementIndex)
+      updateVisibleRange(e.currentTarget.scrollTop)
     },
-    [updateFirstVisibleElement],
+    [updateVisibleRange],
   )
 
   return (
@@ -38,13 +46,13 @@ const VirtualList = <DataType,>({ items, itemRenderer }: Props<DataType>) => {
       ref={elementRef}
       style={{ height: "100%", overflowY: "scroll" }}
     >
-      <div style={{ height: 30 * items.length, position: "relative" }}>
+      <div style={{ height: rowHeight * items.length, position: "relative" }}>
         <div
           style={{
             height: listViewportHeight,
             width: "100%",
             position: "absolute",
-            top: visibleRange[0] * 30,
+            top: visibleRange[0] * rowHeight,
           }}
         >
           {items.slice(visibleRange[0], visibleRange[1]).map(itemRenderer)}
