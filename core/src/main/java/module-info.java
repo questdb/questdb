@@ -120,6 +120,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqBooleanFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqBinaryFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqGeoHashGeoHashFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqGeoHashStrFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqStrGeoHashFunctionFactory,
 
             //nullif
             io.questdb.griffin.engine.functions.eq.NullIfCharCharFunctionFactory,
@@ -205,6 +207,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.rnd.RndLongFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampSequenceFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampShuffleFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndByteCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndBinCCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory,
@@ -545,6 +549,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory,
             io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory,
+            io.questdb.griffin.engine.functions.table.TouchTableFunctionFactory,
             // first
             io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory,
 //                  Change string case
@@ -556,7 +561,8 @@ open module io.questdb {
 
             // metadata functions
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,
-
+            // geohash functions
+            io.questdb.griffin.engine.functions.geohash.GeoHashFromCoordinatesFunctionFactory,
             // bit operations
             BitwiseAndLongFunctionFactory,
             BitwiseOrLongFunctionFactory,

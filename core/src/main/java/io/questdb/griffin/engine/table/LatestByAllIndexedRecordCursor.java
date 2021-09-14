@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -45,28 +44,21 @@ import io.questdb.tasks.LatestByTask;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
+    protected final DirectLongList prefixes;
     private final int columnIndex;
-    private final int hashColumnIndex;
-    private final int hashColumnType;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     protected long indexShift = 0;
     protected long aIndex;
     protected long aLimit;
 
-    protected final DirectLongList prefixes;
-
     public LatestByAllIndexedRecordCursor(
             int columnIndex,
-            int hashColumnIndex,
-            int hashColumnType,
             @NotNull DirectLongList rows,
             @NotNull IntList columnIndexes,
             @NotNull DirectLongList prefixes
     ) {
         super(rows, columnIndexes);
         this.columnIndex = columnIndex;
-        this.hashColumnIndex = hashColumnIndex;
-        this.hashColumnType = hashColumnType;
         this.prefixes = prefixes;
     }
 
@@ -91,7 +83,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     }
 
     @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException  {
+    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
         final MessageBus bus = executionContext.getMessageBus();
         assert bus != null;
 
@@ -106,7 +98,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         final int workerCount = executionContext.getWorkerCount();
 
         final long chunkSize = (keyCount + workerCount - 1) / workerCount;
-        final int taskCount = (int)((keyCount + chunkSize - 1) / chunkSize);
+        final int taskCount = (int) ((keyCount + chunkSize - 1) / chunkSize);
 
         final long argumentsAddress = LatestByArguments.allocateMemoryArray(taskCount);
         for (long i = 0; i < taskCount; ++i) {
@@ -120,9 +112,18 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
             LatestByArguments.setRowsSize(argsAddress, 0);
         }
 
-        final long prefixesAddress = prefixes.getAddress();
-        final long prefixesCount = prefixes.size();
+        int hashColumnIndex = -1;
+        int hashColumnType = ColumnType.UNDEFINED;
 
+        long prefixesAddress = 0;
+        long prefixesCount = 0;
+
+        if(this.prefixes.size() > 2) {
+            hashColumnIndex = (int) prefixes.get(0);
+            hashColumnType = (int) prefixes.get(1);
+            prefixesAddress = prefixes.getAddress() + 2 * Long.BYTES;
+            prefixesCount = prefixes.size() - 2;
+        }
 
         DataFrame frame;
         // frame metadata is based on TableReader, which is "full" metadata
@@ -158,7 +159,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
             }
 
             // -1 must be dead case here
-            final int hashesColumnSize = ColumnType.isGeoHash(hashColumnType) ? GeoHashes.sizeOf(hashColumnType) : -1;
+            final int hashesColumnSize = ColumnType.isGeoHash(hashColumnType) ? getPow2SizeOfGeoHashType(hashColumnType) : -1;
 
             int queuedCount = 0;
             for (long i = 0; i < taskCount; ++i) {
@@ -239,6 +240,10 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         aLimit = rowCount;
         aIndex = indexShift;
         postProcessRows();
+    }
+
+    private static int getPow2SizeOfGeoHashType(int type) {
+        return 1 << ColumnType.pow2SizeOfBits(ColumnType.getGeoHashBits(type));
     }
 
     protected void postProcessRows() {

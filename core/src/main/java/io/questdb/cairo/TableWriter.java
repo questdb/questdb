@@ -27,7 +27,10 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.cairo.SymbolMapWriter.TransientSymbolCountChangeHandler;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.SqlException;
@@ -122,8 +125,8 @@ public class TableWriter implements Closeable {
     private final TxWriter txFile;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final LongList o3PartitionRemoveCandidates = new LongList();
-    private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<O3MutableAtomicInteger>(O3MutableAtomicInteger::new, 64);
-    private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<O3Basket>(O3Basket::new, 64);
+    private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<>(O3MutableAtomicInteger::new, 64);
+    private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<>(O3Basket::new, 64);
     private final TxnScoreboard txnScoreboard;
     private final StringSink o3Sink = new StringSink();
     private final NativeLPSZ o3NativeLPSZ = new NativeLPSZ();
@@ -408,6 +411,9 @@ public class TableWriter implements Closeable {
 
         // add column objects
         configureColumn(type, isIndexed);
+        if (isIndexed) {
+            populateDenseIndexerList();
+        }
 
         // increment column count
         columnCount++;
@@ -1335,7 +1341,7 @@ public class TableWriter implements Closeable {
     }
 
     private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryA mem1, MemoryA mem2) {
-        switch (ColumnType.storageTag(type)) {
+        switch (ColumnType.tagOf(type)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
                 nullers.add(() -> mem1.putByte((byte) 0));
@@ -1420,7 +1426,10 @@ public class TableWriter implements Closeable {
                     case ColumnType.LONG256:
                         // Consider Symbols as fixed, check data file size
                     case ColumnType.SYMBOL:
-                    case ColumnType.GEOHASH:
+                    case ColumnType.GEOBYTE:
+                    case ColumnType.GEOSHORT:
+                    case ColumnType.GEOINT:
+                    case ColumnType.GEOLONG:
                         attachPartitionCheckFilesMatchFixedColumn(ff, path, columnType, partitionSize);
                         break;
                     case ColumnType.STRING:
@@ -1442,8 +1451,9 @@ public class TableWriter implements Closeable {
             int typeSize = 4;
             long fileSize = ff.length(path);
             if (fileSize < partitionSize * typeSize) {
-                throw CairoException.instance(0).put("Column file row count does not match timestamp file row count. " +
-                        "Partition files inconsistent [file=")
+                throw CairoException.instance(0)
+                        .put("Column file row count does not match timestamp file row count. ")
+                        .put("Partition files inconsistent [file=")
                         .put(path)
                         .put(",expectedSize=")
                         .put(partitionSize * typeSize)
@@ -1467,8 +1477,9 @@ public class TableWriter implements Closeable {
         if (ff.exists(path)) {
             long fileSize = ff.length(path);
             if (fileSize < partitionSize << ColumnType.pow2SizeOf(columnType)) {
-                throw CairoException.instance(0).put("Column file row count does not match timestamp file row count. " +
-                        "Partition files inconsistent [file=")
+                throw CairoException.instance(0)
+                        .put("Column file row count does not match timestamp file row count. ")
+                        .put("Partition files inconsistent [file=")
                         .put(path)
                         .put(",expectedSize=")
                         .put(partitionSize << ColumnType.pow2SizeOf(columnType))
@@ -1791,7 +1802,6 @@ public class TableWriter implements Closeable {
         configureNullSetters(o3NullSetters, type, oooPrimary, oooSecondary);
         if (indexFlag) {
             indexers.extendAndSet((columns.size() - 1) / 2, new SymbolColumnIndexer());
-            populateDenseIndexerList();
         }
         refs.add(0);
     }
@@ -1822,7 +1832,6 @@ public class TableWriter implements Closeable {
             o3TimestampMem = o3Columns.getQuick(getPrimaryColumnIndex(timestampIndex));
             o3TimestampMemCpy = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE);
         }
-        populateDenseIndexerList();
     }
 
     private LongConsumer configureTimestampSetter() {
@@ -2542,7 +2551,8 @@ public class TableWriter implements Closeable {
                         final long srcOooLo = srcOoo;
                         final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
                         final long srcOooHi;
-                        final long srcOooTimestampCeil = timestampCeilMethod.ceil(o3Timestamp);
+                        // keep ceil inclusive in the interval
+                        final long srcOooTimestampCeil = timestampCeilMethod.ceil(o3Timestamp) - 1;
                         if (srcOooTimestampCeil < o3TimestampMax) {
                             srcOooHi = Vect.boundedBinarySearchIndexT(
                                     sortedTimestampsAddr,
@@ -3208,8 +3218,8 @@ public class TableWriter implements Closeable {
                     other.slash$();
                     int errno;
                     if ((errno = ff.rmdir(other)) == 0) {
-                        LOG.info().$(
-                                "purged [path=").$(other)
+                        LOG.info()
+                                .$("purged [path=").$(other)
                                 .$(", readerTxn=").$(readerTxn)
                                 .$(", readerTxnCount=").$(readerTxnCount)
                                 .$(']').$();
@@ -3588,6 +3598,7 @@ public class TableWriter implements Closeable {
 
     private void openFirstPartition(long timestamp) {
         openPartition(repairDataGaps(timestamp));
+        populateDenseIndexerList();
         setAppendPosition(txFile.getTransientRowCount(), true);
         if (performRecovery) {
             performRecovery();
@@ -3657,6 +3668,7 @@ public class TableWriter implements Closeable {
                     indexer.configureFollowerAndWriter(configuration, path, name, getPrimaryColumn(i), columnTop);
                 }
             }
+            populateDenseIndexerList();
             LOG.info().$("switched partition [path='").$(path).$("']").$();
         } catch (Throwable e) {
             distressed = true;
@@ -4486,7 +4498,7 @@ public class TableWriter implements Closeable {
             try {
                 denseIndexers.getQuick(i).refreshSourceAndIndex(lo, hi);
             } catch (CairoException e) {
-                // this is pretty severe, we hit some sort of a limit
+                // this is pretty severe, we hit some sort of limit
                 LOG.error().$("index error {").$((Sinkable) e).$('}').$();
                 throwDistressException(e);
             }
@@ -4760,6 +4772,42 @@ public class TableWriter implements Closeable {
             notNull(index);
         }
 
+        public void putGeoHash(int index, long value) {
+            int type = metadata.getColumnType(index);
+            putGeoHash0(index, value, type);
+        }
+
+        public void putGeoHashDeg(int index, double lat, double lon) {
+            int type = metadata.getColumnType(index);
+            putGeoHash0(index, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type);
+        }
+
+        public void putGeoStr(int index, CharSequence hash) {
+            long val;
+            final int type = metadata.getColumnType(index);
+            if (hash != null) {
+                final int hashLen = hash.length();
+                final int typeBits = ColumnType.getGeoHashBits(type);
+                final int charsRequired = (typeBits - 1) / 5 + 1;
+                if (hashLen < charsRequired) {
+                    val = GeoHashes.NULL;
+                } else {
+                    try {
+                        val = ColumnType.truncateGeoHashBits(
+                                GeoHashes.fromString(hash, 0, charsRequired),
+                                charsRequired * 5,
+                                typeBits
+                        );
+                    } catch (NumericException e) {
+                        val = GeoHashes.NULL;
+                    }
+                }
+            } else {
+                val = GeoHashes.NULL;
+            }
+            putGeoHash0(index, val, type);
+        }
+
         public void putInt(int index, int value) {
             getPrimaryColumn(index).putInt(value);
             notNull(index);
@@ -4840,26 +4888,6 @@ public class TableWriter implements Closeable {
             putTimestamp(index, l);
         }
 
-        public void putGeoHash(int index, long value) {
-            int type = metadata.getColumnType(index);
-            final MemoryA primaryColumn = getPrimaryColumn(index);
-            switch (ColumnType.sizeOf(type)) {
-                case 1:
-                    primaryColumn.putByte((byte)value);
-                    break;
-                case 2:
-                    primaryColumn.putShort((short) value);
-                    break;
-                case 4:
-                    primaryColumn.putInt((int) value);
-                    break;
-                default:
-                    primaryColumn.putLong(value);
-                    break;
-            }
-            notNull(index);
-        }
-
         private MemoryA getPrimaryColumn(int columnIndex) {
             return activeColumns.getQuick(getPrimaryColumnIndex(columnIndex));
         }
@@ -4870,6 +4898,25 @@ public class TableWriter implements Closeable {
 
         private void notNull(int index) {
             refs.setQuick(index, masterRef);
+        }
+
+        private void putGeoHash0(int index, long value, int type) {
+            final MemoryA primaryColumn = getPrimaryColumn(index);
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.GEOBYTE:
+                    primaryColumn.putByte((byte) value);
+                    break;
+                case ColumnType.GEOSHORT:
+                    primaryColumn.putShort((short) value);
+                    break;
+                case ColumnType.GEOINT:
+                    primaryColumn.putInt((int) value);
+                    break;
+                default:
+                    primaryColumn.putLong(value);
+                    break;
+            }
+            notNull(index);
         }
     }
 

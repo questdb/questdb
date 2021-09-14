@@ -637,14 +637,22 @@ public final class IntervalUtils {
             parseInterval(seq, lo, p, operation, out);
             long low = getEncodedPeriodLo(out, index);
             long hi = getEncodedPeriodHi(out, index);
-            replaceHiLoInterval(low, Timestamps.addPeriod(hi, type, period), operation, out);
+            hi = Timestamps.addPeriod(hi, type, period);
+            if (hi < low) {
+                throw SqlException.invalidDate(position);
+            }
+            replaceHiLoInterval(low, hi, operation, out);
             return;
         } catch (NumericException ignore) {
             // try date instead
         }
         try {
             long loMillis = TimestampFormatUtils.tryParse(seq, lo, p);
-            addHiLoInterval(loMillis, Timestamps.addPeriod(loMillis, type, period), operation, out);
+            long hiMillis = Timestamps.addPeriod(loMillis, type, period);
+            if (hiMillis < loMillis) {
+                throw SqlException.invalidDate(position);
+            }
+            addHiLoInterval(loMillis, hiMillis, operation, out);
         } catch (NumericException e) {
             throw SqlException.invalidDate(position);
         }
@@ -974,7 +982,7 @@ public final class IntervalUtils {
                                     + (day - 1) * Timestamps.DAY_MICROS,
                             Timestamps.yearMicros(year, l)
                                     + Timestamps.monthOfYearMicros(month, l)
-                                    + +(day - 1) * Timestamps.DAY_MICROS
+                                    + (day - 1) * Timestamps.DAY_MICROS
                                     + 23 * Timestamps.HOUR_MICROS
                                     + 59 * Timestamps.MINUTE_MICROS
                                     + 59 * Timestamps.SECOND_MICROS

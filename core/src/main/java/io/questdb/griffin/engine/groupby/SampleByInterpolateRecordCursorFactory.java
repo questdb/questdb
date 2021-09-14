@@ -61,10 +61,10 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     private final int timestampIndex;
     private final TimestampSampler sampler;
     private final int yDataSize;
-    private long yData;
     private final int groupByFunctionCount;
     private final int groupByScalarFunctionCount;
     private final int groupByTwoPointFunctionCount;
+    private long yData;
 
     public SampleByInterpolateRecordCursorFactory(
             CairoConfiguration configuration,
@@ -159,7 +159,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                         break;
                     default:
                         Misc.freeObjList(groupByScalarFunctions);
-                        throw SqlException.$(groupByFunctionPositions.getQuick(i), "Unsupported type: ").put(ColumnType.nameOf(function.getType()));
+                        throw SqlException.$(groupByFunctionPositions.getQuick(i), "Unsupported interpolation type: ").put(ColumnType.nameOf(function.getType()));
                 }
             } else {
                 groupByTwoPointFunctions.add(function);
@@ -207,6 +207,9 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         final Record baseRecord = baseCursor.getRecord();
         final SqlExecutionInterruptor interruptor = executionContext.getSqlExecutionInterruptor();
         try {
+            // init all record function for this cursor, in case functions require metadata and/or symbol tables
+            Function.init(recordFunctions, baseCursor, executionContext);
+
             // Collect map of unique key values.
             // using this values we will fill gaps in main
             // data before jumping to another timestamp.
@@ -404,7 +407,9 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 }
             }
 
-            return initFunctionsAndCursor(executionContext, dataMap.getCursor(), baseCursor);
+            cursor.of(baseCursor, dataMap.getCursor());
+
+            return cursor;
         } catch (Throwable e) {
             baseCursor.close();
             throw e;
@@ -475,18 +480,6 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             Unsafe.free(yData, yDataSize);
             yData = 0;
         }
-    }
-
-    @NotNull
-    protected RecordCursor initFunctionsAndCursor(
-            SqlExecutionContext executionContext,
-            RecordCursor mapCursor,
-            RecordCursor baseCursor
-    ) throws SqlException {
-        cursor.of(baseCursor, mapCursor);
-        // init all record function for this cursor, in case functions require metadata and/or symbol tables
-        Function.init(recordFunctions, baseCursor, executionContext);
-        return cursor;
     }
 
     private void interpolate(long lo, long hi, Record mapRecord, long x1, long x2, MapValue x1Value, MapValue x2value) {

@@ -39,6 +39,31 @@ public class LongFunctionTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testChar() {
+        function.getChar(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoByte() {
+        function.getGeoByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoInt() {
+        function.getGeoInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoLong() {
+        function.getGeoLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoShort() {
+        function.getGeoShort(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
         function.getBin(null);
     }
@@ -103,14 +128,14 @@ public class LongFunctionTest {
         function.getSymbol(null);
     }
 
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetSymbolB() {
+        function.getSymbolB(null);
+    }
+
     @Test
     public void testGetTimestamp() {
         Assert.assertEquals(149, function.getTimestamp(null));
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testChar() {
-        function.getChar(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -128,23 +153,8 @@ public class LongFunctionTest {
         function.getLong256B(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHash() {
-        function.getGeoHashLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashInt() {
-        function.getGeoHashInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashByte() {
-        function.getGeoHashByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashShor() {
-        function.getGeoHashShort(null);
+    @Test
+    public void testGetFloat() {
+        Assert.assertEquals(149, function.getFloat(null), 0.00001);
     }
 }

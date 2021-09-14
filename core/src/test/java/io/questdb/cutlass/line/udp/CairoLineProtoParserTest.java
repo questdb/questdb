@@ -102,9 +102,121 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCharSingleChar() throws Exception {
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("char", ColumnType.CHAR)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        assertThat("char\ttimestamp\n" +
+                        "c\t1970-01-01T00:00:00.000000Z\n",
+                "x char=\"c\"\n",
+                "x",
+                new DefaultCairoConfiguration(root) {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return new TestMicroClock(0, 0);
+                    }
+                });
+    }
+
+    @Test
+    public void testCharStringIsProvided() throws Exception {
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("char", ColumnType.CHAR)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        assertThat("char\ttimestamp\n" +
+                        "c\t1970-01-01T00:00:00.000000Z\n",
+                "x char=\"coconut\"\n",
+                "x",
+                new DefaultCairoConfiguration(root) {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return new TestMicroClock(0, 0);
+                    }
+                });
+    }
+
+    @Test
+    public void testCharNull() throws Exception {
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("char", ColumnType.CHAR)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        assertThat("char\ttimestamp\n" +
+                        "\t1970-01-01T00:00:00.000000Z\n",
+                "x char=\"\"\n",
+                "x",
+                new DefaultCairoConfiguration(root) {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return new TestMicroClock(0, 0);
+                    }
+                });
+    }
+
+    @Test
+    public void testCharMissing() throws Exception {
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("char", ColumnType.CHAR)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        assertThat("char\ttimestamp\n",
+                "x char=\n",
+                "x",
+                new DefaultCairoConfiguration(root) {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return new TestMicroClock(0, 0);
+                    }
+                });
+    }
+
+    @Test
+    public void testCharSingleQuote() throws Exception {
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("char", ColumnType.CHAR)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        assertThat("char\ttimestamp\n",
+                "x char=''\n",
+                "x",
+                new DefaultCairoConfiguration(root) {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return new TestMicroClock(0, 0);
+                    }
+                });
+    }
+
+    @Test
+    public void testBinary() throws Exception {
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("bin", ColumnType.BINARY)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        assertThat("bin\ttimestamp\n",
+                "x bin=b10101010101\n",
+                "x",
+                new DefaultCairoConfiguration(root) {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return new TestMicroClock(0, 0);
+                    }
+                });
+    }
+
+    @Test
     public void testBadDouble1() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
                 "xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
+                "\tNaN\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
                 "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
                 "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
@@ -125,6 +237,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testBadDouble2() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
+                "xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
                 "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
                 "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
@@ -133,7 +246,8 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
                 "66\tbox\t7.9\t1970-01-01T00:28:20.000000Z\n";
 
-        String lines = "x,sym2=xyz double=1.6x,int=15i,bool=true,str=\"string1\" 1500000000000\n" +  // <-- error here
+        String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\" 1500000000000\n" +
+                "x,sym2=xyz double=1.6x,int=11i,bool=false,str=\"string0\" 1500000000000\n" +  // <-- error here
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000000000\n" +
                 "y,asym1=55,asym2=box adouble=5.9 1700000000000\n" +
                 "x,sym1=row3 double=9.4,int=6i,bool=false,str=\"string3\" 1500000000000\n" +
@@ -144,9 +258,31 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBadDouble3() throws Exception {
+        final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
+                "xyz\t1.6x\t11\tfalse\tstring0\t1970-01-01T00:25:00.000000Z\t\n" +
+                "\ta\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
+                "\txxx\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+
+        final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
+                "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
+                "66\tbox\t7.9\t1970-01-01T00:28:20.000000Z\n";
+
+        String lines = "x,sym2=xyz double=1.6x,int=11i,bool=false,str=\"string0\" 1500000000000\n" +  // <-- error here, taken as symbol
+                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000000000\n" +
+                "y,asym1=55,asym2=box adouble=5.9 1700000000000\n" +
+                "x,sym1=row3 double=a,int=6i,bool=false,str=\"string3\" 1500000000000\n" +
+                "y,asym1=66,asym2=box adouble=7.9 1700000000000\n" +
+                "x,sym1=row4 double=xxx,int=91i,bool=true,str=\"string4\" 1500000000000\n";
+
+        assertMultiTable(expected1, expected2, lines);
+    }
+
+    @Test
     public void testBadInt1() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
                 "xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
+                "\t1.3\tNaN\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
                 "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
                 "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
@@ -167,6 +303,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testBadInt2() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
+                "xyz\t1.6\tNaN\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
                 "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
                 "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
@@ -188,6 +325,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     @Test
     public void testLong() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
+                "xyz\t1.6\tNaN\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
                 "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
                 "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
@@ -536,7 +674,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 @SuppressWarnings("resource")
                 TableModel model = new TableModel(configuration, "t_ilp21",
                         PartitionBy.NONE).col("event", ColumnType.SHORT).col("id", ColumnType.LONG256).col("ts", ColumnType.TIMESTAMP).col("float1", ColumnType.FLOAT)
-                                .col("int1", ColumnType.INT).col("date1", ColumnType.DATE).col("byte1", ColumnType.BYTE).timestamp()) {
+                        .col("int1", ColumnType.INT).col("date1", ColumnType.DATE).col("byte1", ColumnType.BYTE).timestamp()) {
             CairoTestUtils.create(model);
         }
         String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +

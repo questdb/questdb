@@ -28,9 +28,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Rows;
+import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
 
-public class TableReaderRecord implements Record {
+public class TableReaderRecord implements Record, Sinkable {
 
     private int columnBase;
     private long recordIndex = 0;
@@ -222,28 +223,28 @@ public class TableReaderRecord implements Record {
     }
 
     @Override
-    public byte getGeoHashByte(int col) {
+    public byte getGeoByte(int col) {
         final long offset = getAdjustedRecordIndex(col) * Byte.BYTES;
         final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
         return offset < 0 ? GeoHashes.BYTE_NULL : reader.getColumn(absoluteColumnIndex).getByte(offset);
     }
 
     @Override
-    public short getGeoHashShort(int col) {
+    public short getGeoShort(int col) {
         final long offset = getAdjustedRecordIndex(col) * Short.BYTES;
         final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
         return offset < 0 ? GeoHashes.SHORT_NULL : reader.getColumn(absoluteColumnIndex).getShort(offset);
     }
 
     @Override
-    public int getGeoHashInt(int col) {
+    public int getGeoInt(int col) {
         final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
         final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
         return offset < 0 ? GeoHashes.INT_NULL : reader.getColumn(absoluteColumnIndex).getInt(offset);
     }
 
     @Override
-    public long getGeoHashLong(int col) {
+    public long getGeoLong(int col) {
         final long offset = getAdjustedRecordIndex(col) * Long.BYTES;
         final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
         return offset < 0 ? GeoHashes.NULL : reader.getColumn(absoluteColumnIndex).getLong(offset);
@@ -278,5 +279,10 @@ public class TableReaderRecord implements Record {
     private long getAdjustedRecordIndex(int col) {
         assert col > -1 && col < reader.getColumnCount() : "Column index out of bounds: " + col + " >= " + reader.getColumnCount();
         return recordIndex - reader.getColumnTop(columnBase, col);
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("TableReaderRecord [columnBase=").put(columnBase).put(", recordIndex=").put(recordIndex).put(']');
     }
 }

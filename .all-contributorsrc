@@ -1,7 +1,8 @@
 {
   "files": [
     "README.md",
-    "i18n/README.zh-cn.md"
+    "i18n/README.zh-cn.md",
+    "i18n/README.ar-dz.md"
   ],
   "imageSize": 100,
   "commit": false,
@@ -561,6 +562,15 @@
       "contributions": [
         "ideas",
         "bug",
+        "doc"
+      ]
+    },
+    {
+      "login": "houarizegai",
+      "name": "Houari Zegai",
+      "avatar_url": "https://avatars.githubusercontent.com/houarizegai?v=4",
+      "profile": "https://github.com/houarizegai",
+      "contributions": [
         "doc"
       ]
     }

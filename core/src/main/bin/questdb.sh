@@ -29,12 +29,12 @@ export QDB_MAX_STOP_ATTEMPTS=5;
 export QDB_OS=`uname`
 
 case `uname` in
-   Darwin)
-       export PID_FIELD=3
+   Darwin|FreeBSD)
+       export PS_CMD="ps aux"
        export QDB_DEFAULT_ROOT="/usr/local/var/questdb"
        ;;
    *)
-       export PID_FIELD=2
+       export PS_CMD="ps -ef"
        export QDB_DEFAULT_ROOT="$HOME/.questdb"
        ;;
 esac
@@ -63,7 +63,7 @@ function usage {
 }
 
 function export_pid {
-    export QDB_PID=`ps -ef | grep ${QDB_PROCESS_LABEL} | grep -v grep | tr -s " " | cut -d " " -f ${PID_FIELD}`
+    export QDB_PID=`${PS_CMD} | grep ${QDB_PROCESS_LABEL} | grep -v grep | tr -s " " | cut -d " " -f 2`
 }
 
 function export_java {

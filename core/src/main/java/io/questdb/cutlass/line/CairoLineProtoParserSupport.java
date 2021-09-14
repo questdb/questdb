@@ -26,7 +26,9 @@ package io.questdb.cutlass.line;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Numbers;
@@ -40,13 +42,21 @@ public class CairoLineProtoParserSupport {
      * column type and written to column, identified by columnIndex. If value cannot be
      * cast to column type, #BadCastException is thrown.
      *
-     * @param row         table row
-     * @param columnIndex index of column to write value to
-     * @param columnType  column type value will be cast to
-     * @param value       value characters
+     * @param row            table row
+     * @param columnType     column type value will be cast to
+     * @param columnTypeMeta if columnType's tag is GeoHash it contains bits precision (low short)
+     *                       and tag size (high short negative), otherwise -1
+     * @param columnIndex    index of column to write value to
+     * @param value          value characters
      * @throws BadCastException when value cannot be cast to the give type
      */
-    public static void putValue(TableWriter.Row row, int columnType, int columnIndex, CharSequence value) throws BadCastException {
+    public static void putValue(
+            TableWriter.Row row,
+            int columnType,
+            int columnTypeMeta,
+            int columnIndex,
+            CharSequence value
+    ) throws BadCastException {
         try {
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.LONG:
@@ -76,7 +86,12 @@ public class CairoLineProtoParserSupport {
                 case ColumnType.BYTE:
                     long v = Numbers.parseLong(value, 0, value.length() - 1);
                     if (v < Byte.MIN_VALUE || v > Byte.MAX_VALUE) {
-                        throw CairoException.instance(0).put("line protocol integer is out of byte bounds [columnIndex=").put(columnIndex).put(", v=").put(v).put(']');
+                        throw CairoException.instance(0)
+                                .put("line protocol integer is out of byte bounds [columnIndex=")
+                                .put(columnIndex)
+                                .put(", v=")
+                                .put(v)
+                                .put(']');
                     }
                     row.putByte(columnIndex, (byte) v);
                     break;
@@ -84,21 +99,73 @@ public class CairoLineProtoParserSupport {
                     row.putDate(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                     break;
                 case ColumnType.LONG256:
-                    if (value.charAt(0) == '0' && value.charAt(1) == 'x') {
-                        row.putLong256(columnIndex, value, 2, value.length() - 1);
-                    } else {
-                        throw BadCastException.INSTANCE;
+                    int limit = value.length() - 1;
+                    if (value.charAt(limit) != 'i') {
+                        limit++;
                     }
+                    row.putLong256(columnIndex, value, 2, limit);
                     break;
                 case ColumnType.TIMESTAMP:
                     row.putTimestamp(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                     break;
+                case ColumnType.CHAR:
+                    row.putChar(columnIndex, value.length() == 2 ? (char) 0 : value.charAt(1)); // skip quotes
+                    break;
+                case ColumnType.GEOBYTE:
+                    row.putByte(
+                            columnIndex,  // skip quotes
+                            (byte) GeoHashes.fromStringTruncatingNl(
+                                    value,
+                                    1,
+                                    value.length() - 1,
+                                    columnTypeMeta
+                            )
+                    );
+                    break;
+                case ColumnType.GEOSHORT:
+                    row.putShort(
+                            columnIndex,
+                            (short) GeoHashes.fromStringTruncatingNl(
+                                    value,
+                                    1,
+                                    value.length() - 1,
+                                    columnTypeMeta
+                            )
+                    );
+                    break;
+                case ColumnType.GEOINT:
+                    row.putInt(
+                            columnIndex,
+                            (int) GeoHashes.fromStringTruncatingNl(
+                                    value,
+                                    1,
+                                    value.length() - 1,
+                                    columnTypeMeta
+                            )
+                    );
+                    break;
+                case ColumnType.GEOLONG:
+                    row.putLong(
+                            columnIndex,
+                            GeoHashes.fromStringTruncatingNl(
+                                    value,
+                                    1,
+                                    value.length() - 1,
+                                    columnTypeMeta
+                            )
+                    );
+                    break;
                 default:
+                    // unsupported types are ignored
                     break;
             }
         } catch (NumericException e) {
-            LOG.info().$("cast error [value=").$(value).$(", toType=").$(ColumnType.nameOf(columnType)).$(']').$();
-            throw BadCastException.INSTANCE;
+            LOG.info()
+                    .$("cast error [value=")
+                    .$(value).$(", toType=")
+                    .$(ColumnType.nameOf(columnType))
+                    .$(']')
+                    .$();
         }
     }
 
@@ -107,34 +174,53 @@ public class CairoLineProtoParserSupport {
     }
 
     public static int getValueType(CharSequence token) {
+        // method called for inbound ilp messages on each value.
+        // returning UNDEFINED makes the whole line be skipped.
+        // the goal of this method is to guess the potential type
+        // and then it will be parsed accordingly by 'putValue'.
         int len = token.length();
-        switch (token.charAt(len - 1)) {
-            case 'i':
-                if (token.charAt(1) == 'x') {
-                    return ColumnType.LONG256;
-                }
-                return ColumnType.LONG;
-            case 'e':
-                // tru(e)
-                //  fals(e)
-            case 't':
-            case 'T':
-                // t
-                // T
-            case 'f':
-            case 'F':
-                // f
-                // F
-                return ColumnType.BOOLEAN;
-            case '"':
-                if (len < 2 || token.charAt(0) != '\"') {
-                    LOG.error().$("incorrectly quoted string: ").$(token).$();
-                    return -1;
-                }
-                return ColumnType.STRING;
-            default:
-                return ColumnType.DOUBLE;
+        if (len > 0) {
+            char lastChar = token.charAt(len - 1); // see LineProtoSender.field methods
+            switch (lastChar) {
+                case 'i':
+                    if (len > 3 && token.charAt(0) == '0' && token.charAt(1) == 'x') {
+                        return ColumnType.LONG256;
+                    }
+                    return len == 1 ? ColumnType.SYMBOL : ColumnType.LONG;
+                case 'e':
+                case 'E':
+                    // tru(e)
+                    //  fals(e)
+                case 't':
+                case 'T':
+                    // t
+                    // T
+                case 'f':
+                case 'F':
+                    // f
+                    // F
+                    if (len == 1) {
+                        return lastChar != 'e' ? ColumnType.BOOLEAN : ColumnType.SYMBOL;
+                    }
+                    return SqlKeywords.isTrueKeyword(token) || SqlKeywords.isFalseKeyword(token) ?
+                            ColumnType.BOOLEAN : ColumnType.SYMBOL;
+                case '"':
+                    if (len < 2 || token.charAt(0) != '\"') {
+                        LOG.error().$("incorrectly quoted string: ").$(token).$();
+                        return ColumnType.UNDEFINED;
+                    }
+                    return ColumnType.STRING;
+                default:
+                    if (lastChar >= '0' && lastChar <= '9') {
+                        if (len > 2 && token.charAt(0) == '0' && token.charAt(1) == 'x') {
+                            return ColumnType.LONG256;
+                        }
+                        return ColumnType.DOUBLE;
+                    }
+                    return ColumnType.SYMBOL;
+            }
         }
+        return ColumnType.UNDEFINED;
     }
 
     public static boolean isTrue(CharSequence value) {

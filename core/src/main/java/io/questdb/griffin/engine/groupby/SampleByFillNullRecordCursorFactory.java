@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -100,7 +97,8 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             Function function = recordFunctions.getQuick(i);
             if (function instanceof GroupByFunction) {
-                switch (ColumnType.tagOf(function.getType())) {
+                int type = function.getType();
+                switch (ColumnType.tagOf(type)) {
                     case ColumnType.INT:
                         placeholderFunctions.add(IntConstant.NULL);
                         break;
@@ -119,8 +117,20 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
                     case ColumnType.SHORT:
                         placeholderFunctions.add(ShortConstant.ZERO);
                         break;
+                    case ColumnType.GEOBYTE:
+                        placeholderFunctions.add(GeoByteConstant.NULL);
+                        break;
+                    case ColumnType.GEOSHORT:
+                        placeholderFunctions.add(GeoShortConstant.NULL);
+                        break;
+                    case ColumnType.GEOINT:
+                        placeholderFunctions.add(GeoIntConstant.NULL);
+                        break;
+                    case ColumnType.GEOLONG:
+                        placeholderFunctions.add(GeoLongConstant.NULL);
+                        break;
                     default:
-                        throw SqlException.$(recordFunctionPositions.getQuick(i), "Unsupported type: ").put(ColumnType.nameOf(function.getType()));
+                        throw SqlException.$(recordFunctionPositions.getQuick(i), "Unsupported type: ").put(ColumnType.nameOf(type));
                 }
             } else {
                 placeholderFunctions.add(function);

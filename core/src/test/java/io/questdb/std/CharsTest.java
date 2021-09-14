@@ -62,6 +62,15 @@ public class CharsTest {
     }
 
     @Test
+    public void testIsOnlyDecimals() {
+        Assert.assertTrue(Chars.isOnlyDecimals("9876543210123456789"));
+        Assert.assertFalse(Chars.isOnlyDecimals(""));
+        Assert.assertFalse(Chars.isOnlyDecimals(" "));
+        Assert.assertFalse(Chars.isOnlyDecimals("99 "));
+        Assert.assertFalse(Chars.isOnlyDecimals("987654321a123456789"));
+    }
+
+    @Test
     public void testNameFromPath() {
         StringBuilder name = new StringBuilder();
         name.append(separator).append("xyz").append(separator).append("dir1").append(separator).append("dir2").append(separator).append("this is my name");

@@ -168,6 +168,83 @@ public class GenericLexerTest {
     }
 
     @Test
+    public void testBrokenSingleQuotedToken1() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("#1234'");
+        Assert.assertEquals("#1234", ts.next().toString());
+        Assert.assertEquals("'", ts.next().toString());
+
+        ts.of("#1234\"");
+        Assert.assertEquals("#1234", ts.next().toString());
+        Assert.assertEquals("\"", ts.next().toString());
+
+        ts.of("#1234`");
+        Assert.assertEquals("#1234", ts.next().toString());
+        Assert.assertEquals("`", ts.next().toString());
+    }
+
+    @Test
+    public void testBrokenSingleQuotedToken2() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("'#1234");
+        Assert.assertEquals("'", ts.next().toString());
+        Assert.assertEquals("#1234", ts.next().toString());
+
+        ts.of("\"#1234");
+        Assert.assertEquals("\"", ts.next().toString());
+        Assert.assertEquals("#1234", ts.next().toString());
+
+        ts.of("`#1234");
+        Assert.assertEquals("`", ts.next().toString());
+        Assert.assertEquals("#1234", ts.next().toString());
+    }
+
+    @Test
+    public void testBrokenSingleQuotedToken3() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("#12'34");
+        Assert.assertEquals("#12", ts.next().toString());
+        Assert.assertEquals("'", ts.next().toString());
+        Assert.assertEquals("34", ts.next().toString());
+
+        ts.of("#12\"34");
+        Assert.assertEquals("#12", ts.next().toString());
+        Assert.assertEquals("\"", ts.next().toString());
+        Assert.assertEquals("34", ts.next().toString());
+
+        ts.of("#12`34");
+        Assert.assertEquals("#12", ts.next().toString());
+        Assert.assertEquals("`", ts.next().toString());
+        Assert.assertEquals("34", ts.next().toString());
+    }
+
+    @Test
+    public void testBrokenSingleQuotedToken4() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("'");
+        Assert.assertEquals("'", ts.next().toString());
+
+        ts.of("\"");
+        Assert.assertEquals("\"", ts.next().toString());
+
+        ts.of("`");
+        Assert.assertEquals("`", ts.next().toString());
+    }
+
+    @Test
+    public void testSingleQuotedToken4() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("''");
+        Assert.assertEquals("''", ts.next().toString());
+
+        ts.of("\"\"");
+        Assert.assertEquals("\"\"", ts.next().toString());
+
+        ts.of("``");
+        Assert.assertEquals("``", ts.next().toString());
+    }
+
+    @Test
     public void testSymbolLookup() {
         GenericLexer ts = new GenericLexer(64);
         ts.defineSymbol("+");
@@ -215,6 +292,7 @@ public class GenericLexerTest {
         Assert.assertEquals(" ", ts.next().toString());
         Assert.assertNull(ts.peek());
         Assert.assertEquals("day-o", ts.next().toString());
+
         Assert.assertNull(ts.peek());
     }
 
@@ -345,6 +423,26 @@ public class GenericLexerTest {
         CharSequence tok1 = ts.next();
         GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair) ts.immutablePairOf(tok0, tok1);
         Assert.assertEquals(culprit.length() - 1, pair.length());
+        StringSink sink = Misc.getThreadLocalBuilder();
+        for (int i = 0; i < pair.length(); i++) {
+            sink.put(pair.charAt(i));
+        }
+        pair.clear();
+        Assert.assertEquals(pair.toString(), sink.toString());
+    }
+
+    @Test
+    public void testImmutablePairOf8() {
+        GenericLexer lex = new GenericLexer(64);
+        lex.defineSymbol("/");
+        String culprit = "#sp052w92p1p8/7";
+        lex.of(culprit);
+        CharSequence geohashTok = GenericLexer.immutableOf(lex.next());
+        lex.next(); // slash
+        CharSequence bitsTok = lex.next();
+        GenericLexer.FloatingSequencePair pair = (GenericLexer.FloatingSequencePair)
+                lex.immutablePairOf(geohashTok, '/', bitsTok);
+        Assert.assertEquals(culprit, pair.toString());
         StringSink sink = Misc.getThreadLocalBuilder();
         for (int i = 0; i < pair.length(); i++) {
             sink.put(pair.charAt(i));

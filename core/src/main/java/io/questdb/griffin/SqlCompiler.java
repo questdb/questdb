@@ -32,6 +32,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
+import io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowSearchPathCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStringsCursorFactory;
@@ -60,6 +61,7 @@ public class SqlCompiler implements Closeable {
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
     private static final CastStrToGeoHashFunctionFactory GEO_HASH_FUNCTION_FACTORY = new CastStrToGeoHashFunctionFactory();
+    private static final CastCharToStrFunctionFactory CHAR_TO_STR_FUNCTION_FACTORY = new CastCharToStrFunctionFactory();
     protected final GenericLexer lexer;
     protected final Path path = new Path();
     protected final CairoEngine engine;
@@ -126,9 +128,9 @@ public class SqlCompiler implements Closeable {
         this.functionParser = new FunctionParser(
                 configuration,
                 functionFactoryCache != null
-                                     ? functionFactoryCache
-                                     : new FunctionFactoryCache(engine.getConfiguration(), ServiceLoader.load(
-                                             FunctionFactory.class, FunctionFactory.class.getClassLoader()))
+                        ? functionFactoryCache
+                        : new FunctionFactoryCache(engine.getConfiguration(), ServiceLoader.load(
+                        FunctionFactory.class, FunctionFactory.class.getClassLoader()))
         );
         this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser);
 
@@ -205,17 +207,17 @@ public class SqlCompiler implements Closeable {
         int interfaceClassIndex = asm.poolClass(RecordToRowCopier.class);
 
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
-        int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoHashInt", "(I)I");
+        int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
         int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
-        int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoHashLong", "(I)J");
+        int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
         int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
         int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
         //
         int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
-        int rGetGeoByte = asm.poolInterfaceMethod(Record.class, "getGeoHashByte", "(I)B");
+        int rGetGeoByte = asm.poolInterfaceMethod(Record.class, "getGeoByte", "(I)B");
         int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
-        int rGetGeoShort = asm.poolInterfaceMethod(Record.class, "getGeoHashShort", "(I)S");
+        int rGetGeoShort = asm.poolInterfaceMethod(Record.class, "getGeoShort", "(I)S");
         int rGetChar = asm.poolInterfaceMethod(Record.class, "getChar", "(I)C");
         int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
         int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
@@ -238,11 +240,13 @@ public class SqlCompiler implements Closeable {
         int wPutSym = asm.poolMethod(TableWriter.Row.class, "putSym", "(ILjava/lang/CharSequence;)V");
         int wPutSymChar = asm.poolMethod(TableWriter.Row.class, "putSym", "(IC)V");
         int wPutStr = asm.poolMethod(TableWriter.Row.class, "putStr", "(ILjava/lang/CharSequence;)V");
+        int wPutGeoStr = asm.poolMethod(TableWriter.Row.class, "putGeoStr", "(ILjava/lang/CharSequence;)V");
         int wPutTimestampStr = asm.poolMethod(TableWriter.Row.class, "putTimestamp", "(ILjava/lang/CharSequence;)V");
         int wPutStrChar = asm.poolMethod(TableWriter.Row.class, "putStr", "(IC)V");
         int wPutChar = asm.poolMethod(TableWriter.Row.class, "putChar", "(IC)V");
         int wPutBin = asm.poolMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
-        int geohashTruncatePrecision = asm.poolMethod(ColumnType.class, "geohashTruncatePrecision", "(JII)J");
+        int truncateGeoHashTypes = asm.poolMethod(ColumnType.class, "truncateGeoHashTypes", "(JII)J");
+        int encodeCharAsGeoByte = asm.poolMethod(GeoHashes.class, "encodeChar", "(C)B");
 
         int copyNameIndex = asm.poolUtf8("copy");
         int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;)V");
@@ -584,6 +588,18 @@ public class SqlCompiler implements Closeable {
                         case ColumnType.SYMBOL:
                             asm.invokeVirtual(wPutSymChar);
                             break;
+                        case ColumnType.GEOBYTE:
+                            asm.invokeStatic(encodeCharAsGeoByte);
+                            if (ColumnType.getGeoHashBits(toColumnType) < 5) {
+                                asm.i2l();
+                                asm.iconst(ColumnType.getGeoHashTypeWithBits(5));
+                                asm.iconst(toColumnType);
+                                asm.invokeStatic(truncateGeoHashTypes);
+                                asm.l2i();
+                                asm.i2b();
+                            }
+                            asm.invokeVirtual(wPutByte);
+                            break;
                         default:
                             asm.invokeVirtual(wPutChar);
                             break;
@@ -606,6 +622,12 @@ public class SqlCompiler implements Closeable {
                         case ColumnType.TIMESTAMP:
                             asm.invokeVirtual(wPutTimestampStr);
                             break;
+                        case ColumnType.GEOBYTE:
+                        case ColumnType.GEOSHORT:
+                        case ColumnType.GEOINT:
+                        case ColumnType.GEOLONG:
+                            asm.invokeVirtual(wPutGeoStr);
+                            break;
                         default:
                             asm.invokeVirtual(wPutStr);
                             break;
@@ -619,129 +641,108 @@ public class SqlCompiler implements Closeable {
                     asm.invokeInterface(rGetLong256, 1);
                     asm.invokeVirtual(wPutLong256);
                     break;
-                case ColumnType.GEOHASH:
-                    assert toColumnTypeTag == ColumnType.GEOHASH;
-                    final int sizeFrom = ColumnType.sizeOf(fromColumnType);
-                    final int sizeTo = ColumnType.sizeOf(toColumnType);
-                    switch (sizeFrom) {
-                        case 1:
-                            // impossible conversion
-                            if (sizeTo == 1) {
-                                asm.invokeInterface(rGetGeoByte, 1);
-                                asm.invokeVirtual(wPutByte);
-                            }
+                case ColumnType.GEOBYTE:
+                    asm.invokeInterface(rGetGeoByte, 1);
+                    if (fromColumnType != toColumnType && (fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOBYTE)) {
+                        // truncate within the same storage type
+                        asm.i2l();
+                        asm.iconst(fromColumnType);
+                        asm.iconst(toColumnType);
+                        asm.invokeStatic(truncateGeoHashTypes);
+                        asm.l2i();
+                        asm.i2b();
+                    }
+                    asm.invokeVirtual(wPutByte);
+                    break;
+                case ColumnType.GEOSHORT:
+                    asm.invokeInterface(rGetGeoShort, 1);
+                    if (ColumnType.tagOf(toColumnType) == ColumnType.GEOBYTE) {
+                        asm.i2l();
+                        asm.iconst(fromColumnType);
+                        asm.iconst(toColumnType);
+                        asm.invokeStatic(truncateGeoHashTypes);
+                        asm.l2i();
+                        asm.i2b();
+                        asm.invokeVirtual(wPutByte);
+                    } else if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOSHORT) {
+                        asm.i2l();
+                        asm.iconst(fromColumnType);
+                        asm.iconst(toColumnType);
+                        asm.invokeStatic(truncateGeoHashTypes);
+                        asm.l2i();
+                        asm.i2s();
+                        asm.invokeVirtual(wPutShort);
+                    } else {
+                        asm.invokeVirtual(wPutShort);
+                    }
+                    break;
+                case ColumnType.GEOINT:
+                    asm.invokeInterface(rGetGeoInt, 1);
+                    switch (ColumnType.tagOf(toColumnType)) {
+                        case ColumnType.GEOBYTE:
+                            asm.i2l();
+                            asm.iconst(fromColumnType);
+                            asm.iconst(toColumnType);
+                            asm.invokeStatic(truncateGeoHashTypes);
+                            asm.l2i();
+                            asm.i2b();
+                            asm.invokeVirtual(wPutByte);
                             break;
-                        case 2:
-                            switch (sizeTo) {
-                                case 1:
-                                    asm.invokeInterface(rGetGeoShort, 1);
-                                    asm.i2l();
-                                    asm.iconst(fromColumnType);
-                                    asm.iconst(toColumnType);
-                                    asm.invokeStatic(geohashTruncatePrecision);
-                                    asm.l2i();
-                                    asm.i2b();
-                                    asm.invokeVirtual(wPutByte);
-                                    break;
-                                case 2:
-                                    asm.invokeInterface(rGetGeoShort, 1);
-                                    asm.invokeVirtual(wPutShort);
-                                    break;
-                                default:
-                                    break; // impossible conversion
-                            }
-                            break;
-                        case 4:
-                            switch (sizeTo) {
-                                case 1:
-                                    asm.invokeInterface(rGetGeoInt, 1);
-                                    asm.i2l();
-                                    asm.iconst(fromColumnType);
-                                    asm.iconst(toColumnType);
-                                    asm.invokeStatic(geohashTruncatePrecision);
-                                    asm.l2i();
-                                    asm.i2b();
-                                    asm.invokeVirtual(wPutByte);
-                                    break;
-                                case 2:
-                                    asm.invokeInterface(rGetGeoInt, 1);
-                                    asm.i2l();
-                                    asm.iconst(fromColumnType);
-                                    asm.iconst(toColumnType);
-                                    asm.invokeStatic(geohashTruncatePrecision);
-                                    asm.l2i();
-                                    asm.i2s();
-                                    asm.invokeVirtual(wPutShort);
-                                    break;
-                                case 4:
-                                    asm.invokeInterface(rGetGeoInt, 1);
-                                    asm.invokeVirtual(wPutInt);
-                                    break;
-                                default:
-                                    break; // impossible conversion
-                            }
-                            break;
-                        case 8:
-                            switch (sizeTo) {
-                                case 1:
-                                    asm.invokeInterface(rGetGeoLong, 1);
-                                    asm.iconst(fromColumnType);
-                                    asm.iconst(toColumnType);
-                                    asm.invokeStatic(geohashTruncatePrecision);
-                                    asm.l2i();
-                                    asm.i2b();
-                                    asm.invokeVirtual(wPutByte);
-                                    break;
-                                case 2:
-                                    asm.invokeInterface(rGetGeoLong, 1);
-                                    asm.iconst(fromColumnType);
-                                    asm.iconst(toColumnType);
-                                    asm.invokeStatic(geohashTruncatePrecision);
-                                    asm.l2i();
-                                    asm.i2s();
-                                    asm.invokeVirtual(wPutShort);
-                                    break;
-                                case 4:
-                                    asm.invokeInterface(rGetGeoLong, 1);
-                                    asm.iconst(fromColumnType);
-                                    asm.iconst(toColumnType);
-                                    asm.invokeStatic(geohashTruncatePrecision);
-                                    asm.l2i();
-                                    asm.invokeVirtual(wPutInt);
-                                    break;
-                                case 8:
-                                    asm.invokeInterface(rGetGeoLong, 1);
-                                    asm.invokeVirtual(wPutLong);
-                                    break;
-                                default:
-                                    break; // impossible conversion
-                            }
-                            break;
-                        // NULL has size 0
-                        case 0:
-                            asm.pop();
-                            asm.pop();
-                            asm.iconst(GeoHashes.INT_NULL);
-                            switch (sizeTo) {
-                                case 1:
-                                    asm.invokeVirtual(wPutByte);
-                                    break;
-                                case 2:
-                                    asm.invokeVirtual(wPutShort);
-                                    break;
-                                case 4:
-                                    asm.invokeVirtual(wPutInt);
-                                    break;
-                                case 8:
-                                    asm.i2l();
-                                    asm.invokeVirtual(wPutLong);
-                                    break;
-                                default:
-                                    break; // impossible conversion
-                            }
+                        case ColumnType.GEOSHORT:
+                            asm.i2l();
+                            asm.iconst(fromColumnType);
+                            asm.iconst(toColumnType);
+                            asm.invokeStatic(truncateGeoHashTypes);
+                            asm.l2i();
+                            asm.i2s();
+                            asm.invokeVirtual(wPutShort);
                             break;
                         default:
-                            break; // impossible size
+                            if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOINT) {
+                                asm.i2l();
+                                asm.iconst(fromColumnType);
+                                asm.iconst(toColumnType);
+                                asm.invokeStatic(truncateGeoHashTypes);
+                                asm.l2i();
+                            }
+                            asm.invokeVirtual(wPutInt);
+                            break;
+                    }
+                    break;
+                case ColumnType.GEOLONG:
+                    asm.invokeInterface(rGetGeoLong, 1);
+                    switch (ColumnType.tagOf(toColumnType)) {
+                        case ColumnType.GEOBYTE:
+                            asm.iconst(fromColumnType);
+                            asm.iconst(toColumnType);
+                            asm.invokeStatic(truncateGeoHashTypes);
+                            asm.l2i();
+                            asm.i2b();
+                            asm.invokeVirtual(wPutByte);
+                            break;
+                        case ColumnType.GEOSHORT:
+                            asm.iconst(fromColumnType);
+                            asm.iconst(toColumnType);
+                            asm.invokeStatic(truncateGeoHashTypes);
+                            asm.l2i();
+                            asm.i2s();
+                            asm.invokeVirtual(wPutShort);
+                            break;
+                        case ColumnType.GEOINT:
+                            asm.iconst(fromColumnType);
+                            asm.iconst(toColumnType);
+                            asm.invokeStatic(truncateGeoHashTypes);
+                            asm.l2i();
+                            asm.invokeVirtual(wPutInt);
+                            break;
+                        default:
+                            if (fromColumnType != toColumnType && fromColumnType != ColumnType.NULL && fromColumnType != ColumnType.GEOLONG) {
+                                asm.iconst(fromColumnType);
+                                asm.iconst(toColumnType);
+                                asm.invokeStatic(truncateGeoHashTypes);
+                            }
+                            asm.invokeVirtual(wPutLong);
+                            break;
                     }
                     break;
                 default:
@@ -784,13 +785,24 @@ public class SqlCompiler implements Closeable {
     public static boolean isAssignableFrom(int to, int from) {
         final int toTag = ColumnType.tagOf(to);
         final int fromTag = ColumnType.tagOf(from);
-        return toTag == fromTag
+        return (toTag == fromTag && (ColumnType.getGeoHashBits(to) <= ColumnType.getGeoHashBits(from)
+                || ColumnType.getGeoHashBits(from) == 0) /* to account for typed NULL assignment */)
                 || fromTag == ColumnType.NULL
                 || (fromTag >= ColumnType.BYTE
                 && toTag >= ColumnType.BYTE
                 && toTag <= ColumnType.DOUBLE
                 && fromTag < toTag)
-                || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOHASH) // TODO: add b0101010101010101
+                || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOBYTE)
+                || (fromTag == ColumnType.CHAR && toTag == ColumnType.GEOBYTE && ColumnType.getGeoHashBits(to) < 6)
+                || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOSHORT)
+                || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOINT)
+                || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOLONG)
+                || (fromTag == ColumnType.GEOLONG && toTag == ColumnType.GEOINT)
+                || (fromTag == ColumnType.GEOLONG && toTag == ColumnType.GEOSHORT)
+                || (fromTag == ColumnType.GEOLONG && toTag == ColumnType.GEOBYTE)
+                || (fromTag == ColumnType.GEOINT && toTag == ColumnType.GEOSHORT)
+                || (fromTag == ColumnType.GEOINT && toTag == ColumnType.GEOBYTE)
+                || (fromTag == ColumnType.GEOSHORT && toTag == ColumnType.GEOBYTE)
                 || (fromTag == ColumnType.STRING && toTag == ColumnType.SYMBOL)
                 || (fromTag == ColumnType.SYMBOL && toTag == ColumnType.STRING)
                 || (fromTag == ColumnType.CHAR && toTag == ColumnType.SYMBOL)
@@ -924,7 +936,7 @@ public class SqlCompiler implements Closeable {
                     if (SqlKeywords.isPartitionKeyword(tok)) {
                         alterTableDropOrAttachPartition(writer, PartitionAction.ATTACH, executionContext);
                     } else {
-                        throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
+                        throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
                     }
                 } else if (SqlKeywords.isRenameKeyword(tok)) {
                     tok = expectToken(lexer, "'column'");
@@ -1003,29 +1015,6 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofAlter();
     }
 
-    private void alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, TableWriter writer) throws SqlException {
-        if (isMaxUncommittedRowsParam(paramName)) {
-            int maxUncommittedRows;
-            try {
-                maxUncommittedRows = Numbers.parseInt(value);
-            } catch (NumericException e) {
-                throw SqlException.$(paramNameNamePosition, "invalid value [value=").put(value).put(",parameter=").put(paramName).put(']');
-            }
-            if (maxUncommittedRows < 0) {
-                throw SqlException.$(paramNameNamePosition, "maxUncommittedRows must be non negative");
-            }
-            writer.setMetaMaxUncommittedRows(maxUncommittedRows);
-        } else if (isCommitLag(paramName)) {
-            long commitLag = SqlUtil.expectMicros(value, paramNameNamePosition);
-            if (commitLag < 0) {
-                throw SqlException.$(paramNameNamePosition, "commitLag must be non negative");
-            }
-            writer.setMetaCommitLag(commitLag);
-        } else {
-            throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(paramName).put('\'');
-        }
-    }
-
     private void alterTableAddColumn(int tableNamePosition, TableWriter writer) throws SqlException {
         // add columns to table
 
@@ -1056,7 +1045,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), "invalid type");
             }
 
-            if (ColumnType.isGeoHash(type)) {
+            if (type == ColumnType.GEOHASH) {
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null || tok.charAt(0) != '(') {
                     throw SqlException.position(lexer.getPosition()).put("missing GEOHASH precision");
@@ -1064,7 +1053,7 @@ public class SqlCompiler implements Closeable {
 
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && tok.charAt(0) != ')') {
-                    int geosizeBits = SqlParser.parseGeoHashSize(lexer.lastTokenPosition(), 0, tok);
+                    int geosizeBits = SqlParser.parseGeoHashBits(lexer.lastTokenPosition(), 0, tok);
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || tok.charAt(0) != ')') {
                         if (tok != null) {
@@ -1075,7 +1064,7 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.position(lexer.getPosition())
                                 .put("invalid GEOHASH type literal, expected ')'");
                     }
-                    type = ColumnType.geohashWithPrecision(geosizeBits);
+                    type = ColumnType.getGeoHashTypeWithBits(geosizeBits);
                 } else {
                     throw SqlException.position(lexer.lastTokenPosition())
                             .put("missing GEOHASH precision");
@@ -1176,8 +1165,13 @@ public class SqlCompiler implements Closeable {
                         false
                 );
             } catch (CairoException e) {
-                LOG.error().$("Cannot add column '").$(writer.getTableName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, "could add column [error=").put(e.getFlyweightMessage())
+                LOG.error()
+                        .$("could not add column [table=").$(writer.getTableName())
+                        .$(", column=").$(columnName)
+                        .$(", errno=").$(e.getErrno())
+                        .$(", error=").$(e.getFlyweightMessage())
+                        .I$();
+                throw SqlException.$(tableNamePosition, "could not add column [error=").put(e.getFlyweightMessage())
                         .put(", errno=").put(e.getErrno())
                         .put(']');
             }
@@ -1382,6 +1376,29 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
         } while (true);
+    }
+
+    private void alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, TableWriter writer) throws SqlException {
+        if (isMaxUncommittedRowsParam(paramName)) {
+            int maxUncommittedRows;
+            try {
+                maxUncommittedRows = Numbers.parseInt(value);
+            } catch (NumericException e) {
+                throw SqlException.$(paramNameNamePosition, "invalid value [value=").put(value).put(",parameter=").put(paramName).put(']');
+            }
+            if (maxUncommittedRows < 0) {
+                throw SqlException.$(paramNameNamePosition, "maxUncommittedRows must be non negative");
+            }
+            writer.setMetaMaxUncommittedRows(maxUncommittedRows);
+        } else if (isCommitLag(paramName)) {
+            long commitLag = SqlUtil.expectMicros(value, paramNameNamePosition);
+            if (commitLag < 0) {
+                throw SqlException.$(paramNameNamePosition, "commitLag must be non negative");
+            }
+            writer.setMetaCommitLag(commitLag);
+        } else {
+            throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(paramName).put('\'');
+        }
     }
 
     private void backupTable(@NotNull CharSequence tableName, @NotNull SqlExecutionContext executionContext) {
@@ -2444,22 +2461,17 @@ public class SqlCompiler implements Closeable {
             }
             if (ColumnType.isGeoHash(columnType)) {
                 switch (ColumnType.tagOf(function.getType())) {
-                    case ColumnType.GEOHASH:
-                        int typeBits = GeoHashes.getBitsPrecision(columnType);
-                        int funcBits = GeoHashes.getBitsPrecision(function.getType());
-                        if (funcBits < typeBits) {
-                            throw SqlException.$(functionPosition, "GEOHASH does not have enough precision");
-                        }
+                    case ColumnType.GEOBYTE:
+                    case ColumnType.GEOSHORT:
+                    case ColumnType.GEOINT:
+                    case ColumnType.GEOLONG:
                         break;
-                    case ColumnType.STRING:
+                    case ColumnType.CHAR:
+                        function = CHAR_TO_STR_FUNCTION_FACTORY.newInstance(function);
+                        // fall through to STRING
+                    default:
                         function = GEO_HASH_FUNCTION_FACTORY.newInstance(functionPosition, columnType, function);
                         break;
-                    default:
-                        throw SqlException.position(functionPosition)
-                                .put("cannot cast ")
-                                .put(ColumnType.nameOf(function.getType()))
-                                .put(" to ")
-                                .put(ColumnType.nameOf(columnType));
                 }
             }
             valueFunctions.add(function);

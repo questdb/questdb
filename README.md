@@ -15,7 +15,7 @@
   </a>
 </p>
 
-English | [简体中文](./i18n/README.zh-cn.md)
+English | [简体中文](./i18n/README.zh-cn.md) | [العربية](./i18n/README.ar-dz.md)
 
 # QuestDB
 

@@ -40,6 +40,31 @@ public class DateFunctionTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testChar() {
+        function.getChar(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoByte() {
+        function.getGeoByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoInt() {
+        function.getGeoInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoLong() {
+        function.getGeoLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoShort() {
+        function.getGeoShort(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
         function.getBin(null);
     }
@@ -79,6 +104,17 @@ public class DateFunctionTest {
         Assert.assertEquals(163, function.getLong(null));
     }
 
+    @Test
+    public void testGetNullTimestamp() {
+        final DateFunction function = new DateFunction() {
+            @Override
+            public long getDate(Record rec) {
+                return Numbers.LONG_NaN;
+            }
+        };
+        Assert.assertEquals(Numbers.LONG_NaN, function.getTimestamp(null));
+    }
+
     @Test(expected = UnsupportedOperationException.class)
     public void testGetRecordCursorFactory() {
         function.getRecordCursorFactory();
@@ -114,26 +150,14 @@ public class DateFunctionTest {
         function.getSymbol(null);
     }
 
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetSymbolB() {
+        function.getSymbolB(null);
+    }
+
     @Test
     public void testGetTimestamp() {
         Assert.assertEquals(163000, function.getTimestamp(null));
-    }
-
-    @Test
-    public void testGetNullTimestamp() {
-        final DateFunction function = new DateFunction() {
-            @Override
-            public long getDate(Record rec) {
-                return Numbers.LONG_NaN;
-            }
-        };
-
-        Assert.assertEquals(Numbers.LONG_NaN, function.getTimestamp(null));
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testChar() {
-        function.getChar(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -149,25 +173,5 @@ public class DateFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testLong256B() {
         function.getLong256B(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHash() {
-        function.getGeoHashLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashInt() {
-        function.getGeoHashInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashByte() {
-        function.getGeoHashByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashShor() {
-        function.getGeoHashShort(null);
     }
 }

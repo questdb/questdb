@@ -30,11 +30,11 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.GeoHashFunction;
+import io.questdb.griffin.engine.functions.GeoByteFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
-class FirstGeoHashGroupByFunctionInt extends GeoHashFunction implements GroupByFunction, UnaryFunction {
+class FirstGeoHashGroupByFunctionInt extends GeoByteFunction implements GroupByFunction, UnaryFunction {
     protected final Function function;
     protected int valueIndex;
 
@@ -45,7 +45,7 @@ class FirstGeoHashGroupByFunctionInt extends GeoHashFunction implements GroupByF
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putInt(valueIndex, function.getGeoHashInt(record));
+        mapValue.putInt(valueIndex, function.getGeoInt(record));
     }
 
     @Override
@@ -75,22 +75,22 @@ class FirstGeoHashGroupByFunctionInt extends GeoHashFunction implements GroupByF
     }
 
     @Override
-    public byte getGeoHashByte(Record rec) {
+    public byte getGeoByte(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public short getGeoHashShort(Record rec) {
+    public short getGeoShort(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public int getGeoHashInt(Record rec) {
-        return rec.getGeoHashInt(this.valueIndex);
+    public int getGeoInt(Record rec) {
+        return rec.getGeoInt(this.valueIndex);
     }
 
     @Override
-    public long getGeoHashLong(Record rec) {
+    public long getGeoLong(Record rec) {
         throw new UnsupportedOperationException();
     }
 }

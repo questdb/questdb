@@ -26,6 +26,7 @@ package io.questdb.mp;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
@@ -459,7 +460,7 @@ public class ConcurrentTest {
         public void run() {
             try {
                 barrier.await();
-                Thread.sleep(10);
+                Os.sleep(10);
 
                 // subscribe
                 Sequence sequence = new SCSequence(publisher.current());
