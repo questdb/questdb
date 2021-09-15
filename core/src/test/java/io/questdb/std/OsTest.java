@@ -24,22 +24,14 @@
 
 package io.questdb.std;
 
-import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
-import java.io.File;
-import java.io.IOException;
-import java.util.Random;
-import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -79,75 +71,5 @@ public class OsTest {
         Assert.assertTrue(actual > 0);
         long delta = actual / 1_000_000 - reference;
         Assert.assertTrue(delta < 200);
-    }
-
-
-    private final static Log LOG = LogFactory.getLog(OsTest.class);
-
-    @ClassRule
-    public static TemporaryFolder temp = new TemporaryFolder();
-
-    @Test
-    public void testVanilla() throws IOException, BrokenBarrierException, InterruptedException {
-        long pagesPerLong = Files.PAGE_SIZE / 8;
-        for(int loop = 0; loop < 200000; loop++) {
-            Random rnd = new Random();
-            for (long longCountIncr = pagesPerLong; longCountIncr < pagesPerLong * 3; longCountIncr += rnd.nextDouble() * 512) {
-                long longCount = longCountIncr;
-                final var readLatch = new CountDownLatch(1);
-                final File file = temp.newFile();
-                try (Path path = new Path()) {
-                    path.of(file.getAbsolutePath()).$();
-                    FilesFacade ff = FilesFacadeImpl.INSTANCE;
-
-
-                    // barrier to make sure both threads kick in at the same time;
-                    final CyclicBarrier barrier = new CyclicBarrier(2);
-                    final AtomicInteger errorCount = new AtomicInteger();
-                    long fd1 = TableUtils.openRW(ff, path, LOG);
-                    long size = longCount * 8 / Files.PAGE_SIZE + 1;
-
-                    // have this thread write another page
-                    Thread th = new Thread(() -> {
-                        try {
-                            barrier.await();
-                            // over allocate
-                            long mem = TableUtils.mapRW(ff, fd1, (size) * Files.PAGE_SIZE);
-                            for (int i = 0; i < longCount; i++) {
-                                Unsafe.getUnsafe().putLong(mem + i * 8L, i);
-                            }
-                            readLatch.countDown();
-                            ff.munmap(mem, (size) * Files.PAGE_SIZE);
-                            ff.truncate(mem, longCount * 8);
-                            FilesFacadeImpl.INSTANCE.close(fd1);
-                        } catch (Throwable e) {
-                            errorCount.incrementAndGet();
-                            e.printStackTrace();
-                        }
-                    });
-                    th.start();
-                    barrier.await();
-
-                    long fd2 = TableUtils.openRO(ff, path, LOG);
-                    try {
-                        readLatch.await();
-                        long mem = TableUtils.mapRO(ff, fd2, longCount * 8);
-                        try {
-                            for (int i = 0; i < longCount; i++) {
-                                long value = Unsafe.getUnsafe().getLong(mem + i * 8L);
-                                if (i != value) {
-                                    Assert.fail("value " + value + ",offset " + i + ", size " + longCount + ", mapped " + size * Files.PAGE_SIZE);
-                                }
-                            }
-                        } finally {
-                            ff.munmap(mem, longCount * 8);
-                        }
-                    } finally {
-                        ff.close(fd2);
-                    }
-                    Assert.assertEquals(0, errorCount.get());
-                }
-            }
-        }
     }
 }
