@@ -25,14 +25,15 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterMetadata;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.mp.SOCountDownLatch;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -60,7 +61,24 @@ public class DispatcherWriterQueueTest {
     }
 
     @Test
-    public void testAlterTableWhenWriterBusyAndTicking() throws Exception {
+    public void testAlterTableAddIndex() throws Exception {
+        runAlterOnBusyTable("alter+table+x+alter+column+s+add+index", writer -> {
+            int columnIndex = writer.getMetadata().getColumnIndex("s");
+            Assert.assertTrue(writer.getMetadata().isColumnIndexed(columnIndex));
+        });
+    }
+
+    @Test
+    public void testAlterTableAddColumn() throws Exception {
+        runAlterOnBusyTable("alter+table+x+add+column+y+int", writer -> {
+            TableWriterMetadata metadata = writer.getMetadata();
+            int columnIndex = metadata.getColumnIndex("y");
+            Assert.assertEquals(1, columnIndex);
+            Assert.assertEquals(ColumnType.INT, metadata.getColumnType(columnIndex));
+        });
+    }
+
+    private void runAlterOnBusyTable(final String httpAlterQuery, final AlterVerifyAction alterVerifyAction) throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
                 .withWorkerCount(1)
@@ -74,17 +92,15 @@ public class DispatcherWriterQueueTest {
                     " from long_sequence(10)" +
                     " )", sqlExecutionContext);
             TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "test lock");
-
             SOCountDownLatch finished = new SOCountDownLatch(1);
             AtomicInteger errors = new AtomicInteger();
 
             Thread thread = new Thread(() -> {
                 try {
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                            "GET /query?query=alter+table+x+alter+column+s+add+index HTTP/1.1\r\n",
+                            "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n",
                             "0d\r\n" +
-                                    "{\"ddl\":\"OK\"}\r\n" +
-                                    "\r\n" +
+                                    "{\"ddl\":\"OK\"}\n\r\n" +
                                     "00\r\n" +
                                     "\r\n"
                     );
@@ -103,13 +119,21 @@ public class DispatcherWriterQueueTest {
                 writer.tick();
                 finished.await(1_000_000);
             }
+            if (error != null) {
+                throw error;
+            }
+            alterVerifyAction.run(writer);
+            thread.join();
             writer.close();
 
-            Assert.assertEquals(1, finished.getCount());
-            if (error != null) {
-                 throw error;
-            }
+            Assert.assertEquals(0, finished.getCount());
             Assert.assertEquals(0, errors.get());
+            compiler.close();
         });
+    }
+
+    @FunctionalInterface
+    interface AlterVerifyAction {
+        void run(TableWriter writer);
     }
 }

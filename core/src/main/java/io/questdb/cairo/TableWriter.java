@@ -1281,6 +1281,7 @@ public class TableWriter implements Closeable {
         final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
         if (pubCursor > -1) {
             final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
+            event.of(TableWriterTask.TSK_ALTER_TABLE, tableId, tableName);
             event.setInstance(tableId);
             messageBus.getTableWriterEventPubSeq().done(pubCursor);
             LOG.info()

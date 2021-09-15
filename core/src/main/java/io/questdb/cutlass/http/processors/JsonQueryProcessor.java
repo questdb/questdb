@@ -275,7 +275,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         header(socket, keepAliveHeader);
-        socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}').put('\n');
+        socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}').put("\n");
         socket.sendChunk(true);
         readyForNextRequest(context);
     }
@@ -358,12 +358,19 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             final FanOut writerEventFanOut = engine.getMessageBus().getTableWriterEventFanOut();
             RingQueue<TableWriterTask> tableWriterEventQueue = engine.getMessageBus().getTableWriterEventQueue();
             MCSequence tableWriterEventSeq = new MCSequence(writerEventFanOut.current(), tableWriterEventQueue.getCapacity());
-            writerEventFanOut.and(tableWriterEventSeq);
-            long instance = engine.pubTableWriterCommand(cc.getAlterStatement());
-            state.info().$("published writer event [table=")
-                    .$(cc.getAlterStatement().getTableName())
-                    .$(",instance=").$(instance).I$();
-            waitWriterEvent(tableWriterEventSeq, tableWriterEventQueue, instance);
+            try {
+                writerEventFanOut.and(tableWriterEventSeq);
+                long instance = engine.pubTableWriterCommand(cc.getAlterStatement());
+                state.info().$("published writer event [table=")
+                        .$(cc.getAlterStatement().getTableName())
+                        .$(",instance=").$(instance).I$();
+                waitWriterEvent(tableWriterEventSeq, tableWriterEventQueue, instance);
+                state.info().$("received response writer event [table=")
+                        .$(cc.getAlterStatement().getTableName())
+                        .$(",instance=").$(instance).I$();
+            } finally {
+                writerEventFanOut.remove(tableWriterEventSeq);
+            }
         }
         sendConfirmation(state, cc, keepAliveHeader);
     }
@@ -371,18 +378,18 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private void waitWriterEvent(MCSequence tableWriterEventSeq,
                                  RingQueue<TableWriterTask> tableWriterEventQueue,
                                  long commandId) {
-            while (true) {
-                long seq = tableWriterEventSeq.next();
-                if (seq < 0) {
-                    continue;
-                }
-                TableWriterTask event = tableWriterEventQueue.get(seq);
-                tableWriterEventSeq.done(seq);
-                if (event.getInstance() == commandId) {
-                    return;
-                }
-                LockSupport.parkNanos(100);
+        while (true) {
+            long seq = tableWriterEventSeq.next();
+            if (seq < 0) {
+                continue;
             }
+            TableWriterTask event = tableWriterEventQueue.get(seq);
+            tableWriterEventSeq.done(seq);
+            if (event.getInstance() == commandId && event.getType() == TableWriterTask.TSK_ALTER_TABLE) {
+                return;
+            }
+            LockSupport.parkNanos(100);
+        }
     }
 
     private void executeInsert(
