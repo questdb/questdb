@@ -104,15 +104,12 @@ public class OsTest {
                     // barrier to make sure both threads kick in at the same time;
                     final CyclicBarrier barrier = new CyclicBarrier(2);
                     final AtomicInteger errorCount = new AtomicInteger();
-
-                    // write map page + extra longs
-
                     long fd1 = TableUtils.openRW(ff, path, LOG);
                     long size = longCount * 8 / Files.PAGE_SIZE + 1;
                     ff.truncate(fd1, size * Files.PAGE_SIZE);
 
                     // have this thread write another page
-                    new Thread(() -> {
+                    Thread th = new Thread(() -> {
                         try {
                             barrier.await();
                             // over allocate
@@ -121,13 +118,15 @@ public class OsTest {
                                 Unsafe.getUnsafe().putLong(mem + i * 8L, i);
                             }
                             readLatch.countDown();
-//                            Unsafe.getUnsafe().fullFence();
                             ff.munmap(mem, (size) * Files.PAGE_SIZE);
+                            ff.truncate(mem, longCount * 8);
+                            FilesFacadeImpl.INSTANCE.close(fd1);
                         } catch (Throwable e) {
                             errorCount.incrementAndGet();
                             e.printStackTrace();
                         }
-                    }).start();
+                    });
+                    th.start();
 
                     barrier.await();
 
@@ -149,8 +148,7 @@ public class OsTest {
                         ff.close(fd2);
                     }
                     Assert.assertEquals(0, errorCount.get());
-                    FilesFacadeImpl.INSTANCE.close(fd1);
-                } finally {
+                    th.join();
                 }
             }
         }
