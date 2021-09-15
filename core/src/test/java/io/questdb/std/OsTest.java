@@ -106,7 +106,6 @@ public class OsTest {
                     final AtomicInteger errorCount = new AtomicInteger();
                     long fd1 = TableUtils.openRW(ff, path, LOG);
                     long size = longCount * 8 / Files.PAGE_SIZE + 1;
-                    ff.truncate(fd1, size * Files.PAGE_SIZE);
 
                     // have this thread write another page
                     Thread th = new Thread(() -> {
@@ -127,7 +126,6 @@ public class OsTest {
                         }
                     });
                     th.start();
-
                     barrier.await();
 
                     long fd2 = TableUtils.openRO(ff, path, LOG);
@@ -148,7 +146,6 @@ public class OsTest {
                         ff.close(fd2);
                     }
                     Assert.assertEquals(0, errorCount.get());
-                    th.join();
                 }
             }
         }
