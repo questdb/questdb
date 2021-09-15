@@ -91,68 +91,70 @@ public class OsTest {
 
     @Test
     public void testVanilla() throws IOException, BrokenBarrierException, InterruptedException {
-        Random rnd = new Random();
         long pagesPerLong = Files.PAGE_SIZE / 8;
-        for (long longCountIncr = pagesPerLong; longCountIncr < pagesPerLong * 3; longCountIncr += rnd.nextDouble() * 512) {
-            long longCount = longCountIncr;
-            final var readLatch = new CountDownLatch(1);
-            final File file = temp.newFile();
-            try (Path path = new Path()) {
-                path.of(file.getAbsolutePath()).$();
-                FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        for(int loop = 0; loop < 200000; loop++) {
+            Random rnd = new Random();
+            for (long longCountIncr = pagesPerLong; longCountIncr < pagesPerLong * 3; longCountIncr += rnd.nextDouble() * 512) {
+                long longCount = longCountIncr;
+                final var readLatch = new CountDownLatch(1);
+                final File file = temp.newFile();
+                try (Path path = new Path()) {
+                    path.of(file.getAbsolutePath()).$();
+                    FilesFacade ff = FilesFacadeImpl.INSTANCE;
 
 
-                // barrier to make sure both threads kick in at the same time;
-                final CyclicBarrier barrier = new CyclicBarrier(2);
-                final AtomicInteger errorCount = new AtomicInteger();
+                    // barrier to make sure both threads kick in at the same time;
+                    final CyclicBarrier barrier = new CyclicBarrier(2);
+                    final AtomicInteger errorCount = new AtomicInteger();
 
-                // write map page + extra longs
-                mem = 0;
+                    // write map page + extra longs
+                    mem = 0;
 
-                fd1 = TableUtils.openRW(ff, path, LOG);
-                size = longCount * 8 / Files.PAGE_SIZE + 1;
-                ff.truncate(fd1, size * Files.PAGE_SIZE);
+                    fd1 = TableUtils.openRW(ff, path, LOG);
+                    size = longCount * 8 / Files.PAGE_SIZE + 1;
+                    ff.truncate(fd1, size * Files.PAGE_SIZE);
 
-                // have this thread write another page
-                new Thread(() -> {
-                    try {
-                        barrier.await();
-                        // over allocate
-                        mem = TableUtils.mapRW(ff, fd1, (size) * Files.PAGE_SIZE);
-                        for (int i = 0; i < longCount; i++) {
-                            Unsafe.getUnsafe().putLong(mem + i * 8L, i);
-                        }
-                        readLatch.countDown();
-                        ff.munmap(mem, (size) * Files.PAGE_SIZE);
-//                        ff.truncate(fd1, longCount * 8);
-                    } catch (Throwable e) {
-                        errorCount.incrementAndGet();
-                        e.printStackTrace();
-                    }
-                }).start();
-
-                barrier.await();
-
-                long fd2 = TableUtils.openRO(ff, path, LOG);
-                try {
-                    readLatch.await();
-                    long mem = TableUtils.mapRO(ff, fd2, longCount * 8);
-                    try {
-                        for (int i = 0; i < longCount; i++) {
-                            if (i != Unsafe.getUnsafe().getLong(mem + i * 8L)) {
-                                Assert.fail("offset " + i + ", size " + longCount + ", mapped " + size * Files.PAGE_SIZE);
+                    // have this thread write another page
+                    new Thread(() -> {
+                        try {
+                            barrier.await();
+                            // over allocate
+                            mem = TableUtils.mapRW(ff, fd1, (size) * Files.PAGE_SIZE);
+                            for (int i = 0; i < longCount; i++) {
+                                Unsafe.getUnsafe().putLong(mem + i * 8L, i);
                             }
+                            readLatch.countDown();
+                            ff.munmap(mem, (size) * Files.PAGE_SIZE);
+//                        ff.truncate(fd1, longCount * 8);
+                        } catch (Throwable e) {
+                            errorCount.incrementAndGet();
+                            e.printStackTrace();
+                        }
+                    }).start();
+
+                    barrier.await();
+
+                    long fd2 = TableUtils.openRO(ff, path, LOG);
+                    try {
+                        readLatch.await();
+                        long mem = TableUtils.mapRO(ff, fd2, longCount * 8);
+                        try {
+                            for (int i = 0; i < longCount; i++) {
+                                if (i != Unsafe.getUnsafe().getLong(mem + i * 8L)) {
+                                    Assert.fail("offset " + i + ", size " + longCount + ", mapped " + size * Files.PAGE_SIZE);
+                                }
+                            }
+                        } finally {
+                            ff.munmap(mem, longCount * 8);
                         }
                     } finally {
-                        ff.munmap(mem, longCount * 8);
+                        ff.close(fd2);
                     }
+                    Assert.assertEquals(0, errorCount.get());
                 } finally {
-                    ff.close(fd2);
-                }
-                Assert.assertEquals(0, errorCount.get());
-            } finally {
-                if (mem != 0) {
-                    FilesFacadeImpl.INSTANCE.close(fd1);
+                    if (mem != 0) {
+                        FilesFacadeImpl.INSTANCE.close(fd1);
+                    }
                 }
             }
         }
