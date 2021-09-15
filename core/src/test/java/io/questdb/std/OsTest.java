@@ -87,9 +87,6 @@ public class OsTest {
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
 
-    long fd1, mem, size;
-    volatile int memBarrier;
-
     @Test
     public void testVanilla() throws IOException, BrokenBarrierException, InterruptedException {
         long pagesPerLong = Files.PAGE_SIZE / 8;
@@ -109,10 +106,9 @@ public class OsTest {
                     final AtomicInteger errorCount = new AtomicInteger();
 
                     // write map page + extra longs
-                    mem = 0;
 
-                    fd1 = TableUtils.openRW(ff, path, LOG);
-                    size = longCount * 8 / Files.PAGE_SIZE + 1;
+                    long fd1 = TableUtils.openRW(ff, path, LOG);
+                    long size = longCount * 8 / Files.PAGE_SIZE + 1;
                     ff.truncate(fd1, size * Files.PAGE_SIZE);
 
                     // have this thread write another page
@@ -120,12 +116,12 @@ public class OsTest {
                         try {
                             barrier.await();
                             // over allocate
-                            mem = TableUtils.mapRW(ff, fd1, (size) * Files.PAGE_SIZE);
+                            long mem = TableUtils.mapRW(ff, fd1, (size) * Files.PAGE_SIZE);
                             for (int i = 0; i < longCount; i++) {
                                 Unsafe.getUnsafe().putLong(mem + i * 8L, i);
                             }
-                            memBarrier++;
                             readLatch.countDown();
+//                            Unsafe.getUnsafe().fullFence();
                             ff.munmap(mem, (size) * Files.PAGE_SIZE);
                         } catch (Throwable e) {
                             errorCount.incrementAndGet();
@@ -153,10 +149,8 @@ public class OsTest {
                         ff.close(fd2);
                     }
                     Assert.assertEquals(0, errorCount.get());
+                    FilesFacadeImpl.INSTANCE.close(fd1);
                 } finally {
-                    if (mem != 0) {
-                        FilesFacadeImpl.INSTANCE.close(fd1);
-                    }
                 }
             }
         }
