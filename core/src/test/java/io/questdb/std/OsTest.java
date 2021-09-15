@@ -88,6 +88,7 @@ public class OsTest {
     public static TemporaryFolder temp = new TemporaryFolder();
 
     long fd1, mem, size;
+    volatile int memBarrier;
 
     @Test
     public void testVanilla() throws IOException, BrokenBarrierException, InterruptedException {
@@ -123,9 +124,9 @@ public class OsTest {
                             for (int i = 0; i < longCount; i++) {
                                 Unsafe.getUnsafe().putLong(mem + i * 8L, i);
                             }
+                            memBarrier++;
                             readLatch.countDown();
                             ff.munmap(mem, (size) * Files.PAGE_SIZE);
-//                        ff.truncate(fd1, longCount * 8);
                         } catch (Throwable e) {
                             errorCount.incrementAndGet();
                             e.printStackTrace();
@@ -140,8 +141,9 @@ public class OsTest {
                         long mem = TableUtils.mapRO(ff, fd2, longCount * 8);
                         try {
                             for (int i = 0; i < longCount; i++) {
-                                if (i != Unsafe.getUnsafe().getLong(mem + i * 8L)) {
-                                    Assert.fail("offset " + i + ", size " + longCount + ", mapped " + size * Files.PAGE_SIZE);
+                                long value = Unsafe.getUnsafe().getLong(mem + i * 8L);
+                                if (i != value) {
+                                    Assert.fail("value " + value + ",offset " + i + ", size " + longCount + ", mapped " + size * Files.PAGE_SIZE);
                                 }
                             }
                         } finally {
