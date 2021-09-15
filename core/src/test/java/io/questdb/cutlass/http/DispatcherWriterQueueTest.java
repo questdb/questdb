@@ -82,7 +82,11 @@ public class DispatcherWriterQueueTest {
                 try {
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=alter+table+x+alter+column+s+add+index HTTP/1.1\r\n",
-                            "0630\r\n"
+                            "0d\r\n" +
+                                    "{\"ddl\":\"OK\"}\r\n" +
+                                    "\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
                     );
                 } catch (Error e) {
                     error = e;
@@ -101,7 +105,7 @@ public class DispatcherWriterQueueTest {
             }
             writer.close();
 
-            Assert.assertEquals(0, finished.getCount());
+            Assert.assertEquals(1, finished.getCount());
             if (error != null) {
                  throw error;
             }

@@ -990,7 +990,7 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach', 'set' or 'rename' expected");
                 }
             } catch (CairoException e) {
-                LOG.info().$("could not alter table [table=").$(name).$(", ex=").$(e).$();
+                LOG.info().$("could not alter table [table=").$(name).$(", ex=").$((Throwable) e).$();
                 throw SqlException.$(lexer.lastTokenPosition(), "table '").put(name).put("' could not be altered: ").put(e);
             }
         } else if (SqlKeywords.isSystemKeyword(tok)) {
@@ -1828,7 +1828,7 @@ public class SqlCompiler implements Closeable {
                         writer = createTableFromCursor(createTableModel, executionContext);
                     }
                 } catch (CairoException e) {
-                    LOG.error().$("could not create table [error=").$(e).$(']').$();
+                    LOG.error().$("could not create table [error=").$((Throwable) e).$(']').$();
                     throw SqlException.$(name.position, "Could not create table. See log for details.");
                 }
             } finally {
@@ -2226,7 +2226,7 @@ public class SqlCompiler implements Closeable {
                 //opening the writer will attempt to fix/repair the table. The writer is now opened inside migrateNullFlag()
                 engine.migrateNullFlag(executionContext.getCairoSecurityContext(), tok);
             } catch (CairoException e) {
-                LOG.info().$("table busy [table=").$(tok).$(", e=").$(e).$(']').$();
+                LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).$(']').$();
                 throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' is busy");
             }
             tok = SqlUtil.fetchNext(lexer);
@@ -2459,7 +2459,7 @@ public class SqlCompiler implements Closeable {
                     try {
                         tableWriters.add(engine.getWriter(executionContext.getCairoSecurityContext(), tok, "truncateTables"));
                     } catch (CairoException e) {
-                        LOG.info().$("table busy [table=").$(tok).$(", e=").$(e).$(']').$();
+                        LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).$(']').$();
                         throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
                     }
                     tok = SqlUtil.fetchNext(lexer);

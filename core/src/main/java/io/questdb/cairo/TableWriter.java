@@ -1268,18 +1268,27 @@ public class TableWriter implements Closeable {
                 .$(", tableId=").$(tableId)
                 .$(", src=").$(dst)
                 .I$();
-
+        sequence.done(cursor);
         try {
             alterTableStatement.apply(this);
         } catch (Throwable th) {
 
         }
-        // release command queue slot not to hold both queues
-        sequence.done(cursor);
         replAlterTableEvent0(alterTableStatement, tableId, dst);
     }
 
     private void replAlterTableEvent0(AlterTableImpl alterTableStatement, long tableId, long dst) {
+        final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
+        if (pubCursor > -1) {
+            final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
+            event.setInstance(tableId);
+            messageBus.getTableWriterEventPubSeq().done(pubCursor);
+            LOG.info()
+                    .$("published alter table complete event [table=").$(tableName)
+                    .$(", tableId=").$(tableId)
+                    .$(", dst=").$(dst)
+                    .I$();
+        }
     }
 
     public void rollback() {

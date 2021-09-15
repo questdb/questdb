@@ -52,6 +52,7 @@ import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.util.concurrent.locks.LockSupport;
 
 public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
@@ -358,14 +359,30 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             RingQueue<TableWriterTask> tableWriterEventQueue = engine.getMessageBus().getTableWriterEventQueue();
             MCSequence tableWriterEventSeq = new MCSequence(writerEventFanOut.current(), tableWriterEventQueue.getCapacity());
             writerEventFanOut.and(tableWriterEventSeq);
-            long commandId = engine.pubTableWriterCommand(cc.getAlterStatement());
-            waitWriterEvent(tableWriterEventSeq, tableWriterEventQueue, commandId);
+            long instance = engine.pubTableWriterCommand(cc.getAlterStatement());
+            state.info().$("published writer event [table=")
+                    .$(cc.getAlterStatement().getTableName())
+                    .$(",instance=").$(instance).I$();
+            waitWriterEvent(tableWriterEventSeq, tableWriterEventQueue, instance);
         }
         sendConfirmation(state, cc, keepAliveHeader);
     }
 
-    private void waitWriterEvent(MCSequence tableWriterEventSeq, long commandId) {
-
+    private void waitWriterEvent(MCSequence tableWriterEventSeq,
+                                 RingQueue<TableWriterTask> tableWriterEventQueue,
+                                 long commandId) {
+            while (true) {
+                long seq = tableWriterEventSeq.next();
+                if (seq < 0) {
+                    continue;
+                }
+                TableWriterTask event = tableWriterEventQueue.get(seq);
+                tableWriterEventSeq.done(seq);
+                if (event.getInstance() == commandId) {
+                    return;
+                }
+                LockSupport.parkNanos(100);
+            }
     }
 
     private void executeInsert(

@@ -125,11 +125,15 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
 
         tableName = event.getTableName();
         long readPtr = event.getData();
-        command = Unsafe.getUnsafe().getShort(readPtr += 2);
-        tableNamePosition = Unsafe.getUnsafe().getInt(readPtr += 4);
-        int longSize = Unsafe.getUnsafe().getInt(readPtr += 4);
+        command = Unsafe.getUnsafe().getShort(readPtr);
+        readPtr += 2;
+        tableNamePosition = Unsafe.getUnsafe().getInt(readPtr);
+        readPtr += 4;
+        int longSize = Unsafe.getUnsafe().getInt(readPtr);
+        readPtr += 4;
         for(int i = 0; i < longSize; i++) {
-            longList.add(Unsafe.getUnsafe().getLong(readPtr += 8));
+            longList.add(Unsafe.getUnsafe().getLong(readPtr));
+            readPtr += 8;
         }
 
         directCharList.of(readPtr);
@@ -139,16 +143,16 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
     @Override
     public void serialize(TableWriterTask event) {
         event.of(TableWriterTask.TSK_ALTER_TABLE, tableId, tableName);
-        event.put(command);
-        event.put(tableNamePosition);
-        event.put(longList.size());
+        event.putShort(command);
+        event.putInt(tableNamePosition);
+        event.putInt(longList.size());
         for(int i = 0, n = longList.size(); i < n; i++) {
-            event.put(longList.getQuick(i));
+            event.putLong(longList.getQuick(i));
         }
 
-        event.put(objCharList.size());
+        event.putInt(objCharList.size());
         for(int i = 0, n = objCharList.size(); i < n; i++) {
-            event.put(objCharList.getStrA(i));
+            event.putStr(objCharList.getStrA(i));
         }
     }
 
@@ -515,9 +519,11 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
 
         public long of(long address) {
             long initialAddress = address;
-            int size = Unsafe.getUnsafe().getInt(address += 4);
+            int size = Unsafe.getUnsafe().getInt(address);
+            address += 4;
             for(int i = 0; i < size; i++) {
-                int stringSize = Unsafe.getUnsafe().getInt(address += 4);
+                int stringSize = 2 * Unsafe.getUnsafe().getInt(address);
+                address += 4;
                 offsets.add(address, address + stringSize);
                 address += stringSize;
             }
