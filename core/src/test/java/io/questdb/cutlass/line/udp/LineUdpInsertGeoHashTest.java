@@ -68,7 +68,7 @@ abstract class LineUdpInsertGeoHashTest extends LineUdpInsertTest {
                     createTable(engine, columnBits);
                     receiver.start();
                     sendGeoHashLines(numLines, lineGeoSizeChars);
-                    assertReader(tableName, expected);
+                    assertReader(engine, tableName, expected);
                 }
             }
         });

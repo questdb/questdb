@@ -70,7 +70,7 @@ public class LineUdpInsertIntGeoHashTest extends LineUdpInsertGeoHashTest {
                         sender.metric(tableName).field("location", "j").field("in", "yes").$(3000000000L);
                         sender.flush();
                     }
-                    assertReader(tableName,
+                    assertReader(engine, tableName,
                             "geohash\ttimestamp\tlocation\tin\n" +
                                     "\t1970-01-01T00:00:01.000000Z\t9\t\n" +
                                     "\t1970-01-01T00:00:02.000000Z\t4\t\n" +
@@ -91,7 +91,7 @@ public class LineUdpInsertIntGeoHashTest extends LineUdpInsertGeoHashTest {
                     createTable(engine, 20);
                     receiver.start();
                     sendGeoHashLine("sp052w92p1p8187");
-                    assertReader(tableName,
+                    assertReader(engine, tableName,
                             "geohash\ttimestamp\n" +
                                     "sp05\t1970-01-01T00:00:01.000000Z\n");
                 }
@@ -121,7 +121,7 @@ public class LineUdpInsertIntGeoHashTest extends LineUdpInsertGeoHashTest {
                     createTable(engine, 31);
                     receiver.start();
                     sendGeoHashLine("sp018*");
-                    assertReader(tableName,
+                    assertReader(engine, tableName,
                             "geohash\ttimestamp\n" +
                                     "\t1970-01-01T00:00:01.000000Z\n");
                 }
@@ -138,7 +138,7 @@ public class LineUdpInsertIntGeoHashTest extends LineUdpInsertGeoHashTest {
                     receiver.start();
                     sendGeoHashLine("");
                     sendGeoHashLine("null");
-                    assertReader(tableName,
+                    assertReader(engine, tableName,
                             "geohash\ttimestamp\n" +
                                     "\t1970-01-01T00:00:01.000000Z\n" +
                                     "\t1970-01-01T00:00:01.000000Z\n");

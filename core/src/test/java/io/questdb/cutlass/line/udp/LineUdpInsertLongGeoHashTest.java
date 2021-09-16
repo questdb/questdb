@@ -72,7 +72,7 @@ public class LineUdpInsertLongGeoHashTest extends LineUdpInsertGeoHashTest {
                         sender.flush();
                     }
                     Os.sleep(50); // let things settle
-                    assertReader(tableName,
+                    assertReader(engine, tableName,
                             "geohash\ttimestamp\tcarrots\tonions\n" +
                                     "\t1970-01-01T00:00:01.000000Z\t9\t\n" +
                                     "\t1970-01-01T00:00:02.000000Z\t4\t\n" +
@@ -92,7 +92,7 @@ public class LineUdpInsertLongGeoHashTest extends LineUdpInsertGeoHashTest {
                     createTable(engine, 57);
                     receiver.start();
                     sendGeoHashLine("9v1s8hm7wpkssv1h");
-                    assertReader(tableName,
+                    assertReader(engine, tableName,
                             "geohash\ttimestamp\n" +
                                     "010011101100001110000100010000100110011111100101011001011\t1970-01-01T00:00:01.000000Z\n");
                 }
@@ -121,7 +121,7 @@ public class LineUdpInsertLongGeoHashTest extends LineUdpInsertGeoHashTest {
                     createTable(engine, 58);
                     receiver.start();
                     sendGeoHashLine("sp018sp0!18*");
-                    assertReader(tableName,
+                    assertReader(engine, tableName,
                             "geohash\ttimestamp\n" +
                                     "\t1970-01-01T00:00:01.000000Z\n");
                 }
@@ -138,7 +138,7 @@ public class LineUdpInsertLongGeoHashTest extends LineUdpInsertGeoHashTest {
                     receiver.start();
                     sendGeoHashLine("");
                     sendGeoHashLine("null");
-                    assertReader(tableName,
+                    assertReader(engine, tableName,
                             "geohash\ttimestamp\n" +
                                     "\t1970-01-01T00:00:01.000000Z\n" +
                                     "\t1970-01-01T00:00:01.000000Z\n");

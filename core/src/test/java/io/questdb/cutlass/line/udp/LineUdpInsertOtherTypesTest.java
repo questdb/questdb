@@ -837,7 +837,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         }
                         sender.flush();
                     }
-                    assertReader(tableName, expected);
+                    assertReader(engine, tableName, expected);
                 }
             }
         });

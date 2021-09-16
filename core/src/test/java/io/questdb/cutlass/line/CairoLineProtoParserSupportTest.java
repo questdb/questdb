@@ -262,7 +262,7 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
                     try (LineProtoSender sender = createLineProtoSender()) {
                         senderConsumer.accept(sender);
                     }
-                    assertReader(tableName, expected);
+                    assertReader(engine, tableName, expected);
                 }
             }
         });

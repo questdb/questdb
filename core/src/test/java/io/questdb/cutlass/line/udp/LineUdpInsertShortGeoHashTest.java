@@ -74,7 +74,7 @@ public class LineUdpInsertShortGeoHashTest extends LineUdpInsertGeoHashTest {
                         sender.metric(tableName).field("carrots", "j").$(3000000000L);
                         sender.flush();
                     }
-                    assertReader(tableName,
+                    assertReader(engine, tableName,
                             "geohash\ttimestamp\tcarrots\n" +
                                     "\t1970-01-01T00:00:01.000000Z\t9\n" +
                                     "\t1970-01-01T00:00:02.000000Z\t4\n" +
@@ -93,7 +93,7 @@ public class LineUdpInsertShortGeoHashTest extends LineUdpInsertGeoHashTest {
                     createTable(engine, 14);
                     receiver.start();
                     sendGeoHashLine("9v1s8hm7wpkssv1h");
-                    assertReader(tableName,
+                    assertReader(engine, tableName,
                             "geohash\ttimestamp\n" +
                                     "01001110110000\t1970-01-01T00:00:01.000000Z\n");
                 }
@@ -125,7 +125,7 @@ public class LineUdpInsertShortGeoHashTest extends LineUdpInsertGeoHashTest {
                     createTable(engine, 9);
                     receiver.start();
                     sendGeoHashLine("sp-");
-                    assertReader(tableName,
+                    assertReader(engine, tableName,
                             "geohash\ttimestamp\n" +
                                     "\t1970-01-01T00:00:01.000000Z\n");
                 }
@@ -142,7 +142,7 @@ public class LineUdpInsertShortGeoHashTest extends LineUdpInsertGeoHashTest {
                     receiver.start();
                     sendGeoHashLine("");
                     sendGeoHashLine("null");
-                    assertReader(tableName,
+                    assertReader(engine, tableName,
                             "geohash\ttimestamp\n" +
                                     "\t1970-01-01T00:00:01.000000Z\n" +
                                     "\t1970-01-01T00:00:01.000000Z\n");

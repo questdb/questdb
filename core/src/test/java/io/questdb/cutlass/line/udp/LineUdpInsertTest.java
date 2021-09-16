@@ -25,10 +25,12 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoSender;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Os;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
@@ -54,12 +56,18 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
         return new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 1024, 1);
     }
 
-    protected static void assertReader(String tableName, String expected) {
-        assertReader(tableName, expected, (String[]) null);
+    protected static void assertReader(CairoEngine engine, String tableName, String expected) {
+        assertReader(engine, tableName, expected, (String[]) null);
     }
 
-    protected static void assertReader(String tableName, String expected, String... expectedExtraStringColumns) {
+    protected static void assertReader(CairoEngine engine, String tableName, String expected, String... expectedExtraStringColumns) {
         int numLines = expected.split("[\n]").length - 1;
+        try (Path path = new Path()) {
+            int millis = 100;
+            while (engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName) != TableUtils.TABLE_EXISTS && millis-- > 0) {
+                LockSupport.parkNanos(1000000); // 1 milli
+            }
+        }
         CairoException pendingRecoveryErr = null;
         for (int i = 0, n = 5; i < n; i++) {
             // aggressively demand a TableReader up to 5x
