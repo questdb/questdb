@@ -33,9 +33,11 @@ import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.ReplMemoryLogCAImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
@@ -180,6 +182,7 @@ public class TableWriter implements Closeable {
     private ObjList<Runnable> activeNullSetters;
     private int rowActon = ROW_ACTION_OPEN_PARTITION;
     private final AlterTableImpl alterTableStatement = new AlterTableImpl();
+    private boolean isTicking;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot());
@@ -1260,35 +1263,55 @@ public class TableWriter implements Closeable {
     }
 
     private void processAlterTableEvent(TableWriterTask cmd, long cursor, Sequence sequence) {
-        final long dst = cmd.getInstance();
+        final long instance = cmd.getInstance();
         final long tableId = cmd.getTableId();
         alterTableStatement.deserialize(cmd);
         LOG.info()
                 .$("received ALTER TABLE cmd [tableName=").$(tableName)
                 .$(", tableId=").$(tableId)
-                .$(", src=").$(dst)
+                .$(", src=").$(instance)
                 .I$();
         sequence.done(cursor);
+        CharSequence error = null;
         try {
             alterTableStatement.apply(this);
-        } catch (Throwable th) {
-
+        } catch (SqlException ex) {
+            error = ex.getFlyweightMessage();
+        } catch (Throwable ex) {
+            error = ex.getMessage();
         }
-        replAlterTableEvent0(alterTableStatement, tableId, dst);
+        replAlterTableEvent0(tableId, instance, error);
     }
 
-    private void replAlterTableEvent0(AlterTableImpl alterTableStatement, long tableId, long dst) {
+    private void replAlterTableEvent0(long tableId, long instance, CharSequence error) {
         final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
-        if (pubCursor > -1) {
-            final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
-            event.of(TableWriterTask.TSK_ALTER_TABLE, tableId, tableName);
-            event.setInstance(tableId);
-            messageBus.getTableWriterEventPubSeq().done(pubCursor);
-            LOG.info()
-                    .$("published alter table complete event [table=").$(tableName)
-                    .$(", tableId=").$(tableId)
-                    .$(", dst=").$(dst)
-                    .I$();
+        while (true) {
+            if (pubCursor > -1) {
+                final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
+                event.of(TableWriterTask.TSK_ALTER_TABLE, tableId, tableName);
+                if (error != null) {
+                    event.putStr(error);
+                } else {
+                    event.putInt(0);
+                }
+                event.setInstance(instance);
+                LogRecord lg = LOG.debug()
+                        .$("published alter table complete event [table=").$(tableName)
+                        .$(",tableId=").$(tableId)
+                        .$(",instance=").$(instance);
+                if (error != null) {
+                    lg.$(",error=").$(error);
+                }
+                lg.I$();
+                messageBus.getTableWriterEventPubSeq().done(pubCursor);
+                return;
+            } else if (pubCursor == -1) {
+                LOG.error()
+                        .$("cannot publish alter table complete event [table=").$(tableName)
+                        .$(",tableId=").$(tableId)
+                        .$(",instance=").$(instance)
+                        .I$();
+            }
         }
     }
 
@@ -1370,7 +1393,15 @@ public class TableWriter implements Closeable {
     }
 
     public void tick() {
-        processCommandQueue();
+        // Some alter table trigger commit() which trigger tick()
+        // If already inside the tick(), do not re-enter it.
+        if (isTicking) return;
+        try {
+            isTicking = true;
+            processCommandQueue();
+        } finally {
+            isTicking = false;
+        }
     }
 
     @Override

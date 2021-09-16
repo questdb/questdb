@@ -187,23 +187,26 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public long pubTableWriterCommand(AlterStatement alterTableStatement) {
         CharSequence tableName = alterTableStatement.getTableName();
-        long pubCursor = messageBus.getTableWriterCommandPubSeq().next();
-        if (pubCursor > -1) {
-            final TableWriterTask command = tableWriterCmdQueue.get(pubCursor);
-            long correlationId = alterCommandCommandCorrelationId.incrementAndGet();
-            alterTableStatement.serialize(command);
-            command.setInstance(correlationId);
-            messageBus.getTableWriterCommandPubSeq().done(pubCursor);
-            LOG.info()
-                    .$("published ASYNC writer ALTER TABLE task [table=").$(tableName)
-                    .I$();
-            return correlationId;
-        } else {
-            LOG.error()
-                    .$("could not publish writer task [table=").$(tableName)
-                    .$(",seqCursor=").$(pubCursor)
-                    .I$();
-            throw CairoException.instance(0).put("Could not publish writer ALTER TABLE task [table=").put(tableName).put(']');
+
+        while (true) {
+            long pubCursor = messageBus.getTableWriterCommandPubSeq().next();
+            if (pubCursor > -1) {
+                final TableWriterTask command = tableWriterCmdQueue.get(pubCursor);
+                long correlationId = alterCommandCommandCorrelationId.incrementAndGet();
+                alterTableStatement.serialize(command);
+                command.setInstance(correlationId);
+                messageBus.getTableWriterCommandPubSeq().done(pubCursor);
+                LOG.info()
+                        .$("published ASYNC writer ALTER TABLE task [table=").$(tableName)
+                        .I$();
+                return correlationId;
+            } else if (pubCursor == -1) {
+                LOG.error()
+                        .$("could not publish writer task [table=").$(tableName)
+                        .$(",seqCursor=").$(pubCursor)
+                        .I$();
+                throw CairoException.instance(0).put("Could not publish writer ALTER TABLE task [table=").put(tableName).put(']');
+            }
         }
     }
 

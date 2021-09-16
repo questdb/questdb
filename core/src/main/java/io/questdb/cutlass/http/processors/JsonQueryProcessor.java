@@ -26,7 +26,10 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
 import io.questdb.Telemetry;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
@@ -40,13 +43,14 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.*;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.Nullable;
@@ -67,6 +71,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final NanosecondClock nanosecondClock;
     private final HttpSqlExecutionInterruptor interruptor;
     private final Metrics metrics;
+    private final DirectCharSequence writerErrorMessage = new DirectCharSequence();
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
@@ -361,11 +366,13 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             try {
                 writerEventFanOut.and(tableWriterEventSeq);
                 long instance = engine.pubTableWriterCommand(cc.getAlterStatement());
-                state.info().$("published writer event [table=")
+                state.debug().$("published writer event [table=")
                         .$(cc.getAlterStatement().getTableName())
                         .$(",instance=").$(instance).I$();
+
                 waitWriterEvent(tableWriterEventSeq, tableWriterEventQueue, instance);
-                state.info().$("received response writer event [table=")
+
+                state.debug().$("received response writer event [table=")
                         .$(cc.getAlterStatement().getTableName())
                         .$(",instance=").$(instance).I$();
             } finally {
@@ -375,20 +382,32 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         sendConfirmation(state, cc, keepAliveHeader);
     }
 
-    private void waitWriterEvent(MCSequence tableWriterEventSeq,
-                                 RingQueue<TableWriterTask> tableWriterEventQueue,
-                                 long commandId) {
+    private void waitWriterEvent(
+            MCSequence tableWriterEventSeq,
+            RingQueue<TableWriterTask> tableWriterEventQueue,
+            long commandId
+    ) throws SqlException {
         while (true) {
             long seq = tableWriterEventSeq.next();
             if (seq < 0) {
                 continue;
             }
+
             TableWriterTask event = tableWriterEventQueue.get(seq);
-            tableWriterEventSeq.done(seq);
-            if (event.getInstance() == commandId && event.getType() == TableWriterTask.TSK_ALTER_TABLE) {
-                return;
+            if (event.getInstance() != commandId || event.getType() != TableWriterTask.TSK_ALTER_TABLE) {
+                tableWriterEventSeq.done(seq);
+                LockSupport.parkNanos(100);
+            } else {
+                int strLen = Unsafe.getUnsafe().getInt(event.getData());
+                if (strLen > 0) {
+                    SqlException ex = SqlException.$(0, writerErrorMessage.of(event.getData() + 4, event.getData() + 4L + 2L * strLen));
+                    tableWriterEventSeq.done(seq);
+                    throw ex;
+                }
+
+                tableWriterEventSeq.done(seq);
+                break;
             }
-            LockSupport.parkNanos(100);
         }
     }
 

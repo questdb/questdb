@@ -32,13 +32,16 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.mp.MPSequence;
 import io.questdb.mp.SOCountDownLatch;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
 
 public class DispatcherWriterQueueTest {
     @Rule
@@ -62,26 +65,62 @@ public class DispatcherWriterQueueTest {
 
     @Test
     public void testAlterTableAddIndex() throws Exception {
-        runAlterOnBusyTable("alter+table+x+alter+column+s+add+index", writer -> {
-            int columnIndex = writer.getMetadata().getColumnIndex("s");
-            Assert.assertTrue(writer.getMetadata().isColumnIndexed(columnIndex));
-        });
+        runAlterOnBusyTable(writer -> {
+                    TableWriterMetadata metadata = writer.getMetadata();
+                    int columnIndex = metadata.getColumnIndex("y");
+                    Assert.assertEquals(1, columnIndex);
+                    Assert.assertEquals(ColumnType.INT, metadata.getColumnType(columnIndex));
+                },
+                0,
+                "alter+table+x+add+column+y+int");
     }
 
     @Test
     public void testAlterTableAddColumn() throws Exception {
-        runAlterOnBusyTable("alter+table+x+add+column+y+int", writer -> {
-            TableWriterMetadata metadata = writer.getMetadata();
-            int columnIndex = metadata.getColumnIndex("y");
-            Assert.assertEquals(1, columnIndex);
-            Assert.assertEquals(ColumnType.INT, metadata.getColumnType(columnIndex));
-        });
+        runAlterOnBusyTable(writer -> {
+                    TableWriterMetadata metadata = writer.getMetadata();
+                    int columnIndex = metadata.getColumnIndex("y");
+                    Assert.assertEquals(1, columnIndex);
+                    Assert.assertEquals(ColumnType.INT, metadata.getColumnType(columnIndex));
+                },
+                0,
+                "alter+table+x+add+column+y+int");
     }
 
-    private void runAlterOnBusyTable(final String httpAlterQuery, final AlterVerifyAction alterVerifyAction) throws Exception {
+    @Test
+    public void testAlterTableAddRenameColumn() throws Exception {
+        runAlterOnBusyTable(writer -> {
+                    TableWriterMetadata metadata = writer.getMetadata();
+                    int columnIndex = metadata.getColumnIndex("y");
+                    Assert.assertTrue("Column y must exist", columnIndex > 0);
+                    int columnIndex2 = metadata.getColumnIndex("s2");
+                    Assert.assertTrue("Column s2 must exist", columnIndex2 > 0);
+                    Assert.assertTrue(metadata.isColumnIndexed(columnIndex2));
+                },
+                0,
+                "alter+table+x+add+column+y+int",
+                "alter+table+x+add+column+s2+symbol+capacity+512+nocache+index");
+    }
+
+    @Test
+    public void testAlterTableFailsToUpgradeConcurrently() throws Exception {
+        runAlterOnBusyTable(writer -> {
+                    TableWriterMetadata metadata = writer.getMetadata();
+                    int columnIndex = metadata.getColumnIndexQuiet("y");
+                    int columnIndex2 = metadata.getColumnIndexQuiet("x");
+
+                    Assert.assertTrue(columnIndex > -1 || columnIndex2 > -1);
+                    Assert.assertTrue(columnIndex == -1 || columnIndex2 == -1);
+                },
+                1,
+                "alter+table+x+rename+column+s+to+y",
+                "alter+table+x+rename+column+s+to+x");
+    }
+
+    private void runAlterOnBusyTable(final AlterVerifyAction alterVerifyAction, int errorsExpected, final String... httpAlterQueries) throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
-                .withWorkerCount(1)
+                .withWorkerCount(httpAlterQueries.length)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder()
                                 .withReceiveBufferSize(50)
@@ -92,42 +131,56 @@ public class DispatcherWriterQueueTest {
                     " from long_sequence(10)" +
                     " )", sqlExecutionContext);
             TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "test lock");
-            SOCountDownLatch finished = new SOCountDownLatch(1);
+            SOCountDownLatch finished = new SOCountDownLatch(httpAlterQueries.length);
             AtomicInteger errors = new AtomicInteger();
+            CyclicBarrier barrier = new CyclicBarrier(httpAlterQueries.length);
 
-            Thread thread = new Thread(() -> {
-                try {
-                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                            "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n",
-                            "0d\r\n" +
-                                    "{\"ddl\":\"OK\"}\n\r\n" +
-                                    "00\r\n" +
-                                    "\r\n"
-                    );
-                } catch (Error e) {
-                    error = e;
-                    errors.getAndIncrement();
-                } catch (Throwable e) {
-                    errors.getAndIncrement();
-                } finally {
-                    finished.countDown();
+            for (int i = 0; i < httpAlterQueries.length; i++) {
+                String httpAlterQuery = httpAlterQueries[i];
+                Thread thread = new Thread(() -> {
+                    try {
+                        barrier.await();
+                        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n",
+                                "0d\r\n" +
+                                        "{\"ddl\":\"OK\"}\n\r\n" +
+                                        "00\r\n" +
+                                        "\r\n"
+                        );
+                    } catch (Error e) {
+                        if (errorsExpected == 0) {
+                            error = e;
+                        }
+                        errors.getAndIncrement();
+                    } catch (Throwable e) {
+                        errors.getAndIncrement();
+                    } finally {
+                        finished.countDown();
+                    }
+                });
+                thread.start();
+            }
+
+            if (httpAlterQueries.length > 1) {
+                // Allow all queries to trigger commands before start processing them
+                MPSequence tableWriterCommandPubSeq = engine.getMessageBus().getTableWriterCommandPubSeq();
+                while (tableWriterCommandPubSeq.current() < httpAlterQueries.length - 1) {
+                    Thread.sleep(5);
                 }
-            });
-            thread.start();
+            }
 
-            for(int i = 0; i < 100 && finished.getCount() == 1 && error == null; i++) {
+            for(int i = 0; i < 100 && finished.getCount() > 0 && errors.get() <= errorsExpected; i++) {
                 writer.tick();
                 finished.await(1_000_000);
             }
             if (error != null) {
                 throw error;
             }
-            alterVerifyAction.run(writer);
-            thread.join();
-            writer.close();
 
             Assert.assertEquals(0, finished.getCount());
-            Assert.assertEquals(0, errors.get());
+            Assert.assertEquals(errorsExpected, errors.get());
+            alterVerifyAction.run(writer);
+            writer.close();
             compiler.close();
         });
     }

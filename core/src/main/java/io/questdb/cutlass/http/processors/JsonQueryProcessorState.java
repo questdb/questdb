@@ -174,6 +174,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.rnd = rnd;
     }
 
+    public LogRecord debug() {
+        return LOG.debug().$('[').$(getFd()).$("] ");
+    }
+
     public LogRecord info() {
         return LOG.info().$('[').$(getFd()).$("] ");
     }

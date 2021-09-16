@@ -428,7 +428,7 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
                 writer.renameColumn(columnName, newName);
             } catch (CairoException e) {
                 LOG.error().$("cannot rename column '").$(writer.getTableName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, "cannot rename column. Try again later [errno=").put(e.getErrno()).put(']');
+                throw SqlException.$(tableNamePosition, "cannot rename column ").put(columnName).put(": ").put(e);
             }
         }
     }
