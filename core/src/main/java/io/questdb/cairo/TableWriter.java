@@ -2329,9 +2329,12 @@ public class TableWriter implements Closeable {
             //   |  ================================ < === |  ================================ > ----- |
             //   |     committedTransientRowCount          I     transientRowsAdded            |
 
-            int shl = ColumnType.pow2SizeOf(columnType);
+            int shl;
 
             if (secondaryColumn == null) {
+
+                shl = ColumnType.pow2SizeOf(columnType);
+
                 long srcMappedRows = primaryColumn.offsetInPage((committedTransientRowCount + transientRowsAdded) << shl) >> shl;
                 if (srcMappedRows < transientRowsAdded) {
                     long delta = transientRowsAdded - srcMappedRows;
@@ -2353,10 +2356,10 @@ public class TableWriter implements Closeable {
                 //
                 // Step 1: process fixed record file in the same way as fixed size column above
                 //
-                long fixLenMappedRows = secondaryColumn.offsetInPage(secondaryColumn.getAppendOffset()) >> shl;
-                if (fixLenMappedRows < transientRowsAdded) {
-                    committedTransientRowCount += transientRowsAdded - fixLenMappedRows;
-                    transientRowsAdded = fixLenMappedRows;
+                long srcMappedRows = secondaryColumn.offsetInPage((committedTransientRowCount + transientRowsAdded) << shl) >> shl;
+                if (srcMappedRows < transientRowsAdded) {
+                    committedTransientRowCount += transientRowsAdded - srcMappedRows;
+                    transientRowsAdded = srcMappedRows;
                 }
 
                 // Assert that secondary file is mapped for row committedTransientRowCount
@@ -2395,7 +2398,7 @@ public class TableWriter implements Closeable {
                             secondaryColumn.addressOf(committedTransientRowCount << shl), // this is address of memory of fix file where to start the search
                             varFileMappedOffset, // This is the value we search for (28 in case of example)
                             0, // start from index 0
-                            fixLenMappedRows - 1, // and search in all mapped rows (inclusive of ixLenMappedRows - 1)
+                            srcMappedRows - 1, // and search in all mapped rows (inclusive of ixLenMappedRows - 1)
                             BinarySearch.SCAN_DOWN // doesn't matter
                     );
 
@@ -2681,8 +2684,7 @@ public class TableWriter implements Closeable {
                                         dstFixMem,
                                         dstVarMem,
                                         this,
-                                        indexWriter,
-                                        tempMem16b
+                                        indexWriter
                                 );
                             }
                         } else {
@@ -2984,14 +2986,17 @@ public class TableWriter implements Closeable {
                 // Var size column
                 sourceOffset = o3IndexMem.getLong(o3RowCount * 8);
                 size = o3DataMem.getAppendOffset() - sourceOffset;
+                // move count + 1 rows, to make sure index column remains n+1
                 O3Utils.shiftCopyFixedSizeColumnData(
                         sourceOffset,
                         o3IndexMem.addressOf(o3RowCount * 8),
                         0,
-                        o3LagRowCount,
+                        o3LagRowCount + 1,
                         o3IndexMem.addressOf(0)
                 );
-                o3IndexMem.jumpTo(o3LagRowCount * 8);
+                // adjust append position of the index column to
+                // maintain n+1 number of entries
+                o3IndexMem.jumpTo(o3LagRowCount * 8 + 8);
             }
 
             o3DataMem.jumpTo(size);
@@ -3048,21 +3053,24 @@ public class TableWriter implements Closeable {
                 // Var size
                 final MemoryMAR srcFixMem = getSecondaryColumn(colIndex);
                 long srcVarOffset = srcFixMem.getLong(committedTransientRowCount * Long.BYTES);
+                // the size includes trailing LONG
+                long srcFixSize = o3IndexMem.getAppendOffset();
                 // ensure memory is available
-                long dstAppendOffset = o3IndexMem.getAppendOffset();
-                o3IndexMem.jumpTo(o3IndexMem.getAppendOffset() + transientRowsAdded * Long.BYTES);
+                // we add a trailing Long (var index column is n+1) to track the length of var data column
+                o3IndexMem.jumpTo(srcFixSize + transientRowsAdded * Long.BYTES);
 
                 O3Utils.shiftCopyFixedSizeColumnData(
                         srcVarOffset - dstVarOffset,
                         srcFixMem.addressOf(committedTransientRowCount * Long.BYTES),
                         0,
                         transientRowsAdded,
-                        o3IndexMem.addressOf(dstAppendOffset)
+                        // copy uncommitted index over the trailing LONG
+                        o3IndexMem.addressOf(srcFixSize - Long.BYTES)
                 );
                 long sourceEndOffset = srcDataMem.getAppendOffset();
                 extendedSize = sourceEndOffset - srcVarOffset;
                 srcFixOffset = srcVarOffset;
-                srcFixMem.jumpTo(committedTransientRowCount * Long.BYTES);
+                srcFixMem.jumpTo(committedTransientRowCount * Long.BYTES + Long.BYTES);
             }
 
             o3DataMem.jumpTo(dstVarOffset + extendedSize);
@@ -3565,13 +3573,14 @@ public class TableWriter implements Closeable {
         final long srcDataAddr = dataMem.addressOf(0);
         final long srcDataSize = dataMem.size();
         final long srcIndxAddr = indexMem.addressOf(0);
+        // exclude the trailing offset from shuffling
         final long srcIndxSize = indexMem.size();
         final long tgtDataAddr = dataMem2.resize(dataSize);
         final long tgtDataSize = dataMem2.size();
         final long tgtIndxAddr = indexMem2.resize(valueCount * Long.BYTES);
         final long tgtIndxSize = indexMem2.size();
         // add max offset so that we do not have conditionals inside loop
-        indexMem.putLong(valueCount * Long.BYTES, dataSize);
+//        indexMem.putLong(valueCount * Long.BYTES, dataSize);
         final long offset = Vect.sortVarColumn(
                 mergedTimestampsAddr,
                 valueCount,
@@ -3586,6 +3595,7 @@ public class TableWriter implements Closeable {
         indexMem2.replacePage(srcIndxAddr, srcIndxSize);
         dataMem.jumpTo(offset);
         indexMem.jumpTo(valueCount * Long.BYTES);
+        indexMem.putLong(dataSize);
     }
 
     private void o3TimestampSetter(long timestamp) {

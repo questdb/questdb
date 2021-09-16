@@ -136,7 +136,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         srcOooHi,
                         dstFixAddr + dstFixOffset,
                         dstVarAddr,
-                        dstVarOffset
+                        dstVarOffset,
+                        dstVarSize
                 );
                 break;
             case O3_BLOCK_O3:
@@ -888,22 +889,17 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarAdjust
 
     ) {
-        final long lo = O3Utils.findVarOffset(srcFixAddr, srcLo, srcHi, srcVarSize);
-        final long hi;
-        if (srcHi + 1 == srcFixSize / Long.BYTES) {
-            hi = srcVarSize;
-        } else {
-            hi = O3Utils.findVarOffset(srcFixAddr, srcHi + 1, srcFixSize / Long.BYTES, srcVarSize);
-        }
+        final long lo = O3Utils.findVarOffset(srcFixAddr, srcLo, srcVarSize);
+        final long hi = O3Utils.findVarOffset(srcFixAddr, srcHi + 1, srcVarSize);
         // copy this before it changes
         final long dest = dstVarAddr + dstVarOffset;
         final long len = hi - lo;
         Vect.memcpy(srcVarAddr + lo, dest, len);
         long offset = dstVarOffset + dstVarAdjust;
         if (lo == offset) {
-            copyFixedSizeCol(srcFixAddr, srcLo, srcHi, dstFixAddr, 3);
+            copyFixedSizeCol(srcFixAddr, srcLo, srcHi + 1, dstFixAddr, 3);
         } else {
-            O3Utils.shiftCopyFixedSizeColumnData(lo - offset, srcFixAddr, srcLo, srcHi, dstFixAddr);
+            O3Utils.shiftCopyFixedSizeColumnData(lo - offset, srcFixAddr, srcLo, srcHi + 1, dstFixAddr);
         }
     }
 
@@ -920,7 +916,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcOooHi,
             long dstFixAddr,
             long dstVarAddr,
-            long dstVarOffset
+            long dstVarOffset,
+            long dstVarSize
     ) {
         final long rowCount = srcOooHi - srcOooLo + 1 + srcDataHi - srcDataLo + 1;
         switch (ColumnType.tagOf(columnType)) {
@@ -946,6 +943,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstVarAddr,
                         dstVarOffset
                 );
+                // multiple threads could be writing to this location as var index segments overlap,
+                // but they will be writing the same value
+                Unsafe.getUnsafe().putLong(dstFixAddr + rowCount * 8, dstVarSize);
                 break;
             case ColumnType.BINARY:
                 Vect.oooMergeCopyBinColumn(
@@ -959,6 +959,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstVarAddr,
                         dstVarOffset
                 );
+                Unsafe.getUnsafe().putLong(dstFixAddr + rowCount * 8, dstVarSize);
                 break;
             case ColumnType.INT:
             case ColumnType.FLOAT:

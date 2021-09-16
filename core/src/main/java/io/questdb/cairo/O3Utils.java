@@ -63,34 +63,16 @@ public class O3Utils {
             long srcLo,
             long srcHi,
             long srcFixAddr,
-            long srcFixSize,
             long srcVarSize
     ) {
-        final long lo = findVarOffset(srcFixAddr, srcLo, srcHi, srcVarSize);
+        final long lo = findVarOffset(srcFixAddr, srcLo, srcVarSize);
         final long hi;
-        if (srcHi + 1 == srcFixSize / Long.BYTES) {
-            hi = srcVarSize;
-        } else {
-            hi = findVarOffset(srcFixAddr, srcHi + 1, srcFixSize / Long.BYTES, srcVarSize);
-        }
+        hi = findVarOffset(srcFixAddr, srcHi + 1, srcVarSize);
         return hi - lo;
     }
 
-    static long findVarOffset(long srcFixAddr, long srcLo, long srcHi, long srcVarSize) {
-        long lo = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
-        if (lo > -1) {
-            return lo;
-        }
-
-        // todo: test on a lot of NULL strings!
-        while (++srcLo < srcHi) {
-            lo = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
-            if (lo > -1) {
-                return lo;
-            }
-        }
-
-        return srcVarSize;
+    static long findVarOffset(long srcFixAddr, long srcLo, long srcVarSize) {
+        return Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
     }
 
     static void shiftCopyFixedSizeColumnData(
