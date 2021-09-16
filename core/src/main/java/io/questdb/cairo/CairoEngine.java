@@ -185,7 +185,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return configuration;
     }
 
-    public long pubTableWriterCommand(AlterStatement alterTableStatement) {
+    public long publishTableWriterCommand(AlterStatement alterTableStatement) {
         CharSequence tableName = alterTableStatement.getTableName();
 
         while (true) {

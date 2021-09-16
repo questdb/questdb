@@ -38,7 +38,6 @@ import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
-import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
@@ -69,6 +68,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final HttpSqlExecutionInterruptor interruptor;
     private final Metrics metrics;
     private final DirectCharSequence writerErrorMessage = new DirectCharSequence();
+    private final long alterWaitTimeoutMilli;
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
@@ -117,6 +117,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.nanosecondClock = engine.getConfiguration().getNanosecondClock();
         this.interruptor = new HttpSqlExecutionInterruptor(configuration.getInterruptorConfiguration());
         this.metrics = metrics;
+        this.alterWaitTimeoutMilli = configuration.getAlterTableMaxWaitTimeout() / 1_000L;
     }
 
     @Override
@@ -357,13 +358,13 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             compiler.executeAlterCommand(cc, sqlExecutionContext);
         } catch (EntryUnavailableException ex) {
             AlterStatement alterStatement = cc.getAlterStatement();
-            state.info().$("writer busy, will pass ALTER TABLE execution to writer owner [table=").$(alterStatement.getTableName()).I$();
+            state.info().$("writer busy, will pass ALTER TABLE execution to writer owner async [table=").$(alterStatement.getTableName()).I$();
             final FanOut writerEventFanOut = engine.getMessageBus().getTableWriterEventFanOut();
             RingQueue<TableWriterTask> tableWriterEventQueue = engine.getMessageBus().getTableWriterEventQueue();
-            SCSequence tableWriterEventSeq = new SCSequence();
+            SCSequence tableWriterEventSeq = state.getWriterEventConsumeSequence();
             try {
                 writerEventFanOut.and(tableWriterEventSeq);
-                long instance = engine.pubTableWriterCommand(alterStatement);
+                long instance = engine.publishTableWriterCommand(alterStatement);
                 state.debug().$("published writer event [table=")
                         .$(alterStatement.getTableName())
                         .$(",instance=").$(instance).I$();
@@ -374,7 +375,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                             .$(alterStatement.getTableName())
                             .$(",instance=").$(instance).I$();
                 } else {
-                    state.info().$("received ERROR response for ALTER TABLE from writer [table=")
+                    state.info().$("received error response for ALTER TABLE from writer [table=")
                             .$(alterStatement.getTableName())
                             .$(",instance=").$(instance)
                             .$(",error=").$(status.getFlyweightMessage())
@@ -393,9 +394,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             RingQueue<TableWriterTask> tableWriterEventQueue,
             long commandId,
             int tableNamePosition) {
+        long start = System.currentTimeMillis();
         while (true) {
             long seq = tableWriterEventSeq.next();
             if (seq < 0) {
+                // Queue is empty, check if the execution blocked for too long
+                if (System.currentTimeMillis() - start > alterWaitTimeoutMilli) {
+                    return SqlException.$(tableNamePosition, "Timeout expired on waiting for the ALTER TABLE execution result.");
+                }
+                LockSupport.parkNanos(100);
                 continue;
             }
 

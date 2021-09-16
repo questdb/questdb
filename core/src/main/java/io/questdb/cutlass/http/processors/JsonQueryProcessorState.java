@@ -40,6 +40,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
+import io.questdb.mp.SCSequence;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
@@ -70,6 +71,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final NanosecondClock nanosecondClock;
     private final int floatScale;
     private final int doubleScale;
+    private final SCSequence writerEventConsumeSequence = new SCSequence();
     private Rnd rnd;
     private RecordCursorFactory recordCursorFactory;
     private RecordCursor cursor;
@@ -168,6 +170,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public Rnd getRnd() {
         return rnd;
+    }
+
+    public SCSequence getWriterEventConsumeSequence() {
+        return writerEventConsumeSequence;
     }
 
     public void setRnd(Rnd rnd) {

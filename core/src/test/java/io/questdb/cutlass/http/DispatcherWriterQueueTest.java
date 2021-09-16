@@ -64,25 +64,27 @@ public class DispatcherWriterQueueTest {
     }
 
     @Test
-    public void testAlterTableAddIndex() throws Exception {
+    public void testAlterTableAddColumn() throws Exception {
         runAlterOnBusyTable(writer -> {
                     TableWriterMetadata metadata = writer.getMetadata();
                     int columnIndex = metadata.getColumnIndex("y");
-                    Assert.assertEquals(1, columnIndex);
+                    Assert.assertEquals(2, columnIndex);
                     Assert.assertEquals(ColumnType.INT, metadata.getColumnType(columnIndex));
                 },
+                1,
                 0,
                 "alter+table+x+add+column+y+int");
     }
 
     @Test
-    public void testAlterTableAddColumn() throws Exception {
+    public void testAlterTableAddIndex() throws Exception {
         runAlterOnBusyTable(writer -> {
                     TableWriterMetadata metadata = writer.getMetadata();
                     int columnIndex = metadata.getColumnIndex("y");
-                    Assert.assertEquals(1, columnIndex);
+                    Assert.assertEquals(2, columnIndex);
                     Assert.assertEquals(ColumnType.INT, metadata.getColumnType(columnIndex));
                 },
+                1,
                 0,
                 "alter+table+x+add+column+y+int");
     }
@@ -97,6 +99,7 @@ public class DispatcherWriterQueueTest {
                     Assert.assertTrue("Column s2 must exist", columnIndex2 > 0);
                     Assert.assertTrue(metadata.isColumnIndexed(columnIndex2));
                 },
+                2,
                 0,
                 "alter+table+x+add+column+y+int",
                 "alter+table+x+add+column+s2+symbol+capacity+512+nocache+index");
@@ -112,22 +115,79 @@ public class DispatcherWriterQueueTest {
                     Assert.assertTrue(columnIndex > -1 || columnIndex2 > -1);
                     Assert.assertTrue(columnIndex == -1 || columnIndex2 == -1);
                 },
+                2,
                 1,
                 "alter+table+x+rename+column+s+to+y",
                 "alter+table+x+rename+column+s+to+x");
     }
 
-    private void runAlterOnBusyTable(final AlterVerifyAction alterVerifyAction, int errorsExpected, final String... httpAlterQueries) throws Exception {
+    @Test
+    public void testCanReuseSameJsonContextForMultipleAlterRuns() throws Exception {
+        runAlterOnBusyTable(writer -> {
+                    TableWriterMetadata metadata = writer.getMetadata();
+                    int columnIndex = metadata.getColumnIndexQuiet("y");
+                    int columnIndex2 = metadata.getColumnIndexQuiet("x");
+
+                    Assert.assertTrue(columnIndex > -1 && columnIndex2 > -1);
+                    Assert.assertEquals(-1, metadata.getColumnIndexQuiet("s"));
+                },
+                1,
+                0,
+                "alter+table+x+add+y+long256,x+timestamp",
+                "alter+table+x+drop+column+s");
+    }
+
+    @Test
+    public void testShouldFailWithTimeout() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
-                .withWorkerCount(httpAlterQueries.length)
+                .withWorkerCount(1)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder()
+                                .withAlterTableMaxWaitTimeout(10)
                                 .withReceiveBufferSize(50)
                 ).run((engine) -> {
             setupSql(engine);
-            compiler.compile("create table x as (" +
-                    " select rnd_symbol('a', 'b', 'c') as s" +
+            try {
+                compiler.compile("create table x as (" +
+                        " select rnd_symbol('a', 'b', 'c') as s" +
+                        " from long_sequence(10)" +
+                        " )", sqlExecutionContext);
+
+                try (TableWriter ignored = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "test lock")) {
+                    // Writer locked, supposed to return timeout error
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=alter+table+x+add+column+y+int HTTP/1.1\r\n",
+                            "83\r\n" +
+                                    "{\"query\":\"alter table x add column y int\",\"error\":\"Timeout expired on waiting for the ALTER TABLE execution result.\",\"position\":12}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
+                }
+            } finally {
+                compiler.close();
+            }
+        });
+    }
+
+    private void runAlterOnBusyTable(
+            final AlterVerifyAction alterVerifyAction,
+            int httpWorkers,
+            int errorsExpected,
+            final String... httpAlterQueries
+    ) throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(httpWorkers)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withAlterTableMaxWaitTimeout(2_000_000)
+                                .withReceiveBufferSize(50)
+                ).run((engine) -> {
+            setupSql(engine);
+            compiler.compile("create table IF NOT EXISTS x as (" +
+                    " select rnd_symbol('a', 'b', 'c') as s," +
+                    " cast(x as timestamp) ts" +
                     " from long_sequence(10)" +
                     " )", sqlExecutionContext);
             TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "test lock");
@@ -161,15 +221,15 @@ public class DispatcherWriterQueueTest {
                 thread.start();
             }
 
-            if (httpAlterQueries.length > 1) {
+            if (httpAlterQueries.length > 1 && httpAlterQueries.length <= httpWorkers) {
                 // Allow all queries to trigger commands before start processing them
                 MPSequence tableWriterCommandPubSeq = engine.getMessageBus().getTableWriterCommandPubSeq();
                 while (tableWriterCommandPubSeq.current() < httpAlterQueries.length - 1) {
-                    Thread.sleep(5);
+                    LockSupport.parkNanos(10_000_000L);
                 }
             }
 
-            for(int i = 0; i < 100 && finished.getCount() > 0 && errors.get() <= errorsExpected; i++) {
+            for (int i = 0; i < 100 && finished.getCount() > 0 && errors.get() <= errorsExpected; i++) {
                 writer.tick();
                 finished.await(1_000_000);
             }

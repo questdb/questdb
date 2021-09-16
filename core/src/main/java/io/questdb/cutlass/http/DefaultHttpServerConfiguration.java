@@ -72,6 +72,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     };
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
         @Override
+        public long getAlterTableMaxWaitTimeout() {
+            return 1_000;
+        }
+
+        @Override
         public MillisecondClock getClock() {
             return httpContextConfiguration.getClock();
         }

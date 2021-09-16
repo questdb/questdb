@@ -498,7 +498,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
     @Test
     public void testWriterRelease2() throws Exception {
         runInContext(() -> {
-            String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+            String lineData = "weather,location=us\\ midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
             send(lineData, "weather");
@@ -507,13 +507,13 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 w.truncate();
             }
 
-            lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+            lineData = "weather,location=us\\ midwest temperature=85 1465839830102300200\n" +
                     "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
             send(lineData, "weather");
 
             String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
                     "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
             assertTable(expected, "weather");

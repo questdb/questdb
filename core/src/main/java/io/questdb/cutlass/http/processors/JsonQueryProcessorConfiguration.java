@@ -30,6 +30,8 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface JsonQueryProcessorConfiguration {
 
+    long getAlterTableMaxWaitTimeout();
+
     MillisecondClock getClock();
 
     int getConnectionCheckFrequency();
