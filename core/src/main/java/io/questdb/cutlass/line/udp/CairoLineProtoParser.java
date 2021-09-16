@@ -30,6 +30,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -212,14 +213,18 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         try {
             for (int i = 0; i < columnCount; i++) {
                 final long valueIdxAndType = columnIndexAndType.getQuick(i);
-                CairoLineProtoParserSupport.putValue(
-                        row,
-                        Numbers.decodeHighInt(valueIdxAndType),
-                        geohashBitsSizeByColIdx.getQuick(i),
-                        Numbers.decodeLowInt(valueIdxAndType),
-                        cache.get(columnValues.getQuick(i)),
-                        metadata.getColumnType(i)
-                );
+                CharSequence value = cache.get(columnValues.getQuick(i));
+                if (!SqlKeywords.isNullKeyword(value)) {
+                    CairoLineProtoParserSupport.putValue(
+                            row,
+                            Numbers.decodeHighInt(valueIdxAndType),
+                            geohashBitsSizeByColIdx.getQuick(i),
+                            Numbers.decodeLowInt(valueIdxAndType),
+                            value
+                    );
+                } else {
+                    CairoLineProtoParserSupport.putNullValue(row, columnIndex, metadata.getColumnType(i));
+                }
             }
             row.append();
         } catch (BadCastException ignore) {

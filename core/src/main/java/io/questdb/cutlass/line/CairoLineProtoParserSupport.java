@@ -37,28 +37,17 @@ import io.questdb.std.NumericException;
 public class CairoLineProtoParserSupport {
     private final static Log LOG = LogFactory.getLog(CairoLineProtoParserSupport.class);
 
-    public static void putValue(
-            TableWriter.Row row,
-            int columnType,
-            int columnTypeMeta,
-            int columnIndex,
-            CharSequence value
-    ) throws BadCastException {
-        putValue(row, columnType, columnTypeMeta, columnIndex, value, ColumnType.UNDEFINED);
-    }
-
     /**
      * Writes column value to table row. CharSequence value is interpreted depending on
      * column type and written to column, identified by columnIndex. If value cannot be
      * cast to column type, #BadCastException is thrown.
      *
-     * @param row               table row
-     * @param columnType        column type value will be cast to
-     * @param columnTypeMeta    if columnType's tag is GeoHash it contains bits precision (low short)
-     *                          and tag size (high short negative), otherwise -1
-     * @param columnIndex       index of column to write value to
-     * @param value             value characters
-     * @param storageColumnType column storage type when table exists, otherwise UNDEFINED
+     * @param row            table row
+     * @param columnType     column type value will be cast to
+     * @param columnTypeMeta if columnType's tag is GeoHash it contains bits precision (low short)
+     *                       and tag size (high short negative), otherwise -1
+     * @param columnIndex    index of column to write value to
+     * @param value          value characters
      * @throws BadCastException when value cannot be cast to the give type
      */
     public static void putValue(
@@ -66,13 +55,8 @@ public class CairoLineProtoParserSupport {
             int columnType,
             int columnTypeMeta,
             int columnIndex,
-            CharSequence value,
-            int storageColumnType
+            CharSequence value
     ) throws BadCastException {
-        if (SqlKeywords.isNullKeyword(value)) {
-            putNullValue(row, columnIndex, storageColumnType);
-            return;
-        }
         try {
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.LONG:
@@ -242,14 +226,14 @@ public class CairoLineProtoParserSupport {
                     return ColumnType.SYMBOL;
             }
         }
-        return len == 0 ? ColumnType.NULL : ColumnType.UNDEFINED;
+        return ColumnType.NULL;
     }
 
     private static boolean isTrue(CharSequence value) {
         return (value.charAt(0) | 32) == 't';
     }
 
-    private static void putNullValue(TableWriter.Row row, int columnIndex, int storageColumnType) {
+    public static void putNullValue(TableWriter.Row row, int columnIndex, int storageColumnType) {
         switch (ColumnType.tagOf(storageColumnType)) {
             case ColumnType.BOOLEAN:
                 row.putBool(columnIndex, false);
