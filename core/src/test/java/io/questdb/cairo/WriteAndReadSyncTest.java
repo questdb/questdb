@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -49,10 +48,11 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
 
     @Test
     public void testVanilla() throws IOException, BrokenBarrierException, InterruptedException {
-        long pagesPerLong = Files.PAGE_SIZE / 8;
+        final long longsPerPage = Files.PAGE_SIZE / 8;
         for(int loop = 0; loop < 10; loop++) {
             Random rnd = new Random();
-            for (long longCountIncr = pagesPerLong; longCountIncr < pagesPerLong * 3; longCountIncr += rnd.nextDouble() * 512) {
+            // increments randomly by [0..512] up to three pages
+            for (long longCountIncr = longsPerPage, limit = longsPerPage * 3; longCountIncr < limit; longCountIncr += rnd.nextDouble() * 512) {
                 long longCount = longCountIncr;
                 final CountDownLatch readLatch = new CountDownLatch(1);
                 final File file = temp.newFile();
