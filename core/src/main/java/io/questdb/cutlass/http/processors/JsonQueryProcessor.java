@@ -30,10 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.sql.InsertMethod;
-import io.questdb.cairo.sql.InsertStatement;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
-import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.cutlass.text.Utf8Exception;
@@ -359,22 +356,31 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         try {
             compiler.executeAlterCommand(cc, sqlExecutionContext);
         } catch (EntryUnavailableException ex) {
-            state.info().$("writer busy, will pass execution to writer owner [table=").$(cc.getAlterStatement().getTableName()).I$();
+            AlterStatement alterStatement = cc.getAlterStatement();
+            state.info().$("writer busy, will pass ALTER TABLE execution to writer owner [table=").$(alterStatement.getTableName()).I$();
             final FanOut writerEventFanOut = engine.getMessageBus().getTableWriterEventFanOut();
             RingQueue<TableWriterTask> tableWriterEventQueue = engine.getMessageBus().getTableWriterEventQueue();
-            MCSequence tableWriterEventSeq = new MCSequence(writerEventFanOut.current(), tableWriterEventQueue.getCapacity());
+            SCSequence tableWriterEventSeq = new SCSequence();
             try {
                 writerEventFanOut.and(tableWriterEventSeq);
-                long instance = engine.pubTableWriterCommand(cc.getAlterStatement());
+                long instance = engine.pubTableWriterCommand(alterStatement);
                 state.debug().$("published writer event [table=")
-                        .$(cc.getAlterStatement().getTableName())
+                        .$(alterStatement.getTableName())
                         .$(",instance=").$(instance).I$();
 
-                waitWriterEvent(tableWriterEventSeq, tableWriterEventQueue, instance);
-
-                state.debug().$("received response writer event [table=")
-                        .$(cc.getAlterStatement().getTableName())
-                        .$(",instance=").$(instance).I$();
+                SqlException status = waitWriterEvent(tableWriterEventSeq, tableWriterEventQueue, instance, alterStatement.getTableNamePosition());
+                if (status == null) {
+                    state.debug().$("received DONE response writer event [table=")
+                            .$(alterStatement.getTableName())
+                            .$(",instance=").$(instance).I$();
+                } else {
+                    state.info().$("received ERROR response for ALTER TABLE from writer [table=")
+                            .$(alterStatement.getTableName())
+                            .$(",instance=").$(instance)
+                            .$(",error=").$(status.getFlyweightMessage())
+                            .I$();
+                    throw status;
+                }
             } finally {
                 writerEventFanOut.remove(tableWriterEventSeq);
             }
@@ -382,11 +388,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         sendConfirmation(state, cc, keepAliveHeader);
     }
 
-    private void waitWriterEvent(
-            MCSequence tableWriterEventSeq,
+    private SqlException waitWriterEvent(
+            SCSequence tableWriterEventSeq,
             RingQueue<TableWriterTask> tableWriterEventQueue,
-            long commandId
-    ) throws SqlException {
+            long commandId,
+            int tableNamePosition) {
         while (true) {
             long seq = tableWriterEventSeq.next();
             if (seq < 0) {
@@ -397,17 +403,18 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             if (event.getInstance() != commandId || event.getType() != TableWriterTask.TSK_ALTER_TABLE) {
                 tableWriterEventSeq.done(seq);
                 LockSupport.parkNanos(100);
-            } else {
-                int strLen = Unsafe.getUnsafe().getInt(event.getData());
-                if (strLen > 0) {
-                    SqlException ex = SqlException.$(0, writerErrorMessage.of(event.getData() + 4, event.getData() + 4L + 2L * strLen));
-                    tableWriterEventSeq.done(seq);
-                    throw ex;
-                }
-
-                tableWriterEventSeq.done(seq);
-                break;
+                continue;
             }
+
+            // If writer failed to execute the ALTER command it will send back string error
+            // in the event data
+            SqlException result = null;
+            int strLen = Unsafe.getUnsafe().getInt(event.getData());
+            if (strLen != 0) {
+                result = SqlException.$(tableNamePosition, writerErrorMessage.of(event.getData() + 4L, event.getData() + 4L + 2L * strLen));
+            }
+            tableWriterEventSeq.done(seq);
+            return result;
         }
     }
 

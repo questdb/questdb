@@ -487,7 +487,7 @@ public class TableWriter implements Closeable {
         final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
 
         if (columnIndex == -1) {
-            throw CairoException.instance(0).put("Invalid column name: ").put(columnName);
+            throw CairoException.instance(0).put("column \"").put(columnName).put("\" does not exist");
         }
 
         commit();
@@ -729,7 +729,7 @@ public class TableWriter implements Closeable {
         if (index > -1) {
             return index;
         }
-        throw CairoException.instance(0).put("Invalid column name: ").put(name);
+        throw CairoException.instance(0).put("column \"").put(name).put("\" does not exist");
     }
 
     public String getDesignatedTimestampColumnName() {

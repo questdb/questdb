@@ -43,5 +43,7 @@ public interface AlterStatement {
 
     void apply(TableWriter tableWriter) throws SqlException;
     CharSequence getTableName();
+
+    int getTableNamePosition();
     void serialize(TableWriterTask event);
 }

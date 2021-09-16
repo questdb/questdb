@@ -120,6 +120,11 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
         return tableName;
     }
 
+    @Override
+    public int getTableNamePosition() {
+        return tableNamePosition;
+    }
+
     public void deserialize(TableWriterTask event) {
         clear();
 
@@ -428,7 +433,7 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
                 writer.renameColumn(columnName, newName);
             } catch (CairoException e) {
                 LOG.error().$("cannot rename column '").$(writer.getTableName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, "cannot rename column ").put(columnName).put(": ").put(e);
+                throw SqlException.$(tableNamePosition, "cannot rename column \"").put(columnName).put("\"; ").put(e.getFlyweightMessage());
             }
         }
     }
