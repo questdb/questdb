@@ -54,7 +54,7 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
             Random rnd = new Random();
             for (long longCountIncr = pagesPerLong; longCountIncr < pagesPerLong * 3; longCountIncr += rnd.nextDouble() * 512) {
                 long longCount = longCountIncr;
-                final var readLatch = new CountDownLatch(1);
+                final CountDownLatch readLatch = new CountDownLatch(1);
                 final File file = temp.newFile();
                 try (Path path = new Path()) {
                     path.of(file.getAbsolutePath()).$();
