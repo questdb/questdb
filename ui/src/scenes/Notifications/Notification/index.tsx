@@ -1,28 +1,23 @@
 import { format } from "date-fns/fp"
-import React, { useCallback, useContext, useState } from "react"
+import React, { useCallback } from "react"
 import { useDispatch } from "react-redux"
 import { CSSTransition } from "react-transition-group"
 import { Close } from "@styled-icons/remix-line/Close"
-import { Pushpin } from "@styled-icons/remix-line/Pushpin"
-import { Pushpin2 } from "@styled-icons/remix-line/Pushpin2"
-import styled, { css, keyframes } from "styled-components"
+import styled, { css } from "styled-components"
 
 import { bezierTransition, Text, Toast, TransitionDuration } from "components"
 import { actions } from "store"
-import { LocalStorageContext } from "providers/LocalStorageProvider"
 import { Color, NotificationShape, NotificationType } from "types"
 import { color } from "utils"
 
 type Props = NotificationShape
 
-type AnimationPlay = "paused" | "running"
-
-const Wrapper = styled(Toast)<{ pinned: boolean }>`
-  margin-top: 1rem;
+const Wrapper = styled(Toast)`
+  margin-bottom: 1rem;
   padding-right: 3rem;
   border-right: none;
   box-shadow: ${color("black")} 0 0 4px;
-  ${({ pinned }) => (pinned ? "" : "border-bottom: none;")};
+  width: 100%;
 
   overflow: hidden;
   ${bezierTransition};
@@ -53,62 +48,6 @@ const CloseIcon = styled(Close)`
   ${baseIconStyles};
 `
 
-const disappear = keyframes`
-  from {
-    left: 0;
-  }
-
-  to {
-    left: 100%
-  }
-`
-
-const Out = styled.div<{
-  animationPlay: AnimationPlay
-  animationDelay: number
-}>`
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 2px;
-
-  :before {
-    content: " ";
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    height: 2px;
-    background: ${color("draculaSelection")};
-  }
-
-  :after {
-    content: " ";
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    height: 2px;
-    background: ${color("gray2")};
-    animation: ${disappear} ${({ animationDelay }) => animationDelay}s linear 0s
-      1 normal forwards;
-    animation-play-state: ${({ animationPlay }) => animationPlay};
-  }
-`
-
-const Pin = styled(Pushpin2)`
-  ${baseIconStyles};
-  top: 1.8rem;
-  right: 0.8rem;
-`
-
-const Unpin = styled(Pushpin)`
-  ${baseIconStyles};
-  top: 1.8rem;
-  right: 0.8rem;
-`
-
 const getBorderColor = (type: NotificationType): Color => {
   if (type === NotificationType.SUCCESS) {
     return "draculaGreen"
@@ -122,57 +61,27 @@ const getBorderColor = (type: NotificationType): Color => {
 }
 
 const Notification = ({ createdAt, line1, title, type, ...rest }: Props) => {
-  const { notificationDelay } = useContext(LocalStorageContext)
-  const [pinned, setPinned] = useState(false)
-  const [animationPlay, setAnimationPlay] = useState<AnimationPlay>("running")
   const dispatch = useDispatch()
+
   const handleCloseClick = useCallback(() => {
     dispatch(actions.query.removeNotification(createdAt))
   }, [createdAt, dispatch])
-  const handlePinClick = useCallback(() => {
-    setPinned(!pinned)
-  }, [pinned])
-  const handleMouseEnter = useCallback(() => {
-    setAnimationPlay("paused")
-  }, [])
-  const handleMouseLeave = useCallback(() => {
-    setAnimationPlay("running")
-  }, [])
 
   return (
     <CSSTransition
-      classNames="slide"
+      classNames="fade-reg"
       timeout={TransitionDuration.REG}
       unmountOnExit
       {...rest}
     >
-      <Wrapper
-        borderColor={getBorderColor(type)}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-        pinned={pinned}
-      >
+      <Wrapper borderColor={getBorderColor(type)}>
         <Title color="gray2" hasLine1={!!line1}>
           [{format("HH:mm:ss", createdAt)}]&nbsp;{title}
         </Title>
 
         {line1}
 
-        {!pinned && (
-          <Out
-            animationDelay={notificationDelay}
-            animationPlay={animationPlay}
-            onAnimationEnd={handleCloseClick}
-          />
-        )}
-
         <CloseIcon onClick={handleCloseClick} size="18px" />
-
-        {pinned ? (
-          <Unpin onClick={handlePinClick} size="16px" />
-        ) : (
-          <Pin onClick={handlePinClick} size="16px" />
-        )}
       </Wrapper>
     </CSSTransition>
   )

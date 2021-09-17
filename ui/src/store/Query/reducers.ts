@@ -22,38 +22,18 @@
  *
  ******************************************************************************/
 
-import { differenceInMilliseconds } from "date-fns"
-
-import { NotificationShape, NotificationType, QueryAction, QueryAT, QueryStateShape } from "types"
+import { QueryAction, QueryAT, QueryStateShape } from "types"
 
 export const initialState: QueryStateShape = {
   notifications: [],
   running: false,
-  maxNotificationHeight: 500
-}
-
-function calculateHeight(notifications: NotificationShape[]): number {
-  if (!notifications) return 0;
-  let height = 0;
-  notifications.forEach(element => {
-    // Estimate element height
-    if (element.type === NotificationType.SUCCESS ) {
-      height += 145
-    } else {
-      height += 70;
-    }
-  });
-  return height;
+  maxNotificationHeight: 500,
 }
 
 const query = (state = initialState, action: QueryAction): QueryStateShape => {
   switch (action.type) {
     case QueryAT.ADD_NOTIFICATION: {
-      const notifications = [action.payload, ...state.notifications]
-
-      while (notifications.length > 1 && calculateHeight(notifications) > state.maxNotificationHeight) {
-        notifications.pop()
-      }
+      const notifications = [...state.notifications, action.payload]
 
       return {
         ...state,
@@ -95,24 +75,6 @@ const query = (state = initialState, action: QueryAction): QueryStateShape => {
       return {
         ...state,
         running: !state.running,
-      }
-    }
-
-    case QueryAT.CHANGE_MAX_NOTIFICATION_HEIGHTS: {
-      let notifications = state.notifications
-
-      while (calculateHeight(notifications) > action.payload) {
-        if (notifications == state.notifications) {
-          // copy
-          notifications = [...state.notifications]
-        }
-        notifications.pop()
-      }
-
-      return {
-        ...state, 
-        notifications,
-        maxNotificationHeight: action.payload,
       }
     }
 
