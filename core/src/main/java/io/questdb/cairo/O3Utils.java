@@ -59,19 +59,11 @@ public class O3Utils {
         return temp8ByteBuf[worker];
     }
 
-    static long getVarColumnLength(
-            long srcLo,
-            long srcHi,
-            long srcFixAddr,
-            long srcVarSize
-    ) {
-        final long lo = findVarOffset(srcFixAddr, srcLo, srcVarSize);
-        final long hi;
-        hi = findVarOffset(srcFixAddr, srcHi + 1, srcVarSize);
-        return hi - lo;
+    static long getVarColumnLength(long srcLo, long srcHi, long srcFixAddr) {
+        return findVarOffset(srcFixAddr, srcHi + 1) - findVarOffset(srcFixAddr, srcLo);
     }
 
-    static long findVarOffset(long srcFixAddr, long srcLo, long srcVarSize) {
+    static long findVarOffset(long srcFixAddr, long srcLo) {
         return Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
     }
 

@@ -156,7 +156,6 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    @Ignore
     public void testColumnTopLastDataMergeDataParallel() throws Exception {
         executeWithPool(4, O3Test::testColumnTopLastDataMergeData0);
     }
@@ -386,7 +385,7 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testOOOFollowedByAnotherOOO() throws Exception {
+    public void testOOOFollowedByAnotherOOOParallel() throws Exception {
         executeWithPool(4, O3Test::testOooFollowedByAnotherOOO0);
     }
 

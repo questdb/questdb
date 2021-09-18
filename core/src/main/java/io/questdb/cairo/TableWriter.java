@@ -2641,23 +2641,17 @@ public class TableWriter implements Closeable {
                                 final MemoryMAR mem2 = columns.getQuick(colOffset + 1);
                                 final long srcDataTop = getColumnTop(i);
                                 final long srcOooFixAddr;
-                                final long srcOooFixSize;
                                 final long srcOooVarAddr;
-                                final long srcOooVarSize;
                                 final MemoryMAR dstFixMem;
                                 final MemoryMAR dstVarMem;
                                 if (!ColumnType.isVariableLength(columnType)) {
                                     srcOooFixAddr = oooMem1.addressOf(0);
-                                    srcOooFixSize = oooMem1.getAppendOffset();
                                     srcOooVarAddr = 0;
-                                    srcOooVarSize = 0;
                                     dstFixMem = mem1;
                                     dstVarMem = null;
                                 } else {
                                     srcOooFixAddr = oooMem2.addressOf(0);
-                                    srcOooFixSize = oooMem2.getAppendOffset();
                                     srcOooVarAddr = oooMem1.addressOf(0);
-                                    srcOooVarSize = oooMem1.getAppendOffset();
                                     dstFixMem = mem2;
                                     dstVarMem = mem1;
                                 }
@@ -2669,9 +2663,7 @@ public class TableWriter implements Closeable {
                                         columnCounter,
                                         notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
                                         srcOooFixAddr,
-                                        srcOooFixSize,
                                         srcOooVarAddr,
-                                        srcOooVarSize,
                                         srcOooLo,
                                         srcOooHi,
                                         srcOooMax,
@@ -3401,7 +3393,7 @@ public class TableWriter implements Closeable {
             } else {
                 // Var size column
                 size = o3IndexMem.getLong(o3RowCount * 8);
-                o3IndexMem.jumpTo(o3RowCount * 8);
+                o3IndexMem.jumpTo((o3RowCount + 1) * 8);
             }
 
             o3DataMem.jumpTo(size);

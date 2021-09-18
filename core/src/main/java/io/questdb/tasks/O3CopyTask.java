@@ -49,9 +49,7 @@ public class O3CopyTask extends AbstractLockable {
     private long srcDataTop;
     private long srcDataMax;
     private long srcOooFixAddr;
-    private long srcOooFixSize;
     private long srcOooVarAddr;
-    private long srcOooVarSize;
     private long srcOooLo;
     private long srcOooHi;
     private long srcOooMax;
@@ -67,6 +65,7 @@ public class O3CopyTask extends AbstractLockable {
     private long dstVarFd;
     private long dstVarAddr;
     private long dstVarOffset;
+    private long dstVarOffsetEnd;
     private long dstVarAdjust;
     private long dstVarSize;
     private long dstKFd;
@@ -129,12 +128,20 @@ public class O3CopyTask extends AbstractLockable {
         return dstVarAddr;
     }
 
+    public long getDstVarAdjust() {
+        return dstVarAdjust;
+    }
+
     public long getDstVarFd() {
         return dstVarFd;
     }
 
     public long getDstVarOffset() {
         return dstVarOffset;
+    }
+
+    public long getDstVarOffsetEnd() {
+        return dstVarOffsetEnd;
     }
 
     public long getDstVarSize() {
@@ -205,10 +212,6 @@ public class O3CopyTask extends AbstractLockable {
         return srcOooFixAddr;
     }
 
-    public long getSrcOooFixSize() {
-        return srcOooFixSize;
-    }
-
     public long getSrcOooHi() {
         return srcOooHi;
     }
@@ -231,10 +234,6 @@ public class O3CopyTask extends AbstractLockable {
 
     public long getSrcOooVarAddr() {
         return srcOooVarAddr;
-    }
-
-    public long getSrcOooVarSize() {
-        return srcOooVarSize;
     }
 
     public long getSrcTimestampAddr() {
@@ -273,10 +272,6 @@ public class O3CopyTask extends AbstractLockable {
         return partitionMutates;
     }
 
-    public long getDstVarAdjust() {
-        return dstVarAdjust;
-    }
-
     public void of(
             AtomicInteger columnCounter,
             AtomicInteger partCounter,
@@ -296,9 +291,7 @@ public class O3CopyTask extends AbstractLockable {
             long srcDataTop,
             long srcDataMax,
             long srcOooFixAddr,
-            long srcOooFixSize,
             long srcOooVarAddr,
-            long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
@@ -314,6 +307,7 @@ public class O3CopyTask extends AbstractLockable {
             long dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
+            long dstVarOffsetEnd,
             long dstVarAdjust,
             long dstVarSize,
             long dstKFd,
@@ -346,9 +340,7 @@ public class O3CopyTask extends AbstractLockable {
         this.srcDataHi = srcDataHi;
         this.srcDataMax = srcDataMax;
         this.srcOooFixAddr = srcOooFixAddr;
-        this.srcOooFixSize = srcOooFixSize;
         this.srcOooVarAddr = srcOooVarAddr;
-        this.srcOooVarSize = srcOooVarSize;
         this.srcOooLo = srcOooLo;
         this.srcOooHi = srcOooHi;
         this.srcOooMax = srcOooMax;
@@ -364,6 +356,7 @@ public class O3CopyTask extends AbstractLockable {
         this.dstVarFd = dstVarFd;
         this.dstVarAddr = dstVarAddr;
         this.dstVarOffset = dstVarOffset;
+        this.dstVarOffsetEnd = dstVarOffsetEnd;
         this.dstVarAdjust = dstVarAdjust;
         this.dstVarSize = dstVarSize;
         this.dstKFd = dstKFd;
