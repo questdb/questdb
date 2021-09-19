@@ -86,7 +86,7 @@ public class SymbolMapWriter implements Closeable {
             this.offsetMem = Vm.getWholeMARWInstance(ff, path, mapPageSize);
             final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
             final boolean useCache = offsetMem.getBool(HEADER_CACHE_ENABLED);
-            this.offsetMem.jumpTo(keyToOffset(symbolCount));
+            this.offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
 
             // index writer is used to identify attempts to store duplicate symbol value
             this.indexWriter = new BitmapIndexWriter(configuration, path.trimTo(plen), name);
@@ -211,7 +211,7 @@ public class SymbolMapWriter implements Closeable {
     }
 
     public int getSymbolCount() {
-        return offsetToKey(offsetMem.getAppendOffset());
+        return offsetToKey(offsetMem.getAppendOffset() - Long.BYTES);
     }
 
     public int put(char c) {
@@ -237,7 +237,7 @@ public class SymbolMapWriter implements Closeable {
 
     public void rollback(int symbolCount) {
         indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
-        offsetMem.jumpTo(keyToOffset(symbolCount));
+        offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
         jumpCharMemToSymbolCount(symbolCount);
         transientSymbolCountChangeHandler.handleTransientSymbolCountChange(symbolCount);
         if (cache != null) {
@@ -267,9 +267,7 @@ public class SymbolMapWriter implements Closeable {
 
     private void jumpCharMemToSymbolCount(int symbolCount) {
         if (symbolCount > 0) {
-            long lastSymbolOffset = this.offsetMem.getLong(keyToOffset(symbolCount - 1));
-            int l = Vm.getStorageLength(this.charMem.getStr(lastSymbolOffset));
-            this.charMem.jumpTo(lastSymbolOffset + l);
+            this.charMem.jumpTo(this.offsetMem.getLong(keyToOffset(symbolCount)));
         } else {
             this.charMem.jumpTo(0);
         }
@@ -295,7 +293,7 @@ public class SymbolMapWriter implements Closeable {
     }
 
     private int put0(CharSequence symbol, int hash) {
-        long offsetOffset = offsetMem.getAppendOffset();
+        long offsetOffset = offsetMem.getAppendOffset() - Long.BYTES;
         offsetMem.putLong(charMem.putStr(symbol));
         indexWriter.add(hash, offsetOffset);
         int symIndex = offsetToKey(offsetOffset);
@@ -304,7 +302,7 @@ public class SymbolMapWriter implements Closeable {
     }
 
     void truncate() {
-        offsetMem.jumpTo(keyToOffset(0));
+        offsetMem.jumpTo(keyToOffset(0) + Long.BYTES);
         charMem.jumpTo(0);
         indexWriter.truncate();
         if (cache != null) {

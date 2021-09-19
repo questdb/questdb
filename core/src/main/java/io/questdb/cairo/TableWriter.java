@@ -1372,19 +1372,13 @@ public class TableWriter implements Closeable {
                 nullers.add(() -> mem1.putChar((char) 0));
                 break;
             case ColumnType.STRING:
-                nullers.add(() -> {
-                    mem1.putNullStr();
-                    mem2.putLong(mem1.getAppendOffset());
-                });
+                nullers.add(() -> mem2.putLong(mem1.putNullStr()));
                 break;
             case ColumnType.SYMBOL:
                 nullers.add(() -> mem1.putInt(SymbolTable.VALUE_IS_NULL));
                 break;
             case ColumnType.BINARY:
-                nullers.add(() -> {
-                    mem1.putNullBin();
-                    mem2.putLong(mem1.getAppendOffset());
-                });
+                nullers.add(() -> mem2.putLong(mem1.putNullBin()));
                 break;
             case ColumnType.GEOBYTE:
                 nullers.add(() -> mem1.putByte(GeoHashes.BYTE_NULL));
@@ -4864,20 +4858,17 @@ public class TableWriter implements Closeable {
         }
 
         public void putStr(int index, CharSequence value) {
-            getPrimaryColumn(index).putStr(value);
-            getSecondaryColumn(index).putLong(getPrimaryColumn(index).getAppendOffset());
+            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value));
             notNull(index);
         }
 
         public void putStr(int index, char value) {
-            getPrimaryColumn(index).putStr(value);
-            getSecondaryColumn(index).putLong(getPrimaryColumn(index).getAppendOffset());
+            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value));
             notNull(index);
         }
 
         public void putStr(int index, CharSequence value, int pos, int len) {
-            getPrimaryColumn(index).putStr(value, pos, len);
-            getSecondaryColumn(index).putLong(getPrimaryColumn(index).getAppendOffset());
+            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value, pos, len));
             notNull(index);
         }
 
