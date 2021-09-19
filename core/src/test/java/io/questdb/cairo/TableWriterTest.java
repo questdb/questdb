@@ -1404,7 +1404,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, "productName.d")) {
+                if (Chars.endsWith(name, "productName.i")) {
                     return fd = super.openRW(name);
                 }
                 return super.openRW(name);
@@ -2583,13 +2583,8 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSetAppendPositionFailureBin1() throws Exception {
-        testSetAppendPositionFailure("bin.d");
-    }
-
-    @Test
     public void testSetAppendPositionFailureBin2() throws Exception {
-        testSetAppendPositionFailure("bin.i");
+        testSetAppendPositionFailure();
     }
 
     @Test
@@ -3578,7 +3573,7 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
-    private void testSetAppendPositionFailure(String failFile) throws Exception {
+    private void testSetAppendPositionFailure() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
 
@@ -3587,7 +3582,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 @Override
                 public long openRW(LPSZ name) {
-                    if (Chars.endsWith(name, failFile)) {
+                    if (Chars.endsWith(name, "bin.i")) {
                         return fd = super.openRW(name);
                     }
                     return super.openRW(name);

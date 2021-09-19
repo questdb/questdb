@@ -1261,33 +1261,15 @@ public class TableWriter implements Closeable {
             long buf,
             boolean ensureFileSize
     ) {
-        long offset;
-        long len;
         long mem1Size;
         if (actualPosition > 0) {
             // subtract column top
             switch (ColumnType.tagOf(type)) {
                 case ColumnType.BINARY:
-                    assert mem2 != null;
-                    readOffsetBytes(ff, mem2, actualPosition, buf);
-                    offset = Unsafe.getUnsafe().getLong(buf);
-                    readBytes(ff, mem1, buf, Long.BYTES, offset, "Cannot read length, fd=");
-                    len = Unsafe.getUnsafe().getLong(buf);
-                    mem1Size = len == -1 ? offset + Long.BYTES : offset + len + Long.BYTES;
-                    if (ensureFileSize) {
-                        mem1.allocate(mem1Size);
-                        mem2.allocate(actualPosition * Long.BYTES + Long.BYTES);
-                    }
-                    mem1.jumpTo(mem1Size);
-                    mem2.jumpTo(actualPosition * Long.BYTES + Long.BYTES);
-                    break;
                 case ColumnType.STRING:
                     assert mem2 != null;
                     readOffsetBytes(ff, mem2, actualPosition, buf);
-                    offset = Unsafe.getUnsafe().getLong(buf);
-                    readBytes(ff, mem1, buf, Integer.BYTES, offset, "Cannot read length, fd=");
-                    len = Unsafe.getUnsafe().getInt(buf);
-                    mem1Size = len == -1 ? offset + Integer.BYTES : offset + len * Character.BYTES + Integer.BYTES;
+                    mem1Size = Unsafe.getUnsafe().getLong(buf);
                     if (ensureFileSize) {
                         mem1.allocate(mem1Size);
                         mem2.allocate(actualPosition * Long.BYTES + Long.BYTES);
@@ -1333,12 +1315,8 @@ public class TableWriter implements Closeable {
     }
 
     private static void readOffsetBytes(FilesFacade ff, MemoryM mem, long position, long buf) {
-        readBytes(ff, mem, buf, 8, (position - 1) * 8, "could not read offset, fd=");
-    }
-
-    private static void readBytes(FilesFacade ff, MemoryM mem, long buf, int byteCount, long offset, CharSequence errorMsg) {
-        if (ff.read(mem.getFd(), buf, byteCount, offset) != byteCount) {
-            throw CairoException.instance(ff.errno()).put(errorMsg).put(mem.getFd()).put(", offset=").put(offset);
+        if (ff.read(mem.getFd(), buf, 8, position * 8) != 8) {
+            throw CairoException.instance(ff.errno()).put("could not read offset, fd=").put(mem.getFd()).put(", offset=").put((position - 1) * 8);
         }
     }
 

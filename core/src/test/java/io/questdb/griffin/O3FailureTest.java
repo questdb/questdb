@@ -330,7 +330,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public long openRW(LPSZ name) {
                 long fd = super.openRW(name);
-                if (Chars.endsWith(name, "1970-01-08" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
+                if (Chars.endsWith(name, "1970-01-08" + Files.SEPARATOR + "v12.i") && counter.decrementAndGet() == 0) {
                     theFd = fd;
                 }
                 return fd;
@@ -356,7 +356,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public long openRW(LPSZ name) {
                 long fd = super.openRW(name);
-                if (Chars.endsWith(name, "1970-01-08" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
+                if (Chars.endsWith(name, "1970-01-08" + Files.SEPARATOR + "v12.i") && counter.decrementAndGet() == 0) {
                     theFd = fd;
                 }
                 return fd;
@@ -365,58 +365,6 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public long read(long fd, long buf, long len, long offset) {
                 if (fd == theFd && len == Long.BYTES) {
-                    theFd = 0;
-                    return 2;
-                }
-                return super.read(fd, buf, len, offset);
-            }
-        });
-    }
-
-    @Test
-    public void testColumnTopLastOOOPrefixReadStrLen() throws Exception {
-        counter.set(1);
-        executeWithoutPool(O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
-            long theFd;
-
-            @Override
-            public long openRW(LPSZ name) {
-                long fd = super.openRW(name);
-                if (Chars.endsWith(name, "1970-01-08" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
-                    theFd = fd;
-                }
-                return fd;
-            }
-
-            @Override
-            public long read(long fd, long buf, long len, long offset) {
-                if (fd == theFd && len == Integer.BYTES) {
-                    theFd = 0;
-                    return 2;
-                }
-                return super.read(fd, buf, len, offset);
-            }
-        });
-    }
-
-    @Test
-    public void testColumnTopLastOOOPrefixReadStrLenContended() throws Exception {
-        counter.set(1);
-        executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
-            long theFd;
-
-            @Override
-            public long openRW(LPSZ name) {
-                long fd = super.openRW(name);
-                if (Chars.endsWith(name, "1970-01-08" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
-                    theFd = fd;
-                }
-                return fd;
-            }
-
-            @Override
-            public long read(long fd, long buf, long len, long offset) {
-                if (fd == theFd && len == Integer.BYTES) {
                     theFd = 0;
                     return 2;
                 }
