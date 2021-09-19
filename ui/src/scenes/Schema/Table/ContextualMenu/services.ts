@@ -18,8 +18,10 @@ export const formatTableSchemaQueryResult = (
       const symbolCapacity = column[5]
 
       query += `${name} ${typeDef} `
-      query += symbolCapacity ? `capacity ${symbolCapacity} ` : ""
-      query += symbolCached ? "cache " : "nocache "
+      if (typeDef === "SYMBOL") {
+        query += symbolCapacity ? `capacity ${symbolCapacity} ` : ""
+        query += symbolCached ? "cache " : "nocache "
+      }
       query += indexed ? "index " : ""
       query +=
         indexed && indexBlockCapacity ? `capacity ${indexBlockCapacity} ` : ""
