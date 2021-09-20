@@ -6,7 +6,7 @@ export const formatTableSchemaQueryResult = (
   result: QuestDB.QueryRawResult,
 ): string => {
   if (result.type === QuestDB.Type.DQL) {
-    let query = `CREATE TABLE ${name} (`
+    let query = `CREATE TABLE '${name}' (`
 
     for (let i = 0; i < result.count; i++) {
       const column = result.dataset[i]
