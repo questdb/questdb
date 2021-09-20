@@ -193,7 +193,7 @@ public class GeoHashes {
         }
         final int chars = Math.min((int) (hi - lo), MAX_STRING_LENGTH);
         int actualBits = 5 * chars;
-        if (actualBits < bits) {
+        if (actualBits < bits || bits == 0) {
             throw NumericException.INSTANCE;
         }
         long geohash = 0;
