@@ -81,7 +81,7 @@ const Settings = () => {
             selected={selected === "notification"}
           >
             <Popup size="18px" />
-            <span>Notification</span>
+            <span>Notification Log</span>
           </ToggleButton>
         </SettingsMenu>
       </PaneWrapper>
