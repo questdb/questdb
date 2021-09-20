@@ -84,7 +84,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.path.of(configuration.getRoot()).concat(tableName);
         this.rootLen = path.length();
         try {
-            failOnPendingTodo();
+//            failOnPendingTodo();
             this.metadata = openMetaFile();
             this.columnCount = this.metadata.getColumnCount();
             this.columnCountBits = getColumnBits(columnCount);
@@ -736,37 +736,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         partitionCount--;
     }
 
-    private void failOnPendingTodo() {
-        try {
-            path.concat(TableUtils.TODO_FILE_NAME).$();
-            if (ff.exists(path)) {
-                todoMem.smallFile(ff, path);
-                if (todoMem.getPageCount() > 0) {
-                    long instanceHashLo;
-                    long instanceHashHi;
-                    long todoTxn;
-                    long attemptsLeft = 10;
-                    do {
-                        todoTxn = todoMem.getLong(24);
-                        Unsafe.getUnsafe().loadFence();
-                        instanceHashLo = todoMem.getLong(8);
-                        instanceHashHi = todoMem.getLong(16);
-                        Unsafe.getUnsafe().loadFence();
-                    } while (todoTxn != todoMem.getLong(0) && --attemptsLeft > 0);
-
-                    if (
-                            (instanceHashHi != 0 && instanceHashHi != configuration.getDatabaseIdHi())
-                                    || (instanceHashLo != 0 && instanceHashLo != configuration.getDatabaseIdLo())
-                    ) {
-                        throw CairoException.instance(0).put("Table ").put(path.$()).put(" is pending recovery.");
-                    }
-                }
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
     private void fetchColumnsFrom(
             int columnBase,
             int columnIndex
@@ -893,12 +862,13 @@ public class TableReader implements Closeable, SymbolTableSource {
             Path path,
             ObjList<MemoryMR> columns,
             int primaryIndex,
-            MemoryMR mem
+            MemoryMR mem,
+            long columnSize
     ) {
         if (mem != null && mem != NullColumn.INSTANCE) {
-            mem.wholeFile(ff, path);
+            mem.partialFile(ff, path, columnSize);
         } else {
-            mem = Vm.getMRInstance(ff, path, ff.length(path));
+            mem = Vm.getMRInstance(ff, path, columnSize);
             columns.setQuick(primaryIndex, mem);
         }
         return mem;
@@ -1121,20 +1091,27 @@ public class TableReader implements Closeable, SymbolTableSource {
             MemoryMR mem1 = columns.getQuick(primaryIndex);
             MemoryMR mem2 = columns.getQuick(secondaryIndex);
 
-            if (ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
+            final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b);
+            final long columnRowCount = partitionRowCount - columnTop;
 
-                mem1 = openOrCreateMemory(path, columns, primaryIndex, mem1);
+            // When column is added mid-table existence the .top file is only
+            // created in the current partition. Older partitions would simply have no
+            // column file. This makes it necessary to check for .d file existence
+            if (columnRowCount > 0 &&  ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
+                final int columnType = metadata.getColumnType(columnIndex);
 
-                final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b);
-                final int type = metadata.getColumnType(columnIndex);
-
-                if (ColumnType.isVariableLength(type)) {
+                if (ColumnType.isVariableLength(columnType)) {
+                    long columnSize = columnRowCount * 8L + 8L;
                     TableUtils.iFile(path.trimTo(plen), name);
-                    mem2 = openOrCreateMemory(path, columns, secondaryIndex, mem2);
-                    growColumn(mem1, mem2, type, partitionRowCount - columnTop);
+                    mem2 = openOrCreateMemory(path, columns, secondaryIndex, mem2, columnSize);
+                    columnSize = mem2.getLong(columnRowCount * 8L);
+                    TableUtils.dFile(path.trimTo(plen), name);
+                    openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize);
                 } else {
+                    long columnSize = columnRowCount << ColumnType.pow2SizeOf(columnType);
+                    TableUtils.dFile(path.trimTo(plen), name);
+                    openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize);
                     Misc.free(columns.getAndSetQuick(secondaryIndex, null));
-                    growColumn(mem1, null, type, partitionRowCount - columnTop);
                 }
 
                 columnTops.setQuick(columnBase / 2 + columnIndex, columnTop);

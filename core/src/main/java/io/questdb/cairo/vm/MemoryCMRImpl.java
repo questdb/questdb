@@ -85,6 +85,10 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
         } else {
             this.pageAddress = 0;
         }
+
+        if (size < 0) {
+            System.out.println("wtf?");
+        }
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
     }
 

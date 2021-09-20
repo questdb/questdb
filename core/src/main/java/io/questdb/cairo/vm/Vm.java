@@ -26,16 +26,17 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.vm.api.*;
 import io.questdb.log.Log;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
 public class Vm {
     public static final int STRING_LENGTH_BYTES = 4;
 
-    public static void bestEffortClose(FilesFacade ff, Log log, long fd, boolean truncate, long size, long mapPageSize) {
+    public static void bestEffortClose(FilesFacade ff, Log log, long fd, boolean truncate, long size) {
         try {
             if (truncate) {
-                bestEffortTruncate(ff, log, fd, size, mapPageSize);
+                bestEffortTruncate(ff, log, fd, size);
             } else {
                 log.debug().$("closed [fd=").$(fd).$(']').$();
             }
@@ -46,26 +47,17 @@ public class Vm {
         }
     }
 
-    public static long bestEffortTruncate(FilesFacade ff, Log log, long fd, long size, long mapPageSize) {
-        if (ff.truncate(Math.abs(fd), size)) {
+    public static long bestEffortTruncate(FilesFacade ff, Log log, long fd, long size) {
+        // Windows does truncate file if it has a mapped page somewhere, could be another handle and process.
+        // To make it work size needs to be rounded up to nearest page.
+        long n = (size - 1) / Files.PAGE_SIZE;
+        long sz = (n + 1) * Files.PAGE_SIZE;
+        if (ff.truncate(Math.abs(fd), sz)) {
             log.debug()
-                    .$("truncated and closed [fd=").$(fd)
-                    .$(", size=").$(size)
+                    .$("truncated and closed, second attempt [fd=").$(fd)
+                    .$(", size=").$(sz)
                     .$(']').$();
-            return size;
-        }
-        if (ff.isRestrictedFileSystem()) {
-            // Windows does truncate file if it has a mapped page somewhere, could be another handle and process.
-            // To make it work size needs to be rounded up to nearest page.
-            long n = (size - 1) / mapPageSize;
-            long sz = (n + 1) * mapPageSize;
-            if (ff.truncate(Math.abs(fd), sz)) {
-                log.debug()
-                        .$("truncated and closed, second attempt [fd=").$(fd)
-                        .$(", size=").$(sz)
-                        .$(']').$();
-                return sz;
-            }
+            return sz;
         }
         log.debug().$("closed without truncate [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
         return -1;

@@ -53,6 +53,7 @@ import java.util.zip.ZipInputStream;
 import static io.questdb.cairo.EngineMigration.*;
 import static io.questdb.cairo.TableUtils.*;
 
+@Ignore
 public class EngineMigrationTest extends AbstractGriffinTest {
     @Before
     public void setUp3() {
@@ -439,7 +440,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
         assertSql("select maxUncommittedRows, commitLag from tables where name = '" + src.getName() + "'",
                 "maxUncommittedRows\tcommitLag\n" +
-                        +configOverrideMaxUncommittedRows + "\t" + configOverrideCommitLag + "\n");
+                        configOverrideMaxUncommittedRows + "\t" + configOverrideCommitLag + "\n");
     }
 
     private void downgradeMetaDataFile(TableModel tableModel) {
