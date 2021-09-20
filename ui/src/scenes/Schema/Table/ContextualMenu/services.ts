@@ -6,25 +6,39 @@ export const formatTableSchemaQueryResult = (
   result: QuestDB.QueryRawResult,
 ): string => {
   if (result.type === QuestDB.Type.DQL) {
+    let designatedName = null
     let query = `CREATE TABLE '${name}' (`
 
     for (let i = 0; i < result.count; i++) {
-      const column = result.dataset[i]
-      const name = column[0]
-      const typeDef = column[1]
-      const indexed = column[2]
-      const indexBlockCapacity = column[3]
-      const symbolCached = column[4]
-      const symbolCapacity = column[5]
+      const [
+        name,
+        typeDef,
+        indexed,
+        indexBlockCapacity,
+        symbolCached,
+        symbolCapacity,
+        designated,
+      ] = result.dataset[i]
 
       query += `${name} ${typeDef} `
+
       if (typeDef === "SYMBOL") {
         query += symbolCapacity ? `capacity ${symbolCapacity} ` : ""
-        query += symbolCached ? "cache " : "nocache "
+        if (symbolCached) {
+          query += "CACHE "
+        }
       }
-      query += indexed ? "index " : ""
-      query +=
-        indexed && indexBlockCapacity ? `capacity ${indexBlockCapacity} ` : ""
+
+      if (indexed) {
+        query += "index "
+        if (indexBlockCapacity) {
+          query += `capacity ${indexBlockCapacity} `
+        }
+      }
+
+      if (designated) {
+        designatedName = name
+      }
 
       query = trim(query)
 
@@ -33,7 +47,13 @@ export const formatTableSchemaQueryResult = (
       }
     }
 
-    return `${trim(query)})`
+    query += ")"
+
+    if (designatedName) {
+      query += ` timestamp ${designatedName}`
+    }
+
+    return `${query};`
   } else {
     throw new Error("Could not format table schema")
   }
