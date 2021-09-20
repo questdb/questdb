@@ -27,13 +27,17 @@ import { QueryAction, QueryAT, QueryStateShape } from "types"
 export const initialState: QueryStateShape = {
   notifications: [],
   running: false,
-  maxNotificationHeight: 500,
+  maxNotifications: 20,
 }
 
 const query = (state = initialState, action: QueryAction): QueryStateShape => {
   switch (action.type) {
     case QueryAT.ADD_NOTIFICATION: {
       const notifications = [...state.notifications, action.payload]
+
+      while (notifications.length === state.maxNotifications) {
+        notifications.shift()
+      }
 
       return {
         ...state,
