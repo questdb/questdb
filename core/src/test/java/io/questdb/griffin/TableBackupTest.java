@@ -24,25 +24,22 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.PropServerConfiguration;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.MutableCharSink;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
+import java.io.File;
 import java.io.IOException;
 
 public class TableBackupTest {
@@ -53,7 +50,9 @@ public class TableBackupTest {
     public TemporaryFolder temp = new TemporaryFolder();
 
     private CharSequence backupRoot;
+    private Path path;
     private Path finalBackupPath;
+    private int finalBackupPathLen;
 
     private CairoConfiguration mainConfiguration;
     private CairoEngine mainEngine;
@@ -65,9 +64,8 @@ public class TableBackupTest {
 
     @Before
     public void setup() throws IOException {
+        path = new Path();
         finalBackupPath = new Path();
-        CharSequence root = temp.newFolder("dbRoot").getAbsolutePath();
-        backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
         mkdirsErrno = -1;
         renameErrno = -1;
         FilesFacade ff = new FilesFacadeImpl() {
@@ -104,6 +102,8 @@ public class TableBackupTest {
                 return super.rename(from, to);
             }
         };
+        CharSequence root = temp.newFolder(String.format("dbRoot%c%s", Files.SEPARATOR, PropServerConfiguration.DB_DIRECTORY)).getAbsolutePath();
+        backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
         mainConfiguration = new DefaultCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
@@ -122,12 +122,25 @@ public class TableBackupTest {
         };
         mainEngine = new CairoEngine(mainConfiguration);
         mainCompiler = new SqlCompiler(mainEngine);
-        mainSqlExecutionContext = new SqlExecutionContextImpl(mainEngine, 1).with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableServiceImpl(mainConfiguration), null, -1, null);
+        mainSqlExecutionContext = new SqlExecutionContextImpl(mainEngine, 1)
+                .with(AllowAllCairoSecurityContext.INSTANCE,
+                        new BindVariableServiceImpl(mainConfiguration),
+                        null,
+                        -1,
+                        null);
+
+        File confRoot = new File(PropServerConfiguration.confRoot(root));  // dummy configuration
+        Assert.assertTrue(confRoot.mkdirs());
+        Assert.assertTrue(new File(confRoot, "server.conf").createNewFile());
+        Assert.assertTrue(new File(confRoot, "mime.types").createNewFile());
+        Assert.assertTrue(new File(confRoot, "log-file.conf").createNewFile());
+        Assert.assertTrue(new File(confRoot, "date.formats").createNewFile());
     }
 
     @After
     public void tearDown() {
         finalBackupPath.close();
+        path.close();
     }
 
     @Test
@@ -183,9 +196,10 @@ public class TableBackupTest {
             mainCompiler.compile("backup database", mainSqlExecutionContext);
 
             setFinalBackupPath();
-
             assertTables("tb1");
             assertTables("tb2");
+            assertTabIndex();
+            assertConf();
         });
     }
 
@@ -208,9 +222,10 @@ public class TableBackupTest {
             mainCompiler.compile("backup database", mainSqlExecutionContext);
 
             setFinalBackupPath();
-
             assertTables("tb1");
             assertTables("tb2");
+            assertTabIndex();
+            assertConf();
         });
     }
 
@@ -239,8 +254,9 @@ public class TableBackupTest {
             mainCompiler.compile("backup database", mainSqlExecutionContext);
 
             setFinalBackupPath();
-
             assertTables("tb1");
+            assertTabIndex();
+            assertConf();
         });
     }
 
@@ -372,7 +388,6 @@ public class TableBackupTest {
             mainCompiler.compile("backup table tb1, tb2", mainSqlExecutionContext);
 
             setFinalBackupPath();
-
             assertTables("tb1");
             assertTables("tb2");
         });
@@ -506,7 +521,7 @@ public class TableBackupTest {
                 mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);
                 Assert.fail();
             } catch (CairoException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[13] Could not create "));
+                Assert.assertTrue(ex.getMessage().startsWith("[13] could not create backup "));
             }
         });
     }
@@ -566,6 +581,8 @@ public class TableBackupTest {
             finalBackupPath.put(n);
         }
         finalBackupPath.slash$();
+        finalBackupPathLen = finalBackupPath.length();
+        finalBackupPath.trimTo(finalBackupPathLen).concat(PropServerConfiguration.DB_DIRECTORY).slash$();
     }
 
     private void setFinalBackupPath() {
@@ -576,5 +593,21 @@ public class TableBackupTest {
         selectAll(tb1, false, sink1);
         selectAll(tb1, true, sink2);
         TestUtils.assertEquals(sink1, sink2);
+    }
+
+    private void assertTabIndex() {
+        path.of(mainConfiguration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+        Assert.assertTrue(Files.exists(path));
+        finalBackupPath.concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+        Assert.assertTrue(Files.exists(finalBackupPath));
+    }
+
+    private void assertConf() {
+        finalBackupPath.trimTo(finalBackupPathLen).concat(PropServerConfiguration.CONFIG_DIRECTORY).slash$();
+        final int trimLen = finalBackupPath.length();
+        Assert.assertTrue(Files.exists(finalBackupPath.concat("server.conf").$()));
+        Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("mime.types").$()));
+        Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("log-file.conf").$()));
+        Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("date.formats").$()));
     }
 }

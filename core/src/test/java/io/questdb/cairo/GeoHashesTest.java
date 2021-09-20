@@ -336,11 +336,9 @@ public class GeoHashesTest {
     public void testFromStringTruncatingNlShorterThanRequiredLength2() {
         testUnsafeFromStringTruncatingNl("123", (lo, hi) -> {
             try {
-                GeoHashes.fromStringTruncatingNl(lo, lo + 7, 0);
-                Assert.fail();
-            } catch (StringIndexOutOfBoundsException fail) {
-                Assert.fail();
-            } catch (NumericException ignored) {
+                Assert.assertEquals(0, GeoHashes.fromStringTruncatingNl(lo, hi + 7, 1));
+            } catch (NumericException expected) {
+                // beyond hi we will find whatever, very unlikely that it parses as a geohash char
             }
             return null;
         });
@@ -425,8 +423,8 @@ public class GeoHashesTest {
             testUnsafeFromStringTruncatingNl("123456789bcdezz", (lo1, hi1) -> {
                 try {
                     Assert.assertEquals(
-                            GeoHashes.fromStringTruncatingNl(lo0, lo0 + 12, 0),
-                            GeoHashes.fromStringTruncatingNl(lo1 + 1, lo1 + 13, 0));
+                            GeoHashes.fromStringTruncatingNl(lo0, lo0 + 12, 4),
+                            GeoHashes.fromStringTruncatingNl(lo1 + 1, lo1 + 13, 4));
 
                     Assert.assertNotEquals(
                             GeoHashes.fromStringTruncatingNl(lo0, lo0 + 12, 20),

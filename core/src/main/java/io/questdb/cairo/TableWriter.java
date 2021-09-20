@@ -1553,9 +1553,13 @@ public class TableWriter implements Closeable {
             return;
         }
 
-        if (hasO3()) {
-            masterRef--;
-            setO3AppendPosition(getO3RowCount());
+        if (o3MasterRef > -1) {
+            if (hasO3()) {
+                // O3 mode and there are some rows.
+                masterRef--;
+                setO3AppendPosition(getO3RowCount());
+            }
+            // We're in O3 mode but no rows added yet. Return.
             return;
         }
 
@@ -3000,15 +3004,16 @@ public class TableWriter implements Closeable {
     private long o3MoveUncommitted(final int timestampIndex) {
         final long committedRowCount = txFile.getCommittedFixedRowCount() + txFile.getCommittedTransientRowCount();
         final long rowsAdded = txFile.getRowCount() - committedRowCount;
-        final long committedTransientRowCount = txFile.getTransientRowCount() - Math.min(txFile.getTransientRowCount(), rowsAdded);
-        if (Math.min(txFile.getTransientRowCount(), rowsAdded) > 0) {
+        long transientRowsAdded = Math.min(txFile.getTransientRowCount(), rowsAdded);
+        final long committedTransientRowCount = txFile.getTransientRowCount() - transientRowsAdded;
+        if (transientRowsAdded > 0) {
             LOG.debug()
                     .$("o3 move uncommitted [table=").$(tableName)
-                    .$(", transientRowsAdded=").$(Math.min(txFile.getTransientRowCount(), rowsAdded))
+                    .$(", transientRowsAdded=").$(transientRowsAdded)
                     .I$();
             return o3ScheduleMoveUncommitted0(
                     timestampIndex,
-                    Math.min(txFile.getTransientRowCount(), rowsAdded),
+                    transientRowsAdded,
                     committedTransientRowCount
             );
         }
@@ -3382,8 +3387,18 @@ public class TableWriter implements Closeable {
                 size = o3RowCount << ColumnType.pow2SizeOf(columnType);
             } else {
                 // Var size column
-                size = o3IndexMem.getLong(o3RowCount * 8);
-                o3IndexMem.jumpTo(o3RowCount * 8);
+                if (o3RowCount > 0) {
+                    // Usually we would find var col size of row count as (index[count] - index[count-1])
+                    // but the record index[count] may not exist yet
+                    // so the data size has to be calculated as (index[count-1] + len(data[count-1]) + 4)
+                    // where len(data[count-1]) can be read as the int from var col data at offset index[count-1]
+                    long prevOffset = o3IndexMem.getLong((o3RowCount - 1) * 8);
+                    size = prevOffset + 2L * o3DataMem.getInt(prevOffset) + 4L;
+                    o3IndexMem.jumpTo(o3RowCount * 8);
+                } else {
+                    size = 0;
+                    o3IndexMem.jumpTo(0);
+                }
             }
 
             o3DataMem.jumpTo(size);
@@ -3560,6 +3575,12 @@ public class TableWriter implements Closeable {
         final long tgtDataSize = dataMem2.size();
         final long tgtIndxAddr = indexMem2.resize(valueCount * Long.BYTES);
         final long tgtIndxSize = indexMem2.size();
+
+        assert srcDataAddr != 0;
+        assert srcIndxAddr != 0;
+        assert tgtDataAddr != 0;
+        assert tgtIndxAddr != 0;
+
         // add max offset so that we do not have conditionals inside loop
         indexMem.putLong(valueCount * Long.BYTES, dataSize);
         final long offset = Vect.sortVarColumn(
