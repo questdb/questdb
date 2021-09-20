@@ -6,7 +6,7 @@ import React, {
   useRef,
   useLayoutEffect,
 } from "react"
-import { useSelector } from "react-redux"
+import { useDispatch, useSelector } from "react-redux"
 import { TransitionGroup } from "react-transition-group"
 import styled from "styled-components"
 import {
@@ -18,7 +18,7 @@ import {
   useScreenSize,
 } from "components"
 import { color } from "utils"
-import { selectors } from "store"
+import { actions, selectors } from "store"
 import { LocalStorageContext } from "providers/LocalStorageProvider"
 import { TerminalBox } from "@styled-icons/remix-line/TerminalBox"
 import { Subtract } from "@styled-icons/remix-line/Subtract"
@@ -61,18 +61,26 @@ const ActivityIcon = styled.span`
   line-height: 2rem;
 `
 
+const ClearAllNotifications = styled.div`
+  display: flex;
+  width: 100%;
+  justify-content: center;
+  margin-top: auto;
+`
+
 const Notifications = () => {
   const notifications = useSelector(selectors.query.getNotifications)
   const { isNotificationEnabled } = useContext(LocalStorageContext)
   const { sm } = useScreenSize()
   const [isMinimized, setIsMinimized] = useState(true)
-  const notificationsEndRef = useRef<HTMLDivElement | null>(null)
+  const clearAllNotificationsRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
   const [hasUnread, setHasUnread] = useState(false)
+  const dispatch = useDispatch()
 
   const scrollToBottom = () => {
     contentRef.current?.scrollTo({
-      top: notificationsEndRef.current?.offsetTop,
+      top: clearAllNotificationsRef.current?.offsetTop,
     })
   }
 
@@ -80,6 +88,10 @@ const Notifications = () => {
     setHasUnread(false)
     setIsMinimized(!isMinimized)
   }, [isMinimized])
+
+  const cleanupNotifications = useCallback(() => {
+    dispatch(actions.query.cleanupNotifications())
+  }, [dispatch])
 
   useLayoutEffect(() => {
     if (notifications.length > 0) {
@@ -126,7 +138,14 @@ const Notifications = () => {
             />
           ))}
         </TransitionGroup>
-        <div ref={notificationsEndRef} />
+        <ClearAllNotifications ref={clearAllNotificationsRef}>
+          <SecondaryButton
+            disabled={notifications.length === 0}
+            onClick={cleanupNotifications}
+          >
+            Clear all
+          </SecondaryButton>
+        </ClearAllNotifications>
       </Content>
     </Wrapper>
   )
