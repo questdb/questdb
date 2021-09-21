@@ -2304,10 +2304,8 @@ public class TableWriter implements Closeable {
             int shl;
 
             if (secondaryColumn == null) {
-
                 shl = ColumnType.pow2SizeOf(columnType);
-
-                long srcMappedRows = primaryColumn.offsetInPage((committedTransientRowCount + transientRowsAdded) << shl) >> shl;
+                long srcMappedRows = (primaryColumn.offsetInPage((committedTransientRowCount + transientRowsAdded - 1) << shl) >> shl) + 1;
                 if (srcMappedRows < transientRowsAdded) {
                     long delta = transientRowsAdded - srcMappedRows;
                     committedTransientRowCount += delta;
@@ -2328,7 +2326,7 @@ public class TableWriter implements Closeable {
                 //
                 // Step 1: process fixed record file in the same way as fixed size column above
                 //
-                long srcMappedRows = secondaryColumn.offsetInPage((committedTransientRowCount + transientRowsAdded) << shl) >> shl;
+                long srcMappedRows = (secondaryColumn.offsetInPage((committedTransientRowCount + transientRowsAdded) << shl) >> shl);
                 if (srcMappedRows < transientRowsAdded) {
                     committedTransientRowCount += transientRowsAdded - srcMappedRows;
                     transientRowsAdded = srcMappedRows;
@@ -2355,40 +2353,46 @@ public class TableWriter implements Closeable {
                 // here committedTransientRowCount == 0 and transientRowsAdded == 4
 
                 // varFileCommittedOffset is record with 0 offset in the example and is 0
-                long varFileCommittedOffset = secondaryColumn.getLong(committedTransientRowCount << shl);
+                if (transientRowsAdded > 0) { // Check if there anything to copy still
+                    long varFileCommittedOffset = secondaryColumn.getLong(committedTransientRowCount << shl);
 
-                // varFileMappedOffset is 28 in the above example (offset in bytes where Page 2 of primary file starts)
-                long varFileAppendOffset = primaryColumn.getAppendOffset();
-                long varLenMappedBytes = primaryColumn.offsetInPage(primaryColumn.getAppendOffset());
-                long varFileMappedOffset = varFileAppendOffset - varLenMappedBytes;
+                    // varFileMappedOffset is 28 in the above example (offset in bytes where Page 2 of primary file starts)
+                    long varFileAppendOffset = primaryColumn.getAppendOffset();
+                    long varLenMappedBytes = primaryColumn.offsetInPage(primaryColumn.getAppendOffset() - 1) + 1;
+                    long varFileMappedOffset = varFileAppendOffset - varLenMappedBytes;
 
-                // Check if all variable file records we want to move are mapped
-                if (varFileCommittedOffset < varFileMappedOffset) {
-                    // We need to binary search fix file
-                    // to find the records where mapped page starts (Page 2 in the example, offset 28)
-                    long firstMappedVarColRowOffset = Vect.binarySearch64Bit(
-                            secondaryColumn.addressOf(committedTransientRowCount << shl), // this is address of memory of fix file where to start the search
-                            varFileMappedOffset, // This is the value we search for (28 in case of example)
-                            0, // start from index 0
-                            srcMappedRows - 1, // and search in all mapped rows (inclusive of ixLenMappedRows - 1)
-                            BinarySearch.SCAN_DOWN // doesn't matter
-                    );
+                    // Check if all variable file records we want to move are mapped
+                    if (varFileCommittedOffset < varFileMappedOffset) {
+                        // We need to binary search fix file
+                        // to find the records where mapped page starts (Page 2 in the example, offset 28)
+                        long firstMappedVarColRowOffset = Vect.binarySearch64Bit(
+                                secondaryColumn.addressOf(committedTransientRowCount << shl), // this is address of memory of fix file where to start the search
+                                varFileMappedOffset, // This is the value we search for (28 in case of example)
+                                0, // start from index 0
+                                srcMappedRows - 1, // and search in all mapped rows (inclusive of ixLenMappedRows - 1)
+                                BinarySearch.SCAN_DOWN // doesn't matter
+                        );
 
-                    // In the example firstMappedVarColRowOffset expected to be -3 -1, e.g. no exact match found
-                    // value 28 is between index 2 and 3 in the secondary file
-                    if (firstMappedVarColRowOffset < 0) {
-                        // convert it to index 3, the first index of the value >= 28
-                        firstMappedVarColRowOffset = -firstMappedVarColRowOffset - 1;
+                        // In the example firstMappedVarColRowOffset expected to be -3 -1, e.g. no exact match found
+                        // value 28 is between index 2 and 3 in the secondary file
+                        if (firstMappedVarColRowOffset < 0) {
+                            // convert it to index 3, the first index of the value >= 28
+                            firstMappedVarColRowOffset = -firstMappedVarColRowOffset - 1;
+                        }
+
+                        // move transientRowsAdded to 1 and committedTransientRowCount to 3
+                        transientRowsAdded -= firstMappedVarColRowOffset;
+                        assert transientRowsAdded >= 0;
+                        committedTransientRowCount += firstMappedVarColRowOffset;
+
+                        // assert that secondary file is mapped for record committedTransientRowCount
+                        assert primaryColumn.addressOf(secondaryColumn.getLong(committedTransientRowCount << shl)) > 0;
                     }
-
-                    // move transientRowsAdded to 1 and committedTransientRowCount to 3
-                    transientRowsAdded -= firstMappedVarColRowOffset;
-                    assert transientRowsAdded >= 0;
-                    committedTransientRowCount += firstMappedVarColRowOffset;
-
-                    // assert that secondary file is mapped for record committedTransientRowCount
-                    assert primaryColumn.addressOf(secondaryColumn.getLong(committedTransientRowCount << shl)) > 0;
                 }
+            }
+            if (transientRowsAdded == 0L) {
+                // No point to continue
+                return transientRowsAdded;
             }
         }
         return transientRowsAdded;
@@ -3275,9 +3279,8 @@ public class TableWriter implements Closeable {
             committedTransientRowCount += delta;
         }
 
+        long maxCommittedTimestamp = txFile.getMaxTimestamp();
         if (transientRowsAdded > 0) {
-
-            long maxCommittedTimestamp = 0;
             if (delta > 0) {
                 // If there are rows to move, and we cannot move all uncommitted rows to o3 memory
                 // we have to set maxCommittedTimestamp in tx file
@@ -3338,13 +3341,13 @@ public class TableWriter implements Closeable {
             }
 
             o3DoneLatch.await(queuedCount);
-            if (delta == 0) {
-                txFile.resetToLastPartition(committedTransientRowCount);
-            } else {
-                // If transientRowsAdded is decreased because uncommitted area is not mapped
-                // maxCommittedTimestamp the last value of the segment left in files
-                txFile.resetToLastPartition(committedTransientRowCount, maxCommittedTimestamp);
-            }
+        }
+        if (delta == 0) {
+            txFile.resetToLastPartition(committedTransientRowCount);
+        } else {
+            // If transientRowsAdded is decreased because uncommitted area is not mapped
+            // maxCommittedTimestamp the last value of the segment left in files
+            txFile.resetToLastPartition(committedTransientRowCount, maxCommittedTimestamp);
         }
         return transientRowsAdded;
     }
