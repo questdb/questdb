@@ -4160,6 +4160,38 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByAllValueIndexedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table balances(\n" +
+                    "cust_id SYMBOL index,\n" +
+                    "balance_ccy SYMBOL,\n" +
+                    "balance DOUBLE,\n" +
+                    "timestamp TIMESTAMP\n" +
+                    ")\n" +
+                    "timestamp(timestamp)", sqlExecutionContext);
+
+            executeInsert("insert into balances values ('c1', 'USD', 1500, '2021-09-14T17:35:01.000000Z')");
+            executeInsert("insert into balances values ('c1', 'USD', 900.75, '2021-09-14T17:35:02.000000Z')");
+            executeInsert("insert into balances values ('c1', 'EUR', 880.2, '2021-09-14T17:35:03.000000Z')");
+            executeInsert("insert into balances values ('c1', 'EUR', 782, '2021-09-14T17:35:04.000000Z')");
+            executeInsert("insert into balances values ('c2', 'USD', 900, '2021-09-14T17:35:05.000000Z')");
+            executeInsert("insert into balances values ('c2', 'USD', 190.75, '2021-09-14T17:35:06.000000Z')");
+            executeInsert("insert into balances values ('c2', 'EUR', 890.2, '2021-09-14T17:35:07.000000Z')");
+            executeInsert("insert into balances values ('c2', 'EUR', 1000, '2021-09-14T17:35:08.000000Z')");
+
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "SELECT * FROM balances LATEST BY cust_id, balance_ccy \n" +
+                            "WHERE cust_id = 'c1' and balance_ccy='EUR'",
+                    sink,
+                    "cust_id\tbalance_ccy\tbalance\ttimestamp\n" +
+                            "c1\tEUR\t782.0\t2021-09-14T17:35:04.000000Z\n"
+            );
+        });
+    }
+
+    @Test
     public void testLeftJoinDoesNotRequireTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("CREATE TABLE sensors (ID LONG, make STRING, city STRING);", sqlExecutionContext);

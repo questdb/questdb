@@ -954,159 +954,158 @@ public class SqlCodeGenerator implements Mutable {
         // 'latest by' clause takes over the filter
         model.setWhereClause(null);
 
-        if (listColumnFilterA.size() == 1) {
-            final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
-            final boolean indexed = metadata.isColumnIndexed(latestByIndex);
+        assert listColumnFilterA.size() > 0;
+        final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
+        final boolean indexed = metadata.isColumnIndexed(latestByIndex);
 
-            if (!ColumnType.isSymbol(metadata.getColumnType(latestByIndex))) {
-                return new LatestByAllFilteredRecordCursorFactory(
-                        metadata,
+        if (!ColumnType.isSymbol(metadata.getColumnType(latestByIndex))) {
+            return new LatestByAllFilteredRecordCursorFactory(
+                    metadata,
+                    configuration,
+                    dataFrameCursorFactory,
+                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
+                    keyTypes,
+                    filter,
+                    columnIndexes
+            );
+        }
+
+        if (intrinsicModel.keyColumn != null) {
+            // key column must always be the same as latest by column
+            assert latestByIndex == metadata.getColumnIndexQuiet(intrinsicModel.keyColumn);
+
+            if (intrinsicModel.keySubQuery != null) {
+
+                final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, executionContext);
+                final Record.CharSequenceFunction func = validateSubQueryColumnAndGetGetter(intrinsicModel, rcf.getMetadata());
+
+                return new LatestBySubQueryRecordCursorFactory(
                         configuration,
+                        metadata,
                         dataFrameCursorFactory,
-                        RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
-                        keyTypes,
+                        latestByIndex,
+                        rcf,
+                        filter,
+                        indexed,
+                        func,
+                        columnIndexes
+                );
+            }
+
+            final int nKeyValues = intrinsicModel.keyValues.size();
+            if (indexed) {
+
+                assert nKeyValues > 0;
+                // deal with key values as a list
+                // 1. resolve each value of the list to "int"
+                // 2. get first row in index for each value (stream)
+
+                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(latestByIndex);
+                final RowCursorFactory rcf;
+                if (nKeyValues == 1) {
+                    final CharSequence symbolValue = intrinsicModel.keyValues.get(0);
+                    final int symbol = symbolMapReader.keyOf(symbolValue);
+
+                    if (filter == null) {
+                        if (symbol == SymbolTable.VALUE_NOT_FOUND) {
+                            rcf = new LatestByValueDeferredIndexedRowCursorFactory(latestByIndex, Chars.toString(symbolValue), false);
+                        } else {
+                            rcf = new LatestByValueIndexedRowCursorFactory(latestByIndex, symbol, false);
+                        }
+                        return new DataFrameRecordCursorFactory(metadata, dataFrameCursorFactory, rcf, false, null, false, columnIndexes, null);
+                    }
+
+                    if (symbol == SymbolTable.VALUE_NOT_FOUND) {
+                        return new LatestByValueDeferredIndexedFilteredRecordCursorFactory(
+                                metadata,
+                                dataFrameCursorFactory,
+                                latestByIndex,
+                                Chars.toString(symbolValue),
+                                filter,
+                                columnIndexes
+                        );
+                    }
+                    return new LatestByValueIndexedFilteredRecordCursorFactory(
+                            metadata,
+                            dataFrameCursorFactory,
+                            latestByIndex,
+                            symbol,
+                            filter,
+                            columnIndexes
+                    );
+                }
+
+                return new LatestByValuesIndexedFilteredRecordCursorFactory(
+                        configuration,
+                        metadata,
+                        dataFrameCursorFactory,
+                        latestByIndex,
+                        intrinsicModel.keyValues,
+                        symbolMapReader,
                         filter,
                         columnIndexes
                 );
             }
 
-            if (intrinsicModel.keyColumn != null) {
-                // key column must always be the same as latest by column
-                assert latestByIndex == metadata.getColumnIndexQuiet(intrinsicModel.keyColumn);
+            assert nKeyValues > 0;
 
-                if (intrinsicModel.keySubQuery != null) {
+            // we have "latest by" column values, but no index
+            final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(latestByIndex);
 
-                    final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, executionContext);
-                    final Record.CharSequenceFunction func = validateSubQueryColumnAndGetGetter(intrinsicModel, rcf.getMetadata());
-
-                    return new LatestBySubQueryRecordCursorFactory(
-                            configuration,
-                            metadata,
-                            dataFrameCursorFactory,
-                            latestByIndex,
-                            rcf,
-                            filter,
-                            indexed,
-                            func,
-                            columnIndexes
-                    );
-                }
-
-                final int nKeyValues = intrinsicModel.keyValues.size();
-                if (indexed) {
-
-                    assert nKeyValues > 0;
-                    // deal with key values as a list
-                    // 1. resolve each value of the list to "int"
-                    // 2. get first row in index for each value (stream)
-
-                    final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(latestByIndex);
-                    final RowCursorFactory rcf;
-                    if (nKeyValues == 1) {
-                        final CharSequence symbolValue = intrinsicModel.keyValues.get(0);
-                        final int symbol = symbolMapReader.keyOf(symbolValue);
-
-                        if (filter == null) {
-                            if (symbol == SymbolTable.VALUE_NOT_FOUND) {
-                                rcf = new LatestByValueDeferredIndexedRowCursorFactory(latestByIndex, Chars.toString(symbolValue), false);
-                            } else {
-                                rcf = new LatestByValueIndexedRowCursorFactory(latestByIndex, symbol, false);
-                            }
-                            return new DataFrameRecordCursorFactory(metadata, dataFrameCursorFactory, rcf, false, null, false, columnIndexes, null);
-                        }
-
-                        if (symbol == SymbolTable.VALUE_NOT_FOUND) {
-                            return new LatestByValueDeferredIndexedFilteredRecordCursorFactory(
-                                    metadata,
-                                    dataFrameCursorFactory,
-                                    latestByIndex,
-                                    Chars.toString(symbolValue),
-                                    filter,
-                                    columnIndexes
-                            );
-                        }
-                        return new LatestByValueIndexedFilteredRecordCursorFactory(
-                                metadata,
-                                dataFrameCursorFactory,
-                                latestByIndex,
-                                symbol,
-                                filter,
-                                columnIndexes
-                        );
-                    }
-
-                    return new LatestByValuesIndexedFilteredRecordCursorFactory(
-                            configuration,
-                            metadata,
-                            dataFrameCursorFactory,
-                            latestByIndex,
-                            intrinsicModel.keyValues,
-                            symbolMapReader,
-                            filter,
-                            columnIndexes
-                    );
-                }
-
-                assert nKeyValues > 0;
-
-                // we have "latest by" column values, but no index
-                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(latestByIndex);
-
-                if (nKeyValues > 1) {
-                    return new LatestByValuesFilteredRecordCursorFactory(
-                            configuration,
-                            metadata,
-                            dataFrameCursorFactory,
-                            latestByIndex,
-                            intrinsicModel.keyValues,
-                            symbolMapReader,
-                            filter,
-                            columnIndexes
-                    );
-                }
-
-                // we have a single symbol key
-                int symbolKey = symbolMapReader.keyOf(intrinsicModel.keyValues.get(0));
-                if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                    return new LatestByValueDeferredFilteredRecordCursorFactory(
-                            metadata,
-                            dataFrameCursorFactory,
-                            latestByIndex,
-                            Chars.toString(intrinsicModel.keyValues.get(0)),
-                            filter,
-                            columnIndexes
-                    );
-                }
-
-                return new LatestByValueFilteredRecordCursorFactory(metadata, dataFrameCursorFactory, latestByIndex, symbolKey, filter, columnIndexes);
-            }
-            // we select all values of "latest by" column
-
-            assert intrinsicModel.keyValues.size() == 0;
-            // get latest rows for all values of "latest by" column
-
-            if (indexed) {
-                return new LatestByAllIndexedFilteredRecordCursorFactory(
+            if (nKeyValues > 1) {
+                return new LatestByValuesFilteredRecordCursorFactory(
                         configuration,
                         metadata,
                         dataFrameCursorFactory,
                         latestByIndex,
+                        intrinsicModel.keyValues,
+                        symbolMapReader,
                         filter,
-                        columnIndexes,
-                        prefixes
+                        columnIndexes
                 );
             }
-        }
 
-        return new LatestByAllFilteredRecordCursorFactory(
-                metadata,
-                configuration,
-                dataFrameCursorFactory,
-                RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
-                keyTypes,
-                filter,
-                columnIndexes
-        );
+            // we have a single symbol key
+            int symbolKey = symbolMapReader.keyOf(intrinsicModel.keyValues.get(0));
+            if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                return new LatestByValueDeferredFilteredRecordCursorFactory(
+                        metadata,
+                        dataFrameCursorFactory,
+                        latestByIndex,
+                        Chars.toString(intrinsicModel.keyValues.get(0)),
+                        filter,
+                        columnIndexes
+                );
+            }
+
+            return new LatestByValueFilteredRecordCursorFactory(metadata, dataFrameCursorFactory, latestByIndex, symbolKey, filter, columnIndexes);
+        }
+        // we select all values of "latest by" column
+
+        assert intrinsicModel.keyValues.size() == 0;
+        // get latest rows for all values of "latest by" column
+
+        if (indexed) {
+            return new LatestByAllIndexedFilteredRecordCursorFactory(
+                    configuration,
+                    metadata,
+                    dataFrameCursorFactory,
+                    latestByIndex,
+                    filter,
+                    columnIndexes,
+                    prefixes
+            );
+        } else {
+            return new LatestByAllFilteredRecordCursorFactory(
+                    metadata,
+                    configuration,
+                    dataFrameCursorFactory,
+                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
+                    keyTypes,
+                    filter,
+                    columnIndexes
+            );
+        }
     }
 
     private RecordCursorFactory generateLimit(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {

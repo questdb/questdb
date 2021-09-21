@@ -22,8 +22,8 @@ node --version
 
 ### Maven commands
 
-The commands below will create a JAR without assembling executable binaries or
-building web console:
+The following commands will create a JAR without assembling executable binaries nor
+build the web console:
 
 ```script
 cd questdb
@@ -36,23 +36,23 @@ To package the web console with the JAR, use the following command:
 mvn clean package -DskipTests -P build-web-console
 ```
 
-To build executable binaries use the following command:
+To build executable binaries, use the following command:
 
 ```script
 mvn clean package -DskipTests -P build-web-console,build-binaries
 ```
 
-To run tests, it is not required to have the binaries or web console built.
-There are over 4000 tests that should complete without 2-6 minutes depending on
-the system:
+To run tests, it is not required to have the binaries nor the web console built.
+There are over 4000 tests that should complete within 2-6 minutes depending on
+your system:
 
 ```script
 mvn clean test
 ```
 
-To release to Maven Central use the following command that activates deploy
-profile. Ensure that your `~/.m2/settings.xml` contains username/password for
-server `central` and `gnupg` is on hand to sign the artefacts.
+To release to Maven Central, use the following command, which activates the deploy
+profile. Ensure that your `~/.m2/settings.xml` file contains the appropriate username/password for
+server `central`, and `gnupg` is on hand to sign the artefacts.
 
 ```script
 mvn -pl !benchmarks clean deploy -DskipTests -P build-web-console,maven-central-release
@@ -68,22 +68,22 @@ java -p core/target/questdb-5.0.5-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMa
 
 ## Docker images
 
-To build docker images successfully please follow these instructions precisely.
-There could be a lot of variations on how these images can be built. This is
+To build docker images successfully, please follow these instructions precisely.
+There may be a lot of variation on how these images are built. This is
 what worked:
 
 - Use Windows OS. Docker Desktop might also work on Mac, but not on Linux.
-- Download Docker Desktop _Edge_. At the time of writing (Nov 2019) only Edge
-  version is able to build ARM64 images and help create multi-platform manifest.
-- Ensure "experimental" features are enabled.
+- Download Docker Desktop _Edge_. At the time of writing (Nov 2019), only the Edge
+  version is able to build ARM64 images and help create multi-platform manifests.
+- Ensure that "experimental" features are enabled.
 
-To verify that your Docker Desktop is good to go try the following command:
+To verify that your Docker Desktop is good to go, try the following command:
 
 ```
 docker buildx ls
 ```
 
-You should see output similar to:
+You should see an output similar to:
 
 ```
 C:\Users\blues>docker buildx ls
@@ -92,16 +92,16 @@ default * docker
   default default         running linux/amd64, linux/arm64, linux/ppc64le, linux/s390x, linux/386, linux/arm/v7, linux/arm/v6
 ```
 
-If docker complains on `buildx` command - you either running _stable_ version or
-have not enabled experimental features. Look through Docker Settings. There is
-JSON config you need to edit **and** toggle a switch in UI
+If docker complains on `buildx` command - you are either running the _stable_ version or
+have not enabled experimental features. Look through your Docker Settings. There should be a
+JSON config file which you need to edit **and** a switch in UI you need to toggle.
 
-Assuming all is good, lets start building.
+Assuming all is good, let's start building.
 
 ### Login to Docker Hub
 
-The following command will prompt you for everything thats required and will
-keep your logged in for some time. You don't have to run it if you know you are
+The following command will prompt you for everything that is required and will
+keep you logged in for some time. You don't have to run it if you know you are
 logged in.
 
 ```
@@ -110,8 +110,7 @@ docker login
 
 ### Switch Docker Desktop to Linux
 
-To do that right click on Docker Desktop tray icon (bottom right) and chose
-switch from pop-up menu.
+Right-click on the Docker Desktop tray icon (bottom right) and chose 'switch' from the pop-up menu.
 
 Create new builder
 
@@ -149,7 +148,7 @@ docker push questdb/questdb:4.0.0-linux-arm64
 ### Switch Docker Desktop to Windows
 
 Build Windows image. Notice that this build does not use `buildx`. Also make
-sure that tag (:4.0.0-windows) reflect QuestDB version.
+sure that tag (:4.0.0-windows) reflects QuestDB version.
 
 ```
 docker build -t questdb/questdb:4.0.0-windows-amd64 --file Dockerfile-windows .
@@ -163,9 +162,9 @@ docker push questdb/questdb:4.0.0-windows-amd64
 
 ### Create manifest
 
-The purpose of the manifest is to simplify image usage by end user. They will
-just hopefully install `questdb/questdb` and Docker Hub sill figure out
-appropriate image for target platform.
+The purpose of the manifest is to simplify image usage for end users. 
+Hopefully when they install `questdb/questdb`, Docker Hub will still figure out the
+appropriate image for their target platform.
 
 ```
 docker manifest create questdb/questdb:4.0.0 questdb/questdb:4.0.0-linux-arm64 questdb/questdb:4.0.0-linux-amd64 questdb/questdb:4.0.0-windows-amd64
@@ -177,8 +176,8 @@ Push manifest:
 docker manifest push questdb/questdb:4.0.0 --purge
 ```
 
-The --purge option is there to delete manifest on local Docker. If you do not do
-it and find out that you added wrong image to manifest, it would be impossible
+The `--purge` option is there to delete local Docker manifests. If you do not do
+this and find out that you added the wrong image to the manifest, it would be impossible
 to take that image out!
 
 ## Running QuestDB via Docker
@@ -195,7 +194,7 @@ To run QuestDB interactively:
 docker run --rm -it -p 9000:9000 -p 8812:8812 questdb/questdb
 ```
 
-You can stop this container using Ctrl+C. The container and all the data is
+You can stop this container using `Ctrl+C`. The container and all the data is
 removed when stopped. A practical process for running QuestDB is to create a
 container with a name:
 
@@ -216,7 +215,7 @@ QuestDB supports the following volumes:
 
 `/root/.questdb/db` for Linux containers `c:\questdb\db` for Windows containers
 
-You can mount host directories using -v option, e.g.
+You can mount host directories using `-v` option, e.g.
 
 ```
 -v /local/dir:/root/.questdb/db
