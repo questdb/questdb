@@ -389,10 +389,8 @@ public class O3CommitLagTest extends AbstractO3Test {
                 o3.commit();
                 ordered.commit();
             }
-
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "ordered", "o3", LOG);
+            engine.releaseAllReaders();
             try (TableWriter o3 = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "o3", "testing");
                  TableWriter ordered = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "ordered", "testing")) {
                 o3.truncate();
