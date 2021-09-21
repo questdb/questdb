@@ -89,7 +89,11 @@ public interface CairoConfiguration {
 
     int getReaderPoolMaxSegments();
 
-    CharSequence getRoot();
+    CharSequence getRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
+
+    CharSequence getDbDirectory(); // env['cairo.root'], defaults to db
+
+    CharSequence getConfRoot(); // same as root/../conf
 
     // null input root disables "copy" sql
     CharSequence getInputRoot();

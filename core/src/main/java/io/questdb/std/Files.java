@@ -36,6 +36,7 @@ public final class Files {
 
     public static final Charset UTF_8;
     public static final long PAGE_SIZE;
+    public static final int DT_FILE = 8;
     public static final int DT_DIR = 4;
     public static final int MAP_RO = 1;
     public static final int MAP_RW = 2;

@@ -3625,6 +3625,20 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRenameTable() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table table_old_name (a int, b double, t timestamp) timestamp(t)", sqlExecutionContext);
+            compiler.compile("rename table table_old_name to table_new_name", sqlExecutionContext);
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "table_new_name")) {
+                Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "table_new_name", "testing")) {
+                    Assert.assertEquals(2, writer.getMetadata().getTimestampIndex());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRndSymbolEmptyArgs() throws Exception {
         assertFailure(7, "function rnd_symbol expects arguments but has none",
                 "select rnd_symbol() from long_sequence(1)");
