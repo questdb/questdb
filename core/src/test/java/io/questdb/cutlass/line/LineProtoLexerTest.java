@@ -146,6 +146,7 @@ public class LineProtoLexerTest {
     @Test
     public void testNoFieldValue2() {
         assertError("measurement,tag=x f= 10000", 0, 0, 0);
+        assertThat("measurement,tag=x f= 10000\n", "measurement,tag=x f= 10000\n");
     }
 
     @Test
@@ -235,17 +236,18 @@ public class LineProtoLexerTest {
 
     @Test
     public void testSimpleParse() {
-        assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n",
-                "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n");
+        assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n", "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n");
     }
 
     @Test
     public void testSkipLine() {
         assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
                         "measurement,tag=value3,tag2=value2 field=,field2=\"ok\"\n" +
+                        "measurement,tag=value3,tag2=value2 field=-- error --\n" +
                         "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n",
                 "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
                         "measurement,tag=value3,tag2=value2 field=,field2=\"ok\"\n" +
+                        "measurement,tag=value3,tag2=value2 field= field2=\"not ok\"\n" +
                         "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n");
     }
 
@@ -280,7 +282,7 @@ public class LineProtoLexerTest {
         assertThat("违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n", "违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n");
     }
 
-    protected void assertError(CharSequence line, int state, int code, int position) throws LineProtoException {
+    private void assertError(CharSequence line, int state, int code, int position) throws LineProtoException {
         byte[] bytes = line.toString().getBytes(StandardCharsets.UTF_8);
         long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
@@ -304,11 +306,11 @@ public class LineProtoLexerTest {
         }
     }
 
-    protected void assertThat(CharSequence expected, CharSequence line) throws LineProtoException {
+    private void assertThat(CharSequence expected, CharSequence line) throws LineProtoException {
         assertThat(expected, line.toString().getBytes(StandardCharsets.UTF_8));
     }
 
-    protected void assertThat(CharSequence expected, byte[] line) throws LineProtoException {
+    private void assertThat(CharSequence expected, byte[] line) throws LineProtoException {
         final int len = line.length;
         long mem = Unsafe.malloc(line.length, MemoryTag.NATIVE_DEFAULT);
         try {

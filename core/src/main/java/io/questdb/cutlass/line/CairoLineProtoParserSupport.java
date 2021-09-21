@@ -172,7 +172,6 @@ public class CairoLineProtoParserSupport {
         } else {
             putNullValue(row, columnIndex, columnType);
         }
-
     }
 
     public static class BadCastException extends Exception {
@@ -182,7 +181,7 @@ public class CairoLineProtoParserSupport {
     public static int getValueType(CharSequence value) {
         // method called for inbound ilp messages on each value.
         // returning UNDEFINED makes the whole line be skipped.
-        // 0 len values, null, should result in a skip of the insert.
+        // 0 len values, return null type.
         // the goal of this method is to guess the potential type
         // and then it will be parsed accordingly by 'putValue'.
         int valueLen = value.length();
@@ -219,7 +218,6 @@ public class CairoLineProtoParserSupport {
                     return ColumnType.STRING;
                 default:
                     char first = value.charAt(0);
-                    // TODO: speed this up
                     if (last >= '0' && last <= '9' && ((first >= '0' && first <= '9') || first == '-' || first == '.')) {
                         return ColumnType.DOUBLE;
                     }

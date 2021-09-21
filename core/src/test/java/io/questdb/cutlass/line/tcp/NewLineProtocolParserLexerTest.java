@@ -28,6 +28,7 @@ import java.nio.charset.StandardCharsets;
 
 import io.questdb.std.MemoryTag;
 import io.questdb.cutlass.line.LineProtoLexer;
+import io.questdb.cutlass.line.LineProtoLexerTest;
 import io.questdb.cutlass.line.LineProtoParser;
 import org.junit.Assert;
 
@@ -295,11 +296,11 @@ public class NewLineProtocolParserLexerTest {
         assertThat("违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n", "违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n");
     }
 
-    protected void assertThat(CharSequence expected, CharSequence line) throws LineProtoException {
+    private void assertThat(CharSequence expected, CharSequence line) throws LineProtoException {
         assertThat(expected, line.toString().getBytes(StandardCharsets.UTF_8));
     }
 
-    protected void assertThat(CharSequence expected, byte[] line) throws LineProtoException {
+    private void assertThat(CharSequence expected, byte[] line) throws LineProtoException {
         final int len = line.length;
         final boolean endWithEOL = line[len - 1] == '\n' || line[len - 1] == '\r';
         long mem = Unsafe.malloc(line.length + 1, MemoryTag.NATIVE_DEFAULT);
@@ -356,7 +357,7 @@ public class NewLineProtocolParserLexerTest {
         }
     }
 
-    protected void assertError(CharSequence line, int state, int code, int position) throws LineProtoException {
+    private void assertError(CharSequence line, int state, int code, int position) throws LineProtoException {
         byte[] bytes = line.toString().getBytes(StandardCharsets.UTF_8);
         int len = bytes.length;
         final boolean endWithEOL = bytes[len - 1] == '\n' || bytes[len - 1] == '\r';

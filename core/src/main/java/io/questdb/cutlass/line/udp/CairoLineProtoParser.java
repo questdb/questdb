@@ -126,6 +126,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
     @Override
     public void onEvent(CachedCharSequence token, int eventType, CharSequenceCache cache) {
+
         switch (eventType) {
             case EVT_MEASUREMENT:
                 int wrtIndex = writerCache.keyIndex(token);
@@ -210,15 +211,13 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
         try {
             for (int i = 0; i < columnCount; i++) {
-                final long valueIdxAndType = columnIndexAndType.getQuick(i);
-                CharSequence value = cache.get(columnValues.getQuick(i));
-                // values of len 0, null, are ignored, not inserted
+                final long value = columnIndexAndType.getQuick(i);
                 CairoLineProtoParserSupport.putValue(
                         row,
-                        Numbers.decodeHighInt(valueIdxAndType),
+                        Numbers.decodeHighInt(value),
                         geohashBitsSizeByColIdx.getQuick(i),
-                        Numbers.decodeLowInt(valueIdxAndType),
-                        value
+                        Numbers.decodeLowInt(value),
+                        cache.get(columnValues.getQuick(i))
                 );
             }
             row.append();

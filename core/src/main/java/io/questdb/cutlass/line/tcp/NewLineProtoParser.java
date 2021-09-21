@@ -58,8 +58,8 @@ public class NewLineProtoParser implements Closeable {
     private long bufAt;
     private long entityLo;
     private boolean tagsComplete;
-    private boolean isQuotedValue;
     private int nEscapedChars;
+    private boolean isQuotedFieldValue;
     private int nEntities;
     private ProtoEntity currentEntity;
     private ErrorCode errorCode;
@@ -109,32 +109,6 @@ public class NewLineProtoParser implements Closeable {
         return this;
     }
 
-    /**
-     * Structure of an ilp message:
-     * <pre>
-     *     table[(,sym=s)*] fld=f(,fld=f)*[ timestamp_nano]\n
-     * </pre>
-     * where:
-     * <ul>
-     *     <li>table: name of the table to insert into.</li>
-     *     <li>sym: name of a symbol column.</li>
-     *     <li>s: symbol value (of type symbol, i.e. string without quotes).</li>
-     *     <li>fld: name of a column.</li>
-     *     <li>f: value for the column. The type of these is parsed based on the
-     *     content of the token (e.g. with prefix '0x' and suffix 'i' it is assumed
-     *     a long256).
-     *     </li>
-     *     <li>timestamp_nano: a long representing the epoch with nano precision.
-     *     Optional, when missing it becomes the system's current time.</li>
-     * </ul>
-     * A white space in the line (other than if inside of a string, or escaped)
-     * triggers the transition from expecting symbols, to columns to timestamp.<br/>
-     * The '\n' is compulsory, it delimits the line.<br/>
-     * There can be 0..n symbols, and 1..m columns. Columns support all types.
-     *
-     * @param bufHi start of the line
-     * @return parse status result
-     */
     public ParseResult parseMeasurement(long bufHi) {
         assert bufAt != 0 && bufHi >= bufAt;
         while (bufAt < bufHi) {
@@ -142,14 +116,14 @@ public class NewLineProtoParser implements Closeable {
             boolean endOfLine = false;
             boolean appendByte = false;
             switch (b) {
-                case (byte) '\n': // before '\n' you can find: field value or timestamp
+                case (byte) '\n':
                 case (byte) '\r':
                     endOfLine = true;
                     b = '\n';
                 case (byte) '=':
                 case (byte) ',':
                 case (byte) ' ':
-                    isQuotedValue = false;
+                    isQuotedFieldValue = false;
                     if (!entityHandler.completeEntity(b, bufHi)) {
                         if (errorCode == ErrorCode.EMPTY_LINE) {
                             // An empty line
@@ -157,7 +131,7 @@ public class NewLineProtoParser implements Closeable {
                             entityLo = bufAt;
                             break;
                         }
-                        if (errorCode == ErrorCode.INVALID_FIELD_STR_MISSING_QUOTE) {
+                        if (errorCode == ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW) {
                             return ParseResult.BUFFER_UNDERFLOW;
                         }
                         return ParseResult.ERROR;
@@ -171,7 +145,7 @@ public class NewLineProtoParser implements Closeable {
                         return ParseResult.ERROR;
                     }
                     bufAt++;
-                    if (!isQuotedValue) {
+                    if (!isQuotedFieldValue) {
                         nEscapedChars = 0;
                         entityLo = bufAt;
                     }
@@ -225,10 +199,10 @@ public class NewLineProtoParser implements Closeable {
     public void startNextMeasurement() {
         bufAt++;
         nEscapedChars = 0;
+        isQuotedFieldValue = false;
         entityLo = bufAt;
         errorCode = null;
         tagsComplete = false;
-        isQuotedValue = false;
         nEntities = 0;
         currentEntity = null;
         entityHandler = entityTableHandler;
@@ -242,7 +216,7 @@ public class NewLineProtoParser implements Closeable {
 
     private boolean expectEntityName(byte endOfEntityByte, long bufHi) {
         if (endOfEntityByte == (byte) '=') {
-            if (bufAt - entityLo - nEscapedChars == 0) { // no tag name
+            if (bufAt - entityLo - nEscapedChars == 0) { // no tag/field name
                 errorCode = tagsComplete ? ErrorCode.INCOMPLETE_FIELD: ErrorCode.INCOMPLETE_TAG;
                 return false;
             }
@@ -260,7 +234,7 @@ public class NewLineProtoParser implements Closeable {
             entityHandler = entityValueHandler;
 
             if (tagsComplete) {
-                if (bufAt + 3 < bufHi) { // peek oncoming value's 1st char, only caring for valid strings (2 plus a follow up token)
+                if (bufAt + 3 < bufHi) { // peek oncoming value's 1st byte, only caring for valid strings (2 quotes plus a follow up byte)
                     long candidateQuoteIdx = bufAt + 1;
                     byte b = Unsafe.getUnsafe().getByte(candidateQuoteIdx);
                     if (b == (byte) '"') {
@@ -296,12 +270,13 @@ public class NewLineProtoParser implements Closeable {
     }
 
     private boolean prepareQuotedEntity(long openQuoteIdx, long bufHi) {
-        // the byte at openQuoteIdx (bufAt + 1) is '"', it can only be a is a string
-        // get it ready for immediate consumption by moving butAt to the next '"'
+        // the byte at openQuoteIdx (bufAt + 1) is '"', from here it can only be
+        // the start of a string value. Get it ready for immediate consumption by
+        // the next completeEntity call, moving butAt to the next '"'
         entityLo = openQuoteIdx; // from the quote
         boolean scape = false;
         final long limit = Math.min(bufHi, entityLo + MAX_ALLOWED_STRING_LEN + 1); // limit the size of strings
-        bufAt += 2; // go to first byte of the string
+        bufAt += 2; // go to first byte of the string, past the '"'
         while (bufAt < limit) { // consume until the next quote, '\n', or eof
             switch (Unsafe.getUnsafe().getByte(bufAt)) {
                 case (byte) '\\':
@@ -309,7 +284,7 @@ public class NewLineProtoParser implements Closeable {
                     break;
                 case (byte) '"':
                     if (!scape) {
-                        isQuotedValue = true;
+                        isQuotedFieldValue = true;
                         return true;
                     }
                     scape = false;
@@ -327,7 +302,7 @@ public class NewLineProtoParser implements Closeable {
             }
             bufAt++;
         }
-        errorCode = ErrorCode.INVALID_FIELD_STR_MISSING_QUOTE;
+        errorCode = ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW;
         return false; // missing tail quote as the string extends past the max allowed size
     }
 
@@ -399,7 +374,7 @@ public class NewLineProtoParser implements Closeable {
         INVALID_FIELD_SEPARATOR,
         INVALID_TIMESTAMP,
         INVALID_FIELD_VALUE,
-        INVALID_FIELD_STR_MISSING_QUOTE
+        INVALID_FIELD_VALUE_STR_UNDERFLOW
     }
 
     private interface EntityHandler {

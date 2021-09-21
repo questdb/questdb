@@ -39,7 +39,7 @@ public class LineProtoLexer implements Mutable, Closeable {
     private final FloatingCharSequence floatingCharSequence = new FloatingCharSequence();
     private int state = LineProtoParser.EVT_MEASUREMENT;
     private boolean escape = false;
-    private boolean quotedEscape = false;
+    private boolean escapeQuote = false; // flag to signify we saw a '\' but while parsing a string
     private long buffer;
     private long bufferHi;
     private long dstPos = 0;
@@ -67,7 +67,7 @@ public class LineProtoLexer implements Mutable, Closeable {
     @Override
     public final void clear() {
         escape = false;
-        quotedEscape = false;
+        escapeQuote = false;
         dstTop = dstPos = buffer;
         state = LineProtoParser.EVT_MEASUREMENT;
         utf8ErrorTop = utf8ErrorPos = -1;
@@ -124,7 +124,7 @@ public class LineProtoLexer implements Mutable, Closeable {
 
     private void fireEvent() throws LineProtoException {
         // two bytes less between these and one more byte so we don't have to use >=
-        if (dstTop > dstPos - 3 && state != LineProtoParser.EVT_FIELD_VALUE) { // fields do take null
+        if (dstTop > dstPos - 3 && state != LineProtoParser.EVT_FIELD_VALUE) { // fields do take empty values, same as null
             errorCode = LineProtoParser.ERROR_EMPTY;
             throw LineProtoException.INSTANCE;
         }
@@ -166,14 +166,14 @@ public class LineProtoLexer implements Mutable, Closeable {
     }
 
     private void onComma() {
-        if (!quotedEscape && unquoted) {
+        if (!escapeQuote && unquoted) {
             fireEventTransition(LineProtoParser.EVT_TAG_NAME, LineProtoParser.EVT_FIELD_NAME);
         }
-        quotedEscape = false;
+        escapeQuote = false;
     }
 
     protected void onEol() throws LineProtoException {
-        if (!quotedEscape) {
+        if (!escapeQuote) {
             switch (state) {
                 case LineProtoParser.EVT_MEASUREMENT:
                     chop();
@@ -190,38 +190,38 @@ public class LineProtoLexer implements Mutable, Closeable {
                     throw LineProtoException.INSTANCE;
             }
         }
-        quotedEscape = false;
+        escapeQuote = false;
     }
 
     private void onEquals() {
-        if (!quotedEscape && unquoted) {
+        if (!escapeQuote && unquoted) {
             fireEventTransition2();
         }
-        quotedEscape = false;
+        escapeQuote = false;
     }
 
-    private void onEsc() {
+    private void onEsc() { // '\' backslash
         if (!unquoted) {
-            quotedEscape = true;
+            escapeQuote = true; // found in string
         } else {
             escape = true;
         }
     }
 
     private void onQuote(byte lastByte) {
-        if (lastByte == (byte) '=' && !quotedEscape && unquoted) {
+        if (lastByte == (byte) '=' && !escapeQuote && unquoted) {
             unquoted = false; // open quote
-        } else if (!unquoted && !quotedEscape) {
+        } else if (!unquoted && !escapeQuote) {
             unquoted = true; // close quote
         }
-        quotedEscape = false;
+        escapeQuote = false;
     }
 
     private void onSpace() {
-        if (!quotedEscape && unquoted) {
+        if (!escapeQuote && unquoted) {
             fireEventTransition(LineProtoParser.EVT_FIELD_NAME, LineProtoParser.EVT_TIMESTAMP);
         }
-        quotedEscape = false;
+        escapeQuote = false;
     }
 
     protected long parsePartial(final long bytesPtr, final long hi) {
@@ -284,7 +284,7 @@ public class LineProtoLexer implements Mutable, Closeable {
                         onEquals();
                         break;
                     default:
-                        quotedEscape = false;
+                        escapeQuote = false;
                         break;
                 }
                 lastByte = b;
