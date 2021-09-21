@@ -2327,7 +2327,7 @@ public class TableWriter implements Closeable {
             int shl = ColumnType.pow2SizeOf(columnType);
 
             if (secondaryColumn == null) {
-                long srcMappedRows = primaryColumn.offsetInPage((committedTransientRowCount + transientRowsAdded) << shl) >> shl;
+                long srcMappedRows = (primaryColumn.offsetInPage((committedTransientRowCount + transientRowsAdded - 1) << shl) >> shl) + 1;
                 if (srcMappedRows < transientRowsAdded) {
                     long delta = transientRowsAdded - srcMappedRows;
                     committedTransientRowCount += delta;
@@ -2348,7 +2348,7 @@ public class TableWriter implements Closeable {
                 //
                 // Step 1: process fixed record file in the same way as fixed size column above
                 //
-                long fixLenMappedRows = secondaryColumn.offsetInPage(secondaryColumn.getAppendOffset()) >> shl;
+                long fixLenMappedRows = (secondaryColumn.offsetInPage((committedTransientRowCount + transientRowsAdded - 1) << shl) >> shl) + 1;
                 if (fixLenMappedRows < transientRowsAdded) {
                     committedTransientRowCount += transientRowsAdded - fixLenMappedRows;
                     transientRowsAdded = fixLenMappedRows;
@@ -2375,39 +2375,41 @@ public class TableWriter implements Closeable {
                 // here committedTransientRowCount == 0 and transientRowsAdded == 4
 
                 // varFileCommittedOffset is record with 0 offset in the example and is 0
-                long varFileCommittedOffset = secondaryColumn.getLong(committedTransientRowCount << shl);
+                if (transientRowsAdded > 0) { // Check if there anything to copy still
+                    long varFileCommittedOffset = secondaryColumn.getLong(committedTransientRowCount << shl);
 
-                // varFileMappedOffset is 28 in the above example (offset in bytes where Page 2 of primary file starts)
-                long varFileAppendOffset = primaryColumn.getAppendOffset();
-                long varLenMappedBytes = primaryColumn.offsetInPage(primaryColumn.getAppendOffset());
-                long varFileMappedOffset = varFileAppendOffset - varLenMappedBytes;
+                    // varFileMappedOffset is 28 in the above example (offset in bytes where Page 2 of primary file starts)
+                    long varFileAppendOffset = primaryColumn.getAppendOffset();
+                    long varLenMappedBytes = primaryColumn.offsetInPage(primaryColumn.getAppendOffset() - 1) + 1;
+                    long varFileMappedOffset = varFileAppendOffset - varLenMappedBytes;
 
-                // Check if all variable file records we want to move are mapped
-                if (varFileCommittedOffset < varFileMappedOffset) {
-                    // We need to binary search fix file
-                    // to find the records where mapped page starts (Page 2 in the example, offset 28)
-                    long firstMappedVarColRowOffset = Vect.binarySearch64Bit(
-                            secondaryColumn.addressOf(committedTransientRowCount << shl), // this is address of memory of fix file where to start the search
-                            varFileMappedOffset, // This is the value we search for (28 in case of example)
-                            0, // start from index 0
-                            fixLenMappedRows - 1, // and search in all mapped rows (inclusive of ixLenMappedRows - 1)
-                            BinarySearch.SCAN_DOWN // doesn't matter
-                    );
+                    // Check if all variable file records we want to move are mapped
+                    if (varFileCommittedOffset < varFileMappedOffset) {
+                        // We need to binary search fix file
+                        // to find the records where mapped page starts (Page 2 in the example, offset 28)
+                        long firstMappedVarColRowOffset = Vect.binarySearch64Bit(
+                                secondaryColumn.addressOf(committedTransientRowCount << shl), // this is address of memory of fix file where to start the search
+                                varFileMappedOffset, // This is the value we search for (28 in case of example)
+                                0, // start from index 0
+                                fixLenMappedRows - 1, // and search in all mapped rows (inclusive of ixLenMappedRows - 1)
+                                BinarySearch.SCAN_DOWN // doesn't matter
+                        );
 
-                    // In the example firstMappedVarColRowOffset expected to be -3 -1, e.g. no exact match found
-                    // value 28 is between index 2 and 3 in the secondary file
-                    if (firstMappedVarColRowOffset < 0) {
-                        // convert it to index 3, the first index of the value >= 28
-                        firstMappedVarColRowOffset = -firstMappedVarColRowOffset - 1;
+                        // In the example firstMappedVarColRowOffset expected to be -3 -1, e.g. no exact match found
+                        // value 28 is between index 2 and 3 in the secondary file
+                        if (firstMappedVarColRowOffset < 0) {
+                            // convert it to index 3, the first index of the value >= 28
+                            firstMappedVarColRowOffset = -firstMappedVarColRowOffset - 1;
+                        }
+
+                        // move transientRowsAdded to 1 and committedTransientRowCount to 3
+                        transientRowsAdded -= firstMappedVarColRowOffset;
+                        assert transientRowsAdded >= 0;
+                        committedTransientRowCount += firstMappedVarColRowOffset;
+
+                        // assert that secondary file is mapped for record committedTransientRowCount
+                        assert primaryColumn.addressOf(secondaryColumn.getLong(committedTransientRowCount << shl)) > 0;
                     }
-
-                    // move transientRowsAdded to 1 and committedTransientRowCount to 3
-                    transientRowsAdded -= firstMappedVarColRowOffset;
-                    assert transientRowsAdded >= 0;
-                    committedTransientRowCount += firstMappedVarColRowOffset;
-
-                    // assert that secondary file is mapped for record committedTransientRowCount
-                    assert primaryColumn.addressOf(secondaryColumn.getLong(committedTransientRowCount << shl)) > 0;
                 }
             }
         }
@@ -3048,12 +3050,15 @@ public class TableWriter implements Closeable {
                 long dstAppendOffset = o3IndexMem.getAppendOffset();
                 o3IndexMem.jumpTo(o3IndexMem.getAppendOffset() + transientRowsAdded * Long.BYTES);
 
+                long src = srcFixMem.addressOf(committedTransientRowCount * Long.BYTES);
+                long dstAddr = o3IndexMem.addressOf(dstAppendOffset);
+
                 O3Utils.shiftCopyFixedSizeColumnData(
                         srcVarOffset - dstVarOffset,
-                        srcFixMem.addressOf(committedTransientRowCount * Long.BYTES),
+                        src,
                         0,
-                        transientRowsAdded,
-                        o3IndexMem.addressOf(dstAppendOffset)
+                        transientRowsAdded - 1,
+                        dstAddr
                 );
                 long sourceEndOffset = srcDataMem.getAppendOffset();
                 extendedSize = sourceEndOffset - srcVarOffset;
