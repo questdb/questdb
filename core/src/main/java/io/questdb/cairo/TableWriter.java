@@ -3057,7 +3057,7 @@ public class TableWriter implements Closeable {
                         srcVarOffset - dstVarOffset,
                         src,
                         0,
-                        transientRowsAdded - 1,
+                        transientRowsAdded - 1, // srcHi is inclusive in shiftCopyFixedSizeColumnData
                         dstAddr
                 );
                 long sourceEndOffset = srcDataMem.getAppendOffset();
