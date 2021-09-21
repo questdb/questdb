@@ -22,15 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.udp;
+package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
-import io.questdb.cutlass.line.LineProtoSender;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.std.Misc;
+import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
-public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
-    static final String tableName = "other";
+import java.util.concurrent.locks.LockSupport;
+
+public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
+    static final String table = "other";
     static final String targetColumnName = "value";
 
     @Test
@@ -102,6 +109,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "9223372036854775807\t1970-01-01T00:00:05.000000Z\n" +
                         "-9223372036854775807\t1970-01-01T00:00:06.000000Z\n" +
                         "NaN\t1970-01-01T00:00:07.000000Z\n" +
+                        "1\t1970-01-01T00:00:14.000000Z\n" +
+                        "0\t1970-01-01T00:00:15.000000Z\n" +
                         "NaN\t1970-01-01T00:00:19.000000Z\n",
                 new CharSequence[]{
                         "0i", // valid
@@ -117,8 +126,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-92233720368\"54775808i \"and joy=yes", // discarded bad type symbol
                         "0x12i", // discarded bad type long256
                         "0", // discarded bad type double
-                        "true", // discarded bad type boolean (unlike TCP: valid, true casts down to 1)
-                        "false", // discarded bad type boolean (unlike TCP: valid, true casts down to 0)
+                        "true", // valid, true casts down to 1
+                        "false", // valid, true casts down to 0
                         "-0", // discarded bad type double
                         "-100", // discarded bad type double
                         "null", // discarded bad type symbol
@@ -136,6 +145,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "9223372036854775807\t1970-01-01T00:00:05.000000Z\n" +
                         "-9223372036854775807\t1970-01-01T00:00:06.000000Z\n" +
                         "NaN\t1970-01-01T00:00:07.000000Z\n" +
+                        "1\t1970-01-01T00:00:15.000000Z\n" +
+                        "0\t1970-01-01T00:00:16.000000Z\n" +
                         "NaN\t1970-01-01T00:00:20.000000Z\n",
                 new CharSequence[]{
                         "0i", // valid
@@ -152,8 +163,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-92233720368\"54775808i \"and joy=yes", // discarded bad type symbol
                         "0x12i", // discarded bad type long256
                         "0", // discarded bad type double
-                        "true", // discarded bad type boolean (unlike TCP: valid, true casts down to 1)
-                        "false", // discarded bad type boolean (unlike TCP: valid, true casts down to 0)
+                        "true", // valid, true casts down to 1
+                        "false", // valid, true casts down to 0
                         "-0", // discarded bad type double
                         "-100", // discarded bad type double
                         "null", // discarded bad type symbol
@@ -169,7 +180,6 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "100\t1970-01-01T00:00:02.000000Z\n" +
                         "0\t1970-01-01T00:00:03.000000Z\n" +
                         "-100\t1970-01-01T00:00:04.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:05.000000Z\n" +
                         "NaN\t1970-01-01T00:00:06.000000Z\n" +
                         "2147483647\t1970-01-01T00:00:07.000000Z\n" +
                         "-2147483647\t1970-01-01T00:00:08.000000Z\n" +
@@ -180,7 +190,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "100i", // valid
                         "-0i", // valid equals 0
                         "-100i", // valid
-                        "9223372036854775808i", // valid NaN, same as null (unlike TCP: discarded bad value == Long.MIN_VALUE with no - sign, taken as symbol)
+                        "9223372036854775808i", // discarded bad value == Long.MIN_VALUE with no - sign, taken as symbol
                         "-9223372036854775808i", // valid NaN, same as null
                         "2147483647i", // valid
                         "-2147483647i", // valid
@@ -244,12 +254,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-100\t1970-01-01T00:00:04.000000Z\n" +
                         "32767\t1970-01-01T00:00:05.000000Z\n" +
                         "-32767\t1970-01-01T00:00:06.000000Z\n" +
-                        "0\t1970-01-01T00:00:07.000000Z\n" +
                         "0\t1970-01-01T00:00:08.000000Z\n" +
-                        "0\t1970-01-01T00:00:09.000000Z\n" +
-                        "0\t1970-01-01T00:00:10.000000Z\n" +
-                        "0\t1970-01-01T00:00:11.000000Z\n" +
-                        "0\t1970-01-01T00:00:12.000000Z\n" +
                         "0\t1970-01-01T00:00:19.000000Z\n",
                 new CharSequence[]{
                         "0i", // valid
@@ -258,12 +263,12 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-100i", // valid
                         "32767i", // valid
                         "-32767i", // valid
-                        "9223372036854775808i", // valid NaN, same as null, a short value of 0 (unlike TCP: discarded bad value == Long.MIN_VALUE with no - sign, taken as symbol)
+                        "9223372036854775808i", // discarded bad value == Long.MIN_VALUE with no - sign, taken as symbol
                         "-9223372036854775808i", // valid NaN, same as null, a short value of 0
-                        "2147483647i", // valid NaN, same as null, a short value of 0 (unlike TCP: discarded out of range)
-                        "-2147483647i", // valid NaN, same as null, a short value of 0 (unlike TCP: discarded out of range)
-                        "-2147483648i", // valid NaN, same as null, a short value of 0 (unlike TCP: discarded out of range)
-                        "2147483648i", // valid NaN, same as null, a short value of 0 (unlike TCP: discarded out of range)
+                        "2147483647i", // discarded out of range
+                        "-2147483647i", // discarded out of range
+                        "-2147483648i", // discarded out of range
+                        "2147483648i", // discarded out of range
                         "2147483648", // discarded bad type double
                         "null", // discarded bad type symbol
                         "0", // discarded bad type double
@@ -603,6 +608,46 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
     }
 
     @Test
+    public void testInsertTooLargeAStringTableExists() throws Exception {
+        Rnd rnd = new Rnd();
+        assertType(ColumnType.STRING,
+                "value\ttimestamp\n" +
+                        "\t1970-01-01T00:00:02.000000Z\n",
+                new CharSequence[]{
+                        "\"" + rnd.nextString(NewLineProtoParser.MAX_ALLOWED_STRING_LEN + 1) + "\"", // discarded too long
+                        "" // valid null
+                });
+    }
+
+    @Test
+    public void testInsertTooLargeAStringTableDoesNotExist() throws Exception {
+        Rnd rnd = new Rnd();
+        runInContext(() -> {
+            sink.clear();
+            sink.put(table)
+                    .put(' ')
+                    .put(targetColumnName)
+                    .put("=\"")
+                    .put(rnd.nextString(NewLineProtoParser.MAX_ALLOWED_STRING_LEN + 1))
+                    .put("\" ")
+                    .put(1000000000)
+                    .put('\n');
+            recvBuffer = sink.toString();
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            allowTimeForTableToBeCreated();
+            try (TableReader ignored = new TableReader(new DefaultCairoConfiguration(root), table)) {
+                Assert.fail("table should have not been created");
+            } catch (CairoException expected) {
+                Assert.assertTrue(expected.getMessage().contains("[0] File not found:"));
+            }
+        });
+    }
+
+    @Test
     public void testInsertDoubleTableExists() throws Exception {
         assertType(ColumnType.DOUBLE,
                 "value\ttimestamp\n" +
@@ -770,35 +815,54 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                 });
     }
 
-
-    protected static void assertTypeNoTable(String expected, CharSequence[] values) throws Exception {
+    protected void assertTypeNoTable(String expected, CharSequence[] values) throws Exception {
         assertType(ColumnType.UNDEFINED, expected, values);
     }
 
-    protected static void assertType(int columnType, String expected, CharSequence[] values) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
-                    if (columnType != ColumnType.UNDEFINED) {
-                        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-                            CairoTestUtils.create(model.col(targetColumnName, columnType).timestamp());
-                        }
+    protected void assertType(int columnType, String expected, CharSequence[] values) throws Exception {
+        if (columnType != ColumnType.UNDEFINED) {
+            try (TableModel model = new TableModel(configuration, table, PartitionBy.NONE)) {
+                CairoTestUtils.create(model.col(targetColumnName, columnType).timestamp());
+            }
+        }
+        runInContext(() -> {
+            sink.clear();
+            long ts = 0L;
+            for (int i = 0; i < values.length; i++) {
+                sink.put(table)
+                        .put(' ').put(targetColumnName).put('=').put(values[i])
+                        .put(' ').put(ts += 1000000000)
+                        .put('\n');
+            }
+            recvBuffer = sink.toString();
+
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+
+            int numLines = expected.split("[\n]").length - 1;
+            allowTimeForTableToBeCreated();
+            try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), table)) {
+                for (int attempts = 28_02_78; attempts > 0; attempts--) {
+                    if (reader.size() >= numLines) {
+                        break;
                     }
-                    receiver.start();
-                    long ts = 0L;
-                    try (LineProtoSender sender = createLineProtoSender()) {
-                        for (int i = 0; i < values.length; i++) {
-                            ((LineProtoSender) sender.metric(tableName).put(' ')
-                                    .encodeUtf8(targetColumnName)) // this method belongs to a super class that returns this
-                                    .put('=')
-                                    .put(values[i]) // field method decorates this token, I want full control
-                                    .$(ts += 1000000000);
-                        }
-                        sender.flush();
-                    }
-                    assertReader(engine, tableName, expected);
+                    LockSupport.parkNanos(1);
+                    reader.reload();
                 }
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
+    }
+
+    private void allowTimeForTableToBeCreated() {
+        try (Path path = new Path()) {
+            int millis = 100;
+            while (engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, table) != TableUtils.TABLE_EXISTS && millis-- > 0) {
+                LockSupport.parkNanos(1000000); // 1 milli
+            }
+        }
     }
 }

@@ -779,6 +779,7 @@ public class SqlCompiler implements Closeable {
                 && toTag <= ColumnType.DOUBLE
                 && fromTag < toTag)
                 || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOBYTE)
+                || (fromTag == ColumnType.BOOLEAN && toTag == ColumnType.GEOBYTE)
                 || (fromTag == ColumnType.CHAR && toTag == ColumnType.GEOBYTE && ColumnType.getGeoHashBits(to) < 6)
                 || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOSHORT)
                 || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOINT)

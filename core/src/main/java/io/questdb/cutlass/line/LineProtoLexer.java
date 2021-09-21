@@ -39,6 +39,7 @@ public class LineProtoLexer implements Mutable, Closeable {
     private final FloatingCharSequence floatingCharSequence = new FloatingCharSequence();
     private int state = LineProtoParser.EVT_MEASUREMENT;
     private boolean escape = false;
+    private boolean quotedEscape = false;
     private long buffer;
     private long bufferHi;
     private long dstPos = 0;
@@ -66,6 +67,7 @@ public class LineProtoLexer implements Mutable, Closeable {
     @Override
     public final void clear() {
         escape = false;
+        quotedEscape = false;
         dstTop = dstPos = buffer;
         state = LineProtoParser.EVT_MEASUREMENT;
         utf8ErrorTop = utf8ErrorPos = -1;
@@ -122,7 +124,7 @@ public class LineProtoLexer implements Mutable, Closeable {
 
     private void fireEvent() throws LineProtoException {
         // two bytes less between these and one more byte so we don't have to use >=
-        if (dstTop > dstPos - 3) {
+        if (dstTop > dstPos - 3 && state != LineProtoParser.EVT_FIELD_VALUE) { // fields do take null
             errorCode = LineProtoParser.ERROR_EMPTY;
             throw LineProtoException.INSTANCE;
         }
@@ -164,52 +166,68 @@ public class LineProtoLexer implements Mutable, Closeable {
     }
 
     private void onComma() {
-        if (unquoted) {
+        if (!quotedEscape && unquoted) {
             fireEventTransition(LineProtoParser.EVT_TAG_NAME, LineProtoParser.EVT_FIELD_NAME);
         }
+        quotedEscape = false;
     }
 
     protected void onEol() throws LineProtoException {
-        switch (state) {
-            case LineProtoParser.EVT_MEASUREMENT:
-                chop();
-                break;
-            case LineProtoParser.EVT_TAG_VALUE:
-            case LineProtoParser.EVT_FIELD_VALUE:
-            case LineProtoParser.EVT_TIMESTAMP:
-                fireEvent();
-                parser.onLineEnd(charSequenceCache);
-                clear();
-                break;
-            default:
-                errorCode = LineProtoParser.ERROR_EXPECTED;
-                throw LineProtoException.INSTANCE;
+        if (!quotedEscape) {
+            switch (state) {
+                case LineProtoParser.EVT_MEASUREMENT:
+                    chop();
+                    break;
+                case LineProtoParser.EVT_TAG_VALUE:
+                case LineProtoParser.EVT_FIELD_VALUE:
+                case LineProtoParser.EVT_TIMESTAMP:
+                    fireEvent();
+                    parser.onLineEnd(charSequenceCache);
+                    clear();
+                    break;
+                default:
+                    errorCode = LineProtoParser.ERROR_EXPECTED;
+                    throw LineProtoException.INSTANCE;
+            }
         }
+        quotedEscape = false;
     }
 
     private void onEquals() {
-        if (unquoted) {
+        if (!quotedEscape && unquoted) {
             fireEventTransition2();
         }
+        quotedEscape = false;
     }
 
     private void onEsc() {
-        escape = true;
-    }
-
-    private void onQuote() {
-        unquoted = !unquoted;
-    }
-
-    private void onSpace() {
-        if (unquoted) {
-            fireEventTransition(LineProtoParser.EVT_FIELD_NAME, LineProtoParser.EVT_TIMESTAMP);
+        if (!unquoted) {
+            quotedEscape = true;
+        } else {
+            escape = true;
         }
     }
 
-    protected long parsePartial(long bytesPtr, long hi) {
+    private void onQuote(byte lastByte) {
+        if (lastByte == (byte) '=' && !quotedEscape && unquoted) {
+            unquoted = false; // open quote
+        } else if (!unquoted && !quotedEscape) {
+            unquoted = true; // close quote
+        }
+        quotedEscape = false;
+    }
+
+    private void onSpace() {
+        if (!quotedEscape && unquoted) {
+            fireEventTransition(LineProtoParser.EVT_FIELD_NAME, LineProtoParser.EVT_TIMESTAMP);
+        }
+        quotedEscape = false;
+    }
+
+    protected long parsePartial(final long bytesPtr, final long hi) {
         long p = bytesPtr;
 
+        byte lastByte = (byte) 0;
         while (p < hi && !partialComplete()) {
 
             final byte b = Unsafe.getUnsafe().getByte(p);
@@ -217,6 +235,7 @@ public class LineProtoLexer implements Mutable, Closeable {
             if (skipLine) {
                 doSkipLine(b);
                 p++;
+                lastByte = (byte) 0;
                 continue;
             }
 
@@ -240,12 +259,16 @@ public class LineProtoLexer implements Mutable, Closeable {
 
                 if (escape) {
                     escape = false;
+                    lastByte = b;
                     continue;
                 }
 
                 switch (b) {
                     case '"':
-                        onQuote();
+                        onQuote(lastByte);
+                        break;
+                    case '\\':
+                        onEsc();
                         break;
                     case '\n':
                     case '\r':
@@ -254,9 +277,6 @@ public class LineProtoLexer implements Mutable, Closeable {
                     case ' ':
                         onSpace();
                         break;
-                    case '\\':
-                        onEsc();
-                        break;
                     case ',':
                         onComma();
                         break;
@@ -264,10 +284,10 @@ public class LineProtoLexer implements Mutable, Closeable {
                         onEquals();
                         break;
                     default:
+                        quotedEscape = false;
                         break;
-
                 }
-
+                lastByte = b;
             } catch (LineProtoException ex) {
                 skipLine = true;
                 parser.onError((int) (dstPos - 2 - buffer) / 2, state, errorCode);

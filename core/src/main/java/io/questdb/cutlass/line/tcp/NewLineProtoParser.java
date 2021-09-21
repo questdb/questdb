@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -34,19 +35,22 @@ import java.io.Closeable;
 
 public class NewLineProtoParser implements Closeable {
     public static final long NULL_TIMESTAMP = Numbers.LONG_NaN;
-    public static final byte ENTITY_TYPE_TAG = 0;
-    public static final byte ENTITY_TYPE_FLOAT = 1;
-    public static final byte ENTITY_TYPE_INTEGER = 2;
-    public static final byte ENTITY_TYPE_STRING = 3;
-    public static final byte ENTITY_TYPE_BOOLEAN = 4;
-    public static final byte ENTITY_TYPE_LONG256 = 5;
-    public static final byte ENTITY_TYPE_CACHED_TAG = 6;
-    public static final byte ENTITY_TYPE_GEOBYTE = 7;
-    public static final byte ENTITY_TYPE_GEOSHORT = 8;
-    public static final byte ENTITY_TYPE_GEOINT = 9;
-    public static final byte ENTITY_TYPE_GEOLONG = 10;
+    public static final int MAX_ALLOWED_STRING_LEN = 152; // 150 bytes plus quotes
+    public static final byte ENTITY_TYPE_NULL = 0;
+    public static final byte ENTITY_TYPE_TAG = 1;
+    public static final byte ENTITY_TYPE_FLOAT = 2;
+    public static final byte ENTITY_TYPE_INTEGER = 3;
+    public static final byte ENTITY_TYPE_STRING = 4;
+    public static final byte ENTITY_TYPE_SYMBOL = 5;
+    public static final byte ENTITY_TYPE_BOOLEAN = 6;
+    public static final byte ENTITY_TYPE_LONG256 = 7;
+    public static final byte ENTITY_TYPE_CACHED_TAG = 8;
+    public static final byte ENTITY_TYPE_GEOBYTE = 9;
+    public static final byte ENTITY_TYPE_GEOSHORT = 10;
+    public static final byte ENTITY_TYPE_GEOINT = 11;
+    public static final byte ENTITY_TYPE_GEOLONG = 12;
     public static final int N_ENTITY_TYPES = ENTITY_TYPE_GEOLONG + 1;
-    private static final byte ENTITY_TYPE_NONE = (byte) 0xff;
+    static final byte ENTITY_TYPE_NONE = (byte) 0xff; // visible for testing
     private final DirectByteCharSequence measurementName = new DirectByteCharSequence();
     private final DirectByteCharSequence charSeq = new DirectByteCharSequence();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
@@ -54,9 +58,8 @@ public class NewLineProtoParser implements Closeable {
     private long bufAt;
     private long entityLo;
     private boolean tagsComplete;
+    private boolean isQuotedValue;
     private int nEscapedChars;
-    private boolean fieldValueStartingWithQuote;
-    private byte previousByte;
     private int nEntities;
     private ProtoEntity currentEntity;
     private ErrorCode errorCode;
@@ -106,6 +109,32 @@ public class NewLineProtoParser implements Closeable {
         return this;
     }
 
+    /**
+     * Structure of an ilp message:
+     * <pre>
+     *     table[(,sym=s)*] fld=f(,fld=f)*[ timestamp_nano]\n
+     * </pre>
+     * where:
+     * <ul>
+     *     <li>table: name of the table to insert into.</li>
+     *     <li>sym: name of a symbol column.</li>
+     *     <li>s: symbol value (of type symbol, i.e. string without quotes).</li>
+     *     <li>fld: name of a column.</li>
+     *     <li>f: value for the column. The type of these is parsed based on the
+     *     content of the token (e.g. with prefix '0x' and suffix 'i' it is assumed
+     *     a long256).
+     *     </li>
+     *     <li>timestamp_nano: a long representing the epoch with nano precision.
+     *     Optional, when missing it becomes the system's current time.</li>
+     * </ul>
+     * A white space in the line (other than if inside of a string, or escaped)
+     * triggers the transition from expecting symbols, to columns to timestamp.<br/>
+     * The '\n' is compulsory, it delimits the line.<br/>
+     * There can be 0..n symbols, and 1..m columns. Columns support all types.
+     *
+     * @param bufHi start of the line
+     * @return parse status result
+     */
     public ParseResult parseMeasurement(long bufHi) {
         assert bufAt != 0 && bufHi >= bufAt;
         while (bufAt < bufHi) {
@@ -113,18 +142,14 @@ public class NewLineProtoParser implements Closeable {
             boolean endOfLine = false;
             boolean appendByte = false;
             switch (b) {
-                case (byte) '\n':
+                case (byte) '\n': // before '\n' you can find: field value or timestamp
                 case (byte) '\r':
                     endOfLine = true;
                     b = '\n';
                 case (byte) '=':
                 case (byte) ',':
                 case (byte) ' ':
-                    if (fieldValueStartingWithQuote && previousByte != (byte) '"') {
-                        appendByte = true;
-                        break;
-                    }
-                    fieldValueStartingWithQuote = false;
+                    isQuotedValue = false;
                     if (!entityHandler.completeEntity(b, bufHi)) {
                         if (errorCode == ErrorCode.EMPTY_LINE) {
                             // An empty line
@@ -143,8 +168,10 @@ public class NewLineProtoParser implements Closeable {
                         return ParseResult.ERROR;
                     }
                     bufAt++;
-                    nEscapedChars = 0;
-                    entityLo = bufAt;
+                    if (!isQuotedValue) {
+                        nEscapedChars = 0;
+                        entityLo = bufAt;
+                    }
                     break;
 
                 case (byte) '\\':
@@ -165,7 +192,6 @@ public class NewLineProtoParser implements Closeable {
                     Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
                 }
                 bufAt++;
-                previousByte = b;
             }
         }
         return ParseResult.BUFFER_UNDERFLOW;
@@ -196,10 +222,10 @@ public class NewLineProtoParser implements Closeable {
     public void startNextMeasurement() {
         bufAt++;
         nEscapedChars = 0;
-        fieldValueStartingWithQuote = false;
         entityLo = bufAt;
         errorCode = null;
         tagsComplete = false;
+        isQuotedValue = false;
         nEntities = 0;
         currentEntity = null;
         entityHandler = entityTableHandler;
@@ -226,9 +252,34 @@ public class NewLineProtoParser implements Closeable {
             entityHandler = entityValueHandler;
 
             if (tagsComplete) {
-                if (bufAt < bufHi) {
+                if (bufAt + 1 < bufHi) { // peek oncoming value's 1st char
                     byte b = Unsafe.getUnsafe().getByte(bufAt + 1);
-                    fieldValueStartingWithQuote = b == (byte) '"';
+                    if (b == (byte) '"') {
+                        // it is a string, get it ready for immediate consumption
+                        entityLo = bufAt + 1; // from the quote
+                        bufAt += 2;
+                        boolean scape = false;
+                        final long limit = Math.min(bufHi, entityLo + MAX_ALLOWED_STRING_LEN + 1); // limit the size of strings
+                        while (bufAt < limit) { // consume until the next quote, '\n', or eof
+                            b = Unsafe.getUnsafe().getByte(bufAt);
+                            if (b != (byte) '\\') {
+                                if (b == (byte) '"' && !scape) {
+                                    isQuotedValue = true;
+                                    return true;
+                                }
+                                if (b == (byte) '\n' && !scape) {
+                                    errorCode = ErrorCode.INVALID_FIELD_VALUE;
+                                    return false; // missing tail quote
+                                }
+                                scape = false;
+                            } else {
+                                scape = true;
+                            }
+                            bufAt++;
+                        }
+                        errorCode = ErrorCode.INVALID_FIELD_VALUE;
+                        return false; // missing tail quote as the string extends past the max allowed size
+                    }
                 }
             }
             return true;
@@ -279,7 +330,7 @@ public class NewLineProtoParser implements Closeable {
             return false;
         }
 
-        errorCode = ErrorCode.INVALID_FIELD_SEPERATOR;
+        errorCode = ErrorCode.INVALID_FIELD_SEPARATOR;
         return false;
     }
 
@@ -306,7 +357,7 @@ public class NewLineProtoParser implements Closeable {
                 entityHandler = null;
                 return true;
             }
-            errorCode = ErrorCode.INVALID_FIELD_SEPERATOR;
+            errorCode = ErrorCode.INVALID_FIELD_SEPARATOR;
             return false;
         } catch (NumericException ex) {
             errorCode = ErrorCode.INVALID_TIMESTAMP;
@@ -319,7 +370,13 @@ public class NewLineProtoParser implements Closeable {
     }
 
     public enum ErrorCode {
-        EMPTY_LINE, NO_FIELDS, INCOMPLETE_TAG, INCOMPLETE_FIELD, INVALID_FIELD_SEPERATOR, INVALID_TIMESTAMP, INVALID_FIELD_VALUE
+        EMPTY_LINE,
+        NO_FIELDS,
+        INCOMPLETE_TAG,
+        INCOMPLETE_FIELD,
+        INVALID_FIELD_SEPARATOR,
+        INVALID_TIMESTAMP,
+        INVALID_FIELD_VALUE
     }
 
     private interface EntityHandler {
@@ -367,55 +424,79 @@ public class NewLineProtoParser implements Closeable {
             type = ENTITY_TYPE_NONE;
         }
 
-        private boolean parse(byte lastByte, int valueLen) {
-            try {
-                switch (lastByte) {
-                    case 'i':
-                        if (valueLen > 1 && value.charAt(1) != 'x') {
+        private boolean parse(byte last, int valueLen) {
+            switch (last) {
+                case 'i':
+                    if (valueLen > 3 && value.charAt(0) == '0' && (value.charAt(1) | 32) == 'x') {
+                        value.decHi(); // remove 'i'
+                        type = ENTITY_TYPE_LONG256;
+                        return true;
+                    }
+                    if (valueLen > 1 && value.charAt(1) != 'x') {
+                        try {
                             charSeq.of(value.getLo(), value.getHi() - 1);
                             integerValue = Numbers.parseLong(charSeq);
+                            value.decHi(); // remove 'i'
                             type = ENTITY_TYPE_INTEGER;
-                        } else {
-                            if (valueLen > 3 && value.charAt(0) == '0') {
-                                value.decHi();
-                                type = ENTITY_TYPE_LONG256;
-                            } else {
-                                return false;
-                            }
+                        } catch (NumericException notANumber) {
+                            type = ENTITY_TYPE_SYMBOL;
                         }
                         return true;
-                    case 'e':
-                        // tru(e)
-                        // fals(e)
-                        lastByte = value.byteAt(0);
-                        // fall through
-                    case 't':
-                    case 'T':
-                    case 'f':
-                    case 'F':
-                        // f
-                        // F
-                        // t
-                        // T
-                        booleanValue = (lastByte | 32) == 't';
-                        type = ENTITY_TYPE_BOOLEAN;
-                        return true;
-                    case '"': {
-                        byte b = value.byteAt(0);
-                        if (valueLen > 1 && b == '"') {
-                            value.squeeze();
-                            type = ENTITY_TYPE_STRING;
-                            return true;
-                        }
-                        return false;
                     }
-                    default:
+                    type = ENTITY_TYPE_SYMBOL;
+                    return true;
+                case 'e':
+                case 'E':
+                    // tru(e)
+                    // fals(e)
+                case 't':
+                case 'T':
+                case 'f':
+                case 'F':
+                    // f
+                    // F
+                    // t
+                    // T
+                    if (valueLen == 1) {
+                        if (last != 'e') {
+                            booleanValue = (last | 32) == 't';
+                            type = ENTITY_TYPE_BOOLEAN;
+                        } else {
+                            type = ENTITY_TYPE_SYMBOL;
+                        }
+                    } else {
+                        charSeq.of(value.getLo(), value.getHi());
+                        if (SqlKeywords.isTrueKeyword(charSeq)) {
+                            booleanValue = true;
+                            type = ENTITY_TYPE_BOOLEAN;
+                        } else if (SqlKeywords.isFalseKeyword(charSeq)) {
+                            booleanValue = false;
+                            type = ENTITY_TYPE_BOOLEAN;
+                        } else {
+                            type = ENTITY_TYPE_SYMBOL;
+                        }
+                    }
+                    return true;
+                case '"': {
+                    byte b = value.byteAt(0);
+                    if (valueLen > 1 && b == '"') {
+                        value.squeeze();
+                        type = ENTITY_TYPE_STRING;
+                        return true;
+                    }
+                    return false;
+                }
+                default:
+                    try {
                         floatValue = Numbers.parseDouble(value);
                         type = ENTITY_TYPE_FLOAT;
-                        return true;
-                }
-            } catch (NumericException ex) {
-                return false;
+                    } catch (NumericException ex) {
+                        if (value.byteAt(0) == '"') { // missing closing '"'
+                            return false;
+                        }
+                        type = ENTITY_TYPE_SYMBOL;
+                    }
+                    return true;
             }
         }
 
@@ -427,13 +508,15 @@ public class NewLineProtoParser implements Closeable {
             assert type == ENTITY_TYPE_NONE;
             long bufHi = bufAt - nEscapedChars;
             int valueLen = (int) (bufHi - entityLo);
-            if (valueLen <= 0) {
-                return false;
-            }
             value.of(entityLo, bufHi);
             if (tagsComplete) {
-                byte lastByte = value.byteAt(valueLen - 1);
-                return parse(lastByte, valueLen);
+                if (valueLen > 0) {
+                    byte lastByte = value.byteAt(valueLen - 1);
+                    return parse(lastByte, valueLen);
+                } else {
+                    type = ENTITY_TYPE_NULL;
+                    return true;
+                }
             }
             type = ENTITY_TYPE_TAG;
             return true;

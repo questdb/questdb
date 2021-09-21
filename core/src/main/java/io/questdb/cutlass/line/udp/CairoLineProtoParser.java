@@ -30,7 +30,6 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
-import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -127,7 +126,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
     @Override
     public void onEvent(CachedCharSequence token, int eventType, CharSequenceCache cache) {
-
         switch (eventType) {
             case EVT_MEASUREMENT:
                 int wrtIndex = writerCache.keyIndex(token);
@@ -214,17 +212,14 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             for (int i = 0; i < columnCount; i++) {
                 final long valueIdxAndType = columnIndexAndType.getQuick(i);
                 CharSequence value = cache.get(columnValues.getQuick(i));
-                if (!SqlKeywords.isNullKeyword(value)) {
-                    CairoLineProtoParserSupport.putValue(
-                            row,
-                            Numbers.decodeHighInt(valueIdxAndType),
-                            geohashBitsSizeByColIdx.getQuick(i),
-                            Numbers.decodeLowInt(valueIdxAndType),
-                            value
-                    );
-                } else {
-                    CairoLineProtoParserSupport.putNullValue(row, columnIndex, metadata.getColumnType(i));
-                }
+                // values of len 0, null, are ignored, not inserted
+                CairoLineProtoParserSupport.putValue(
+                        row,
+                        Numbers.decodeHighInt(valueIdxAndType),
+                        geohashBitsSizeByColIdx.getQuick(i),
+                        Numbers.decodeLowInt(valueIdxAndType),
+                        value
+                );
             }
             row.append();
         } catch (BadCastException ignore) {

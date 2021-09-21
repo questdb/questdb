@@ -61,22 +61,21 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
     }
 
     protected static void assertReader(CairoEngine engine, String tableName, String expected, String... expectedExtraStringColumns) {
-        int numLines = expected.split("[\n]").length - 1;
         try (Path path = new Path()) {
-            int millis = 100;
+            int millis = 2000;
             while (engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName) != TableUtils.TABLE_EXISTS && millis-- > 0) {
-                LockSupport.parkNanos(1000000); // 1 milli
+                LockSupport.parkNanos(1000000L); // 1 milli
             }
         }
-        CairoException pendingRecoveryErr = null;
-        for (int i = 0, n = 5; i < n; i++) {
-            // aggressively demand a TableReader up to 5x
+        int numLines = expected.split("[\n]").length - 1;
+        int attempts = 5000;
+        for (; attempts > 0; attempts--) {
             try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), tableName)) {
-                for (int attempts = 28_02_78; attempts > 0; attempts--) {
+                for (int matchLinesAttemps = 28_02_78; matchLinesAttemps > 0; matchLinesAttemps--) {
                     if (reader.size() >= numLines) {
                         break;
                     }
-                    LockSupport.parkNanos(1);
+                    LockSupport.parkNanos(10);
                     reader.reload();
                 }
                 TestUtils.assertReader(expected, reader, sink);
@@ -87,15 +86,12 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                         Assert.assertEquals(ColumnType.STRING, meta.getColumnType(colName));
                     }
                 }
-                pendingRecoveryErr = null;
                 break;
-            } catch (CairoException err) {
-                pendingRecoveryErr = err;
-                LockSupport.parkNanos(1000000); // 1 milli
+            } catch (CairoException ignore) {
+                // will try again
+                LockSupport.parkNanos(1000000L); // 1 milli
             }
         }
-        if (pendingRecoveryErr != null) {
-            throw pendingRecoveryErr;
-        }
+        Assert.assertTrue(attempts > 0);
     }
 }

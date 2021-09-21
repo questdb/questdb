@@ -198,7 +198,10 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
                     Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), sink);
                     sink.put('"');
                     break;
-
+                    case NewLineProtoParser.ENTITY_TYPE_INTEGER:
+                case NewLineProtoParser.ENTITY_TYPE_LONG256:
+                        sink.put(entity.getValue()).put('i');
+                        break;
                 default:
                     sink.put(entity.getValue());
             }

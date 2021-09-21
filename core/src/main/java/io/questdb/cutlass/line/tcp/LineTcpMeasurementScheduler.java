@@ -473,6 +473,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             for (int nEntity = 0; nEntity < nEntities; nEntity++) {
                 assert bufPos < (bufLo + bufSize + 6);
                 ProtoEntity entity = protoParser.getEntity(nEntity);
+                System.out.printf("TRD[%s] localDetails.isNull? %b, entityName.isNull? %b%n", Thread.currentThread().getName(), localDetails == null, entity.getName() == null);
                 int colIndex = localDetails.getColumnIndex(entity.getName());
                 if (colIndex < 0) {
                     int colNameLen = entity.getName().length();
@@ -525,6 +526,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         break;
                     }
                     case NewLineProtoParser.ENTITY_TYPE_STRING:
+                    case NewLineProtoParser.ENTITY_TYPE_SYMBOL:
                     case NewLineProtoParser.ENTITY_TYPE_LONG256: {
                         final int colTypeMeta = localDetails.getColumnTypeMeta(colIndex);
                         if (colTypeMeta == 0) { // not a geohash
@@ -533,7 +535,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             int l = entity.getValue().length();
                             Unsafe.getUnsafe().putInt(bufPos, l);
                             bufPos += Integer.BYTES;
-                            long hi = bufPos + 2L * l;
+                            long hi = bufPos + 2L * l; // unquote
                             floatingCharSink.of(bufPos, hi);
                             if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
                                 throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
@@ -585,6 +587,14 @@ class LineTcpMeasurementScheduler implements Closeable {
                         bufPos += Byte.BYTES;
                         break;
                     }
+                    case NewLineProtoParser.ENTITY_TYPE_NULL: {
+                        Unsafe.getUnsafe().putByte(bufPos, entity.getType());
+                        bufPos += Byte.BYTES;
+                        break;
+                    }
+                    default:
+                        // unsupported types are ignored
+                        break;
                 }
             }
             threadId = tableUpdateDetails.writerThreadId;
@@ -689,7 +699,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                                     break;
 
                                 case ColumnType.INT:
-                                    if (v < Integer.MIN_VALUE || v > Integer.MAX_VALUE) {
+                                    if (v == Numbers.LONG_NaN) {
+                                        v = Numbers.INT_NaN;
+                                    } else if (v < Integer.MIN_VALUE || v > Integer.MAX_VALUE) {
                                         throw CairoException.instance(0)
                                                 .put("line protocol integer is out of int bounds [columnIndex=").put(colIndex)
                                                 .put(", v=").put(v)
@@ -699,7 +711,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                                     break;
 
                                 case ColumnType.SHORT:
-                                    if (v < Short.MIN_VALUE || v > Short.MAX_VALUE) {
+                                    if (v == Numbers.LONG_NaN) {
+                                        v = (short) 0;
+                                    } else if (v < Short.MIN_VALUE || v > Short.MAX_VALUE) {
                                         throw CairoException.instance(0)
                                                 .put("line protocol integer is out of short bounds [columnIndex=").put(colIndex)
                                                 .put(", v=").put(v)
@@ -709,7 +723,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                                     break;
 
                                 case ColumnType.BYTE:
-                                    if (v < Byte.MIN_VALUE || v > Byte.MAX_VALUE) {
+                                    if (v == Numbers.LONG_NaN) {
+                                        v = (byte) 0;
+                                    } else if (v < Byte.MIN_VALUE || v > Byte.MAX_VALUE) {
                                         throw CairoException.instance(0)
                                                 .put("line protocol integer is out of byte bounds [columnIndex=").put(colIndex)
                                                 .put(", v=").put(v)
@@ -773,9 +789,29 @@ class LineTcpMeasurementScheduler implements Closeable {
                             final int colType = writer.getMetadata().getColumnType(colIndex);
                             if (ColumnType.isString(colType)) {
                                 row.putStr(colIndex, job.floatingCharSink);
+                            } else if (ColumnType.isChar(colType)) {
+                                row.putChar(colIndex, job.floatingCharSink.charAt(0));
                             } else {
                                 throw CairoException.instance(0)
                                         .put("cast error for line protocol string [columnIndex=").put(colIndex)
+                                        .put(", columnType=").put(ColumnType.nameOf(colType))
+                                        .put(']');
+                            }
+                            break;
+                        }
+
+                        case NewLineProtoParser.ENTITY_TYPE_SYMBOL: {
+                            int len = Unsafe.getUnsafe().getInt(bufPos);
+                            bufPos += Integer.BYTES;
+                            long hi = bufPos + 2L * len;
+                            job.floatingCharSink.asCharSequence(bufPos, hi);
+                            bufPos = hi;
+                            final int colType = writer.getMetadata().getColumnType(colIndex);
+                            if (ColumnType.isSymbol(colType)) {
+                                row.putSym(colIndex, job.floatingCharSink);
+                            } else {
+                                throw CairoException.instance(0)
+                                        .put("cast error for line protocol symbol [columnIndex=").put(colIndex)
                                         .put(", columnType=").put(ColumnType.nameOf(colType))
                                         .put(']');
                             }
@@ -787,8 +823,16 @@ class LineTcpMeasurementScheduler implements Closeable {
                             bufPos += Integer.BYTES;
                             long hi = bufPos + 2L * len;
                             job.floatingCharSink.asCharSequence(bufPos, hi);
-                            row.putLong256(colIndex, job.floatingCharSink);
                             bufPos = hi;
+                            final int colType = writer.getMetadata().getColumnType(colIndex);
+                            if (ColumnType.isLong256(colType)) {
+                                row.putLong256(colIndex, job.floatingCharSink);
+                            } else {
+                                throw CairoException.instance(0)
+                                        .put("cast error for line protocol long256 [columnIndex=").put(colIndex)
+                                        .put(", columnType=").put(ColumnType.nameOf(colType))
+                                        .put(']');
+                            }
                             break;
                         }
 
@@ -817,6 +861,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                             byte geohash = Unsafe.getUnsafe().getByte(bufPos);
                             bufPos += Byte.BYTES;
                             row.putByte(colIndex, geohash);
+                            break;
+                        }
+
+                        case NewLineProtoParser.ENTITY_TYPE_NULL: {
+                            // ignored, default nulls is used
                             break;
                         }
 
@@ -859,6 +908,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             localDetailsArray = new ThreadLocalDetails[n];
             for (int i = 0; i < n; i++) {
                 localDetailsArray[i] = new ThreadLocalDetails(netIoJobs[i].getUnusedSymbolCaches());
+                System.out.printf("%d: isNull? %b%n", i, localDetailsArray[i] == null);
             }
             lastCommitMillis = milliClock.getTicks();
         }
@@ -955,6 +1005,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         ThreadLocalDetails startNewMeasurementEvent(int workerId) {
+            System.out.printf("TRD[%s]startNewMeasurementEvent(%d)%n", Thread.currentThread().getName(), workerId);
             ThreadLocalDetails localDetails = localDetailsArray[workerId];
             lastMeasurementMillis = milliClock.getTicks();
             return localDetails;
@@ -1476,10 +1527,12 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     static {
+        // if not set it defaults to ColumnType.UNDEFINED
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_TAG] = ColumnType.SYMBOL;
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_FLOAT] = ColumnType.DOUBLE;
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_INTEGER] = ColumnType.LONG;
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_STRING] = ColumnType.STRING;
+        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_SYMBOL] = ColumnType.SYMBOL;
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_BOOLEAN] = ColumnType.BOOLEAN;
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_LONG256] = ColumnType.LONG256;
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOBYTE] = ColumnType.getGeoHashTypeWithBits(8);
