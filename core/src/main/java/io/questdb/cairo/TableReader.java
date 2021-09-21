@@ -546,41 +546,13 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private static void growColumn(MemoryR mem1, MemoryR mem2, int type, long rowCount) {
         if (rowCount > 0) {
-            // subtract column top
-            switch (ColumnType.tagOf(type)) {
-                default:
-                    mem1.extend(rowCount << ColumnType.pow2SizeOf(type));
-                    break;
-                case ColumnType.BINARY:
-                    growBin(mem1, mem2, rowCount);
-                    break;
-                case ColumnType.STRING:
-                    growStr(mem1, mem2, rowCount);
-                    break;
+            if (ColumnType.isVariableLength(type)) {
+                assert mem2 != null;
+                mem2.extend((rowCount + 1) * 8);
+                mem1.extend(mem2.getLong(rowCount * 8));
+            } else {
+                mem1.extend(rowCount << ColumnType.pow2SizeOf(type));
             }
-        }
-    }
-
-    private static void growStr(MemoryR mem1, MemoryR mem2, long rowCount) {
-        assert mem2 != null;
-        mem2.extend(rowCount * 8);
-        final long offset = mem2.getLong((rowCount - 1) * 8);
-        mem1.extend(offset + 4);
-        final int len = mem1.getInt(offset);
-        if (len > 0) {
-            mem1.extend(offset + Vm.getStorageLength(len));
-        }
-    }
-
-    private static void growBin(MemoryR mem1, MemoryR mem2, long rowCount) {
-        assert mem2 != null;
-        mem2.extend(rowCount * 8);
-        final long offset = mem2.getLong((rowCount - 1) * 8);
-        // setSize data column to value offset + length, so that we can read length
-        mem1.extend(offset + 8);
-        final long len = mem1.getLong(offset);
-        if (len > 0) {
-            mem1.extend(offset + len + 8);
         }
     }
 
@@ -1091,13 +1063,13 @@ public class TableReader implements Closeable, SymbolTableSource {
             MemoryMR mem1 = columns.getQuick(primaryIndex);
             MemoryMR mem2 = columns.getQuick(secondaryIndex);
 
-            final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b);
+            final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b, false);
             final long columnRowCount = partitionRowCount - columnTop;
 
             // When column is added mid-table existence the .top file is only
             // created in the current partition. Older partitions would simply have no
             // column file. This makes it necessary to check for .d file existence
-            if (columnRowCount > 0 &&  ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
+            if (partitionRowCount > 0 &&  ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
                 final int columnType = metadata.getColumnType(columnIndex);
 
                 if (ColumnType.isVariableLength(columnType)) {

@@ -48,13 +48,10 @@ public class Vm {
     }
 
     public static long bestEffortTruncate(FilesFacade ff, Log log, long fd, long size) {
-        // Windows does truncate file if it has a mapped page somewhere, could be another handle and process.
-        // To make it work size needs to be rounded up to nearest page.
-        long n = (size - 1) / Files.PAGE_SIZE;
-        long sz = (n + 1) * Files.PAGE_SIZE;
+        long sz = Files.ceilPageSize(size);
         if (ff.truncate(Math.abs(fd), sz)) {
             log.debug()
-                    .$("truncated and closed, second attempt [fd=").$(fd)
+                    .$("truncated and closed [fd=").$(fd)
                     .$(", size=").$(sz)
                     .$(']').$();
             return sz;

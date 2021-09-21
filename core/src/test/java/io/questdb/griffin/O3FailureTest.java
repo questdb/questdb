@@ -25,10 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.WorkerPoolAwareConfiguration;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.*;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -148,6 +145,36 @@ public class O3FailureTest extends AbstractO3Test {
                 theFd = fd;
             }
             return fd;
+        }
+
+        @Override
+        public long write(long fd, long address, long len, long offset) {
+            if (fd == theFd) {
+                theFd = 0;
+                return 5;
+            }
+            return super.write(fd, address, len, offset);
+        }
+    };
+
+    private static final FilesFacade ffWriteAndRemoveTop = new FilesFacadeImpl() {
+        long theFd;
+
+        @Override
+        public long openRW(LPSZ name) {
+            long fd = super.openRW(name);
+            if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "v.top") && counter.decrementAndGet() == 0) {
+                theFd = fd;
+            }
+            return fd;
+        }
+
+        @Override
+        public boolean remove(LPSZ name) {
+            if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "v.top")) {
+                return false;
+            }
+            return super.remove(name);
         }
 
         @Override
@@ -322,58 +349,6 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
-    public void testColumnTopLastOOOPrefixReadBinLen() throws Exception {
-        counter.set(1);
-        executeWithoutPool(O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
-            long theFd;
-
-            @Override
-            public long openRW(LPSZ name) {
-                long fd = super.openRW(name);
-                if (Chars.endsWith(name, "1970-01-08" + Files.SEPARATOR + "v12.i") && counter.decrementAndGet() == 0) {
-                    theFd = fd;
-                }
-                return fd;
-            }
-
-            @Override
-            public long read(long fd, long buf, long len, long offset) {
-                if (fd == theFd && len == Long.BYTES) {
-                    theFd = 0;
-                    return 2;
-                }
-                return super.read(fd, buf, len, offset);
-            }
-        });
-    }
-
-    @Test
-    public void testColumnTopLastOOOPrefixReadBinLenContended() throws Exception {
-        counter.set(1);
-        executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
-            long theFd;
-
-            @Override
-            public long openRW(LPSZ name) {
-                long fd = super.openRW(name);
-                if (Chars.endsWith(name, "1970-01-08" + Files.SEPARATOR + "v12.i") && counter.decrementAndGet() == 0) {
-                    theFd = fd;
-                }
-                return fd;
-            }
-
-            @Override
-            public long read(long fd, long buf, long len, long offset) {
-                if (fd == theFd && len == Long.BYTES) {
-                    theFd = 0;
-                    return 2;
-                }
-                return super.read(fd, buf, len, offset);
-            }
-        });
-    }
-
-    @Test
     public void testColumnTopMidAppend() throws Exception {
         counter.set(3);
         executeWithoutPool(O3FailureTest::testColumnTopMidAppendColumnFailRetry0, new FilesFacadeImpl() {
@@ -391,6 +366,12 @@ public class O3FailureTest extends AbstractO3Test {
     public void testColumnTopMidAppendBlank() throws Exception {
         counter.set(1);
         executeWithoutPool(O3FailureTest::testColumnTopMidAppendBlankColumnFailRetry0, ffWriteTop);
+    }
+
+    @Test
+    public void testColumnTopFailToWriteFollowedByFailToRemove() throws Exception {
+        counter.set(1);
+        executeWithoutPool(O3FailureTest::testColumnTopMidAppendBlankColumnFailRetry0, ffWriteAndRemoveTop);
     }
 
     @Test
@@ -616,10 +597,10 @@ public class O3FailureTest extends AbstractO3Test {
             case Os.LINUX_ARM64:
             case Os.OSX_AMD64:
             case Os.OSX_ARM64:
-                cnt = 82;
+                cnt = 80;
                 break;
             default:
-                cnt = 84;
+                cnt = 82;
                 break;
         }
         counter.set(cnt);
@@ -639,9 +620,8 @@ public class O3FailureTest extends AbstractO3Test {
     public void testFailOnTruncateKeyValueContended() throws Exception {
         // different number of calls to "truncate" on Windows and *Nix
         // the number targets truncate of key file in BitmapIndexWriter
-        counter.set(Os.type == Os.WINDOWS ? 84 : 82);
+        counter.set(Os.type == Os.WINDOWS ? 82 : 80);
         executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
-
             @Override
             public boolean truncate(long fd, long size) {
                 if (counter.decrementAndGet() == 0) {
@@ -857,13 +837,19 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTail() throws Exception {
-        counter.set(200);
+        counter.set(174);
+        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
+    }
+
+    @Test
+    public void testSetAppendPositionFails() throws Exception {
+        counter.set(206);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailContended() throws Exception {
-        counter.set(221);
+        counter.set(174);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -881,7 +867,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailParallel() throws Exception {
-        counter.set(221);
+        counter.set(174);
         executeWithPool(2, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -959,7 +945,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallel() throws Exception {
-        counter.set(262);
+        counter.set(193);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
@@ -1250,7 +1236,7 @@ public class O3FailureTest extends AbstractO3Test {
         try {
             compiler.compile("insert into x select * from append", sqlExecutionContext);
             Assert.fail();
-        } catch (CairoException ignored) {
+        } catch (CairoException | CairoError ignored) {
         }
 
         assertO3DataConsistency(

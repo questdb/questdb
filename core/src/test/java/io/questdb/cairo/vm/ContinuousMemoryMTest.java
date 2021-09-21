@@ -378,7 +378,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
                     mem.close();
                 }
 
-                Assert.assertEquals(ff.length(path), 1024);
+                Assert.assertEquals(ff.length(path), Files.PAGE_SIZE);
             } finally {
                 Assert.assertTrue(ff.remove(path));
             }

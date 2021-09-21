@@ -72,8 +72,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
         map(ff, name, size);
     }
 
-    protected void map(FilesFacade ff, LPSZ name, long size) {
-        size = Math.min(ff.length(fd), size);
+    protected void map(FilesFacade ff, LPSZ name, final long size) {
         this.size = size;
         if (size > 0) {
             try {
@@ -83,12 +82,10 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
                 throw e;
             }
         } else {
+            assert size > -1;
             this.pageAddress = 0;
         }
 
-        if (size < 0) {
-            System.out.println("wtf?");
-        }
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
     }
 

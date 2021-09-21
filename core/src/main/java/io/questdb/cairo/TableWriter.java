@@ -2224,7 +2224,7 @@ public class TableWriter implements Closeable {
                             createIndexFiles(columnName, indexValueBlockSize, plen, true);
 
                             final long partitionSize = txFile.getPartitionSizeByPartitionTimestamp(timestamp);
-                            final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b);
+                            final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b, true);
 
                             if (partitionSize > columnTop) {
                                 TableUtils.dFile(path.trimTo(plen), columnName);
@@ -2249,7 +2249,7 @@ public class TableWriter implements Closeable {
 
         createIndexFiles(columnName, indexValueBlockSize, plen, true);
 
-        final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b);
+        final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b, true);
 
         // set indexer up to continue functioning as normal
         indexer.configureFollowerAndWriter(configuration, path.trimTo(plen), columnName, getPrimaryColumn(columnIndex), columnTop);
@@ -2553,22 +2553,22 @@ public class TableWriter implements Closeable {
                         final boolean last = partitionTimestamp == lastPartitionTimestamp;
                         srcOoo = srcOooHi + 1;
 
-                        final long srcDataSize;
+                        final long srcDataMax;
                         final long srcNameTxn;
                         final int partitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
                         if (partitionIndex > -1) {
                             if (last) {
-                                srcDataSize = txFile.transientRowCount;
+                                srcDataMax = txFile.transientRowCount;
                             } else {
-                                srcDataSize = getPartitionSizeByIndex(partitionIndex);
+                                srcDataMax = getPartitionSizeByIndex(partitionIndex);
                             }
                             srcNameTxn = getPartitionNameTxnByIndex(partitionIndex);
                         } else {
-                            srcDataSize = -1;
+                            srcDataMax = -1;
                             srcNameTxn = -1;
                         }
 
-                        final boolean append = last && (srcDataSize < 0 || o3Timestamp >= maxTimestamp);
+                        final boolean append = last && (srcDataMax < 0 || o3Timestamp >= maxTimestamp);
                         LOG.debug().
                                 $("o3 partition task [table=").$(tableName)
                                 .$(", srcOooLo=").$(srcOooLo)
@@ -2579,7 +2579,7 @@ public class TableWriter implements Closeable {
                                 .$(", o3TimestampMax=").$ts(o3TimestampMax)
                                 .$(", partitionTimestamp=").$ts(partitionTimestamp)
                                 .$(", partitionIndex=").$(partitionIndex)
-                                .$(", srcDataSize=").$(srcDataSize)
+                                .$(", srcDataMax=").$(srcDataMax)
                                 .$(", maxTimestamp=").$ts(maxTimestamp)
                                 .$(", last=").$(last)
                                 .$(", append=").$(append)
@@ -2643,7 +2643,7 @@ public class TableWriter implements Closeable {
                                         o3TimestampMax,
                                         partitionTimestamp,
                                         srcDataTop,
-                                        Math.max(0, srcDataSize),
+                                        Math.max(0, srcDataMax),
                                         isIndexed,
                                         dstFixMem,
                                         dstVarMem,
@@ -2667,7 +2667,7 @@ public class TableWriter implements Closeable {
                                     srcOooHi,
                                     partitionTimestamp,
                                     last,
-                                    srcDataSize,
+                                    srcDataMax,
                                     srcNameTxn,
                                     o3Basket
                             );
@@ -2729,7 +2729,17 @@ public class TableWriter implements Closeable {
         if (!columns.getQuick(0).isOpen() || partitionTimestampHi < txFile.getMaxTimestamp()) {
             openPartition(txFile.getMaxTimestamp());
         }
-        setAppendPosition(txFile.getTransientRowCount(), true);
+
+        // Data is written out successfully, however, we can still fail to set append position, for
+        // example when we ran out of address space and new page cannot be mapped. The "allocate" calls here
+        // ensure we can trigger this situation in tests. We should perhaps align our data such that setAppendPosition()
+        // will attempt to mmap new page and fail.. Then we can remove the 'true' parameter
+        try {
+            setAppendPosition(txFile.getTransientRowCount(), true);
+        } catch (Throwable e) {
+            distressed = true;
+            throw e;
+        }
         return false;
     }
 
@@ -2744,7 +2754,7 @@ public class TableWriter implements Closeable {
             long srcOooHi,
             long partitionTimestamp,
             boolean last,
-            long srcDataSize,
+            long srcDataMax,
             long srcNameTxn,
             O3Basket o3Basket
     ) {
@@ -2763,7 +2773,7 @@ public class TableWriter implements Closeable {
                     oooTimestampMax,
                     partitionTimestamp,
                     maxTimestamp,
-                    srcDataSize,
+                    srcDataMax,
                     srcNameTxn,
                     last,
                     getTxn(),
@@ -2786,7 +2796,7 @@ public class TableWriter implements Closeable {
                     oooTimestampMax,
                     partitionTimestamp,
                     maxTimestamp,
-                    srcDataSize,
+                    srcDataMax,
                     srcNameTxn,
                     last,
                     getTxn(),
@@ -3649,7 +3659,7 @@ public class TableWriter implements Closeable {
                 }
 
                 openColumnFiles(name, i, plen);
-                columnTop = readColumnTop(ff, path, name, plen, tempMem16b);
+                columnTop = readColumnTop(ff, path, name, plen, tempMem16b, true);
                 columnTops.extendAndSet(i, columnTop);
 
                 if (indexed) {
