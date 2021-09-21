@@ -611,8 +611,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
     public void testInsertTooLargeAStringTableExists() throws Exception {
         Rnd rnd = new Rnd();
         assertType(ColumnType.STRING,
-                "value\ttimestamp\n" +
-                        "\t1970-01-01T00:00:02.000000Z\n",
+                "value\ttimestamp\n",
                 new CharSequence[]{
                         "\"" + rnd.nextString(NewLineProtoParser.MAX_ALLOWED_STRING_LEN + 1) + "\"", // discarded too long
                         "" // valid null

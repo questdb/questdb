@@ -157,6 +157,9 @@ public class NewLineProtoParser implements Closeable {
                             entityLo = bufAt;
                             break;
                         }
+                        if (errorCode == ErrorCode.INVALID_FIELD_STR_MISSING_QUOTE) {
+                            return ParseResult.BUFFER_UNDERFLOW;
+                        }
                         return ParseResult.ERROR;
                     }
                     if (endOfLine) {
@@ -239,6 +242,11 @@ public class NewLineProtoParser implements Closeable {
 
     private boolean expectEntityName(byte endOfEntityByte, long bufHi) {
         if (endOfEntityByte == (byte) '=') {
+            if (bufAt - entityLo - nEscapedChars == 0) { // no tag name
+                errorCode = tagsComplete ? ErrorCode.INCOMPLETE_FIELD: ErrorCode.INCOMPLETE_TAG;
+                return false;
+            }
+
             if (entityCache.size() <= nEntities) {
                 currentEntity = new ProtoEntity();
                 entityCache.add(currentEntity);
@@ -252,33 +260,11 @@ public class NewLineProtoParser implements Closeable {
             entityHandler = entityValueHandler;
 
             if (tagsComplete) {
-                if (bufAt + 1 < bufHi) { // peek oncoming value's 1st char
-                    byte b = Unsafe.getUnsafe().getByte(bufAt + 1);
+                if (bufAt + 3 < bufHi) { // peek oncoming value's 1st char, only caring for valid strings (2 plus a follow up token)
+                    long candidateQuoteIdx = bufAt + 1;
+                    byte b = Unsafe.getUnsafe().getByte(candidateQuoteIdx);
                     if (b == (byte) '"') {
-                        // it is a string, get it ready for immediate consumption
-                        entityLo = bufAt + 1; // from the quote
-                        bufAt += 2;
-                        boolean scape = false;
-                        final long limit = Math.min(bufHi, entityLo + MAX_ALLOWED_STRING_LEN + 1); // limit the size of strings
-                        while (bufAt < limit) { // consume until the next quote, '\n', or eof
-                            b = Unsafe.getUnsafe().getByte(bufAt);
-                            if (b != (byte) '\\') {
-                                if (b == (byte) '"' && !scape) {
-                                    isQuotedValue = true;
-                                    return true;
-                                }
-                                if (b == (byte) '\n' && !scape) {
-                                    errorCode = ErrorCode.INVALID_FIELD_VALUE;
-                                    return false; // missing tail quote
-                                }
-                                scape = false;
-                            } else {
-                                scape = true;
-                            }
-                            bufAt++;
-                        }
-                        errorCode = ErrorCode.INVALID_FIELD_VALUE;
-                        return false; // missing tail quote as the string extends past the max allowed size
+                        return prepareQuotedEntity(candidateQuoteIdx, bufHi);
                     }
                 }
             }
@@ -307,6 +293,42 @@ public class NewLineProtoParser implements Closeable {
             errorCode = ErrorCode.INCOMPLETE_TAG;
         }
         return false;
+    }
+
+    private boolean prepareQuotedEntity(long openQuoteIdx, long bufHi) {
+        // the byte at openQuoteIdx (bufAt + 1) is '"', it can only be a is a string
+        // get it ready for immediate consumption by moving butAt to the next '"'
+        entityLo = openQuoteIdx; // from the quote
+        boolean scape = false;
+        final long limit = Math.min(bufHi, entityLo + MAX_ALLOWED_STRING_LEN + 1); // limit the size of strings
+        bufAt += 2; // go to first byte of the string
+        while (bufAt < limit) { // consume until the next quote, '\n', or eof
+            switch (Unsafe.getUnsafe().getByte(bufAt)) {
+                case (byte) '\\':
+                    scape = !scape;
+                    break;
+                case (byte) '"':
+                    if (!scape) {
+                        isQuotedValue = true;
+                        return true;
+                    }
+                    scape = false;
+                    break;
+                case (byte) '\n':
+                    if (!scape) {
+                        errorCode = ErrorCode.INVALID_FIELD_VALUE;
+                        return false; // missing tail quote
+                    }
+                    scape = false;
+                    break;
+                default:
+                    scape = false;
+                    break;
+            }
+            bufAt++;
+        }
+        errorCode = ErrorCode.INVALID_FIELD_STR_MISSING_QUOTE;
+        return false; // missing tail quote as the string extends past the max allowed size
     }
 
     private boolean expectEntityValue(byte endOfEntityByte, long bufHi) {
@@ -376,7 +398,8 @@ public class NewLineProtoParser implements Closeable {
         INCOMPLETE_FIELD,
         INVALID_FIELD_SEPARATOR,
         INVALID_TIMESTAMP,
-        INVALID_FIELD_VALUE
+        INVALID_FIELD_VALUE,
+        INVALID_FIELD_STR_MISSING_QUOTE
     }
 
     private interface EntityHandler {

@@ -100,10 +100,6 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("cast"));
                 Assert.assertEquals(ColumnType.TIMESTAMP, meta.getColumnType("timestamp"));
                 Assert.assertEquals(ColumnType.DOUBLE, meta.getColumnType("humidity"));
-                for (int i = 0; i < meta.getColumnCount(); i++) {
-                    System.out.printf("%d) %d %s%n", i, meta.getColumnType(i), meta.getColumnName(i));
-
-                }
             }
         });
     }

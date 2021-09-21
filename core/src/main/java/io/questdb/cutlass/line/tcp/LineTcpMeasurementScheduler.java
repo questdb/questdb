@@ -473,7 +473,6 @@ class LineTcpMeasurementScheduler implements Closeable {
             for (int nEntity = 0; nEntity < nEntities; nEntity++) {
                 assert bufPos < (bufLo + bufSize + 6);
                 ProtoEntity entity = protoParser.getEntity(nEntity);
-                System.out.printf("TRD[%s] localDetails.isNull? %b, entityName.isNull? %b%n", Thread.currentThread().getName(), localDetails == null, entity.getName() == null);
                 int colIndex = localDetails.getColumnIndex(entity.getName());
                 if (colIndex < 0) {
                     int colNameLen = entity.getName().length();
@@ -908,7 +907,6 @@ class LineTcpMeasurementScheduler implements Closeable {
             localDetailsArray = new ThreadLocalDetails[n];
             for (int i = 0; i < n; i++) {
                 localDetailsArray[i] = new ThreadLocalDetails(netIoJobs[i].getUnusedSymbolCaches());
-                System.out.printf("%d: isNull? %b%n", i, localDetailsArray[i] == null);
             }
             lastCommitMillis = milliClock.getTicks();
         }
@@ -1005,7 +1003,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         ThreadLocalDetails startNewMeasurementEvent(int workerId) {
-            System.out.printf("TRD[%s]startNewMeasurementEvent(%d)%n", Thread.currentThread().getName(), workerId);
             ThreadLocalDetails localDetails = localDetailsArray[workerId];
             lastMeasurementMillis = milliClock.getTicks();
             return localDetails;
