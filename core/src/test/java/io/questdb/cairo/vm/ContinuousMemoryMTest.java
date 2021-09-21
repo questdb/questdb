@@ -297,7 +297,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             final long fd = TableUtils.openRW(ff, path, LOG);
             try {
                 MemoryMARW mem = Vm.getMARWInstance();
-                mem.of(ff, fd, null, Long.MAX_VALUE);
+                mem.of(ff, fd, null, -1);
 
                 mem.extend(ff.getMapPageSize() * 2);
 
@@ -366,7 +366,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             try {
                 MemoryMARW mem = Vm.getMARWInstance();
                 try {
-                    mem.of(ff, TableUtils.openRW(ff, path, LOG), null, Long.MAX_VALUE);
+                    mem.of(ff, TableUtils.openRW(ff, path, LOG), null, -1);
 
                     mem.extend(ff.getMapPageSize() * 2);
 
@@ -662,7 +662,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             try {
                 MemoryMARW mem = Vm.getMARWInstance();
                 try {
-                    mem.of(ff, path, FilesFacadeImpl._16M, Long.MAX_VALUE);
+                    mem.of(ff, path, FilesFacadeImpl._16M, -1);
                     // this is larger than page size
                     for (int i = 0; i < 3_000_000; i++) {
                         mem.putLong(i * 8, i + 1);
@@ -711,7 +711,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             try {
                 MemoryMARW mem = Vm.getMARWInstance();
                 try {
-                    mem.of(ff, path, FilesFacadeImpl._16M, Long.MAX_VALUE);
+                    mem.of(ff, path, FilesFacadeImpl._16M, -1);
                     // this is larger than page size
                     for (int i = 0; i < 3_000_000; i++) {
                         mem.putLong(i * 8, i + 1);
@@ -922,7 +922,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
                             FilesFacadeImpl.INSTANCE,
                             path,
                             sz,
-                            sz
+                            -1
                     );
 
                     MemoryCMR roMem = new MemoryCMRImpl(

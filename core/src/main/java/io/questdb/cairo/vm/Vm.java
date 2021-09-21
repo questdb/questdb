@@ -72,8 +72,8 @@ public class Vm {
         return new MemoryCARWImpl(pageSize, maxPages);
     }
 
-    public static MemoryCMARW getCMARWInstance(FilesFacade ff, LPSZ name, long pageSize, long maxPages) {
-        return new MemoryCMARWImpl(ff, name, pageSize, maxPages);
+    public static MemoryCMARW getCMARWInstance(FilesFacade ff, LPSZ name, long pageSize, long size) {
+        return new MemoryCMARWImpl(ff, name, pageSize, size);
     }
 
     public static MemoryCMARW getCMARWInstance() {
@@ -105,15 +105,15 @@ public class Vm {
     }
 
     public static MemoryA getSmallAInstance(FilesFacade ff, LPSZ name) {
-        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), Long.MAX_VALUE);
+        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1);
     }
 
     public static MemoryARW getSmallARWInstance(FilesFacade ff, LPSZ name) {
-        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), Long.MAX_VALUE);
+        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1);
     }
 
     public static MemoryCMARW getSmallCMARWInstance(FilesFacade ff, LPSZ name) {
-        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), Long.MAX_VALUE);
+        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1);
     }
 
     public static long getStorageLength(int len) {
@@ -129,6 +129,6 @@ public class Vm {
     }
 
     public static MemoryMARW getWholeMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize) {
-        return new MemoryCMARWImpl(ff, name, extendSegmentSize, Long.MAX_VALUE);
+        return new MemoryCMARWImpl(ff, name, extendSegmentSize, -1);
     }
 }

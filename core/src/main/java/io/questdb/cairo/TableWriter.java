@@ -2741,6 +2741,7 @@ public class TableWriter implements Closeable {
         try {
             setAppendPosition(txFile.getTransientRowCount(), true);
         } catch (Throwable e) {
+            LOG.error().$("data is committed but writer failed to update its state `").$(e).$('`').$();
             distressed = true;
             throw e;
         }
@@ -3602,9 +3603,9 @@ public class TableWriter implements Closeable {
         MemoryMAR mem2 = getSecondaryColumn(i);
 
         try {
-            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
+            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), -1);
             if (mem2 != null) {
-                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
+                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), -1);
             }
         } finally {
             path.trimTo(plen);

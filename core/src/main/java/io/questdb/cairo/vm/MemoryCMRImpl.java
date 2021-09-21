@@ -100,7 +100,6 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     private void setSize0(long newSize) {
-        newSize = Math.max(newSize, ff.length(fd));
         try {
             if (size > 0) {
                 pageAddress = TableUtils.mremap(ff, fd, pageAddress, size, newSize, Files.MAP_RO);

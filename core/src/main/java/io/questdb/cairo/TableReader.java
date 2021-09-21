@@ -84,7 +84,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.path.of(configuration.getRoot()).concat(tableName);
         this.rootLen = path.length();
         try {
-//            failOnPendingTodo();
             this.metadata = openMetaFile();
             this.columnCount = this.metadata.getColumnCount();
             this.columnCountBits = getColumnBits(columnCount);

@@ -243,12 +243,12 @@ public class CairoMemoryTest {
 
                     if (fail) {
                         try {
-                            mem.of(ff, path, 2 * ff.getPageSize(), Long.MAX_VALUE);
+                            mem.of(ff, path, 2 * ff.getPageSize(), -1);
                             Assert.fail();
                         } catch (CairoException ignored) {
                         }
                     } else {
-                        mem.of(ff, path, 2 * ff.getPageSize(), Long.MAX_VALUE);
+                        mem.of(ff, path, 2 * ff.getPageSize(), -1);
                         for (int i = 0; i < N; i++) {
                             mem.putLong(i);
                         }
@@ -401,7 +401,7 @@ public class CairoMemoryTest {
     public void testWriteAndRead() throws Exception {
         long used = Unsafe.getMemUsed();
         try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
-            try (MemoryCMARW mem = Vm.getCMARWInstance(FF, path, 2 * FF.getPageSize(), Long.MAX_VALUE)) {
+            try (MemoryCMARW mem = Vm.getCMARWInstance(FF, path, 2 * FF.getPageSize(), -1)) {
                 for (int i = 0; i < N; i++) {
                     mem.putLong(i);
                 }
@@ -425,7 +425,7 @@ public class CairoMemoryTest {
     public void testWriteAndReadWithReadOnlyMem() throws Exception {
         long used = Unsafe.getMemUsed();
         try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
-            try (MemoryCMARW mem = Vm.getCMARWInstance(FF, path, 2 * FF.getPageSize(), Long.MAX_VALUE)) {
+            try (MemoryCMARW mem = Vm.getCMARWInstance(FF, path, 2 * FF.getPageSize(), -1)) {
                 for (int i = 0; i < N; i++) {
                     mem.putLong(i);
                 }

@@ -26,11 +26,13 @@ package io.questdb.cairo;
 
 import io.questdb.griffin.AbstractGriffinTest;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import static io.questdb.cairo.EngineMigrationTest.assertRemoveUpgradeFile;
 import static io.questdb.cairo.EngineMigrationTest.replaceDbContent;
 
+@Ignore
 public class MigrationTableIDTest extends AbstractGriffinTest {
 
     @Test
