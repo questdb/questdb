@@ -1293,12 +1293,12 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd = -1;
 
             @Override
-            public long mmap(long fd, long len, long offset, int flags) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == this.fd) {
                     this.fd = -1;
                     return -1;
                 }
-                return super.mmap(fd, len, offset, flags);
+                return super.mmap(fd, len, offset, flags, memoryTag);
             }
 
             @Override
@@ -1377,11 +1377,11 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd;
 
             @Override
-            public long mmap(long fd, long len, long offset, int flags) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == this.fd) {
                     return -1;
                 }
-                return super.mmap(fd, len, offset, flags);
+                return super.mmap(fd, len, offset, flags, memoryTag);
             }
 
             @Override
@@ -1781,7 +1781,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     MemoryCMARW mem = Vm.getCMARWInstance();
                     Path path = new Path().of(root).concat("all").concat(TableUtils.TODO_FILE_NAME).$()
             ) {
-                mem.smallFile(FilesFacadeImpl.INSTANCE, path);
+                mem.smallFile(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT);
                 mem.putLong(32, 1);
                 mem.putLong(40, 9990001L);
                 mem.jumpTo(48);
@@ -2727,9 +2727,9 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             class X extends CountingFilesFacade {
                 @Override
-                public long mmap(long fd, long len, long offset, int flags) {
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                     if (--count > 0) {
-                        return super.mmap(fd, len, offset, flags);
+                        return super.mmap(fd, len, offset, flags, memoryTag);
                     }
                     return -1;
                 }

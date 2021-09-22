@@ -22,20 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm.api;
+package io.questdb.std;
 
-import io.questdb.std.FilesFacade;
-import io.questdb.std.str.LPSZ;
-
-public interface MemoryMA extends MemoryM, MemoryA {
-
-    void close(boolean truncate);
-
-    long getAppendAddress();
-
-    long getAppendAddressSize();
-
-    void sync(boolean async);
-
-    void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag);
+public final class MemoryTag {
+    public static final int MMAP_DEFAULT = 0;
+    public static final int NATIVE_DEFAULT = 0;
 }

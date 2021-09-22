@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
@@ -119,7 +120,7 @@ public class O3Utils {
 
     static void unmap(FilesFacade ff, long addr, long size) {
         if (addr != 0 && size > 0) {
-            ff.munmap(addr, size);
+            ff.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
         }
     }
 

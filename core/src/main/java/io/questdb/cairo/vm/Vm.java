@@ -56,7 +56,7 @@ public class Vm {
         }
         if (ff.isRestrictedFileSystem()) {
             // Windows does truncate file if it has a mapped page somewhere, could be another handle and process.
-            // To make it work size needs to be rounded up to nearest page.
+            // To make it work size needs to be rounded up to the nearest page.
             long n = (size - 1) / mapPageSize;
             long sz = (n + 1) * mapPageSize;
             if (ff.truncate(Math.abs(fd), sz)) {
@@ -83,8 +83,8 @@ public class Vm {
         return new MemoryCARWImpl(pageSize, maxPages);
     }
 
-    public static MemoryCMARW getCMARWInstance(FilesFacade ff, LPSZ name, long pageSize, long maxPages) {
-        return new MemoryCMARWImpl(ff, name, pageSize, maxPages);
+    public static MemoryCMARW getCMARWInstance(FilesFacade ff, LPSZ name, long pageSize, long maxPages, int memoryTag) {
+        return new MemoryCMARWImpl(ff, name, pageSize, maxPages, memoryTag);
     }
 
     public static MemoryCMARW getCMARWInstance() {
@@ -103,28 +103,28 @@ public class Vm {
         return new MemoryCMARWImpl();
     }
 
-    public static MemoryMARW getMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
-        return new MemoryCMARWImpl(ff, name, extendSegmentSize, size);
+    public static MemoryMARW getMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
+        return new MemoryCMARWImpl(ff, name, extendSegmentSize, size, memoryTag);
     }
 
     public static MemoryMR getMRInstance() {
         return new MemoryCMRImpl();
     }
 
-    public static MemoryMR getMRInstance(FilesFacade ff, LPSZ name, long size) {
-        return new MemoryCMRImpl(ff, name, size);
+    public static MemoryMR getMRInstance(FilesFacade ff, LPSZ name, long size, int memoryTag) {
+        return new MemoryCMRImpl(ff, name, size, memoryTag);
     }
 
-    public static MemoryA getSmallAInstance(FilesFacade ff, LPSZ name) {
-        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), Long.MAX_VALUE);
+    public static MemoryA getSmallAInstance(FilesFacade ff, LPSZ name, int memoryTag) {
+        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), Long.MAX_VALUE, memoryTag);
     }
 
-    public static MemoryARW getSmallARWInstance(FilesFacade ff, LPSZ name) {
-        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), Long.MAX_VALUE);
+    public static MemoryARW getSmallARWInstance(FilesFacade ff, LPSZ name, int memoryTag) {
+        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), Long.MAX_VALUE, memoryTag);
     }
 
-    public static MemoryCMARW getSmallCMARWInstance(FilesFacade ff, LPSZ name) {
-        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), Long.MAX_VALUE);
+    public static MemoryCMARW getSmallCMARWInstance(FilesFacade ff, LPSZ name, int memoryTag) {
+        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), Long.MAX_VALUE, memoryTag);
     }
 
     public static long getStorageLength(int len) {
@@ -139,7 +139,7 @@ public class Vm {
         return STRING_LENGTH_BYTES + s.length() * 2;
     }
 
-    public static MemoryMARW getWholeMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize) {
-        return new MemoryCMARWImpl(ff, name, extendSegmentSize, Long.MAX_VALUE);
+    public static MemoryMARW getWholeMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag) {
+        return new MemoryCMARWImpl(ff, name, extendSegmentSize, Long.MAX_VALUE, memoryTag);
     }
 }

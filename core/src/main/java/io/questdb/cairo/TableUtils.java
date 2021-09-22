@@ -159,7 +159,7 @@ public final class TableUtils {
 
         final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.$(), LOG) : 0;
         try (MemoryMARW mem = memory) {
-            mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$());
+            mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             mem.jumpTo(0);
             final int count = structure.getColumnCount();
             path.trimTo(rootLen);
@@ -205,7 +205,7 @@ public final class TableUtils {
                     symbolMapCount++;
                 }
             }
-            mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$());
+            mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L);
             resetTodoLog(ff, path, rootLen, mem);
             // allocate txn scoreboard
@@ -374,12 +374,12 @@ public final class TableUtils {
         path.put(".lock").$();
     }
 
-    public static long mapRO(FilesFacade ff, long fd, long size) {
-        return mapRO(ff, fd, size, 0);
+    public static long mapRO(FilesFacade ff, long fd, long size, int memoryTag) {
+        return mapRO(ff, fd, size, 0, memoryTag);
     }
 
-    public static long mapRO(FilesFacade ff, long fd, long size, long offset) {
-        final long address = ff.mmap(fd, size, offset, Files.MAP_RO);
+    public static long mapRO(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
+        final long address = ff.mmap(fd, size, offset, Files.MAP_RO, memoryTag);
         if (address == FilesFacade.MAP_FAILED) {
             throw CairoException.instance(ff.errno())
                     .put("could not mmap ")
@@ -392,22 +392,22 @@ public final class TableUtils {
         return address;
     }
 
-    public static long mapRW(FilesFacade ff, long fd, long size) {
-        return mapRW(ff, fd, size, 0);
+    public static long mapRW(FilesFacade ff, long fd, long size, int memoryTag) {
+        return mapRW(ff, fd, size, 0, memoryTag);
     }
 
-    public static long mapRW(FilesFacade ff, long fd, long size, long offset) {
+    public static long mapRW(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
         allocateDiskSpace(ff, fd, size + offset);
-        long addr = ff.mmap(fd, size, offset, Files.MAP_RW);
+        long addr = ff.mmap(fd, size, offset, Files.MAP_RW, memoryTag);
         if (addr > -1) {
             return addr;
         }
         throw CairoException.instance(ff.errno()).put("could not mmap column [fd=").put(fd).put(", size=").put(size).put(']');
     }
 
-    public static long mapRWOrClose(FilesFacade ff, long fd, long size) {
+    public static long mapRWOrClose(FilesFacade ff, long fd, long size, int memoryTag) {
         try {
-            return TableUtils.mapRW(ff, fd, size);
+            return TableUtils.mapRW(ff, fd, size, memoryTag);
         } catch (CairoException e) {
             ff.close(fd);
             throw e;
@@ -420,9 +420,9 @@ public final class TableUtils {
             long prevAddress,
             long prevSize,
             long newSize,
-            int mapMode
-    ) {
-        final long page = ff.mremap(fd, prevAddress, prevSize, newSize, 0, mapMode);
+            int mapMode,
+            int memoryTag) {
+        final long page = ff.mremap(fd, prevAddress, prevSize, newSize, 0, mapMode, memoryTag);
         if (page == FilesFacade.MAP_FAILED) {
             int errno = ff.errno();
             // Closing memory will truncate size to current append offset.
@@ -467,7 +467,7 @@ public final class TableUtils {
     }
 
     public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MemoryMARW mem) {
-        mem.smallFile(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$());
+        mem.smallFile(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
         mem.jumpTo(0);
         mem.putLong(24, 0); // txn check
         Unsafe.getUnsafe().storeFence();
@@ -781,7 +781,7 @@ public final class TableUtils {
 
                 if (!ff.exists(path) || ff.remove(path)) {
                     try {
-                        mem.smallFile(ff, path);
+                        mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
                         mem.jumpTo(0);
                         return index;
                     } catch (CairoException e) {
@@ -811,7 +811,7 @@ public final class TableUtils {
                 path.put('.').put(swapIndex);
             }
             path.$();
-            mem.smallFile(ff, path);
+            mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
         } finally {
             path.trimTo(rootLen);
         }
@@ -894,7 +894,7 @@ public final class TableUtils {
                 final long fd = TableUtils.openRO(ff, path, LOG);
                 try {
                     long fileSize = ff.length(fd);
-                    long mappedMem = mapRO(ff, fd, fileSize);
+                    long mappedMem = mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
                     try {
                         long minTimestamp;
                         long maxTimestamp = timestamp;
@@ -916,7 +916,7 @@ public final class TableUtils {
                         }
                         return size;
                     } finally {
-                        ff.munmap(mappedMem, fileSize);
+                        ff.munmap(mappedMem, fileSize, MemoryTag.MMAP_DEFAULT);
                     }
                 } finally {
                     ff.close(fd);

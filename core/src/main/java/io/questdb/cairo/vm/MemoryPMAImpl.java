@@ -31,6 +31,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.str.LPSZ;
 
 public class MemoryPMAImpl extends MemoryPARWImpl implements MemoryMAR {
@@ -39,9 +40,10 @@ public class MemoryPMAImpl extends MemoryPARWImpl implements MemoryMAR {
     private long fd = -1;
     private long pageAddress = 0;
     private int mappedPage;
+    private int memoryTag = MemoryTag.MMAP_DEFAULT;
 
-    public MemoryPMAImpl(FilesFacade ff, LPSZ name, long pageSize) {
-        of(ff, name, pageSize);
+    public MemoryPMAImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag) {
+        of(ff, name, pageSize, memoryTag);
     }
 
     public MemoryPMAImpl() {
@@ -104,7 +106,7 @@ public class MemoryPMAImpl extends MemoryPARWImpl implements MemoryMAR {
 
     @Override
     protected void release(long address) {
-        ff.munmap(address, getPageSize());
+        ff.munmap(address, getPageSize(), memoryTag);
     }
 
     @Override
@@ -117,24 +119,25 @@ public class MemoryPMAImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
-        of(ff, name, extendSegmentSize);
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
+        of(ff, name, extendSegmentSize, memoryTag);
     }
 
     @Override
-    public void wholeFile(FilesFacade ff, LPSZ name) {
-        of(ff, name, ff.getMapPageSize());
+    public void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
+        of(ff, name, ff.getMapPageSize(), memoryTag);
     }
 
     public long mapPage(int page) {
         // set page to "not mapped" in case mapping fails
-        final long address = TableUtils.mapRW(ff, fd, getExtendSegmentSize(), pageOffset(page));
+        final long address = TableUtils.mapRW(ff, fd, getExtendSegmentSize(), pageOffset(page), memoryTag);
         mappedPage = page;
         return address;
     }
 
-    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize) {
+    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag) {
         close();
+        this.memoryTag = memoryTag;
         this.ff = ff;
         mappedPage = -1;
         setExtendSegmentSize(extendSegmentSize);

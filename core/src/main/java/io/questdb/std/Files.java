@@ -172,11 +172,11 @@ public final class Files {
         return 0;
     }
 
-    public static long mmap(long fd, long len, long offset, int flags) {
-        return mmap(fd, len, offset, flags, 0);
+    public static long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+        return mmap(fd, len, offset, flags, 0, memoryTag);
     }
 
-    public static long mmap(long fd, long len, long offset, int flags, long baseAddress) {
+    public static long mmap(long fd, long len, long offset, int flags, long baseAddress, int memoryTag) {
         long address = mmap0(fd, len, offset, flags, baseAddress);
         if (address != -1) {
             Unsafe.recordMemAlloc(len);
@@ -184,7 +184,7 @@ public final class Files {
         return address;
     }
 
-    public static long mremap(long fd, long address, long previousSize, long newSize, long offset, int flags) {
+    public static long mremap(long fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
         Unsafe.recordMemAlloc(-previousSize);
         address = mremap0(fd, address, previousSize, newSize, offset, flags);
         if (address != -1) {
@@ -195,7 +195,7 @@ public final class Files {
 
     public static native int msync(long addr, long len, boolean async);
 
-    public static void munmap(long address, long len) {
+    public static void munmap(long address, long len, int memoryMap) {
         if (address != 0 && munmap0(address, len) != -1) {
             Unsafe.recordMemAlloc(-len);
         }

@@ -743,7 +743,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         try {
             path.concat(TableUtils.TODO_FILE_NAME).$();
             if (ff.exists(path)) {
-                todoMem.smallFile(ff, path);
+                todoMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
                 if (todoMem.getPageCount() > 0) {
                     long instanceHashLo;
                     long instanceHashHi;
@@ -900,9 +900,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             MemoryMR mem
     ) {
         if (mem != null && mem != NullColumn.INSTANCE) {
-            mem.wholeFile(ff, path);
+            mem.wholeFile(ff, path, MemoryTag.MMAP_DEFAULT);
         } else {
-            mem = Vm.getMRInstance(ff, path, lastPartition ? ff.getMapPageSize() : ff.length(path));
+            mem = Vm.getMRInstance(ff, path, lastPartition ? ff.getMapPageSize() : ff.length(path), MemoryTag.MMAP_DEFAULT);
             columns.setQuick(primaryIndex, mem);
         }
         return mem;

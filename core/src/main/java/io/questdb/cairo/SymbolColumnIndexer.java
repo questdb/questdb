@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.PagedSlidingReadOnlyMemory;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -102,7 +103,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
         this.columnTop = columnTop;
         try {
             this.writer.of(configuration, path, name);
-            this.mem.of(columnMem);
+            this.mem.of(columnMem, MemoryTag.MMAP_DEFAULT);
         } catch (Throwable e) {
             this.close();
             throw e;

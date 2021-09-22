@@ -414,7 +414,7 @@ public class EngineMigration {
 
             // Metadata file should already be backed up
             final MemoryMARW rwMem = migrationContext.rwMemory;
-            rwMem.of(ff, path, ff.getPageSize());
+            rwMem.of(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT);
 
             // column count
             final int columnCount = rwMem.getInt(TableUtils.META_OFFSET_COUNT);
@@ -456,7 +456,7 @@ public class EngineMigration {
         public MemoryMARW createRwMemoryOf(FilesFacade ff, Path path) {
             // re-use same rwMemory
             // assumption that it is re-usable after the close() and then of()  methods called.
-            rwMemory.smallFile(ff, path);
+            rwMemory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
             return rwMemory;
         }
 

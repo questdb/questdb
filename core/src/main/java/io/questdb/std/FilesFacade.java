@@ -78,13 +78,13 @@ public interface FilesFacade {
 
     int mkdirs(LPSZ path, int mode);
 
-    long mmap(long fd, long len, long offset, int flags);
+    long mmap(long fd, long len, long offset, int flags, int memoryTag);
 
-    long mmap(long fd, long len, long offset, int flags, long baseAddress);
+    long mmap(long fd, long len, long offset, int flags, long baseAddress, int memoryTag);
 
-    long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode);
+    long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag);
 
-    void munmap(long address, long size);
+    void munmap(long address, long size, int memoryTag);
 
     long openAppend(LPSZ name);
 

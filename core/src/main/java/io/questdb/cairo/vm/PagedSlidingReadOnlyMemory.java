@@ -30,6 +30,7 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 
 public class PagedSlidingReadOnlyMemory extends MemoryPARWImpl {
     private static final Log LOG = LogFactory.getLog(PagedSlidingReadOnlyMemory.class);
@@ -39,6 +40,7 @@ public class PagedSlidingReadOnlyMemory extends MemoryPARWImpl {
     private long pageAddress;
     private int pageIndex;
     private MemoryMA parent;
+    private int memoryTag = MemoryTag.MMAP_DEFAULT;
 
     @Override
     public void close() {
@@ -66,8 +68,9 @@ public class PagedSlidingReadOnlyMemory extends MemoryPARWImpl {
         return fd;
     }
 
-    public void of(MemoryMA parent) {
+    public void of(MemoryMA parent, int memoryTag) {
         close();
+        this.memoryTag = memoryTag;
         this.ff = parent.getFilesFacade();
         this.fd = parent.getFd();
         this.parent = parent;
@@ -106,7 +109,7 @@ public class PagedSlidingReadOnlyMemory extends MemoryPARWImpl {
 
         if (sz > 0) {
             try {
-                long address = TableUtils.mapRO(ff, fd, getExtendSegmentSize(), offset);
+                long address = TableUtils.mapRO(ff, fd, getExtendSegmentSize(), offset, memoryTag);
                 this.pageIndex = page;
                 this.pageAddress = address;
                 return address;
@@ -121,7 +124,7 @@ public class PagedSlidingReadOnlyMemory extends MemoryPARWImpl {
 
     private void releaseCurrentPage() {
         if (pageAddress != 0) {
-            ff.munmap(pageAddress, getExtendSegmentSize());
+            ff.munmap(pageAddress, getExtendSegmentSize(), memoryTag);
         }
     }
 

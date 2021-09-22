@@ -1397,7 +1397,7 @@ public class TableWriter implements Closeable {
     private static void openMetaFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem) {
         path.concat(META_FILE_NAME).$();
         try {
-            metaMem.smallFile(ff, path);
+            metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
         } finally {
             path.trimTo(rootLen);
         }
@@ -1997,7 +1997,7 @@ public class TableWriter implements Closeable {
 
             // reuse memory column object to create index and close it at the end
             try {
-                ddlMem.smallFile(ff, path);
+                ddlMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
                 BitmapIndexWriter.initKeyMemory(ddlMem, indexValueBlockCapacity);
             } catch (CairoException e) {
                 // looks like we could not create key file properly
@@ -2256,7 +2256,7 @@ public class TableWriter implements Closeable {
 
                             if (partitionSize > columnTop) {
                                 TableUtils.dFile(path.trimTo(plen), columnName);
-                                roMem.partialFile(ff, path, (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT));
+                                roMem.partialFile(ff, path, (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT), MemoryTag.MMAP_DEFAULT);
                                 indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
                                 indexer.index(roMem, columnTop, partitionSize);
                             }
@@ -3613,9 +3613,9 @@ public class TableWriter implements Closeable {
         MemoryMAR mem2 = getSecondaryColumn(i);
 
         try {
-            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
+            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE, MemoryTag.MMAP_DEFAULT);
             if (mem2 != null) {
-                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
+                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE, MemoryTag.MMAP_DEFAULT);
             }
         } finally {
             path.trimTo(plen);
@@ -3713,7 +3713,7 @@ public class TableWriter implements Closeable {
                     throw CairoException.instance(0).put("corrupt ").put(path);
                 }
 
-                todoMem.smallFile(ff, path);
+                todoMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
                 this.todoTxn = todoMem.getLong(0);
                 // check if _todo_ file is consistent, if not, we just ignore its contents and reset hash
                 if (todoMem.getLong(24) != todoTxn) {
@@ -4554,7 +4554,7 @@ public class TableWriter implements Closeable {
                 if (metaSwapIndex > 0) {
                     path.put('.').put(metaSwapIndex);
                 }
-                metaMem.smallFile(ff, path.$());
+                metaMem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                 validationMap.clear();
                 validate(ff, metaMem, validationMap);
             } finally {

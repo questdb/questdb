@@ -2606,7 +2606,7 @@ public class SqlCompiler implements Closeable {
 
             TableReaderMetadata sourceMetaData = reader.getMetadata();
             try {
-                mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$());
+                mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
                 sourceMetaData.cloneTo(mem);
 
                 // create symbol maps
@@ -2619,7 +2619,7 @@ public class SqlCompiler implements Closeable {
                         symbolMapCount++;
                     }
                 }
-                mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$());
+                mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
                 TableUtils.resetTxn(mem, symbolMapCount, 0L, TableUtils.INITIAL_TXN, 0L);
                 srcPath.trimTo(rootLen).concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
             } finally {

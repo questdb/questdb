@@ -8,6 +8,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
@@ -56,7 +57,7 @@ public class MemRemappedFileTest {
                 long offset = 0;
                 for (int nPage = 0; nPage < NPAGES; nPage++) {
                     long newSize = MAPPING_PAGE_SIZE * (nPage + 1);
-                    appMem.of(ff, path, newSize);
+                    appMem.of(ff, path, newSize, MemoryTag.MMAP_DEFAULT);
                     appMem.jumpTo(newSize - MAPPING_PAGE_SIZE);
                     for (int i = 0; i < MAPPING_PAGE_SIZE; i++) {
                         byte b = (byte) rand.nextInt();
@@ -64,7 +65,7 @@ public class MemRemappedFileTest {
                         expectedTotal += b;
                     }
                     if (nPage == 0) {
-                        readMem.smallFile(ff, path);
+                        readMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
                     } else {
                         readMem.extend(newSize);
                     }
