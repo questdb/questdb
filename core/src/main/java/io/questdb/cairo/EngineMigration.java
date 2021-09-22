@@ -254,6 +254,7 @@ public class EngineMigration {
 
     private static class MigrationActions {
         public static void addTblMetaCommitLag(MigrationContext migrationContext) {
+            LOG.info().$("configuring default commit lag [table=").$(migrationContext.tablePath).I$();
             Path path = migrationContext.getTablePath();
             final FilesFacade ff = migrationContext.getFf();
             path.concat(META_FILE_NAME).$();
@@ -274,7 +275,144 @@ public class EngineMigration {
             }
         }
 
+        public static void bumpVarColumnIndex(MigrationContext migrationContext) {
+            final FilesFacade ff = migrationContext.getFf();
+            Path path = migrationContext.getTablePath();
+            int plen = path.length();
+
+//            if (!ff.exists(path)) {
+//                LOG.error().$("meta file does not exist, nothing to migrate [path=").$(path).I$();
+//                return;
+//            }
+            path.trimTo(plen).concat(META_FILE_NAME).$();
+            try (TableReaderMetadata m = new TableReaderMetadata(ff)) {
+                m.of(path, 420);
+                final int columnCount = m.getColumnCount();
+                try (TxReader txReader = new TxReader(ff, path.trimTo(plen), m.getPartitionBy())) {
+                    txReader.readUnchecked();
+                    int partitionCount = txReader.getPartitionCount();
+                    int partitionBy = m.getPartitionBy();
+                    if (partitionBy != PartitionBy.NONE) {
+                        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                            setPathForPartition(path.trimTo(plen), m.getPartitionBy(), txReader.getPartitionTimestamp(partitionIndex), false);
+                            int plen2 = path.length();
+                            long rowCount = txReader.getPartitionSize(partitionIndex);
+                            if (rowCount > 0) {
+                                bumpVarColumnIndex0(migrationContext, ff, path, m, columnCount, plen2, rowCount);
+                            }
+                        }
+                    } else  {
+                        path.concat(DEFAULT_PARTITION_NAME);
+                        int plen2 = path.length();
+                        long rowCount = txReader.getPartitionSize(0);
+                        if (rowCount > 0) {
+                            bumpVarColumnIndex0(migrationContext, ff, path, m, columnCount, plen2, rowCount);
+                        }
+                    }
+                }
+            }
+
+            // upgrade the metadata
+
+            path.trimTo(plen).concat(META_FILE_NAME).$();
+            long fd = TableUtils.openRW(ff, path, LOG);
+            Unsafe.getUnsafe().putInt(migrationContext.tempMemory, VERSION_VAR_COLUMN_CHANGED);
+            ff.write(fd, migrationContext.tempMemory, 4, META_OFFSET_VERSION);
+            ff.close(fd);
+        }
+
+        private static void bumpVarColumnIndex0(MigrationContext migrationContext, FilesFacade ff, Path path, TableReaderMetadata m, int columnCount, int plen2, long rowCount) {
+            for (int i = 0; i < columnCount; i++) {
+                int columnType = ColumnType.tagOf(m.getColumnType(i));
+                switch (columnType) {
+                    case ColumnType.STRING:
+                        final long columnTop = readColumnTop(ff, path.trimTo(plen2), m.getColumnName(i), plen2, migrationContext.tempMemory, false);
+                        final long columnRowCount = rowCount - columnTop;
+                        iFile(path.trimTo(plen2), m.getColumnName(i));
+                        long fd = ff.openRW(path);
+                        if (fd != -1) {
+                            long fileLen = ff.length(fd);
+                            long offset = columnRowCount * 8L;
+                            if (fileLen < offset) {
+                                LOG.error().$("file is too short [path=").$(path).I$();
+                            } else {
+                                if (ff.allocate(fd, offset + 8)) {
+                                    if (ff.read(fd, migrationContext.tempMemory, 8, offset - 8L) == 8) {
+                                        long dataOffset = Unsafe.getUnsafe().getLong(migrationContext.tempMemory);
+                                        // string length
+                                        dFile(path.trimTo(plen2), m.getColumnName(i));
+                                        long fd2 = ff.openRO(path);
+                                        if (fd2 != -1) {
+                                            if (ff.read(fd2, migrationContext.tempMemory, 4, dataOffset) == 4) {
+                                                long len = Unsafe.getUnsafe().getInt(migrationContext.tempMemory);
+                                                if (len == -1) {
+                                                    dataOffset += 4;
+                                                } else {
+                                                    dataOffset += 4 + len * 2L;
+                                                }
+
+                                                // write this value back to index column
+                                                Unsafe.getUnsafe().putLong(migrationContext.tempMemory, dataOffset);
+                                                // todo: this might fail - fail the migration ?
+                                                ff.write(fd2, migrationContext.tempMemory, 8, offset);
+                                            }
+                                            ff.close(fd2);
+                                        } else {
+                                            LOG.error().$("could not read column file [path=").$(path).I$();
+                                        }
+                                    }
+                                } else {
+                                    LOG.error().$("could not allocate extra 8 bytes [file=").$(path).I$();
+                                }
+                            }
+                            ff.close(fd);
+                        } else {
+                            LOG.error().$("column file does not exist [path=").$(path).I$();
+                        }
+                    case ColumnType.BINARY:
+                    default:
+                        break;
+                }
+            }
+        }
+
+        public static void updateColumnTypeIds(MigrationContext migrationContext) {
+            LOG.info().$("updating column type IDs [table=").$(migrationContext.tablePath).I$();
+            final FilesFacade ff = migrationContext.getFf();
+            Path path = migrationContext.getTablePath();
+            path.concat(META_FILE_NAME).$();
+
+            if (!ff.exists(path)) {
+                LOG.error().$("meta file does not exist, nothing to migrate [path=").$(path).I$();
+                return;
+            }
+
+            // Metadata file should already be backed up
+            final MemoryMARW rwMem = migrationContext.rwMemory;
+            rwMem.of(ff, path, ff.getPageSize(), ff.length(path));
+
+            // column count
+            final int columnCount = rwMem.getInt(TableUtils.META_OFFSET_COUNT);
+            rwMem.putInt(TableUtils.META_OFFSET_VERSION, VERSION_COLUMN_TYPE_ENCODING_CHANGED);
+
+            long offset = TableUtils.META_OFFSET_COLUMN_TYPES;
+            for (int i = 0; i < columnCount; i++) {
+                final byte oldTypeId = rwMem.getByte(offset);
+                final long oldFlags = rwMem.getLong(offset + 1);
+                final int blockCapacity = rwMem.getInt(offset + 1 + 8);
+                // column type id is int now
+                // we grabbed 3 reserved bytes for extra type info
+                // extra for old types is zeros
+                rwMem.putInt(offset, oldTypeId + 1); // ColumnType.VERSION_420 - ColumnType.VERSION_419 = 1
+                rwMem.putLong(offset + 4, oldFlags);
+                rwMem.putInt(offset + 4 + 8, blockCapacity);
+                offset += TableUtils.META_COLUMN_DATA_SIZE;
+            }
+            rwMem.close();
+        }
+
         private static void assignTableId(MigrationContext migrationContext) {
+            LOG.info().$("assigning table ID [table=").$(migrationContext.tablePath).I$();
             long mem = migrationContext.getTempMemory(8);
             FilesFacade ff = migrationContext.getFf();
             Path path = migrationContext.getTablePath();
@@ -292,6 +430,7 @@ public class EngineMigration {
             // Before there was 1 int per symbol and list of removed partitions
             // Now there is 2 ints per symbol and 4 longs per each non-removed partition
 
+            LOG.info().$("rebuilding tx file [table=").$(migrationContext.tablePath).I$();
             Path path = migrationContext.getTablePath();
             final FilesFacade ff = migrationContext.getFf();
             int pathDirLen = path.length();
@@ -402,74 +541,6 @@ public class EngineMigration {
             }
             return false;
         }
-
-        public static void updateColumnTypeIds(MigrationContext migrationContext) {
-            final FilesFacade ff = migrationContext.getFf();
-            Path path = migrationContext.getTablePath();
-            path.concat(META_FILE_NAME).$();
-
-            if (!ff.exists(path)) {
-                LOG.error().$("meta file does not exist, nothing to migrate [path=").$(path).I$();
-                return;
-            }
-
-            // Metadata file should already be backed up
-            final MemoryMARW rwMem = migrationContext.rwMemory;
-            rwMem.of(ff, path, ff.getPageSize());
-
-            // column count
-            final int columnCount = rwMem.getInt(TableUtils.META_OFFSET_COUNT);
-            rwMem.putInt(TableUtils.META_OFFSET_VERSION, ColumnType.VERSION);
-
-            long offset = TableUtils.META_OFFSET_COLUMN_TYPES;
-            for (int i = 0; i < columnCount; i++) {
-                final byte oldTypeId = rwMem.getByte(offset);
-                final long oldFlags = rwMem.getLong(offset + 1);
-                final int blockCapacity = rwMem.getInt(offset + 1 + 8);
-                // column type id is int now
-                // we grabbed 3 reserved bytes for extra type info
-                // extra for old types is zeros
-                rwMem.putInt(offset, oldTypeId + 1); // ColumnType.VERSION_420 - ColumnType.VERSION_419 = 1
-                rwMem.putLong(offset + 4, oldFlags);
-                rwMem.putInt(offset + 4 + 8, blockCapacity);
-                offset += TableUtils.META_COLUMN_DATA_SIZE;
-            }
-            rwMem.close();
-        }
-
-        public static void bumpVarColumnIndex(MigrationContext migrationContext) {
-            final FilesFacade ff = migrationContext.getFf();
-            Path path = migrationContext.getTablePath();
-            path.concat(META_FILE_NAME).$();
-
-            if (!ff.exists(path)) {
-                LOG.error().$("meta file does not exist, nothing to migrate [path=").$(path).I$();
-                return;
-            }
-
-            // Metadata file should already be backed up
-            final MemoryMARW rwMem = migrationContext.rwMemory;
-            rwMem.of(ff, path, ff.getPageSize());
-
-            // column count
-            final int columnCount = rwMem.getInt(TableUtils.META_OFFSET_COUNT);
-            rwMem.putInt(TableUtils.META_OFFSET_VERSION, ColumnType.VERSION);
-
-            long offset = TableUtils.META_OFFSET_COLUMN_TYPES;
-            for (int i = 0; i < columnCount; i++) {
-                final byte oldTypeId = rwMem.getByte(offset);
-                final long oldFlags = rwMem.getLong(offset + 1);
-                final int blockCapacity = rwMem.getInt(offset + 1 + 8);
-                // column type id is int now
-                // we grabbed 3 reserved bytes for extra type info
-                // extra for old types is zeros
-                rwMem.putInt(offset, oldTypeId + 1); // ColumnType.VERSION_420 - ColumnType.VERSION_419 = 1
-                rwMem.putLong(offset + 4, oldFlags);
-                rwMem.putInt(offset + 4 + 8, blockCapacity);
-                offset += TableUtils.META_COLUMN_DATA_SIZE;
-            }
-            rwMem.close();
-        }
     }
 
     class MigrationContext {
@@ -548,6 +619,6 @@ public class EngineMigration {
         setByVersion(VERSION_TX_STRUCT_UPDATE_1, MigrationActions::rebuildTransactionFile, 0);
         setByVersion(VERSION_TBL_META_COMMIT_LAG, MigrationActions::addTblMetaCommitLag, 0);
         setByVersion(VERSION_COLUMN_TYPE_ENCODING_CHANGED, MigrationActions::updateColumnTypeIds, 1);
-//        setByVersion(VERSION_VAR_COLUMN_CHANGED, MigrationActions::updateColumnTypeIds, 1);
+        setByVersion(VERSION_VAR_COLUMN_CHANGED, MigrationActions::bumpVarColumnIndex, 1);
     }
 }

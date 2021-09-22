@@ -595,11 +595,19 @@ public final class TableUtils {
         }
     }
 
-    public static void validate(FilesFacade ff, MemoryMR metaMem, LowerCaseCharSequenceIntHashMap nameIndex) {
+    public static void validate(
+            FilesFacade ff,
+            MemoryMR metaMem,
+            LowerCaseCharSequenceIntHashMap nameIndex,
+            int expectedVersion
+    ) {
         try {
             final int metaVersion = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
-            if (ColumnType.VERSION != metaVersion && metaVersion != 404) {
-                throw validationException(metaMem).put("Metadata version does not match runtime version");
+            if (expectedVersion != metaVersion) {
+                throw validationException(metaMem)
+                        .put("Metadata version does not match runtime version [expected=").put(expectedVersion)
+                        .put(", actual=").put(metaVersion)
+                        .put(']');
             }
 
             final int columnCount = metaMem.getInt(META_OFFSET_COUNT);

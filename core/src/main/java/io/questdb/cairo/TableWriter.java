@@ -4555,7 +4555,7 @@ public class TableWriter implements Closeable {
                 }
                 metaMem.smallFile(ff, path.$());
                 validationMap.clear();
-                validate(ff, metaMem, validationMap);
+                validate(ff, metaMem, validationMap, ColumnType.VERSION);
             } finally {
                 metaMem.close();
                 path.trimTo(rootLen);
