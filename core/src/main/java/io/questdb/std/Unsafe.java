@@ -66,6 +66,11 @@ public final class Unsafe {
         //#if jdk.version!=8
         makeAccessible(implAddExports);
         //#endif
+
+        for (int i = 0; i < COUNTERS.length; i++) {
+           COUNTERS[i] = new LongAdder();
+        }
+
     }
 
     //#if jdk.version!=8
