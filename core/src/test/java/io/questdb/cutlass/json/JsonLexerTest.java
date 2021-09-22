@@ -66,7 +66,7 @@ public class JsonLexerTest {
                     Assert.assertEquals(41, e.getPosition());
                 }
             } finally {
-                Unsafe.free(address, json.length());
+                Unsafe.free(address, json.length(), MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -89,7 +89,7 @@ public class JsonLexerTest {
             LEXER.parseLast();
             TestUtils.assertEquals("{\"x\":\"abcdefhijklmn\"}", listener.value());
         } finally {
-            Unsafe.free(address, len);
+            Unsafe.free(address, len, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -146,7 +146,7 @@ public class JsonLexerTest {
 
 
         int len = bytes.length;
-        long address = Unsafe.malloc(len);
+        long address = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < len; i++) {
             Unsafe.getUnsafe().putByte(address + i, bytes[i]);
         }
@@ -165,7 +165,7 @@ public class JsonLexerTest {
                 }
             }
         } finally {
-            Unsafe.free(address, len);
+            Unsafe.free(address, len, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -231,9 +231,9 @@ public class JsonLexerTest {
             long fd = Files.openRO(p);
             JsonParser listener = new NoOpParser();
             try {
-                long buf = Unsafe.malloc(l);
-                long bufA = Unsafe.malloc(l);
-                long bufB = Unsafe.malloc(l);
+                long buf = Unsafe.malloc(l, MemoryTag.NATIVE_DEFAULT);
+                long bufA = Unsafe.malloc(l, MemoryTag.NATIVE_DEFAULT);
+                long bufB = Unsafe.malloc(l, MemoryTag.NATIVE_DEFAULT);
                 try {
                     Assert.assertEquals(l, Files.read(fd, buf, (int) l, 0));
 
@@ -251,9 +251,9 @@ public class JsonLexerTest {
                         }
                     }
                 } finally {
-                    Unsafe.free(buf, l);
-                    Unsafe.free(bufA, l);
-                    Unsafe.free(bufB, l);
+                    Unsafe.free(buf, l, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(bufA, l, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(bufB, l, MemoryTag.NATIVE_DEFAULT);
                 }
             } finally {
                 Files.close(fd);
@@ -680,7 +680,7 @@ public class JsonLexerTest {
                 }
             }
         } finally {
-            Unsafe.free(address, len);
+            Unsafe.free(address, len, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -691,7 +691,7 @@ public class JsonLexerTest {
     private void assertThat(String expected, String input, boolean recordPositions) throws Exception {
         byte[] bytes = input.getBytes(StandardCharsets.UTF_8);
         int len = bytes.length;
-        long address = Unsafe.malloc(len);
+        long address = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < len; i++) {
             Unsafe.getUnsafe().putByte(address + i, bytes[i]);
         }
@@ -707,7 +707,7 @@ public class JsonLexerTest {
                 TestUtils.assertEquals(expected, listener.value());
             }
         } finally {
-            Unsafe.free(address, len);
+            Unsafe.free(address, len, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

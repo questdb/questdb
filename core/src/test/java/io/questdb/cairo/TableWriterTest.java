@@ -3211,7 +3211,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private long testAppendNulls(Rnd rnd, long ts) {
         final int blobLen = 64 * 1024;
-        long blob = Unsafe.malloc(blobLen);
+        long blob = Unsafe.malloc(blobLen, MemoryTag.NATIVE_DEFAULT);
         try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
@@ -3265,7 +3265,7 @@ public class TableWriterTest extends AbstractCairoTest {
             Assert.assertFalse(writer.inTransaction());
             Assert.assertEquals(size + 10000, writer.size());
         } finally {
-            Unsafe.free(blob, blobLen);
+            Unsafe.free(blob, blobLen, MemoryTag.NATIVE_DEFAULT);
         }
         return ts;
     }

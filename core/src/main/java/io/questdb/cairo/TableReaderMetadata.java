@@ -92,7 +92,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         if (address == 0) {
             return;
         }
-        Unsafe.free(address, Unsafe.getUnsafe().getInt(address));
+        Unsafe.free(address, Unsafe.getUnsafe().getInt(address), MemoryTag.NATIVE_DEFAULT);
     }
 
     public void applyTransitionIndex(long pTransitionIndex) {
@@ -210,7 +210,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             final long pTransitionIndex;
             final int size = n * 16;
 
-            long index = pTransitionIndex = Unsafe.calloc(size);
+            long index = pTransitionIndex = Unsafe.calloc(size, MemoryTag.NATIVE_DEFAULT);
             Unsafe.getUnsafe().putInt(index, size);
             Unsafe.getUnsafe().putInt(index + 4, columnCount);
             index += 8;

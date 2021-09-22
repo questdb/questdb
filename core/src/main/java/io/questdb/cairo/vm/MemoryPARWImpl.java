@@ -754,7 +754,7 @@ public class MemoryPARWImpl implements MemoryARW {
         if (page >= maxPages) {
             throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
         }
-        return Unsafe.malloc(getExtendSegmentSize());
+        return Unsafe.malloc(getExtendSegmentSize(), MemoryTag.NATIVE_DEFAULT);
     }
 
     protected long cachePageAddress(int index, long address) {
@@ -1126,7 +1126,7 @@ public class MemoryPARWImpl implements MemoryARW {
 
     protected void release(long address) {
         if (address != 0) {
-            Unsafe.free(address, getPageSize());
+            Unsafe.free(address, getPageSize(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 

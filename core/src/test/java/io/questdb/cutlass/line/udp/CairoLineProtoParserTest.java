@@ -713,7 +713,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 try (CairoLineProtoParser parser = new CairoLineProtoParser(engine, AllowAllCairoSecurityContext.INSTANCE, LineProtoNanoTimestampAdapter.INSTANCE)) {
                     byte[] bytes = lines.getBytes(StandardCharsets.UTF_8);
                     int len = bytes.length;
-                    long mem = Unsafe.malloc(len);
+                    long mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
                     try {
                         for (int i = 0; i < len; i++) {
                             Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
@@ -725,7 +725,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                             parser.commitAll(CommitMode.NOSYNC);
                         }
                     } finally {
-                        Unsafe.free(mem, len);
+                        Unsafe.free(mem, len, MemoryTag.NATIVE_DEFAULT);
                     }
                 }
             }

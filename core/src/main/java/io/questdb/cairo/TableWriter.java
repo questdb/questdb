@@ -149,7 +149,7 @@ public class TableWriter implements Closeable {
     private long masterRef = 0;
     private long o3MasterRef = -1;
     private boolean removeDirOnCancelRow = true;
-    private long tempMem16b = Unsafe.malloc(16);
+    private long tempMem16b = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
     private int metaSwapIndex;
     private int metaPrevIndex;
     private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFromTodoWriteFailure;
@@ -2129,7 +2129,7 @@ public class TableWriter implements Closeable {
 
     private void freeTempMem() {
         if (tempMem16b != 0) {
-            Unsafe.free(tempMem16b, 16);
+            Unsafe.free(tempMem16b, 16, MemoryTag.NATIVE_DEFAULT);
             tempMem16b = 0;
         }
     }

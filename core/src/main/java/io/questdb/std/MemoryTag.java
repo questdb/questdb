@@ -26,5 +26,6 @@ package io.questdb.std;
 
 public final class MemoryTag {
     public static final int MMAP_DEFAULT = 0;
-    public static final int NATIVE_DEFAULT = 0;
+    public static final int NATIVE_DEFAULT = 1;
+    public static final int SIZE = NATIVE_DEFAULT + 1;
 }

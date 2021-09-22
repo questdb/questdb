@@ -118,7 +118,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     public void clear() {
         if (pageAddress != 0) {
             long baseLength = lim - pageAddress;
-            Unsafe.free(pageAddress, baseLength);
+            Unsafe.free(pageAddress, baseLength, MemoryTag.NATIVE_DEFAULT);
             handleMemoryReleased();
         }
     }
@@ -191,9 +191,9 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
 
     protected long reallocateMemory(long currentBaseAddress, long currentSize, long newSize) {
         if (currentBaseAddress != 0) {
-            return Unsafe.realloc(currentBaseAddress, currentSize, newSize);
+            return Unsafe.realloc(currentBaseAddress, currentSize, newSize, MemoryTag.NATIVE_DEFAULT);
         }
-        return Unsafe.malloc(newSize);
+        return Unsafe.malloc(newSize, MemoryTag.NATIVE_DEFAULT);
     }
 
     protected final void setPageSize(long size) {

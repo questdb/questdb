@@ -59,7 +59,7 @@ public final class Os {
         ObjList<Path> paths = Chars.splitLpsz(args);
         int n = paths.size();
         try {
-            long argv = Unsafe.malloc((n + 1) * 8L);
+            long argv = Unsafe.malloc((n + 1) * 8L, MemoryTag.NATIVE_DEFAULT);
             try {
                 long p = argv;
                 for (int i = 0; i < n; i++) {
@@ -69,7 +69,7 @@ public final class Os {
                 Unsafe.getUnsafe().putLong(p, 0);
                 return forkExec(argv);
             } finally {
-                Unsafe.free(argv, n + 1);
+                Unsafe.free(argv, n + 1, MemoryTag.NATIVE_DEFAULT);
             }
         } finally {
             for (int i = 0; i < n; i++) {

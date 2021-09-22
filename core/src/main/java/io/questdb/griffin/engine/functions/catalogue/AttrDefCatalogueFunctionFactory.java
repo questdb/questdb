@@ -70,14 +70,14 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
 
         public AttrDefCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
             super(metadata);
-            this.tempMem = Unsafe.malloc(Integer.BYTES);
+            this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
             this.cursor = new AttrDefCatalogueCursor(configuration, path, tempMem);
         }
 
         @Override
         public void close() {
             Misc.free(path);
-            Unsafe.free(tempMem, Integer.BYTES);
+            Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
 
         @Override

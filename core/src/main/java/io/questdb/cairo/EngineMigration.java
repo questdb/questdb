@@ -65,7 +65,7 @@ public class EngineMigration {
     public void migrateEngineTo(int latestVersion) {
         final FilesFacade ff = configuration.getFilesFacade();
         int tempMemSize = 8;
-        long mem = Unsafe.malloc(tempMemSize);
+        long mem = Unsafe.malloc(tempMemSize, MemoryTag.NATIVE_DEFAULT);
 
         try (
                 MemoryARW virtualMem = Vm.getARWInstance(ff.getPageSize(), 8);
@@ -109,7 +109,7 @@ public class EngineMigration {
                 }
             }
         } finally {
-            Unsafe.free(mem, tempMemSize);
+            Unsafe.free(mem, tempMemSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

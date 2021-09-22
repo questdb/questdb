@@ -24,10 +24,7 @@
 
 package io.questdb.cutlass.line;
 
-import io.questdb.std.Chars;
-import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
@@ -54,7 +51,7 @@ public class LineProtoLexer implements Mutable, Closeable {
     private boolean unquoted = true;
 
     public LineProtoLexer(int bufferSize) {
-        buffer = Unsafe.malloc(bufferSize);
+        buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         bufferHi = buffer + bufferSize;
         charSequenceCache = address -> {
             floatingCharSequence.lo = buffer + Numbers.decodeHighInt(address);
@@ -79,7 +76,7 @@ public class LineProtoLexer implements Mutable, Closeable {
 
     @Override
     public void close() {
-        Unsafe.free(buffer, bufferHi - buffer);
+        Unsafe.free(buffer, bufferHi - buffer, MemoryTag.NATIVE_DEFAULT);
     }
 
     /**
@@ -378,7 +375,7 @@ public class LineProtoLexer implements Mutable, Closeable {
                 // can't realistically reach this in test :(
                 throw LineProtoException.INSTANCE;
             }
-            long buf = Unsafe.realloc(buffer, bufferHi - buffer, capacity);
+            long buf = Unsafe.realloc(buffer, bufferHi - buffer, capacity, MemoryTag.NATIVE_DEFAULT);
             long offset = dstTop - buffer;
             bufferHi = buf + capacity;
             buffer = buf;

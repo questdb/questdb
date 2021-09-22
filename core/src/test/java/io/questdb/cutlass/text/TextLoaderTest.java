@@ -31,10 +31,7 @@ import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
@@ -2926,8 +2923,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
     private static void playText0(TextLoader textLoader, String text, int firstBufSize, ByteManipulator manipulator) throws TextException {
         byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
         int len = bytes.length;
-        long buf = Unsafe.malloc(len);
-        long smallBuf = Unsafe.malloc(1);
+        long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        long smallBuf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < len; i++) {
                 Unsafe.getUnsafe().putByte(buf + i, manipulator.translate(i, len, bytes[i]));
@@ -2946,8 +2943,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
             textLoader.wrapUp();
         } finally {
-            Unsafe.free(buf, len);
-            Unsafe.free(smallBuf, 1);
+            Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(smallBuf, 1, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -3205,8 +3202,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
         textLoader.setState(TextLoader.LOAD_JSON_METADATA);
 
         int len = json.length;
-        long buf = Unsafe.malloc(len);
-        long smallBuf = Unsafe.malloc(1);
+        long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        long smallBuf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < len; i++) {
                 Unsafe.getUnsafe().putByte(buf + i, json[i]);
@@ -3218,8 +3215,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
             textLoader.wrapUp();
         } finally {
-            Unsafe.free(buf, len);
-            Unsafe.free(smallBuf, 1);
+            Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(smallBuf, 1, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

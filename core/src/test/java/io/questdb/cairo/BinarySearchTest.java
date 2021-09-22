@@ -230,7 +230,7 @@ public class BinarySearchTest extends AbstractCairoTest {
 
     private void testMem256Find(long repeatCount, long searchValue, int distinctValueCount, int scanDirection) {
         long size = distinctValueCount * repeatCount * 16L;
-        long mem = Unsafe.malloc(size);
+        long mem = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < distinctValueCount; i++) {
                 for (int j = 0; j < repeatCount; j++) {
@@ -251,7 +251,7 @@ public class BinarySearchTest extends AbstractCairoTest {
                 }
             }
         } finally {
-            Unsafe.free(mem, size);
+            Unsafe.free(mem, size, MemoryTag.NATIVE_DEFAULT);
         }
     }
 }

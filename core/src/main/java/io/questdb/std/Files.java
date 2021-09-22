@@ -179,25 +179,25 @@ public final class Files {
     public static long mmap(long fd, long len, long offset, int flags, long baseAddress, int memoryTag) {
         long address = mmap0(fd, len, offset, flags, baseAddress);
         if (address != -1) {
-            Unsafe.recordMemAlloc(len);
+            Unsafe.recordMemAlloc(len, memoryTag);
         }
         return address;
     }
 
     public static long mremap(long fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
-        Unsafe.recordMemAlloc(-previousSize);
+        Unsafe.recordMemAlloc(-previousSize, memoryTag);
         address = mremap0(fd, address, previousSize, newSize, offset, flags);
         if (address != -1) {
-            Unsafe.recordMemAlloc(newSize);
+            Unsafe.recordMemAlloc(newSize, memoryTag);
         }
         return address;
     }
 
     public static native int msync(long addr, long len, boolean async);
 
-    public static void munmap(long address, long len, int memoryMap) {
+    public static void munmap(long address, long len, int memoryTag) {
         if (address != 0 && munmap0(address, len) != -1) {
-            Unsafe.recordMemAlloc(-len);
+            Unsafe.recordMemAlloc(-len, memoryTag);
         }
     }
 

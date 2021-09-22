@@ -65,7 +65,7 @@ public class MemoryCARWImplTest {
 
             TestUtils.assertEquals(seq, actual, N);
 
-            long buffer = Unsafe.malloc(1024);
+            long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
             try {
                 // supply length of our buffer
                 // blob content would be shorter
@@ -94,7 +94,7 @@ public class MemoryCARWImplTest {
                     assertEquals(5, Unsafe.getUnsafe().getByte(buffer + i));
                 }
             } finally {
-                Unsafe.free(buffer, 1024);
+                Unsafe.free(buffer, 1024, MemoryTag.NATIVE_DEFAULT);
             }
         }
     }
@@ -1064,7 +1064,7 @@ public class MemoryCARWImplTest {
 
         final TestBinarySequence binarySequence = new TestBinarySequence();
         final byte[] buffer = new byte[600];
-        final long bufAddr = Unsafe.malloc(buffer.length);
+        final long bufAddr = Unsafe.malloc(buffer.length, MemoryTag.NATIVE_DEFAULT);
         binarySequence.of(buffer);
 
         try (MemoryARW mem = new MemoryCARWImpl(mem1Size, Integer.MAX_VALUE)) {
@@ -1142,7 +1142,7 @@ public class MemoryCARWImplTest {
                 }
             }
         }
-        Unsafe.free(bufAddr, buffer.length);
+        Unsafe.free(bufAddr, buffer.length, MemoryTag.NATIVE_DEFAULT);
     }
 
     private void testStrRnd(long offset, long pageSize) {

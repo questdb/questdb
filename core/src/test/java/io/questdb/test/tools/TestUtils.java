@@ -199,8 +199,8 @@ public final class TestUtils {
 
                     Assert.assertEquals(Files.length(fda), Files.length(fdb));
 
-                    long bufa = Unsafe.malloc(4096);
-                    long bufb = Unsafe.malloc(4096);
+                    long bufa = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
+                    long bufb = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
 
                     long offset = 0;
                     try {
@@ -221,8 +221,8 @@ public final class TestUtils {
                             }
                         }
                     } finally {
-                        Unsafe.free(bufa, 4096);
-                        Unsafe.free(bufb, 4096);
+                        Unsafe.free(bufa, 4096, MemoryTag.NATIVE_DEFAULT);
+                        Unsafe.free(bufb, 4096, MemoryTag.NATIVE_DEFAULT);
                     }
                 } finally {
                     Files.close(fdb);
@@ -240,7 +240,7 @@ public final class TestUtils {
             Assert.assertNotEquals(-1, fda);
 
             try {
-                long bufa = Unsafe.malloc(4096);
+                long bufa = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
                 final long str = toMemory(actual);
                 long offset = 0;
                 long strp = str;
@@ -273,8 +273,8 @@ public final class TestUtils {
 
                     Assert.assertEquals(strp - str, actual.length());
                 } finally {
-                    Unsafe.free(bufa, 4096);
-                    Unsafe.free(str, actual.length());
+                    Unsafe.free(bufa, 4096, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(str, actual.length(), MemoryTag.NATIVE_DEFAULT);
                 }
             } finally {
                 Files.close(fda);
@@ -654,7 +654,7 @@ public final class TestUtils {
     }
 
     public static long toMemory(CharSequence sequence) {
-        long ptr = Unsafe.malloc(sequence.length());
+        long ptr = Unsafe.malloc(sequence.length(), MemoryTag.NATIVE_DEFAULT);
         Chars.asciiStrCpy(sequence, sequence.length(), ptr);
         return ptr;
     }

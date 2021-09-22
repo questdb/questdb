@@ -25,6 +25,7 @@
 package io.questdb.std.str;
 
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 
 import java.io.Closeable;
@@ -48,7 +49,7 @@ public final class CharSequenceZ extends AbstractCharSequence implements Closeab
     @Override
     public void close() {
         if (ptr != 0) {
-            Unsafe.free(ptr, capacity + 1);
+            Unsafe.free(ptr, capacity + 1, MemoryTag.NATIVE_DEFAULT);
             ptr = 0;
         }
     }
@@ -65,7 +66,7 @@ public final class CharSequenceZ extends AbstractCharSequence implements Closeab
 
     private void alloc(int len) {
         this.capacity = len;
-        this.ptr = Unsafe.malloc(capacity + 1);
+        this.ptr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_DEFAULT);
     }
 
     private void cpyz(CharSequence str, int len) {

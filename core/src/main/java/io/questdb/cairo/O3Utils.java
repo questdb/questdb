@@ -39,7 +39,7 @@ public class O3Utils {
     public static void freeBuf() {
         if (temp8ByteBuf != null) {
             for (int i = 0, n = temp8ByteBuf.length; i < n; i++) {
-                Unsafe.free(temp8ByteBuf[i], Long.BYTES);
+                Unsafe.free(temp8ByteBuf[i], Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             }
             temp8ByteBuf = null;
         }
@@ -52,7 +52,7 @@ public class O3Utils {
     public static void initBuf(int workerCount) {
         temp8ByteBuf = new long[workerCount];
         for (int i = 0; i < workerCount; i++) {
-            temp8ByteBuf[i] = Unsafe.malloc(Long.BYTES);
+            temp8ByteBuf[i] = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

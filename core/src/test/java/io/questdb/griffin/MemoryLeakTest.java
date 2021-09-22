@@ -31,6 +31,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -84,7 +85,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
                 )
         ) {
             compiler.compile("create table users (sequence long, event binary, timestamp timestamp, id long) timestamp(timestamp)", executionContext);
-            long buffer = Unsafe.malloc(1024);
+            long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
             try {
                 try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), "users", "testing")) {
                     // time can go backwards if asked too quickly, add I to offset the chance (on mac M1 at least)
@@ -100,7 +101,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
                     writer.commit();
                 }
             } finally {
-                Unsafe.free(buffer, 1024);
+                Unsafe.free(buffer, 1024, MemoryTag.NATIVE_DEFAULT);
             }
         }
     }

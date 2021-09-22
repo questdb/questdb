@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import java.nio.charset.StandardCharsets;
 
+import io.questdb.std.MemoryTag;
 import org.junit.Assert;
 
 import io.questdb.cutlass.line.LineProtoException;
@@ -49,7 +50,7 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
     protected void assertThat(CharSequence expected, byte[] line) throws LineProtoException {
         final int len = line.length;
         final boolean endWithEOL = line[len - 1] == '\n' || line[len - 1] == '\r';
-        long mem = Unsafe.malloc(line.length + 1);
+        long mem = Unsafe.malloc(line.length + 1, MemoryTag.NATIVE_DEFAULT);
         try {
             if (len < 10) {
                 for (int i = 1; i < len; i++) {
@@ -99,7 +100,7 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
             }
             TestUtils.assertEquals(expected, sink);
         } finally {
-            Unsafe.free(mem, len);
+            Unsafe.free(mem, len, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -111,7 +112,7 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
         if (!endWithEOL) {
             len++;
         }
-        long mem = Unsafe.malloc(len + 1);
+        long mem = Unsafe.malloc(len + 1, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 1; i < len; i++) {
                 for (int j = 0; j < bytes.length; j++) {
@@ -127,7 +128,7 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
                 Assert.assertNotNull(lastErrorCode);
             }
         } finally {
-            Unsafe.free(mem, len);
+            Unsafe.free(mem, len, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
