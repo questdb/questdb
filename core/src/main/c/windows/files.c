@@ -291,7 +291,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length
         return low | (__int64) high << 32;
     } else {
         SaveLastError();
-        return INVALID_FILE_SIZE;
+        return -1;
     }
 }
 

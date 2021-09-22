@@ -80,7 +80,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long tmpBuf
     ) {
         // is out of order data hitting the last partition?
-        // if so we do not need to re-open files and and write to existing file descriptors
+        // if so we do not need to re-open files and write to existing file descriptors
         final long o3TimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
         final RecordMetadata metadata = tableWriter.getMetadata();
         final int timestampIndex = metadata.getTimestampIndex();

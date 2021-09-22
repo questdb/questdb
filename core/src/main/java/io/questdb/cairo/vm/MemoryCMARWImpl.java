@@ -187,7 +187,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize) {
-        of(ff, name, extendSegmentSize, Long.MAX_VALUE);
+        of(ff, name, extendSegmentSize, -1);
     }
 
     @Override
@@ -279,8 +279,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     protected void map(FilesFacade ff, @Nullable CharSequence name, long size) {
-        size = Math.min(ff.length(fd), size);
-        if (size == 0) {
+        // file either did not exist when length() was called or empty
+        if (size < 1) {
             this.size = minMappedMemorySize;
             TableUtils.allocateDiskSpace(ff, fd, this.size);
             map0(ff, minMappedMemorySize);

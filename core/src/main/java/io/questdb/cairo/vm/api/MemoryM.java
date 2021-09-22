@@ -69,10 +69,10 @@ public interface MemoryM extends Closeable {
     }
 
     default void wholeFile(FilesFacade ff, LPSZ name) {
-        of(ff, name, ff.getMapPageSize(), Long.MAX_VALUE);
+        of(ff, name, ff.getMapPageSize(), ff.length(name));
     }
 
     default void smallFile(FilesFacade ff, LPSZ name) {
-        of(ff, name, ff.getPageSize(), Long.MAX_VALUE);
+        of(ff, name, ff.getPageSize(), ff.length(name));
     }
 }

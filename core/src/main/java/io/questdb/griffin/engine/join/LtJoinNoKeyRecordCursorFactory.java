@@ -130,7 +130,7 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactory 
             long slaveTimestamp = this.slaveTimestamp;
             positionSlaveRecB();
             // check where this record falls
-            if (slaveTimestamp < masterTimestamp) {
+            if (slaveTimestamp <= masterTimestamp) {
                 overScrollSlave(masterTimestamp, slaveTimestamp);
             }
         }

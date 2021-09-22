@@ -1533,9 +1533,13 @@ public class TableWriter implements Closeable {
             return;
         }
 
-        if (hasO3()) {
-            masterRef--;
-            setO3AppendPosition(getO3RowCount());
+        if (o3MasterRef > -1) {
+            if (hasO3()) {
+                // O3 mode and there are some rows.
+                masterRef--;
+                setO3AppendPosition(getO3RowCount());
+            }
+            // We're in O3 mode but no rows added yet. Return.
             return;
         }
 
@@ -2224,7 +2228,7 @@ public class TableWriter implements Closeable {
                             createIndexFiles(columnName, indexValueBlockSize, plen, true);
 
                             final long partitionSize = txFile.getPartitionSizeByPartitionTimestamp(timestamp);
-                            final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b);
+                            final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b, true);
 
                             if (partitionSize > columnTop) {
                                 TableUtils.dFile(path.trimTo(plen), columnName);
@@ -2249,7 +2253,7 @@ public class TableWriter implements Closeable {
 
         createIndexFiles(columnName, indexValueBlockSize, plen, true);
 
-        final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b);
+        final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b, true);
 
         // set indexer up to continue functioning as normal
         indexer.configureFollowerAndWriter(configuration, path.trimTo(plen), columnName, getPrimaryColumn(columnIndex), columnTop);
@@ -2557,22 +2561,22 @@ public class TableWriter implements Closeable {
                         final boolean last = partitionTimestamp == lastPartitionTimestamp;
                         srcOoo = srcOooHi + 1;
 
-                        final long srcDataSize;
+                        final long srcDataMax;
                         final long srcNameTxn;
                         final int partitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
                         if (partitionIndex > -1) {
                             if (last) {
-                                srcDataSize = txFile.transientRowCount;
+                                srcDataMax = txFile.transientRowCount;
                             } else {
-                                srcDataSize = getPartitionSizeByIndex(partitionIndex);
+                                srcDataMax = getPartitionSizeByIndex(partitionIndex);
                             }
                             srcNameTxn = getPartitionNameTxnByIndex(partitionIndex);
                         } else {
-                            srcDataSize = -1;
+                            srcDataMax = -1;
                             srcNameTxn = -1;
                         }
 
-                        final boolean append = last && (srcDataSize < 0 || o3Timestamp >= maxTimestamp);
+                        final boolean append = last && (srcDataMax < 0 || o3Timestamp >= maxTimestamp);
                         LOG.debug().
                                 $("o3 partition task [table=").$(tableName)
                                 .$(", srcOooLo=").$(srcOooLo)
@@ -2583,7 +2587,7 @@ public class TableWriter implements Closeable {
                                 .$(", o3TimestampMax=").$ts(o3TimestampMax)
                                 .$(", partitionTimestamp=").$ts(partitionTimestamp)
                                 .$(", partitionIndex=").$(partitionIndex)
-                                .$(", srcDataSize=").$(srcDataSize)
+                                .$(", srcDataMax=").$(srcDataMax)
                                 .$(", maxTimestamp=").$ts(maxTimestamp)
                                 .$(", last=").$(last)
                                 .$(", append=").$(append)
@@ -2647,7 +2651,7 @@ public class TableWriter implements Closeable {
                                         o3TimestampMax,
                                         partitionTimestamp,
                                         srcDataTop,
-                                        Math.max(0, srcDataSize),
+                                        Math.max(0, srcDataMax),
                                         isIndexed,
                                         dstFixMem,
                                         dstVarMem,
@@ -2671,7 +2675,7 @@ public class TableWriter implements Closeable {
                                     srcOooHi,
                                     partitionTimestamp,
                                     last,
-                                    srcDataSize,
+                                    srcDataMax,
                                     srcNameTxn,
                                     o3Basket
                             );
@@ -2733,7 +2737,18 @@ public class TableWriter implements Closeable {
         if (!columns.getQuick(0).isOpen() || partitionTimestampHi < txFile.getMaxTimestamp()) {
             openPartition(txFile.getMaxTimestamp());
         }
-        setAppendPosition(txFile.getTransientRowCount(), true);
+
+        // Data is written out successfully, however, we can still fail to set append position, for
+        // example when we ran out of address space and new page cannot be mapped. The "allocate" calls here
+        // ensure we can trigger this situation in tests. We should perhaps align our data such that setAppendPosition()
+        // will attempt to mmap new page and fail.. Then we can remove the 'true' parameter
+        try {
+            setAppendPosition(txFile.getTransientRowCount(), true);
+        } catch (Throwable e) {
+            LOG.error().$("data is committed but writer failed to update its state `").$(e).$('`').$();
+            distressed = true;
+            throw e;
+        }
         return false;
     }
 
@@ -2748,7 +2763,7 @@ public class TableWriter implements Closeable {
             long srcOooHi,
             long partitionTimestamp,
             boolean last,
-            long srcDataSize,
+            long srcDataMax,
             long srcNameTxn,
             O3Basket o3Basket
     ) {
@@ -2767,7 +2782,7 @@ public class TableWriter implements Closeable {
                     oooTimestampMax,
                     partitionTimestamp,
                     maxTimestamp,
-                    srcDataSize,
+                    srcDataMax,
                     srcNameTxn,
                     last,
                     getTxn(),
@@ -2790,7 +2805,7 @@ public class TableWriter implements Closeable {
                     oooTimestampMax,
                     partitionTimestamp,
                     maxTimestamp,
-                    srcDataSize,
+                    srcDataMax,
                     srcNameTxn,
                     last,
                     getTxn(),
@@ -2982,15 +2997,16 @@ public class TableWriter implements Closeable {
     private long o3MoveUncommitted(final int timestampIndex) {
         final long committedRowCount = txFile.getCommittedFixedRowCount() + txFile.getCommittedTransientRowCount();
         final long rowsAdded = txFile.getRowCount() - committedRowCount;
-        final long committedTransientRowCount = txFile.getTransientRowCount() - Math.min(txFile.getTransientRowCount(), rowsAdded);
-        if (Math.min(txFile.getTransientRowCount(), rowsAdded) > 0) {
+        long transientRowsAdded = Math.min(txFile.getTransientRowCount(), rowsAdded);
+        final long committedTransientRowCount = txFile.getTransientRowCount() - transientRowsAdded;
+        if (transientRowsAdded > 0) {
             LOG.debug()
                     .$("o3 move uncommitted [table=").$(tableName)
-                    .$(", transientRowsAdded=").$(Math.min(txFile.getTransientRowCount(), rowsAdded))
+                    .$(", transientRowsAdded=").$(transientRowsAdded)
                     .I$();
             return o3ScheduleMoveUncommitted0(
                     timestampIndex,
-                    Math.min(txFile.getTransientRowCount(), rowsAdded),
+                    transientRowsAdded,
                     committedTransientRowCount
             );
         }
@@ -3367,8 +3383,18 @@ public class TableWriter implements Closeable {
                 size = o3RowCount << ColumnType.pow2SizeOf(columnType);
             } else {
                 // Var size column
-                size = o3IndexMem.getLong(o3RowCount * 8);
-                o3IndexMem.jumpTo((o3RowCount + 1) * 8);
+                if (o3RowCount > 0) {
+                    // Usually we would find var col size of row count as (index[count] - index[count-1])
+                    // but the record index[count] may not exist yet
+                    // so the data size has to be calculated as (index[count-1] + len(data[count-1]) + 4)
+                    // where len(data[count-1]) can be read as the int from var col data at offset index[count-1]
+                    long prevOffset = o3IndexMem.getLong((o3RowCount - 1) * 8);
+                    size = prevOffset + 2L * o3DataMem.getInt(prevOffset) + 4L;
+                    o3IndexMem.jumpTo((o3RowCount + 1) * 8);
+                } else {
+                    size = 0;
+                    o3IndexMem.jumpTo(0);
+                }
             }
 
             o3DataMem.jumpTo(size);
@@ -3546,6 +3572,12 @@ public class TableWriter implements Closeable {
         final long tgtDataSize = dataMem2.size();
         final long tgtIndxAddr = indexMem2.resize(valueCount * Long.BYTES);
         final long tgtIndxSize = indexMem2.size();
+
+        assert srcDataAddr != 0;
+        assert srcIndxAddr != 0;
+        assert tgtDataAddr != 0;
+        assert tgtIndxAddr != 0;
+
         // add max offset so that we do not have conditionals inside loop
 //        indexMem.putLong(valueCount * Long.BYTES, dataSize);
         final long offset = Vect.sortVarColumn(
@@ -3574,9 +3606,9 @@ public class TableWriter implements Closeable {
         MemoryMAR mem2 = getSecondaryColumn(i);
 
         try {
-            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
+            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), -1);
             if (mem2 != null) {
-                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
+                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), -1);
             }
         } finally {
             path.trimTo(plen);
@@ -3652,7 +3684,7 @@ public class TableWriter implements Closeable {
                 }
 
                 openColumnFiles(name, i, plen);
-                columnTop = readColumnTop(ff, path, name, plen, tempMem16b);
+                columnTop = readColumnTop(ff, path, name, plen, tempMem16b, true);
                 columnTops.extendAndSet(i, columnTop);
 
                 if (indexed) {

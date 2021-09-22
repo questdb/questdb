@@ -79,8 +79,6 @@ public class LineUdpInsertIntGeoHashTest extends LineUdpInsertGeoHashTest {
 
                     receiver.halt();
                 }
-
-                System.out.println("ok");
             }
         });
     }

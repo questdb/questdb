@@ -691,16 +691,27 @@ public final class TableUtils {
             long tempBuf
     ) {
         topFile(path, columnName);
-        final long fd = openRW(ff, path, LOG);
+        long fd = openRW(ff, path, LOG);
         try {
             //noinspection SuspiciousNameCombination
             Unsafe.getUnsafe().putLong(tempBuf, columnTop);
-            allocateDiskSpace(ff, fd, Long.BYTES);
-            if (ff.write(fd, tempBuf, Long.BYTES, 0) != Long.BYTES) {
-                throw CairoException.instance(ff.errno()).put("could not write top file [path=").put(path).put(']');
+            try {
+                allocateDiskSpace(ff, fd, Long.BYTES);
+                if (ff.write(fd, tempBuf, Long.BYTES, 0) != Long.BYTES) {
+                    throw CairoException.instance(ff.errno()).put("could not write top file [path=").put(path).put(']');
+                }
+            } catch (Throwable e) {
+                ff.close(fd);
+                fd = -1;
+                if (!ff.remove(path)) {
+                    LOG.error().$("could not remove top file, please delete manually [file=").$(path).I$();
+                }
+                throw e;
             }
         } finally {
-            ff.close(fd);
+            if (fd != -1) {
+                ff.close(fd);
+            }
         }
     }
 
@@ -721,13 +732,23 @@ public final class TableUtils {
      *
      * @return number of rows column doesn't have when column was added to table that already had data.
      */
-    static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen, long buf) {
+    static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen, long buf, boolean failIfCouldNotRead) {
         try {
             if (ff.exists(topFile(path.chop$(), name))) {
                 final long fd = TableUtils.openRO(ff, path, LOG);
                 try {
-                    if (ff.read(fd, buf, 8, 0) != 8) {
-                        throw CairoException.instance(Os.errno()).put("Cannot read top of column ").put(path);
+                    long n;
+                    if ((n = ff.read(fd, buf, 8, 0)) != 8) {
+                        if (failIfCouldNotRead) {
+                            throw CairoException.instance(Os.errno())
+                                    .put("could not read top of column [file=").put(path)
+                                    .put(", read=").put(n).put(']');
+                        } else {
+                            LOG.error().$("could not read top of column [file=").$(path)
+                                    .$(", read=").$(n)
+                                    .$(", errno=").$(ff.errno())
+                                    .I$();
+                        }
                     }
                     return Unsafe.getUnsafe().getLong(buf);
                 } finally {

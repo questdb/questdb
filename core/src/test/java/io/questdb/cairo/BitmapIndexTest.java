@@ -1065,6 +1065,20 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 mem.putLong(300);
                 mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - mem.getAppendOffset());
             }
+
+            // Memory impl will round truncate size to the OS page size.
+            // Therefore, truncate file manually to below the expected file size
+
+            final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            try (Path path  = new Path()) {
+                path.of(configuration.getRoot()).concat("x").put(".k").$();
+                long fd = TableUtils.openFileRWOrFail(ff, path);
+                try {
+                    ff.truncate(fd, 64);
+                } finally {
+                    ff.close(fd);
+                }
+            }
             assertWriterConstructorFail("Key count");
         });
     }

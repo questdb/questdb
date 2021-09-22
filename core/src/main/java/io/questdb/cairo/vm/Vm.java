@@ -48,13 +48,10 @@ public class Vm {
     }
 
     public static long bestEffortTruncate(FilesFacade ff, Log log, long fd, long size) {
-        // Windows does truncate file if it has a mapped page somewhere, could be another handle and process.
-        // To make it work size needs to be rounded up to nearest page.
-        long n = (size - 1) / Files.PAGE_SIZE;
-        long sz = (n + 1) * Files.PAGE_SIZE;
+        long sz = Files.ceilPageSize(size);
         if (ff.truncate(Math.abs(fd), sz)) {
             log.debug()
-                    .$("truncated and closed, second attempt [fd=").$(fd)
+                    .$("truncated and closed [fd=").$(fd)
                     .$(", size=").$(sz)
                     .$(']').$();
             return sz;
@@ -75,8 +72,8 @@ public class Vm {
         return new MemoryCARWImpl(pageSize, maxPages);
     }
 
-    public static MemoryCMARW getCMARWInstance(FilesFacade ff, LPSZ name, long pageSize, long maxPages) {
-        return new MemoryCMARWImpl(ff, name, pageSize, maxPages);
+    public static MemoryCMARW getCMARWInstance(FilesFacade ff, LPSZ name, long pageSize, long size) {
+        return new MemoryCMARWImpl(ff, name, pageSize, size);
     }
 
     public static MemoryCMARW getCMARWInstance() {
@@ -108,15 +105,15 @@ public class Vm {
     }
 
     public static MemoryA getSmallAInstance(FilesFacade ff, LPSZ name) {
-        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), Long.MAX_VALUE);
+        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1);
     }
 
     public static MemoryARW getSmallARWInstance(FilesFacade ff, LPSZ name) {
-        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), Long.MAX_VALUE);
+        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1);
     }
 
     public static MemoryCMARW getSmallCMARWInstance(FilesFacade ff, LPSZ name) {
-        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), Long.MAX_VALUE);
+        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1);
     }
 
     public static long getStorageLength(int len) {
@@ -132,6 +129,6 @@ public class Vm {
     }
 
     public static MemoryMARW getWholeMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize) {
-        return new MemoryCMARWImpl(ff, name, extendSegmentSize, Long.MAX_VALUE);
+        return new MemoryCMARWImpl(ff, name, extendSegmentSize, -1);
     }
 }
