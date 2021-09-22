@@ -68,7 +68,7 @@ public class EngineMigration {
         long mem = Unsafe.malloc(tempMemSize, MemoryTag.NATIVE_DEFAULT);
 
         try (
-                MemoryARW virtualMem = Vm.getARWInstance(ff.getPageSize(), 8);
+                MemoryARW virtualMem = Vm.getARWInstance(ff.getPageSize(), 8, MemoryTag.NATIVE_DEFAULT);
                 Path path = new Path();
                 MemoryMARW rwMemory = Vm.getMARWInstance()
         ) {

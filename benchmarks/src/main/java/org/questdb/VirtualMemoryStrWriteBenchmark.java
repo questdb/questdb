@@ -26,6 +26,7 @@ package org.questdb;
 
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.MemoryPARWImpl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -41,7 +42,7 @@ import java.util.concurrent.TimeUnit;
 public class VirtualMemoryStrWriteBenchmark {
     private static final MemoryPARWImpl mem1 = new MemoryPARWImpl(1024 * 1024, Integer.MAX_VALUE);
     private static final MemoryPARWImpl mem2 = new MemoryPARWImpl(1024 * 1024, Integer.MAX_VALUE);
-    private static final MemoryCARWImpl mem3 = new MemoryCARWImpl(1024 * 1024L, Integer.MAX_VALUE);
+    private static final MemoryCARWImpl mem3 = new MemoryCARWImpl(1024 * 1024L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
     private static final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {

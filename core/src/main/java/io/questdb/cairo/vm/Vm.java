@@ -71,16 +71,16 @@ public class Vm {
         return -1;
     }
 
-    public static MemoryAR getARInstance(long pageSize, int maxPages) {
-        return new MemoryCARWImpl(pageSize, maxPages);
+    public static MemoryAR getARInstance(long pageSize, int maxPages, int memoryTag) {
+        return new MemoryCARWImpl(pageSize, maxPages, memoryTag);
     }
 
-    public static MemoryARW getARWInstance(long pageSize, int maxPages) {
-        return new MemoryCARWImpl(pageSize, maxPages);
+    public static MemoryARW getARWInstance(long pageSize, int maxPages, int memoryTag) {
+        return new MemoryCARWImpl(pageSize, maxPages, memoryTag);
     }
 
-    public static MemoryCARW getCARWInstance(long pageSize, int maxPages) {
-        return new MemoryCARWImpl(pageSize, maxPages);
+    public static MemoryCARW getCARWInstance(long pageSize, int maxPages, int memoryTag) {
+        return new MemoryCARWImpl(pageSize, maxPages, memoryTag);
     }
 
     public static MemoryCMARW getCMARWInstance(FilesFacade ff, LPSZ name, long pageSize, long maxPages, int memoryTag) {
