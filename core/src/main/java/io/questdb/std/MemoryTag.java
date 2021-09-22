@@ -29,5 +29,7 @@ public final class MemoryTag {
     public static final int NATIVE_DEFAULT = 1;
     public static final int MMAP_O3 = 2;
     public static final int NATIVE_O3 = 3;
+    public static final int NATIVE_TABLE_WRITER = 4;
+    public static final int MMAP_TABLE_WRITER = 5;
     public static final int SIZE = NATIVE_O3 + 1;
 }
