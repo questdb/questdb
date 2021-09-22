@@ -73,7 +73,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private int columnCountBits;
     private long rowCount;
     private long txn = TableUtils.INITIAL_TXN;
-    private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+    private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
     private boolean active;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
@@ -743,7 +743,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         try {
             path.concat(TableUtils.TODO_FILE_NAME).$();
             if (ff.exists(path)) {
-                todoMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                todoMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_READER);
                 if (todoMem.getPageCount() > 0) {
                     long instanceHashLo;
                     long instanceHashHi;
@@ -808,7 +808,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void freeTempMem() {
         if (tempMem8b != 0) {
-            Unsafe.free(tempMem8b, 8, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(tempMem8b, 8, MemoryTag.NATIVE_TABLE_READER);
             tempMem8b = 0;
         }
     }
@@ -900,9 +900,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             MemoryMR mem
     ) {
         if (mem != null && mem != NullColumn.INSTANCE) {
-            mem.wholeFile(ff, path, MemoryTag.MMAP_DEFAULT);
+            mem.wholeFile(ff, path, MemoryTag.MMAP_TABLE_READER);
         } else {
-            mem = Vm.getMRInstance(ff, path, lastPartition ? ff.getMapPageSize() : ff.length(path), MemoryTag.MMAP_DEFAULT);
+            mem = Vm.getMRInstance(ff, path, lastPartition ? ff.getMapPageSize() : ff.length(path), MemoryTag.MMAP_TABLE_READER);
             columns.setQuick(primaryIndex, mem);
         }
         return mem;
