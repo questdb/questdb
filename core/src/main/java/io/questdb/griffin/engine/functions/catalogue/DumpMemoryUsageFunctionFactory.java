@@ -26,15 +26,16 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.std.*;
 
 public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
-    private static final Log LOG = LogFactory.getLog(DumpMemoryUsageFunctionFactory.class);
 
     @Override
     public String getSignature() {
@@ -48,13 +49,23 @@ public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
                                 CairoConfiguration configuration,
                                 SqlExecutionContext sqlExecutionContext
     ) {
-        LOG.info().$("total memory: ").$(Unsafe.getMemUsed()).$();
-        for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
-            final long memUsedByTag = Unsafe.getMemUsedByTag(i);
-            if (memUsedByTag > 0) {
-                LOG.info().$("memory tag(").$(i).$("): ").$(memUsedByTag).$();
+        return new DumpMemoryUsage();
+    }
+
+    private static class DumpMemoryUsage extends BooleanFunction {
+        private static final Log LOG = LogFactory.getLog(DumpMemoryUsage.class);
+
+        @Override
+        public boolean getBool(Record rec) {
+            LogRecord record = LOG.info().$("memory usage [TOTAL=").$(Unsafe.getMemUsed());
+            for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
+                final long memUsedByTag = Unsafe.getMemUsedByTag(i);
+                if (memUsedByTag > 0) {
+                    record = record.$(", ").$(MemoryTag.nameOf(i)).$("=").$(memUsedByTag);
+                }
             }
+            record.I$();
+            return true;
         }
-        return BooleanConstant.TRUE;
     }
 }
