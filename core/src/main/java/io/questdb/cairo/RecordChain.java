@@ -49,7 +49,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     private RecordCursor symbolTableResolver;
 
     public RecordChain(@Transient ColumnTypes columnTypes, RecordSink recordSink, long pageSize, int maxPages) {
-        this.mem = Vm.getARWInstance(pageSize, maxPages, MemoryTag.NATIVE_DEFAULT);
+        this.mem = Vm.getARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
         this.recordSink = recordSink;
         int count = columnTypes.getColumnCount();
         long varOffset = 0L;

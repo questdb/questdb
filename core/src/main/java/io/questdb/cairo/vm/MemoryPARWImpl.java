@@ -58,14 +58,17 @@ public class MemoryPARWImpl implements MemoryARW {
     private long roOffsetLo = 0;
     private long roOffsetHi = 0;
     private long absolutePointer;
+    protected int memoryTag;
 
-    public MemoryPARWImpl(long pageSize, int maxPages) {
+    public MemoryPARWImpl(long pageSize, int maxPages, int memoryTag) {
         setExtendSegmentSize(pageSize);
         this.maxPages = maxPages;
+        this.memoryTag = memoryTag;
     }
 
     protected MemoryPARWImpl() {
         maxPages = Integer.MAX_VALUE;
+        memoryTag = MemoryTag.NATIVE_DEFAULT;
     }
 
     @Override
@@ -754,7 +757,7 @@ public class MemoryPARWImpl implements MemoryARW {
         if (page >= maxPages) {
             throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
         }
-        return Unsafe.malloc(getExtendSegmentSize(), MemoryTag.NATIVE_DEFAULT);
+        return Unsafe.malloc(getExtendSegmentSize(), memoryTag);
     }
 
     protected long cachePageAddress(int index, long address) {
@@ -1126,7 +1129,7 @@ public class MemoryPARWImpl implements MemoryARW {
 
     protected void release(long address) {
         if (address != 0) {
-            Unsafe.free(address, getPageSize(), MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(address, getPageSize(), memoryTag);
         }
     }
 

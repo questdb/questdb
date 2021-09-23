@@ -31,7 +31,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.str.LPSZ;
 
 public class MemoryPMAImpl extends MemoryPARWImpl implements MemoryMAR {
@@ -40,7 +39,6 @@ public class MemoryPMAImpl extends MemoryPARWImpl implements MemoryMAR {
     private long fd = -1;
     private long pageAddress = 0;
     private int mappedPage;
-    private int memoryTag = MemoryTag.MMAP_DEFAULT;
 
     public MemoryPMAImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag) {
         of(ff, name, pageSize, memoryTag);

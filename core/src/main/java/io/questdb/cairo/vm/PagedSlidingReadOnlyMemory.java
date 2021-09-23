@@ -30,7 +30,6 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
 
 public class PagedSlidingReadOnlyMemory extends MemoryPARWImpl {
     private static final Log LOG = LogFactory.getLog(PagedSlidingReadOnlyMemory.class);
@@ -40,7 +39,6 @@ public class PagedSlidingReadOnlyMemory extends MemoryPARWImpl {
     private long pageAddress;
     private int pageIndex;
     private MemoryMA parent;
-    private int memoryTag = MemoryTag.MMAP_DEFAULT;
 
     @Override
     public void close() {

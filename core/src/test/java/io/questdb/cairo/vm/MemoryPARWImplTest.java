@@ -58,7 +58,7 @@ public class MemoryPARWImplTest {
     @Test
     public void testBinSequenceOnEdge() {
         final Rnd rnd = new Rnd();
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(32, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(32, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             TestRecord.ArrayBinarySequence seq = new TestRecord.ArrayBinarySequence();
             int N = 33;
             int O = 10;
@@ -108,7 +108,7 @@ public class MemoryPARWImplTest {
     @Test
     public void testBool() {
         Rnd rnd = new Rnd();
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             int n = 120;
 
             for (int i = 0; i < n; i++) {
@@ -126,7 +126,7 @@ public class MemoryPARWImplTest {
     @Test
     public void testBoolRnd() {
         Rnd rnd = new Rnd();
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             int n = 120;
             long o = 0;
 
@@ -145,7 +145,7 @@ public class MemoryPARWImplTest {
     @Test
     public void testBulkCopy() {
         int N = 1000;
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(128, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(128, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             for (int i = 0; i < N; i++) {
                 mem.putShort((short) i);
             }
@@ -169,7 +169,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testByte() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             int n = 120;
 
             for (int i = 0; i < n; i++) {
@@ -185,7 +185,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testByteRandom() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(128, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(128, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             long offset1 = 512;
             mem.putByte(offset1, (byte) 3);
             mem.putByte(offset1 + 1, (byte) 4);
@@ -199,7 +199,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testByteRnd() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             int n = 120;
 
             long o = 0;
@@ -216,7 +216,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testChar() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(7, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(7, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             char n = 999;
             long o = 0;
             for (char i = n; i > 0; i--) {
@@ -235,7 +235,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testCharWithOffset() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(7, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(7, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             char n = 999;
             long o = 0;
             for (char i = n; i > 0; i--) {
@@ -253,7 +253,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testDouble() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             Rnd rnd = new Rnd();
             int n = 999;
 
@@ -278,7 +278,7 @@ public class MemoryPARWImplTest {
     @Test
     public void testDoubleCompatibility() {
         long pageSize = 64;
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putInt(10);
             mem.putDouble(8980980284.22234);
             mem.putDoubleBytes(8979283749.72983477);
@@ -289,7 +289,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testDoubleRnd() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             Rnd rnd = new Rnd();
             int n = 999;
 
@@ -314,7 +314,7 @@ public class MemoryPARWImplTest {
     @Test
     public void testDoubleRndCompatibility() {
         long pageSize = 64;
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             // prime
             mem.putInt(10, 900);
             mem.putDouble(22, 8980980284.22234);
@@ -326,7 +326,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testEvenPageSize() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(32, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(32, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             assertStrings(mem, false);
         }
     }
@@ -335,7 +335,7 @@ public class MemoryPARWImplTest {
     public void testExtendDoesNotMoveAppendPosition() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             long pageSize = 128;
-            try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+            try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
                 Assert.assertEquals(0, mem.getAppendOffset());
                 Assert.assertEquals(0, mem.getPageCount());
 
@@ -348,7 +348,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testFloat() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             Rnd rnd = new Rnd();
             int n = 999;
 
@@ -371,7 +371,7 @@ public class MemoryPARWImplTest {
     @Test
     public void testFloatCompatibility() {
         long pageSize = 64;
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putFloat(1024f);
             mem.putFloatBytes(2048f);
             assertEquals(1024f, mem.getFloatBytes(0, 0), 0.00001f);
@@ -381,7 +381,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testFloatRnd() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             Rnd rnd = new Rnd();
             int n = 999;
 
@@ -406,7 +406,7 @@ public class MemoryPARWImplTest {
     @Test
     public void testFloatRndCompatibility() {
         long pageSize = 64;
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             // prime
             mem.putByte(10, (byte) 5);
             mem.putFloat(61, 1024f);
@@ -418,7 +418,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testInt() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(7, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(7, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putByte((byte) 1);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -438,7 +438,7 @@ public class MemoryPARWImplTest {
     @Test
     public void testIntCompatibility() {
         long pageSize = 64;
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putInt(1024);
             mem.putIntBytes(2048);
             assertEquals(1024, mem.getIntBytes(0, 0));
@@ -448,7 +448,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testIntRnd() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(7, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(7, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             long o = 1;
             mem.putByte(0, (byte) 1);
             int n = 999;
@@ -470,7 +470,7 @@ public class MemoryPARWImplTest {
     @Test
     public void testIntRndCompatibility() {
         long pageSize = 64;
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             // prime page
             mem.putByte(10, (byte) 22);
             mem.putInt(15, 1024);
@@ -482,7 +482,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testJumpTo() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putByte((byte) 1);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -506,7 +506,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testJumpTo2() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.jumpTo(8);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -523,7 +523,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testJumpTo3() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.jumpTo(256);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -553,7 +553,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testLong256() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(256, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(256, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
             mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
         }
@@ -564,7 +564,7 @@ public class MemoryPARWImplTest {
         long pageSize = 64;
         Rnd rnd = new Rnd();
         Long256Impl sink = new Long256Impl();
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             for (int i = 0; i < 1000; i++) {
                 mem.putLong256(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
             }
@@ -593,7 +593,7 @@ public class MemoryPARWImplTest {
         long pageSize = 64;
         Rnd rnd = new Rnd();
         Long256Impl sink = new Long256Impl();
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             long offset = 0;
             for (int i = 0; i < 1000; i++) {
                 mem.putLong256(offset, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
@@ -620,7 +620,7 @@ public class MemoryPARWImplTest {
         long pageSize = 128;
         Long256Impl long256 = new Long256Impl();
         Long256Impl long256a = new Long256Impl();
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
 
             mem.putLong256(expected);
             mem.putLong256(expected);
@@ -649,7 +649,7 @@ public class MemoryPARWImplTest {
         long pageSize = 64;
         final int N = 1000;
         Long256Impl long256 = new Long256Impl();
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             for (int i = 0; i < N; i++) {
                 mem.putLong256((CharSequence) null);
             }
@@ -674,7 +674,7 @@ public class MemoryPARWImplTest {
         long pageSize = 64;
         Rnd rnd = new Rnd();
         Long256Impl long256 = new Long256Impl();
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             for (int i = 0; i < 1000; i++) {
                 long256.fromRnd(rnd);
                 mem.putLong256(long256);
@@ -699,7 +699,7 @@ public class MemoryPARWImplTest {
         Rnd rnd = new Rnd();
         long offset = 0;
         Long256Impl long256 = new Long256Impl();
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             for (int i = 0; i < 1000; i++) {
                 long256.fromRnd(rnd);
                 mem.putLong256(offset, long256);
@@ -725,7 +725,7 @@ public class MemoryPARWImplTest {
         long pageSize = 128;
         Long256Impl long256 = new Long256Impl();
         Long256Impl long256a = new Long256Impl();
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putLong256(expected);
             mem.putLong256(expected);
             mem.getLong256(0, long256);
@@ -782,7 +782,7 @@ public class MemoryPARWImplTest {
     @Test
     public void testLongCompatibility() {
         long pageSize = 64;
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putLong(8980980284302834L);
             mem.putLongBytes(897928374972983477L);
             assertEquals(8980980284302834L, mem.getLongBytes(0, 0, pageSize));
@@ -792,7 +792,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testLongEven() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             int n = 999;
             for (int i = n; i > 0; i--) {
                 mem.putLong(i);
@@ -808,7 +808,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testLongOdd() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putByte((byte) 1);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -828,7 +828,7 @@ public class MemoryPARWImplTest {
     @Test
     public void testLongRndCompatibility() {
         long pageSize = 64;
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putLong(33, 8980980284302834L);
             mem.putLongBytes(12, 897928374972983477L);
             assertEquals(8980980284302834L, mem.getLongBytes(0, 33, pageSize));
@@ -838,7 +838,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testLongRndEven() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             int n = 999;
             long o = 0;
             for (int i = n; i > 0; i--) {
@@ -856,7 +856,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testLongRndOdd() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putByte(0, (byte) 1);
             int n = 999;
             long o = 1;
@@ -880,7 +880,7 @@ public class MemoryPARWImplTest {
         int pageSize = 256;
         int maxPages = 3;
         int sz = 256 * 3;
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, maxPages)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, maxPages, MemoryTag.NATIVE_DEFAULT)) {
             Assert.assertEquals(pageSize, mem.getExtendSegmentSize());
             int n = 0;
             try {
@@ -903,7 +903,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testNullBin() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(1024, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             final TestBinarySequence binarySequence = new TestBinarySequence();
             final byte[] buf = new byte[0];
             binarySequence.of(buf);
@@ -923,21 +923,21 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testOffPageSize() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(12, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(12, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             assertStrings(mem, true);
         }
     }
 
     @Test
     public void testOkSize() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(1024, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             assertStrings(mem, false);
         }
     }
 
     @Test
     public void testShort() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(7, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(7, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putByte((byte) 1);
             short n = 999;
             for (short i = n; i > 0; i--) {
@@ -957,7 +957,7 @@ public class MemoryPARWImplTest {
     @Test
     public void testShortCompatibility() {
         long pageSize = 64;
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putShort((short) 1024);
             mem.putShortBytes((short) 2048);
             assertEquals(1024, mem.getShortBytes(0, 0, pageSize));
@@ -967,7 +967,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testShortRnd() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(7, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(7, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             long o = 1;
             mem.putByte(0, (byte) 1);
             short n = 999;
@@ -989,7 +989,7 @@ public class MemoryPARWImplTest {
     @Test
     public void testShortRndCompatibility() {
         long pageSize = 64;
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             // prime the page
             mem.putShort(5, (short) 3);
             mem.putShort(11, (short) 1024);
@@ -1001,7 +1001,7 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testSkip() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             mem.putByte((byte) 1);
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -1022,14 +1022,14 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testSmallEven() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(2, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(2, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             assertStrings(mem, false);
         }
     }
 
     @Test
     public void testSmallOdd() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(2, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(2, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             assertStrings(mem, true);
         }
     }
@@ -1122,7 +1122,7 @@ public class MemoryPARWImplTest {
         final long bufAddr = Unsafe.malloc(buffer.length, MemoryTag.NATIVE_DEFAULT);
         binarySequence.of(buffer);
 
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(mem1Size, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(mem1Size, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             Assert.assertEquals(Numbers.ceilPow2(mem1Size), mem.getExtendSegmentSize());
             long offset1 = 0;
             for (int i = 0; i < n; i++) {
@@ -1148,7 +1148,7 @@ public class MemoryPARWImplTest {
                 offset1 += 8 + sz;
             }
 
-            try (MemoryPARWImpl mem2 = new MemoryPARWImpl(mem2Size, Integer.MAX_VALUE)) {
+            try (MemoryPARWImpl mem2 = new MemoryPARWImpl(mem2Size, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
                 Assert.assertEquals(Numbers.ceilPow2(mem2Size), mem2.getExtendSegmentSize());
                 offset1 = 0;
                 for (int i = 0; i < n; i++) {
@@ -1204,7 +1204,7 @@ public class MemoryPARWImplTest {
         Rnd rnd = new Rnd();
         int N = 1000;
         final int M = 4;
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE)) {
+        try (MemoryPARWImpl mem = new MemoryPARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             long o = offset;
             for (int i = 0; i < N; i++) {
                 int flag = rnd.nextInt();

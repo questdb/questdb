@@ -29,9 +29,12 @@ public final class MemoryTag {
     public static final int NATIVE_DEFAULT = 1;
     public static final int MMAP_O3 = 2;
     public static final int NATIVE_O3 = 3;
-    public static final int NATIVE_TABLE_WRITER = 4;
+    public static final int NATIVE_RECORD_CHAIN = 4;
     public static final int MMAP_TABLE_WRITER = 5;
-    public static final int NATIVE_TABLE_READER = 6;
+    public static final int NATIVE_TREE_CHAIN = 6;
     public static final int MMAP_TABLE_READER = 7;
-    public static final int SIZE = MMAP_TABLE_READER + 1;
+    public static final int NATIVE_COMPACT_MAP = 8;
+    public static final int NATIVE_FAST_MAP = 9;
+    public static final int NATIVE_LONG_LIST = 10;
+    public static final int SIZE = NATIVE_LONG_LIST + 1;
 }
