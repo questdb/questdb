@@ -37,4 +37,28 @@ public final class MemoryTag {
     public static final int NATIVE_FAST_MAP = 9;
     public static final int NATIVE_LONG_LIST = 10;
     public static final int SIZE = NATIVE_LONG_LIST + 1;
+
+    private static final IntObjHashMap<String> tagNameMap = new IntObjHashMap<>();
+
+    public static String nameOf(int tag) {
+        final int index = tagNameMap.keyIndex(tag);
+        if (index > -1) {
+            return "Unknown";
+        }
+        return tagNameMap.valueAtQuick(index);
+    }
+
+    static {
+        tagNameMap.put(MMAP_DEFAULT, "MMAP_DEFAULT");
+        tagNameMap.put(NATIVE_DEFAULT, "NATIVE_DEFAULT");
+        tagNameMap.put(MMAP_O3, "MMAP_O3");
+        tagNameMap.put(NATIVE_O3, "NATIVE_O3");
+        tagNameMap.put(NATIVE_RECORD_CHAIN, "NATIVE_RECORD_CHAIN");
+        tagNameMap.put(MMAP_TABLE_WRITER, "MMAP_TABLE_WRITER");
+        tagNameMap.put(NATIVE_TREE_CHAIN, "NATIVE_TREE_CHAIN");
+        tagNameMap.put(MMAP_TABLE_READER, "MMAP_TABLE_READER");
+        tagNameMap.put(NATIVE_COMPACT_MAP, "NATIVE_COMPACT_MAP");
+        tagNameMap.put(NATIVE_FAST_MAP, "NATIVE_FAST_MAP");
+        tagNameMap.put(NATIVE_LONG_LIST, "NATIVE_LONG_LIST");
+    }
 }
