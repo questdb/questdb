@@ -25,12 +25,9 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cutlass.line.LineProtoSender;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import java.util.function.Supplier;
@@ -61,28 +58,16 @@ abstract class LineUdpInsertGeoHashTest extends LineUdpInsertTest {
     public abstract void testNullGeoHash() throws Exception;
 
     protected static void assertGeoHash(int columnBits, int lineGeoSizeChars, int numLines, String expected) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
-                    try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-                        CairoTestUtils.create(model.col(targetColumnName, ColumnType.getGeoHashTypeWithBits(columnBits)).timestamp());
-                    }
-                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "pleasure")) {
-                        writer.warmUp();
-                    }
-                    receiver.start();
+        assertType(tableName,
+                targetColumnName,
+                ColumnType.getGeoHashTypeWithBits(columnBits),
+                expected,
+                sender -> {
                     Supplier<String> rnd = randomGeoHashGenerator(lineGeoSizeChars);
-                    try (LineProtoSender sender = createLineProtoSender()) {
-                        for (int i = 0; i < numLines; i++) {
-                            sender.metric(tableName).field(targetColumnName, rnd.get()).$((long) ((i + 1) * 1e9));
-                        }
-                        sender.flush();
+                    for (int i = 0; i < numLines; i++) {
+                        sender.metric(tableName).field(targetColumnName, rnd.get()).$((long) ((i + 1) * 1e9));
                     }
-
-                    assertReader(tableName, expected);
-                }
-            }
-        });
+                });
     }
 
     private static Supplier<String> randomGeoHashGenerator(int chars) {
