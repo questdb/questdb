@@ -282,7 +282,7 @@ public class LineProtoLexerTest {
         assertThat("违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n", "违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n");
     }
 
-    private void assertError(CharSequence line, int state, int code, int position) throws LineProtoException {
+    protected void assertError(CharSequence line, int state, int code, int position) throws LineProtoException {
         byte[] bytes = line.toString().getBytes(StandardCharsets.UTF_8);
         long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
@@ -306,11 +306,11 @@ public class LineProtoLexerTest {
         }
     }
 
-    private void assertThat(CharSequence expected, CharSequence line) throws LineProtoException {
+    protected void assertThat(CharSequence expected, CharSequence line) throws LineProtoException {
         assertThat(expected, line.toString().getBytes(StandardCharsets.UTF_8));
     }
 
-    private void assertThat(CharSequence expected, byte[] line) throws LineProtoException {
+    protected void assertThat(CharSequence expected, byte[] line) throws LineProtoException {
         final int len = line.length;
         long mem = Unsafe.malloc(line.length, MemoryTag.NATIVE_DEFAULT);
         try {
