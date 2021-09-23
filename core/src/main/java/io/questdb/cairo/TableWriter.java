@@ -1558,8 +1558,13 @@ public class TableWriter implements Closeable {
                 // O3 mode and there are some rows.
                 masterRef--;
                 setO3AppendPosition(getO3RowCount());
+            } else {
+                // Cancelling first row in o3, reverting back to non-o3
+                setO3AppendPosition(0);
+                masterRef--;
+                o3MasterRef = -1;
+                rowFunction = switchPartitionFunction;
             }
-            // We're in O3 mode but no rows added yet. Return.
             return;
         }
 
