@@ -480,8 +480,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             try (MemoryARW rwTx = Vm.getSmallARWInstance(ff, path.$())) {
                 if (rwTx.getInt(META_OFFSET_VERSION) > version - 1) {
                     rwTx.putInt(META_OFFSET_VERSION, version - 1);
-                    rwTx.jumpTo(fileSize);
                 }
+                rwTx.jumpTo(fileSize);
             }
         } finally {
             path.trimTo(pathLen);

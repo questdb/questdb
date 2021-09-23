@@ -34,6 +34,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import org.intellij.lang.annotations.JdkConstants;
 
 import static io.questdb.cairo.ColumnType.VERSION_THAT_ADDED_TABLE_ID;
 import static io.questdb.cairo.TableUtils.*;
@@ -619,6 +620,6 @@ public class EngineMigration {
         setByVersion(VERSION_TX_STRUCT_UPDATE_1, MigrationActions::rebuildTransactionFile, 0);
         setByVersion(VERSION_TBL_META_COMMIT_LAG, MigrationActions::addTblMetaCommitLag, 0);
         setByVersion(VERSION_COLUMN_TYPE_ENCODING_CHANGED, MigrationActions::updateColumnTypeIds, 1);
-        setByVersion(VERSION_VAR_COLUMN_CHANGED, MigrationActions::bumpVarColumnIndex, 1);
+//        setByVersion(VERSION_VAR_COLUMN_CHANGED, MigrationActions::bumpVarColumnIndex, 1);
     }
 }
