@@ -36,6 +36,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class MemoryLeakTest extends AbstractGriffinTest {
@@ -67,9 +68,19 @@ public class MemoryLeakTest extends AbstractGriffinTest {
                     }
                 }
             } finally {
+                Assert.assertEquals(Unsafe.getMemUsed(),  getUsed());
                 engine.clear();
+                Assert.assertEquals(Unsafe.getMemUsed(),  getUsed());
             }
         });
+    }
+
+    private long getUsed() {
+        long used = 0;
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+           used += Unsafe.getMemUsedByTag(i);
+        }
+        return used;
     }
 
     private void populateUsersTable(CairoEngine engine, int n) throws SqlException {
