@@ -36,7 +36,9 @@ public final class MemoryTag {
     public static final int NATIVE_COMPACT_MAP = 8;
     public static final int NATIVE_FAST_MAP = 9;
     public static final int NATIVE_LONG_LIST = 10;
-    public static final int SIZE = NATIVE_LONG_LIST + 1;
+    public static final int NATIVE_HTTP_CONN = 11;
+    public static final int NATIVE_PGW_CONN = 12;
+    public static final int SIZE = NATIVE_PGW_CONN + 1;
 
     private static final IntObjHashMap<String> tagNameMap = new IntObjHashMap<>();
 
@@ -60,5 +62,7 @@ public final class MemoryTag {
         tagNameMap.put(NATIVE_COMPACT_MAP, "NATIVE_COMPACT_MAP");
         tagNameMap.put(NATIVE_FAST_MAP, "NATIVE_FAST_MAP");
         tagNameMap.put(NATIVE_LONG_LIST, "NATIVE_LONG_LIST");
+        tagNameMap.put(NATIVE_HTTP_CONN, "NATIVE_HTTP_CONN");
+        tagNameMap.put(NATIVE_PGW_CONN, "NATIVE_PGW_CONN");
     }
 }

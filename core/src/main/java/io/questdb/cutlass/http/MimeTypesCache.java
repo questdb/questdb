@@ -43,11 +43,11 @@ public final class MimeTypesCache extends CharSequenceObjHashMap<CharSequence> {
             throw HttpException.instance("wrong file size [file=").put(path).put(", size=").put(fileSize).put(']');
         }
 
-        long buffer = Unsafe.malloc(fileSize, MemoryTag.NATIVE_DEFAULT);
+        long buffer = Unsafe.malloc(fileSize, MemoryTag.NATIVE_HTTP_CONN);
         long read = ff.read(fd, buffer, fileSize, 0);
         try {
             if (read != fileSize) {
-                Unsafe.free(buffer, fileSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(buffer, fileSize, MemoryTag.NATIVE_HTTP_CONN);
                 throw HttpException.instance("could not read [file=").put(path).put(", size=").put(fileSize).put(", read=").put(read).put(", errno=").put(ff.errno()).put(']');
             }
         } finally {
@@ -110,7 +110,7 @@ public final class MimeTypesCache extends CharSequenceObjHashMap<CharSequence> {
 
             }
         } finally {
-            Unsafe.free(buffer, fileSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(buffer, fileSize, MemoryTag.NATIVE_HTTP_CONN);
         }
     }
 }

@@ -43,7 +43,7 @@ public class HttpSqlExecutionInterruptor implements SqlExecutionInterruptor, Clo
         this.nf = configuration.getNetworkFacade();
         this.nIterationsPerCheck = configuration.getCountOfIterationsPerCheck();
         this.bufferSize = configuration.getBufferSize();
-        buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
     }
 
     @Override
@@ -90,7 +90,7 @@ public class HttpSqlExecutionInterruptor implements SqlExecutionInterruptor, Clo
 
     @Override
     public void close() {
-        Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_HTTP_CONN);
         buffer = 0;
         fd = -1;
     }
