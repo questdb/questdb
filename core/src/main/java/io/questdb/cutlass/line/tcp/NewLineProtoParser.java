@@ -425,11 +425,6 @@ public class NewLineProtoParser implements Closeable {
         private boolean parse(byte last, int valueLen) {
             switch (last) {
                 case 'i':
-                    if (valueLen > 3 && value.charAt(0) == '0' && (value.charAt(1) | 32) == 'x') {
-                        value.decHi(); // remove 'i'
-                        type = ENTITY_TYPE_LONG256;
-                        return true;
-                    }
                     if (valueLen > 1 && value.charAt(1) != 'x') {
                         try {
                             charSeq.of(value.getLo(), value.getHi() - 1);
@@ -439,6 +434,11 @@ public class NewLineProtoParser implements Closeable {
                         } catch (NumericException notANumber) {
                             type = ENTITY_TYPE_SYMBOL;
                         }
+                        return true;
+                    }
+                    if (valueLen > 3 && value.charAt(0) == '0' && (value.charAt(1) | 32) == 'x') {
+                        value.decHi(); // remove 'i'
+                        type = ENTITY_TYPE_LONG256;
                         return true;
                     }
                     type = ENTITY_TYPE_SYMBOL;
