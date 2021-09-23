@@ -25,9 +25,6 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
-import io.questdb.cutlass.line.LineProtoSender;
-import io.questdb.std.Os;
-import io.questdb.test.tools.TestUtils;
 
 public class LineUdpInsertLongGeoHashTest extends LineUdpInsertGeoHashTest {
     @Override
@@ -58,46 +55,36 @@ public class LineUdpInsertLongGeoHashTest extends LineUdpInsertGeoHashTest {
 
     @Override
     public void testTableHasGeoHashMessageDoesNot() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
-                    createTable(engine, 57);
-                    receiver.start();
-                    try (LineProtoSender sender = createLineProtoSender()) {
-                        sender.metric(tableName).field("carrots", "9").$(1000000000L);
-                        sender.metric(tableName).field("carrots", "4").$(2000000000L);
-                        sender.metric(tableName).field("carrots", "j").$(3000000000L);
-                        sender.metric(tableName).field("onions", "hey").$(5000000000L);
-                        sender.metric(tableName).field("carrots", "k").$(4000000000L);
-                        sender.flush();
-                    }
-                    Os.sleep(50); // let things settle
-                    assertReader(engine, tableName,
-                            "geohash\ttimestamp\tcarrots\tonions\n" +
-                                    "\t1970-01-01T00:00:01.000000Z\t9\t\n" +
-                                    "\t1970-01-01T00:00:02.000000Z\t4\t\n" +
-                                    "\t1970-01-01T00:00:03.000000Z\tj\t\n" +
-                                    "\t1970-01-01T00:00:05.000000Z\t\they\n",
-                            "carrots", "onions");
-                }
-            }
-        });
+        assertType(tableName,
+                targetColumnName,
+                ColumnType.getGeoHashTypeWithBits(57),
+                "geohash\ttimestamp\tcarrots\tonions\n" +
+                        "\t1970-01-01T00:00:01.000000Z\t9\t\n" +
+                        "\t1970-01-01T00:00:02.000000Z\t4\t\n" +
+                        "\t1970-01-01T00:00:03.000000Z\tj\t\n" +
+                        "\t1970-01-01T00:00:05.000000Z\t\they\n",
+                sender -> {
+                    sender.metric(tableName).field("carrots", "9").$(1000000000L);
+                    sender.metric(tableName).field("carrots", "4").$(2000000000L);
+                    sender.metric(tableName).field("carrots", "j").$(3000000000L);
+                    sender.metric(tableName).field("onions", "hey").$(5000000000L);
+                    sender.metric(tableName).field("carrots", "k").$(4000000000L);
+                },
+                "carrots", "onions"
+        );
     }
 
     @Override
     public void testExcessivelyLongGeoHashesAreTruncated() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
-                    createTable(engine, 57);
-                    receiver.start();
-                    sendGeoHashLine("9v1s8hm7wpkssv1h");
-                    assertReader(engine, tableName,
-                            "geohash\ttimestamp\n" +
-                                    "010011101100001110000100010000100110011111100101011001011\t1970-01-01T00:00:01.000000Z\n");
+        assertType(tableName,
+                targetColumnName,
+                ColumnType.getGeoHashTypeWithBits(57),
+                "geohash\ttimestamp\n" +
+                        "010011101100001110000100010000100110011111100101011001011\t1970-01-01T00:00:01.000000Z\n",
+                sender -> {
+                    sender.metric(tableName).field(targetColumnName, "9v1s8hm7wpkssv1h").$(1_000_000_000);
                 }
-            }
-        });
+        );
     }
 
     @Override
@@ -115,35 +102,29 @@ public class LineUdpInsertLongGeoHashTest extends LineUdpInsertGeoHashTest {
 
     @Override
     public void testWrongCharGeoHashes() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
-                    createTable(engine, 58);
-                    receiver.start();
-                    sendGeoHashLine("sp018sp0!18*");
-                    assertReader(engine, tableName,
-                            "geohash\ttimestamp\n" +
-                                    "\t1970-01-01T00:00:01.000000Z\n");
+        assertType(tableName,
+                targetColumnName,
+                ColumnType.getGeoHashTypeWithBits(58),
+                "geohash\ttimestamp\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n",
+                sender -> {
+                    sender.metric(tableName).field(targetColumnName, "sp018sp0!18*").$(1_000_000_000);
                 }
-            }
-        });
+        );
     }
 
     @Override
     public void testNullGeoHash() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
-                    createTable(engine, 30);
-                    receiver.start();
-                    sendGeoHashLine("");
-                    sendGeoHashLine("null");
-                    assertReader(engine, tableName,
-                            "geohash\ttimestamp\n" +
-                                    "\t1970-01-01T00:00:01.000000Z\n" +
-                                    "\t1970-01-01T00:00:01.000000Z\n");
+        assertType(tableName,
+                targetColumnName,
+                ColumnType.getGeoHashTypeWithBits(57),
+                "geohash\ttimestamp\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n",
+                sender -> {
+                    sender.metric(tableName).field(targetColumnName, "").$(1_000_000_000);
+                    sender.metric(tableName).field(targetColumnName, "null").$(1_000_000_000);
                 }
-            }
-        });
+        );
     }
 }

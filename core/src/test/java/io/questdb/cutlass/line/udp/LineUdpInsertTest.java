@@ -25,16 +25,18 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoSender;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Os;
-import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
-import java.util.concurrent.locks.LockSupport;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 public abstract class LineUdpInsertTest extends AbstractCairoTest {
 
@@ -56,42 +58,55 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
         return new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 1024, 1);
     }
 
-    protected static void assertReader(CairoEngine engine, String tableName, String expected) {
-        assertReader(engine, tableName, expected, (String[]) null);
+    protected static void assertReader(String tableName, String expected) {
+        assertReader(tableName, expected, (String[]) null);
     }
 
-    protected static void assertReader(CairoEngine engine, String tableName, String expected, String... expectedExtraStringColumns) {
-        try (Path path = new Path()) {
-            int millis = 2000;
-            while (engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName) != TableUtils.TABLE_EXISTS && millis-- > 0) {
-                LockSupport.parkNanos(1000000L); // 1 milli
+    protected static void assertReader(String tableName, String expected, String... expectedExtraStringColumns) {
+        try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), tableName)) {
+            TestUtils.assertReader(expected, reader, sink);
+            if (expectedExtraStringColumns != null) {
+                TableReaderMetadata meta = reader.getMetadata();
+                Assert.assertEquals(2 + expectedExtraStringColumns.length, meta.getColumnCount());
+                for (String colName : expectedExtraStringColumns) {
+                    Assert.assertEquals(ColumnType.STRING, meta.getColumnType(colName));
+                }
             }
         }
-        int numLines = expected.split("[\n]").length - 1;
-        int attempts = 5000;
-        for (; attempts > 0; attempts--) {
-            try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), tableName)) {
-                for (int matchLinesAttemps = 28_02_78; matchLinesAttemps > 0; matchLinesAttemps--) {
-                    if (reader.size() >= numLines) {
-                        break;
+    }
+
+    protected static void assertType(String tableName,
+                                     String targetColumnName,
+                                     int columnType,
+                                     String expected,
+                                     Consumer<LineProtoSender> senderConsumer,
+                                     String... expectedExtraStringColumns) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                final SOCountDownLatch waitForData = new SOCountDownLatch(1);
+                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                    if (event == PoolListener.EV_RETURN && tableName.equals(name)) {
+                        waitForData.countDown();
                     }
-                    LockSupport.parkNanos(10);
-                    reader.reload();
-                }
-                TestUtils.assertReader(expected, reader, sink);
-                if (expectedExtraStringColumns != null) {
-                    TableReaderMetadata meta = reader.getMetadata();
-                    Assert.assertEquals(2 + expectedExtraStringColumns.length, meta.getColumnCount());
-                    for (String colName : expectedExtraStringColumns) {
-                        Assert.assertEquals(ColumnType.STRING, meta.getColumnType(colName));
+                });
+                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
+                    if (columnType != ColumnType.UNDEFINED) {
+                        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
+                            CairoTestUtils.create(model.col(targetColumnName, columnType).timestamp());
+                        }
                     }
+                    receiver.start();
+                    try (LineProtoSender sender = createLineProtoSender()) {
+                        senderConsumer.accept(sender);
+                        sender.flush();
+                    }
+                    Os.sleep(250L); // allow reader to hit the readout
                 }
-                break;
-            } catch (CairoException ignore) {
-                // will try again
-                LockSupport.parkNanos(1000000L); // 1 milli
+                if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
+                    Assert.fail();
+                }
+                assertReader(tableName, expected, expectedExtraStringColumns);
             }
-        }
-        Assert.assertTrue(attempts > 0);
+        });
     }
 }

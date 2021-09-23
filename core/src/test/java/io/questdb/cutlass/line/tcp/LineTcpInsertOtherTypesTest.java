@@ -25,16 +25,10 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.util.concurrent.locks.LockSupport;
 
 public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
     static final String table = "other";
@@ -637,7 +631,6 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                 Assert.assertFalse(disconnected);
             } while (recvBuffer.length() > 0);
             closeContext();
-            allowTimeForTableToBeCreated();
             try (TableReader ignored = new TableReader(new DefaultCairoConfiguration(root), table)) {
                 Assert.fail("table should have not been created");
             } catch (CairoException expected) {
@@ -834,34 +827,14 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         .put('\n');
             }
             recvBuffer = sink.toString();
-
             do {
                 handleContextIO();
                 Assert.assertFalse(disconnected);
             } while (recvBuffer.length() > 0);
             closeContext();
-
-            int numLines = expected.split("[\n]").length - 1;
-            allowTimeForTableToBeCreated();
             try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), table)) {
-                for (int attempts = 28_02_78; attempts > 0; attempts--) {
-                    if (reader.size() >= numLines) {
-                        break;
-                    }
-                    LockSupport.parkNanos(1);
-                    reader.reload();
-                }
                 TestUtils.assertReader(expected, reader, sink);
             }
         });
-    }
-
-    private void allowTimeForTableToBeCreated() {
-        try (Path path = new Path()) {
-            int millis = 100;
-            while (engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, table) != TableUtils.TABLE_EXISTS && millis-- > 0) {
-                LockSupport.parkNanos(1000000); // 1 milli
-            }
-        }
     }
 }

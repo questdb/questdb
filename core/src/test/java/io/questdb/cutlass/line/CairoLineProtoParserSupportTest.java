@@ -25,13 +25,16 @@
 package io.questdb.cutlass.line;
 
 import io.questdb.cairo.*;
-import io.questdb.cutlass.line.tcp.NewLineProtoParser;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.udp.AbstractLineProtoReceiver;
 import io.questdb.cutlass.line.udp.LineUdpInsertTest;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
@@ -255,6 +258,12 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
                                 Consumer<LineProtoSender> senderConsumer) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
+                final SOCountDownLatch waitForData = new SOCountDownLatch(1);
+                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                    if (event == PoolListener.EV_RETURN && tableName.equals(name)) {
+                        waitForData.countDown();
+                    }
+                });
                 try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
                     try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
                         CairoTestUtils.create(model
@@ -265,10 +274,15 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
                     receiver.start();
                     try (LineProtoSender sender = createLineProtoSender()) {
                         senderConsumer.accept(sender);
+                        sender.flush();
                     }
-                    assertReader(engine, tableName, expected);
+                    Os.sleep(250L);
+                }
+                if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
+                    Assert.fail();
                 }
             }
+            assertReader(tableName, expected);
         });
     }
 }
