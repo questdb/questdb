@@ -71,6 +71,6 @@ public class UnsupportedProbeTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testSymbol() {
-        new SymbolAdapter(null).probe("xyz");
+        new SymbolAdapter().probe("xyz");
     }
 }

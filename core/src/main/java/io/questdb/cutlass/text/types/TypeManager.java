@@ -42,7 +42,7 @@ public class TypeManager implements Mutable {
     private final ObjectPool<DateUtf8Adapter> dateAdapterPool;
     private final ObjectPool<TimestampUtf8Adapter> timestampUtf8AdapterPool;
     private final ObjectPool<TimestampAdapter> timestampAdapterPool;
-    private final SymbolAdapter symbolAdapter;
+    private final ObjectPool<SymbolAdapter> symbolAdapterPool;
     private final InputFormatConfiguration inputFormatConfiguration;
 
     public TypeManager(
@@ -52,9 +52,9 @@ public class TypeManager implements Mutable {
         this.dateAdapterPool = new ObjectPool<>(() -> new DateUtf8Adapter(utf8Sink), configuration.getDateAdapterPoolCapacity());
         this.timestampUtf8AdapterPool = new ObjectPool<>(() -> new TimestampUtf8Adapter(utf8Sink), configuration.getTimestampAdapterPoolCapacity());
         this.timestampAdapterPool = new ObjectPool<>(TimestampAdapter::new, configuration.getTimestampAdapterPoolCapacity());
+        this.symbolAdapterPool = new ObjectPool<>(SymbolAdapter::new, configuration.getSymbolAdapterPoolCapacity());
         this.inputFormatConfiguration = configuration.getInputFormatConfiguration();
         this.stringAdapter = new StringAdapter(utf8Sink);
-        this.symbolAdapter = new SymbolAdapter(utf8Sink);
         addDefaultProbes();
 
         final ObjList<DateFormat> dateFormats = inputFormatConfiguration.getDateFormats();
@@ -86,6 +86,7 @@ public class TypeManager implements Mutable {
         dateAdapterPool.clear();
         timestampUtf8AdapterPool.clear();
         timestampAdapterPool.clear();
+        symbolAdapterPool.clear();
     }
 
     public InputFormatConfiguration getInputFormatConfiguration() {
@@ -121,7 +122,7 @@ public class TypeManager implements Mutable {
             case ColumnType.STRING:
                 return stringAdapter;
             case ColumnType.SYMBOL:
-                return symbolAdapter;
+                return nextSymbolAdapter(false);
             case ColumnType.LONG256:
                 return Long256Adapter.INSTANCE;
             default:
@@ -142,6 +143,12 @@ public class TypeManager implements Mutable {
 
         TimestampAdapter adapter = timestampAdapterPool.next();
         adapter.of(format, locale);
+        return adapter;
+    }
+
+    public TypeAdapter nextSymbolAdapter(boolean indexed) {
+        SymbolAdapter adapter = symbolAdapterPool.next();
+        adapter.of(indexed);
         return adapter;
     }
 
