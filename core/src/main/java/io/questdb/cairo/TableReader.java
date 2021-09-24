@@ -774,25 +774,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txnScoreboard;
     }
 
-    boolean hasNull(int columnIndex) {
-        for (int i = 0; i < partitionCount; i++) {
-            openPartition(i);
-            final int base = getColumnBase(i);
-            final int index = getPrimaryColumnIndex(base, columnIndex);
-            final MemoryR column = columns.getQuick(index);
-            if (column != null) {
-                final long count = column.getPageSize() / Integer.BYTES;
-                for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
-                    long a = column.getPageAddress(pageIndex);
-                    if (Vect.hasNull(a, count)) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
     private void insertPartition(int partitionIndex, long timestamp) {
         final int columnBase = getColumnBase(partitionIndex);
         final int columnSlotSize = getColumnBase(1);

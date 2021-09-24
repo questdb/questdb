@@ -2905,7 +2905,7 @@ public class TableWriter implements Closeable {
                 if (isMapped) {
                     srcAddress = srcFixMem.addressOf(sourceOffset);
                 } else {
-                    srcAddress = mapRO(ff, srcFixMem.getFd(), sourceLen, sourceOffset);
+                    srcAddress = mapRO(ff, srcFixMem.getFd(), sourceLen, sourceOffset, MemoryTag.MMAP_TABLE_WRITER);
                 }
 
                 long srcVarOffset = Unsafe.getUnsafe().getLong(srcAddress);
@@ -2920,7 +2920,7 @@ public class TableWriter implements Closeable {
 
                 if (!isMapped) {
                     // If memory mapping was mapped specially for this move, close it
-                    ff.munmap(srcAddress, sourceLen);
+                    ff.munmap(srcAddress, sourceLen, MemoryTag.MMAP_TABLE_WRITER);
                 }
 
                 long sourceEndOffset = srcDataMem.getAppendOffset();
@@ -2935,9 +2935,9 @@ public class TableWriter implements Closeable {
                 long sourceAddress = srcDataMem.addressOf(srcFixOffset);
                 Vect.memcpy(sourceAddress, appendAddress, extendedSize);
             } else {
-                long sourceAddress = mapRO(ff, srcDataMem.getFd(), extendedSize, srcFixOffset);
+                long sourceAddress = mapRO(ff, srcDataMem.getFd(), extendedSize, srcFixOffset, MemoryTag.MMAP_TABLE_WRITER);
                 Vect.memcpy(sourceAddress, appendAddress, extendedSize);
-                ff.munmap(sourceAddress, extendedSize);
+                ff.munmap(sourceAddress, extendedSize, MemoryTag.MMAP_TABLE_WRITER);
             }
             srcDataMem.jumpTo(srcFixOffset);
         } else {
@@ -2953,7 +2953,7 @@ public class TableWriter implements Closeable {
             if (isMapped) {
                 address = srcDataMem.addressOf(srcFixOffset);
             } else {
-                address = mapRO(ff, srcDataMem.getFd(), srcFixLen, srcFixOffset);
+                address = mapRO(ff, srcDataMem.getFd(), srcFixLen, srcFixOffset, MemoryTag.MMAP_TABLE_WRITER);
             }
 
             for (long n = 0; n < transientRowsAdded; n++) {
@@ -2962,7 +2962,7 @@ public class TableWriter implements Closeable {
             }
 
             if (!isMapped) {
-                ff.munmap(address, srcFixLen);
+                ff.munmap(address, srcFixLen, MemoryTag.MMAP_TABLE_WRITER);
             }
 
             srcDataMem.jumpTo(srcFixOffset);
