@@ -342,7 +342,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         }
 
         long start = IntervalUtils.parseFloorPartialDate("2021-04-27T08:00:00");
-        long[] testCounts = new long[] {  2 * 1024 * 1024, 16 * 8 * 1024 * 5, 2_000_000 };
+        long[] testCounts = new long[] { 2 * 1024 * 1024, 16 * 8 * 1024 * 5, 2_000_000 };
         for (int c = 0; c < testCounts.length; c++) {
             long idCount = testCounts[c];
 
