@@ -2912,15 +2912,16 @@ public class TableWriter implements Closeable {
                 srcFixOffset = committedTransientRowCount << shl;
             } else {
                 // Var size
+                int indexShl = ColumnType.pow2SizeOf(ColumnType.LONG);
                 final MemoryMAR srcFixMem = getSecondaryColumn(colIndex);
-                long sourceOffset = (committedTransientRowCount) * Long.BYTES;
+                long sourceOffset = committedTransientRowCount << indexShl;
 
                 // the size includes trailing LONG
-                long sourceLen = (transientRowsAdded + 1) * Long.BYTES;
+                long sourceLen = (transientRowsAdded + 1) << indexShl;
                 long dstAppendOffset = o3IndexMem.getAppendOffset();
 
                 // ensure memory is available
-                o3IndexMem.jumpTo(dstAppendOffset + transientRowsAdded * Long.BYTES);
+                o3IndexMem.jumpTo(dstAppendOffset + (transientRowsAdded << indexShl));
                 long srcAddress;
                 boolean isMapped = srcFixMem.isMapped(sourceOffset, sourceLen);
 
@@ -2968,7 +2969,7 @@ public class TableWriter implements Closeable {
             int shl = ColumnType.pow2SizeOf(ColumnType.TIMESTAMP);
             MemoryMAR srcDataMem = getPrimaryColumn(colIndex);
             long srcFixOffset = committedTransientRowCount << shl;
-            long srcFixLen = transientRowsAdded * 128;
+            long srcFixLen = transientRowsAdded << shl;
             boolean isMapped = srcDataMem.isMapped(srcFixOffset, srcFixLen);
             long address;
 
