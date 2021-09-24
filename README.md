@@ -89,27 +89,40 @@ results using the `cpu-only` use case with 6 workers on an AMD Ryzen 3970X:
 The following table shows query execution time of a billion rows run on a
 `c5.metal` instance using 16 of the 96 threads available:
 
-| Query                                                     | Runtime    |
-| --------------------------------------------------------- | ---------- |
-| `SELECT sum(double) FROM 1bn`                             | 0.061 secs |
-| `SELECT tag, sum(double) FROM 1bn`                        | 0.179 secs |
+| Query                                                        | Runtime    |
+| ------------------------------------------------------------ | ---------- |
+| `SELECT sum(double) FROM 1bn`                                | 0.061 secs |
+| `SELECT tag, sum(double) FROM 1bn`                           | 0.179 secs |
 | `SELECT tag, sum(double) FROM 1bn WHERE timestamp in '2019'` | 0.05 secs  |
 
 ## Documentation & resources
 
-- The [QuestDB documentation](https://questdb.io/docs/introduction/) describes
+- [The QuestDB documentation](https://questdb.io/docs/introduction/) describes
   how to run and configure QuestDB with technical references.
 - [Our Slack workspace](https://slack.questdb.io) is a great place for technical
   discussions and to meet other users. :wave:
 - [GitHub discussions](https://github.com/questdb/questdb/discussions) is where
-  our users share ideas for features, ask questions, and show what they've built.
-- [GitHub issues](https://github.com/questdb/questdb/issues) are for bug reports.
-- [The project milestones](https://github.com/questdb/questdb/milestones) lists
-  the tasks and features we're working on for upcoming releases.
-- [Tutorials](https://questdb.io/tutorial/) written by our community members
+  our users share ideas for features, ask questions, and show what they've
+  built.
+- [GitHub issues](https://github.com/questdb/questdb/issues) are for bug
+  reports.
+- [Our project roadmap](https://github.com/questdb/questdb/projects) contains
+  our backlog and a list of tasks for upcoming releases.
+- [Tutorials written by our community](https://questdb.io/tutorial/) members
   show what's possible with QuestDB.
 - [QuestDB on Stack Overflow](https://stackoverflow.com/questions/tagged/questdb)
   has common troubleshooting solutions.
+
+### Deployment
+
+- [An AWS AMI](https://questdb.io/docs/guides/aws-official-ami) is provided via
+  the AWS marketplace.
+- [The Docker deployment](https://questdb.io/docs/get-started/docker) guide
+  shows how to start using the official Docker image.
+- [DigitalOcean](https://questdb.io/docs/guides/digitalocean) droplets can be
+  launched as 1-Click applications on the DigitalOcean marketplace.
+- [Basic Kubernetes](https://questdb.io/docs/guides/kubernetes) documentation
+  describes how to get started using the official Helm chart.
 
 ## Contribute
 
