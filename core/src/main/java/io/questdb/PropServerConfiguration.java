@@ -163,6 +163,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
     private final boolean pgEnabled;
     private final boolean telemetryEnabled;
+    private final boolean telemetryDisableCompletely;
     private final int telemetryQueueCapacity;
     private final LineTcpReceiverConfiguration lineTcpReceiverConfiguration = new PropLineTcpReceiverConfiguration();
     private final IODispatcherConfiguration lineTcpReceiverDispatcherConfiguration = new PropLineTcpReceiverIODispatcherConfiguration();
@@ -671,6 +672,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.txn.scoreboard.entry.count", 16384));
             this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.latestby.queue.capacity", 32));
             this.telemetryEnabled = getBoolean(properties, env, "telemetry.enabled", true);
+            this.telemetryDisableCompletely = getBoolean(properties, env, "telemetry.disable.completely", false);
             this.telemetryQueueCapacity = getInt(properties, env, "telemetry.queue.capacity", 512);
 
             parseBindTo(properties, env, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
@@ -2641,6 +2643,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropTelemetryConfiguration implements TelemetryConfiguration {
+
+        @Override
+        public boolean getDisableCompletely() {
+            return telemetryDisableCompletely;
+        }
 
         @Override
         public boolean getEnabled() {
