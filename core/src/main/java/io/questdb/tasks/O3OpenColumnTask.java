@@ -43,9 +43,7 @@ public class O3OpenColumnTask {
     private long srcTimestampSize;
     private long timestampMergeIndexAddr;
     private long srcOooFixAddr;
-    private long srcOooFixSize;
     private long srcOooVarAddr;
-    private long srcOooVarSize;
     private long srcDataTop;
     private long srcDataMax;
     private long srcDataTxn;
@@ -164,10 +162,6 @@ public class O3OpenColumnTask {
         return srcOooFixAddr;
     }
 
-    public long getSrcOooFixSize() {
-        return srcOooFixSize;
-    }
-
     public long getSrcOooHi() {
         return srcOooHi;
     }
@@ -182,10 +176,6 @@ public class O3OpenColumnTask {
 
     public long getSrcOooVarAddr() {
         return srcOooVarAddr;
-    }
-
-    public long getSrcOooVarSize() {
-        return srcOooVarSize;
     }
 
     public long getSrcTimestampAddr() {
@@ -245,9 +235,7 @@ public class O3OpenColumnTask {
             int columnType,
             long timestampMergeIndexAddr,
             long srcOooFixAddr,
-            long srcOooFixSize,
             long srcOooVarAddr,
-            long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
@@ -287,9 +275,7 @@ public class O3OpenColumnTask {
         this.columnType = columnType;
         this.timestampMergeIndexAddr = timestampMergeIndexAddr;
         this.srcOooFixAddr = srcOooFixAddr;
-        this.srcOooFixSize = srcOooFixSize;
         this.srcOooVarAddr = srcOooVarAddr;
-        this.srcOooVarSize = srcOooVarSize;
         this.srcOooLo = srcOooLo;
         this.srcOooHi = srcOooHi;
         this.srcOooMax = srcOooMax;

@@ -67,9 +67,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcDataTop,
             long srcDataMax,
             long srcOooFixAddr,
-            long srcOooFixSize,
             long srcOooVarAddr,
-            long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
@@ -85,6 +83,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarFd,
             long dstVarAddr,
             long dstVarOffset,
+            long dstVarOffsetEnd,
             long dstVarAdjust,
             long dstVarSize,
             long dstKFd,
@@ -136,16 +135,15 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         srcOooHi,
                         dstFixAddr + dstFixOffset,
                         dstVarAddr,
-                        dstVarOffset
+                        dstVarOffset,
+                        dstVarOffsetEnd
                 );
                 break;
             case O3_BLOCK_O3:
                 copyO3(
                         columnType,
                         srcOooFixAddr,
-                        srcOooFixSize,
                         srcOooVarAddr,
-                        srcOooVarSize,
                         srcOooLo,
                         srcOooHi,
                         dstFixAddr + dstFixOffset,
@@ -158,9 +156,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 copyData(
                         columnType,
                         srcDataFixAddr + srcDataFixOffset,
-                        srcDataFixSize - srcDataFixOffset,
                         srcDataVarAddr + srcDataVarOffset,
-                        srcDataVarSize - srcDataVarOffset,
                         srcDataLo,
                         srcDataHi,
                         dstFixAddr + dstFixOffset,
@@ -228,9 +224,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long srcDataMax = task.getSrcDataMax();
         final long srcDataHi = task.getSrcDataHi();
         final long srcOooFixAddr = task.getSrcOooFixAddr();
-        final long srcOooFixSize = task.getSrcOooFixSize();
         final long srcOooVarAddr = task.getSrcOooVarAddr();
-        final long srcOooVarSize = task.getSrcOooVarSize();
         final long srcOooLo = task.getSrcOooLo();
         final long srcOooHi = task.getSrcOooHi();
         final long srcOooMax = task.getSrcOooMax();
@@ -246,6 +240,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long dstVarFd = task.getDstVarFd();
         final long dstVarAddr = task.getDstVarAddr();
         final long dstVarOffset = task.getDstVarOffset();
+        final long dstVarOffsetEnd = task.getDstVarOffsetEnd();
         final long dstVarAdjust = task.getDstVarAdjust();
         final long dstVarSize = task.getDstVarSize();
         final long dstKFd = task.getDstKFd();
@@ -281,9 +276,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 srcDataTop,
                 srcDataMax,
                 srcOooFixAddr,
-                srcOooFixSize,
                 srcOooVarAddr,
-                srcOooVarSize,
                 srcOooLo,
                 srcOooHi,
                 srcOooMax,
@@ -299,6 +292,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 dstVarFd,
                 dstVarAddr,
                 dstVarOffset,
+                dstVarOffsetEnd,
                 dstVarAdjust,
                 dstVarSize,
                 dstKFd,
@@ -762,9 +756,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     private static void copyData(
             int columnType,
             long srcFixAddr,
-            long srcFixSize,
             long srcVarAddr,
-            long srcVarSize,
             long srcLo,
             long srcHi,
             long dstFixAddr,
@@ -777,9 +769,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             case ColumnType.BINARY:
                 copyVarSizeCol(
                         srcFixAddr,
-                        srcFixSize,
                         srcVarAddr,
-                        srcVarSize,
                         srcLo,
                         srcHi,
                         dstFixAddr,
@@ -807,9 +797,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     private static void copyO3(
             int columnType,
             long srcOooFixAddr,
-            long srcOooFixSize,
             long srcOooVarAddr,
-            long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
             long dstFixAddr,
@@ -825,9 +813,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 // 2  if there are more items behind srcOooHi we can get offset of srcOooHi+1
                 copyVarSizeCol(
                         srcOooFixAddr,
-                        srcOooFixSize,
                         srcOooVarAddr,
-                        srcOooVarSize,
                         srcOooLo,
                         srcOooHi,
                         dstFixAddr,
@@ -877,9 +863,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
 
     private static void copyVarSizeCol(
             long srcFixAddr,
-            long srcFixSize,
             long srcVarAddr,
-            long srcVarSize,
             long srcLo,
             long srcHi,
             long dstFixAddr,
@@ -888,28 +872,23 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVarAdjust
 
     ) {
-        final long lo = O3Utils.findVarOffset(srcFixAddr, srcLo, srcHi, srcVarSize);
-        final long hi;
-        if (srcHi + 1 == srcFixSize / Long.BYTES) {
-            hi = srcVarSize;
-        } else {
-            hi = O3Utils.findVarOffset(srcFixAddr, srcHi + 1, srcFixSize / Long.BYTES, srcVarSize);
-        }
+        final long lo = O3Utils.findVarOffset(srcFixAddr, srcLo);
+        final long hi = O3Utils.findVarOffset(srcFixAddr, srcHi + 1);
         // copy this before it changes
         final long dest = dstVarAddr + dstVarOffset;
         final long len = hi - lo;
         Vect.memcpy(srcVarAddr + lo, dest, len);
-        long offset = dstVarOffset + dstVarAdjust;
+        final long offset = dstVarOffset + dstVarAdjust;
         if (lo == offset) {
-            copyFixedSizeCol(srcFixAddr, srcLo, srcHi, dstFixAddr, 3);
+            copyFixedSizeCol(srcFixAddr, srcLo, srcHi + 1, dstFixAddr, 3);
         } else {
-            O3Utils.shiftCopyFixedSizeColumnData(lo - offset, srcFixAddr, srcLo, srcHi, dstFixAddr);
+            O3Utils.shiftCopyFixedSizeColumnData(lo - offset, srcFixAddr, srcLo, srcHi + 1, dstFixAddr);
         }
     }
 
     private static void mergeCopy(
             int columnType,
-            long mergeIndexAddr,
+            long timestampMergeIndexAddr,
             long srcDataFixAddr,
             long srcDataVarAddr,
             long srcDataLo,
@@ -920,23 +899,24 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcOooHi,
             long dstFixAddr,
             long dstVarAddr,
-            long dstVarOffset
+            long dstVarOffset,
+            long dstVarOffsetEnd
     ) {
         final long rowCount = srcOooHi - srcOooLo + 1 + srcDataHi - srcDataLo + 1;
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
             case ColumnType.GEOBYTE:
-                Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);
                 break;
             case ColumnType.SHORT:
             case ColumnType.CHAR:
             case ColumnType.GEOSHORT:
-                Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);
                 break;
             case ColumnType.STRING:
                 Vect.oooMergeCopyStrColumn(
-                        mergeIndexAddr,
+                        timestampMergeIndexAddr,
                         rowCount,
                         srcDataFixAddr,
                         srcDataVarAddr,
@@ -946,10 +926,13 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstVarAddr,
                         dstVarOffset
                 );
+                // multiple threads could be writing to this location as var index segments overlap,
+                // but they will be writing the same value
+                Unsafe.getUnsafe().putLong(dstFixAddr + rowCount * 8, dstVarOffsetEnd);
                 break;
             case ColumnType.BINARY:
                 Vect.oooMergeCopyBinColumn(
-                        mergeIndexAddr,
+                        timestampMergeIndexAddr,
                         rowCount,
                         srcDataFixAddr,
                         srcDataVarAddr,
@@ -959,29 +942,30 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstVarAddr,
                         dstVarOffset
                 );
+                Unsafe.getUnsafe().putLong(dstFixAddr + rowCount * 8, dstVarOffsetEnd);
                 break;
             case ColumnType.INT:
             case ColumnType.FLOAT:
             case ColumnType.SYMBOL:
             case ColumnType.GEOINT:
-                Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);
                 break;
             case ColumnType.DOUBLE:
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.GEOLONG:
-                Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);
                 break;
             case ColumnType.TIMESTAMP:
                 final boolean designated = ColumnType.isDesignatedTimestamp(columnType);
                 if (designated) {
-                    Vect.oooCopyIndex(mergeIndexAddr, rowCount, dstFixAddr);
+                    Vect.oooCopyIndex(timestampMergeIndexAddr, rowCount, dstFixAddr);
                 } else {
-                    Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                    Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);
                 }
                 break;
             case ColumnType.LONG256:
-                Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount);
                 break;
             default:
                 break;

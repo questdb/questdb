@@ -217,7 +217,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                     try {
                         metadata.createTransitionIndex();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "Incorrect columnCount");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "Invalid metadata at ");
                     }
                 }
             }

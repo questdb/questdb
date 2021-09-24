@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.line.LineProtoSender;
 import io.questdb.test.tools.TestUtils;
 
@@ -76,6 +76,8 @@ public class LineUdpInsertIntGeoHashTest extends LineUdpInsertGeoHashTest {
                                     "\t1970-01-01T00:00:02.000000Z\t4\t\n" +
                                     "\t1970-01-01T00:00:03.000000Z\tj\tyes\n",
                             "location", "in");
+
+                    receiver.halt();
                 }
             }
         });

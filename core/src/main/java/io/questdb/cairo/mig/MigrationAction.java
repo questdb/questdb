@@ -22,12 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.cairo.mig;
 
-public interface TelemetryConfiguration {
-    boolean getDisableCompletely();
-
-    boolean getEnabled();
-
-    int getQueueCapacity();
+@FunctionalInterface
+interface MigrationAction {
+    void migrate(MigrationContext context);
 }

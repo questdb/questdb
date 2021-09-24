@@ -458,7 +458,7 @@ public final class Chars {
         if (value.charAt(0) != '.') {
             return true;
         }
-        return len == 1 || len == 2 && value.charAt(1) != '.';
+        return len == 2 && value.charAt(1) != '.';
     }
 
     public static CharSequence repeat(String s, int times) {
