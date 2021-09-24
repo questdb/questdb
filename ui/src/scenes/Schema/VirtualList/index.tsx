@@ -9,7 +9,7 @@ type Props<DataType> = {
 const VirtualList = <DataType,>({
   items,
   itemRenderer,
-  rowHeight = 40,
+  rowHeight = 30,
 }: Props<DataType>) => {
   const elementRef = useRef<HTMLDivElement>(null)
   const [visibleRange, setVisibleRange] = useState<[number, number]>([0, 0])
@@ -46,7 +46,7 @@ const VirtualList = <DataType,>({
       ref={elementRef}
       style={{ height: "100%", overflowY: "scroll" }}
     >
-      <div style={{ height: rowHeight * items.length, position: "relative" }}>
+      <div style={{ position: "relative" }}>
         <div
           style={{
             height: listViewportHeight,
