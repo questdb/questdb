@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.str.Path;
 
@@ -78,7 +79,7 @@ class SymbolCache implements Closeable {
         FilesFacade ff = configuration.getFilesFacade();
         transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symIndex);
         final int plen = path.length();
-        txMem.partialFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), transientSymCountOffset + Integer.BYTES);
+        txMem.partialFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), transientSymCountOffset + Integer.BYTES, MemoryTag.MMAP_DEFAULT);
         int symCount = txMem.getInt(transientSymCountOffset);
         path.trimTo(plen);
         symMapReader.of(configuration, path, name, symCount);

@@ -76,7 +76,7 @@ public class MemoryPages implements Closeable, Mutable {
         for (int i = 0; i < pages.size(); i++) {
             long address = pages.getQuick(i);
             if (address != 0) {
-                Unsafe.free(address, pageSize);
+                Unsafe.free(address, pageSize, MemoryTag.NATIVE_TREE_CHAIN);
             }
         }
         pages.clear();
@@ -96,7 +96,7 @@ public class MemoryPages implements Closeable, Mutable {
         }
 
         if (index >= pages.size()) {
-            pages.extendAndSet((int) index, Unsafe.malloc(pageSize));
+            pages.extendAndSet((int) index, Unsafe.malloc(pageSize, MemoryTag.NATIVE_TREE_CHAIN));
             LOG.debug().$("new page [size=").$(pageSize).$(']').$();
         }
 

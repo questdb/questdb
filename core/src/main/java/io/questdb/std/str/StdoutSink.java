@@ -25,6 +25,7 @@
 package io.questdb.std.str;
 
 import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 
 import java.io.Closeable;
@@ -35,7 +36,7 @@ public final class StdoutSink extends AbstractCharSink implements Closeable {
 
     private final long stdout = Files.getStdOutFd();
     private final int bufferCapacity = 1024;
-    private final long buffer = Unsafe.malloc(bufferCapacity);
+    private final long buffer = Unsafe.malloc(bufferCapacity, MemoryTag.NATIVE_DEFAULT);
     private final long limit = buffer + bufferCapacity;
     private long ptr = buffer;
 
@@ -81,6 +82,6 @@ public final class StdoutSink extends AbstractCharSink implements Closeable {
     }
 
     private void free() {
-        Unsafe.free(buffer, bufferCapacity);
+        Unsafe.free(buffer, bufferCapacity, MemoryTag.NATIVE_DEFAULT);
     }
 }

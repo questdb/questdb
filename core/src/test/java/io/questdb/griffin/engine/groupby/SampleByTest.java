@@ -422,9 +422,9 @@ public class SampleByTest extends AbstractGriffinTest {
                 int count = 10;
 
                 @Override
-                public long mmap(long fd, long len, long offset, int flags) {
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                     if (count-- > 0) {
-                        return super.mmap(fd, len, offset, flags);
+                        return super.mmap(fd, len, offset, flags, memoryTag);
                     }
                     return -1;
                 }
@@ -3627,9 +3627,9 @@ public class SampleByTest extends AbstractGriffinTest {
                 int count = 4;
 
                 @Override
-                public long mmap(long fd, long len, long offset, int flags) {
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                     if (count-- > 0) {
-                        return super.mmap(fd, len, offset, flags);
+                        return super.mmap(fd, len, offset, flags, memoryTag);
                     }
                     return -1;
                 }
@@ -3676,9 +3676,9 @@ public class SampleByTest extends AbstractGriffinTest {
                 int count = 10;
 
                 @Override
-                public long mmap(long fd, long len, long offset, int flags) {
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                     if (count-- > 0) {
-                        return super.mmap(fd, len, offset, flags);
+                        return super.mmap(fd, len, offset, flags, memoryTag);
                     }
                     return -1;
                 }

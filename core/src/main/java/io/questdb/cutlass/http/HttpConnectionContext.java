@@ -74,7 +74,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         this.multipartContentHeaderParser = new HttpHeaderParser(configuration.getMultipartHeaderBufferSize(), csPool);
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
         this.recvBufferSize = configuration.getRecvBufferSize();
-        this.recvBuffer = Unsafe.malloc(recvBufferSize);
+        this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
         this.responseSink = new HttpResponseSink(configuration);
         this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
@@ -118,7 +118,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         responseSink.close();
         headerParser.close();
         localValueMap.close();
-        Unsafe.free(recvBuffer, recvBufferSize);
+        Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
         if (this.pendingRetry) {
             LOG.error().$("Closed context with retry pending.").$();
         }

@@ -743,7 +743,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
             try {
                 TestUtils.assertConnect(fd, sockaddr, noLinger);
                 byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
-                long bufaddr = Unsafe.malloc(lineDataBytes.length);
+                long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int n = 0; n < lineDataBytes.length; n++) {
                         Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
@@ -751,7 +751,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     int rc = Net.send(fd, bufaddr, lineDataBytes.length);
                     Assert.assertEquals(lineDataBytes.length, rc);
                 } finally {
-                    Unsafe.free(bufaddr, lineDataBytes.length);
+                    Unsafe.free(bufaddr, lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
                 }
             } finally {
                 Net.close(fd);

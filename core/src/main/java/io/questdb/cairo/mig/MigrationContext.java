@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
 
 class MigrationContext {
@@ -66,7 +67,7 @@ class MigrationContext {
     public MemoryMARW createRwMemoryOf(FilesFacade ff, Path path) {
         // re-use same rwMemory
         // assumption that it is re-usable after the close() and then of()  methods called.
-        rwMemory.smallFile(ff, path);
+        rwMemory.smallFile(ff, path, MemoryTag.NATIVE_DEFAULT);
         return rwMemory;
     }
 

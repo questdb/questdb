@@ -28,6 +28,7 @@ import io.questdb.cutlass.line.CachedCharSequence;
 import io.questdb.cutlass.line.CharSequenceCache;
 import io.questdb.cutlass.line.LineProtoLexer;
 import io.questdb.cutlass.line.LineProtoParser;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -44,7 +45,7 @@ public class CutlassLexerTest {
 
     private final static LineProtoLexer lpLexer = new LineProtoLexer(4096);
     private static final byte[] bytes = "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n".getBytes();
-    private static final long mem = Unsafe.malloc(bytes.length);
+    private static final long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()

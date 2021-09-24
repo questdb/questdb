@@ -30,6 +30,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
@@ -68,7 +69,7 @@ public class BinarySearchTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 path.of(root).concat("binsearch.d").$();
-                try (MemoryCMARW appendMem = Vm.getSmallCMARWInstance(FilesFacadeImpl.INSTANCE, path)) {
+                try (MemoryCMARW appendMem = Vm.getSmallCMARWInstance(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT)) {
                     for (int i = 0; i < 100; i++) {
                         for (int j = 0; j < 3; j++) {
                             appendMem.putLong(i);
@@ -76,7 +77,7 @@ public class BinarySearchTest extends AbstractCairoTest {
                     }
 
                     long max = 100 * 3 - 1;
-                    try (MemoryMR mem = Vm.getMRInstance(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
+                    try (MemoryMR mem = Vm.getMRInstance(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES, MemoryTag.MMAP_DEFAULT)) {
                         long index = BinarySearch.find(mem, -20, 0, max, BinarySearch.SCAN_DOWN);
                         Assert.assertEquals(-1, index);
                     }
@@ -89,11 +90,11 @@ public class BinarySearchTest extends AbstractCairoTest {
     public void testFindForwardTwoValues() {
         try (Path path = new Path()) {
             path.of(root).concat("binsearch.d").$();
-            try (MemoryMA appendMem = Vm.getSmallCMARWInstance(FilesFacadeImpl.INSTANCE, path)) {
+            try (MemoryMA appendMem = Vm.getSmallCMARWInstance(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT)) {
                 appendMem.putLong(1);
                 appendMem.putLong(3);
 
-                try (MemoryMR mem = Vm.getMRInstance(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
+                try (MemoryMR mem = Vm.getMRInstance(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES, MemoryTag.MMAP_DEFAULT)) {
                     Assert.assertEquals(0, BinarySearch.find(mem, 2, 0, 1, BinarySearch.SCAN_DOWN));
                 }
             }
@@ -130,11 +131,11 @@ public class BinarySearchTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 path.of(root).concat("binsearch.d").$();
-                try (MemoryMA appendMem = Vm.getSmallCMARWInstance(FilesFacadeImpl.INSTANCE, path)) {
+                try (MemoryMA appendMem = Vm.getSmallCMARWInstance(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT)) {
                     appendMem.putLong(1);
                     appendMem.putLong(3);
 
-                    try (MemoryMR mem = Vm.getMRInstance(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
+                    try (MemoryMR mem = Vm.getMRInstance(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES, MemoryTag.MMAP_DEFAULT)) {
                         Assert.assertEquals(0, BinarySearch.find(mem, 2, 0, 1, BinarySearch.SCAN_UP));
                     }
                 }
@@ -201,7 +202,7 @@ public class BinarySearchTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 path.of(root).concat("binsearch.d").$();
-                try (MemoryA appendMem = Vm.getSmallAInstance(FilesFacadeImpl.INSTANCE, path)) {
+                try (MemoryA appendMem = Vm.getSmallAInstance(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT)) {
                     for (int i = 0; i < distinctValueCount; i++) {
                         for (int j = 0; j < repeatCount; j++) {
                             appendMem.putLong(i);
@@ -209,7 +210,7 @@ public class BinarySearchTest extends AbstractCairoTest {
                     }
 
                     long max = distinctValueCount * repeatCount - 1;
-                    try (MemoryMR mem = Vm.getMRInstance(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES)) {
+                    try (MemoryMR mem = Vm.getMRInstance(FilesFacadeImpl.INSTANCE, path, 400 * Long.BYTES, MemoryTag.MMAP_DEFAULT)) {
                         long index = BinarySearch.find(mem, searchValue, 0, max, scanDirection);
                         if (searchValue > distinctValueCount - 1) {
                             Assert.assertEquals(max, index);
@@ -229,7 +230,7 @@ public class BinarySearchTest extends AbstractCairoTest {
 
     private void testMem256Find(long repeatCount, long searchValue, int distinctValueCount, int scanDirection) {
         long size = distinctValueCount * repeatCount * 16L;
-        long mem = Unsafe.malloc(size);
+        long mem = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < distinctValueCount; i++) {
                 for (int j = 0; j < repeatCount; j++) {
@@ -250,7 +251,7 @@ public class BinarySearchTest extends AbstractCairoTest {
                 }
             }
         } finally {
-            Unsafe.free(mem, size);
+            Unsafe.free(mem, size, MemoryTag.NATIVE_DEFAULT);
         }
     }
 }

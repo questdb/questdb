@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
@@ -109,7 +110,7 @@ class MigrationActions {
 
         // Metadata file should already be backed up
         final MemoryMARW rwMem = migrationContext.getRwMemory();
-        rwMem.of(ff, path, ff.getPageSize(), ff.length(path));
+        rwMem.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_DEFAULT);
 
         // column count
         final int columnCount = rwMem.getInt(TableUtils.META_OFFSET_COUNT);

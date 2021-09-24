@@ -59,7 +59,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
 
     public HttpHeaderParser(int bufferLen, ObjectPool<DirectByteCharSequence> pool) {
         final int sz = Numbers.ceilPow2(bufferLen);
-        this.headerPtr = Unsafe.malloc(sz);
+        this.headerPtr = Unsafe.malloc(sz, MemoryTag.NATIVE_HTTP_CONN);
         this._wptr = headerPtr;
         this.hi = this.headerPtr + sz;
         this.pool = pool;
@@ -108,7 +108,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     @Override
     public void close() {
         if (this.headerPtr != 0) {
-            Unsafe.free(this.headerPtr, this.hi - this.headerPtr);
+            Unsafe.free(this.headerPtr, this.hi - this.headerPtr, MemoryTag.NATIVE_HTTP_CONN);
             this.headerPtr = 0;
             boundaryAugmenter.close();
         }
@@ -470,14 +470,14 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
 
         public BoundaryAugmenter() {
             this.lim = 64;
-            this.lo = this._wptr = Unsafe.malloc(this.lim);
+            this.lo = this._wptr = Unsafe.malloc(this.lim, MemoryTag.NATIVE_HTTP_CONN);
             of0(BOUNDARY_PREFIX);
         }
 
         @Override
         public void close() {
             if (lo > 0) {
-                Unsafe.free(this.lo, this.lim);
+                Unsafe.free(this.lo, this.lim, MemoryTag.NATIVE_HTTP_CONN);
                 this.lo = 0;
             }
         }
@@ -499,9 +499,9 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         }
 
         private void resize(int lim) {
-            Unsafe.free(this.lo, this.lim);
+            Unsafe.free(this.lo, this.lim, MemoryTag.NATIVE_HTTP_CONN);
             this.lim = Numbers.ceilPow2(lim);
-            this.lo = _wptr = Unsafe.malloc(this.lim);
+            this.lo = _wptr = Unsafe.malloc(this.lim, MemoryTag.NATIVE_HTTP_CONN);
             of0(BOUNDARY_PREFIX);
         }
     }

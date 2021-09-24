@@ -48,8 +48,8 @@ public class ZipTest {
             File expected = new File(ZipTest.class.getResource("/zip-test/large.csv").getFile());
 
             final int available = 64 * 1024;
-            long in = Unsafe.malloc(available);
-            long out = Unsafe.malloc(available / 2);
+            long in = Unsafe.malloc(available, MemoryTag.NATIVE_DEFAULT);
+            long out = Unsafe.malloc(available / 2, MemoryTag.NATIVE_DEFAULT);
             try {
                 long strm = Zip.deflateInit();
                 try {
@@ -112,8 +112,8 @@ public class ZipTest {
                     Zip.deflateEnd(strm);
                 }
             } finally {
-                Unsafe.free(in, available);
-                Unsafe.free(out, available / 2);
+                Unsafe.free(in, available, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(out, available / 2, MemoryTag.NATIVE_DEFAULT);
             }
 
 

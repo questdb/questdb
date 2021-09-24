@@ -73,7 +73,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private int columnCountBits;
     private long rowCount;
     private long txn = TableUtils.INITIAL_TXN;
-    private long tempMem8b = Unsafe.malloc(8);
+    private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
     private boolean active;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
@@ -745,7 +745,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void freeTempMem() {
         if (tempMem8b != 0) {
-            Unsafe.free(tempMem8b, 8);
+            Unsafe.free(tempMem8b, 8, MemoryTag.NATIVE_DEFAULT);
             tempMem8b = 0;
         }
     }
@@ -772,25 +772,6 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     TxnScoreboard getTxnScoreboard() {
         return txnScoreboard;
-    }
-
-    boolean hasNull(int columnIndex) {
-        for (int i = 0; i < partitionCount; i++) {
-            openPartition(i);
-            final int base = getColumnBase(i);
-            final int index = getPrimaryColumnIndex(base, columnIndex);
-            final MemoryR column = columns.getQuick(index);
-            if (column != null) {
-                final long count = column.getPageSize() / Integer.BYTES;
-                for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
-                    long a = column.getPageAddress(pageIndex);
-                    if (Vect.hasNull(a, count)) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
     }
 
     private void insertPartition(int partitionIndex, long timestamp) {
@@ -837,9 +818,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             long columnSize
     ) {
         if (mem != null && mem != NullColumn.INSTANCE) {
-            mem.partialFile(ff, path, columnSize);
+            mem.partialFile(ff, path, columnSize, MemoryTag.MMAP_TABLE_READER);
         } else {
-            mem = Vm.getMRInstance(ff, path, columnSize);
+            mem = Vm.getMRInstance(ff, path, columnSize, MemoryTag.MMAP_TABLE_READER);
             columns.setQuick(primaryIndex, mem);
         }
         return mem;

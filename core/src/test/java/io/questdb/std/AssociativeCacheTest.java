@@ -68,7 +68,7 @@ public class AssociativeCacheTest {
     @Test
     public void testImmutableKeys() {
         final AssociativeCache<String> cache = new AssociativeCache<>(8, 8);
-        long mem = Unsafe.malloc(1024);
+        long mem = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
         final DirectByteCharSequence dbcs = new DirectByteCharSequence();
 
         try {
@@ -92,7 +92,7 @@ public class AssociativeCacheTest {
 
             Assert.assertEquals("hello2", cache.peek(dbcs));
         } finally {
-            Unsafe.free(mem, 1024);
+            Unsafe.free(mem, 1024, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

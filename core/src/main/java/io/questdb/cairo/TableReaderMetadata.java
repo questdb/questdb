@@ -56,7 +56,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     public TableReaderMetadata of(Path path, int expectedVersion) {
         this.path.of(path).$();
         try {
-            this.metaMem.smallFile(ff, path);
+            this.metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
             this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             this.columnNameIndexMap.clear();
             TableUtils.validate(ff, metaMem, this.columnNameIndexMap, expectedVersion);
@@ -92,12 +92,12 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         if (address == 0) {
             return;
         }
-        Unsafe.free(address, Unsafe.getUnsafe().getInt(address));
+        Unsafe.free(address, Unsafe.getUnsafe().getInt(address), MemoryTag.NATIVE_DEFAULT);
     }
 
     public void applyTransitionIndex(long pTransitionIndex) {
         // re-open _meta file
-        this.metaMem.smallFile(ff, path);
+        this.metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
         this.columnNameIndexMap.clear();
 
         final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
@@ -199,7 +199,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             transitionMeta = Vm.getMRInstance();
         }
 
-        transitionMeta.smallFile(ff, path);
+        transitionMeta.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
         try (MemoryMR metaMem = transitionMeta) {
 
             tmpValidationMap.clear();
@@ -210,7 +210,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             final long pTransitionIndex;
             final int size = n * 16;
 
-            long index = pTransitionIndex = Unsafe.calloc(size);
+            long index = pTransitionIndex = Unsafe.calloc(size, MemoryTag.NATIVE_DEFAULT);
             Unsafe.getUnsafe().putInt(index, size);
             Unsafe.getUnsafe().putInt(index + 4, columnCount);
             index += 8;

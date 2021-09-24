@@ -175,23 +175,23 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long mmap(long fd, long len, long offset, int flags) {
-        return Files.mmap(fd, len, offset, flags);
+    public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+        return Files.mmap(fd, len, offset, flags, memoryTag);
     }
 
     @Override
-    public long mmap(long fd, long len, long flags, int mode, long baseAddress) {
-        return Files.mmap(fd, len, flags, mode);
+    public long mmap(long fd, long len, long flags, int mode, long baseAddress, int memoryTag) {
+        return Files.mmap(fd, len, flags, mode, memoryTag);
     }
 
     @Override
-    public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode) {
-        return Files.mremap(fd, addr, previousSize, newSize, offset, mode);
+    public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+        return Files.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
     }
 
     @Override
-    public void munmap(long address, long size) {
-        Files.munmap(address, size);
+    public void munmap(long address, long size, int memoryTag) {
+        Files.munmap(address, size, memoryTag);
     }
 
     @Override

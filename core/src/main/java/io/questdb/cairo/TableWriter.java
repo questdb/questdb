@@ -149,7 +149,7 @@ public class TableWriter implements Closeable {
     private long masterRef = 0;
     private long o3MasterRef = -1;
     private boolean removeDirOnCancelRow = true;
-    private long tempMem16b = Unsafe.malloc(16);
+    private long tempMem16b = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
     private int metaSwapIndex;
     private int metaPrevIndex;
     private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFromTodoWriteFailure;
@@ -1349,7 +1349,7 @@ public class TableWriter implements Closeable {
     private static void openMetaFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem) {
         path.concat(META_FILE_NAME).$();
         try {
-            metaMem.smallFile(ff, path);
+            metaMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
         } finally {
             path.trimTo(rootLen);
         }
@@ -1737,16 +1737,16 @@ public class TableWriter implements Closeable {
     private void configureColumn(int type, boolean indexFlag) {
         final MemoryMAR primary = Vm.getMARInstance();
         final MemoryMAR secondary;
-        final MemoryCARW oooPrimary = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE);
+        final MemoryCARW oooPrimary = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         final MemoryCARW oooSecondary;
-        final MemoryCARW oooPrimary2 = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE);
+        final MemoryCARW oooPrimary2 = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         final MemoryCARW oooSecondary2;
         switch (ColumnType.tagOf(type)) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 secondary = Vm.getMARInstance();
-                oooSecondary = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE);
-                oooSecondary2 = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE);
+                oooSecondary = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
+                oooSecondary2 = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
                 break;
             default:
                 secondary = null;
@@ -1792,7 +1792,7 @@ public class TableWriter implements Closeable {
         final int timestampIndex = metadata.getTimestampIndex();
         if (timestampIndex != -1) {
             o3TimestampMem = o3Columns.getQuick(getPrimaryColumnIndex(timestampIndex));
-            o3TimestampMemCpy = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE);
+            o3TimestampMemCpy = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         }
     }
 
@@ -1950,7 +1950,7 @@ public class TableWriter implements Closeable {
 
             // reuse memory column object to create index and close it at the end
             try {
-                ddlMem.smallFile(ff, path);
+                ddlMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
                 BitmapIndexWriter.initKeyMemory(ddlMem, indexValueBlockCapacity);
             } catch (CairoException e) {
                 // looks like we could not create key file properly
@@ -2082,7 +2082,7 @@ public class TableWriter implements Closeable {
 
     private void freeTempMem() {
         if (tempMem16b != 0) {
-            Unsafe.free(tempMem16b, 16);
+            Unsafe.free(tempMem16b, 16, MemoryTag.NATIVE_DEFAULT);
             tempMem16b = 0;
         }
     }
@@ -2209,7 +2209,7 @@ public class TableWriter implements Closeable {
 
                             if (partitionSize > columnTop) {
                                 TableUtils.dFile(path.trimTo(plen), columnName);
-                                roMem.partialFile(ff, path, (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT));
+                                roMem.partialFile(ff, path, (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT), MemoryTag.MMAP_TABLE_WRITER);
                                 indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
                                 indexer.index(roMem, columnTop, partitionSize);
                             }
@@ -2905,7 +2905,7 @@ public class TableWriter implements Closeable {
                 if (isMapped) {
                     srcAddress = srcFixMem.addressOf(sourceOffset);
                 } else {
-                    srcAddress = mapRO(ff, srcFixMem.getFd(), sourceLen, sourceOffset);
+                    srcAddress = mapRO(ff, srcFixMem.getFd(), sourceLen, sourceOffset, MemoryTag.MMAP_TABLE_WRITER);
                 }
 
                 long srcVarOffset = Unsafe.getUnsafe().getLong(srcAddress);
@@ -2920,7 +2920,7 @@ public class TableWriter implements Closeable {
 
                 if (!isMapped) {
                     // If memory mapping was mapped specially for this move, close it
-                    ff.munmap(srcAddress, sourceLen);
+                    ff.munmap(srcAddress, sourceLen, MemoryTag.MMAP_TABLE_WRITER);
                 }
 
                 long sourceEndOffset = srcDataMem.getAppendOffset();
@@ -2935,9 +2935,9 @@ public class TableWriter implements Closeable {
                 long sourceAddress = srcDataMem.addressOf(srcFixOffset);
                 Vect.memcpy(sourceAddress, appendAddress, extendedSize);
             } else {
-                long sourceAddress = mapRO(ff, srcDataMem.getFd(), extendedSize, srcFixOffset);
+                long sourceAddress = mapRO(ff, srcDataMem.getFd(), extendedSize, srcFixOffset, MemoryTag.MMAP_TABLE_WRITER);
                 Vect.memcpy(sourceAddress, appendAddress, extendedSize);
-                ff.munmap(sourceAddress, extendedSize);
+                ff.munmap(sourceAddress, extendedSize, MemoryTag.MMAP_TABLE_WRITER);
             }
             srcDataMem.jumpTo(srcFixOffset);
         } else {
@@ -2953,7 +2953,7 @@ public class TableWriter implements Closeable {
             if (isMapped) {
                 address = srcDataMem.addressOf(srcFixOffset);
             } else {
-                address = mapRO(ff, srcDataMem.getFd(), srcFixLen, srcFixOffset);
+                address = mapRO(ff, srcDataMem.getFd(), srcFixLen, srcFixOffset, MemoryTag.MMAP_TABLE_WRITER);
             }
 
             for (long n = 0; n < transientRowsAdded; n++) {
@@ -2962,7 +2962,7 @@ public class TableWriter implements Closeable {
             }
 
             if (!isMapped) {
-                ff.munmap(address, srcFixLen);
+                ff.munmap(address, srcFixLen, MemoryTag.MMAP_TABLE_WRITER);
             }
 
             srcDataMem.jumpTo(srcFixOffset);
@@ -3466,9 +3466,9 @@ public class TableWriter implements Closeable {
         MemoryMAR mem2 = getSecondaryColumn(i);
 
         try {
-            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), -1);
+            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
             if (mem2 != null) {
-                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), -1);
+                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
             }
         } finally {
             path.trimTo(plen);
@@ -3571,7 +3571,7 @@ public class TableWriter implements Closeable {
                     throw CairoException.instance(0).put("corrupt ").put(path);
                 }
 
-                todoMem.smallFile(ff, path);
+                todoMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
                 this.todoTxn = todoMem.getLong(0);
                 // check if _todo_ file is consistent, if not, we just ignore its contents and reset hash
                 if (todoMem.getLong(24) != todoTxn) {
@@ -4412,7 +4412,7 @@ public class TableWriter implements Closeable {
                 if (metaSwapIndex > 0) {
                     path.put('.').put(metaSwapIndex);
                 }
-                metaMem.smallFile(ff, path.$());
+                metaMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
                 validationMap.clear();
                 validate(ff, metaMem, validationMap, ColumnType.VERSION);
             } finally {

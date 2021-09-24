@@ -4,6 +4,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -31,7 +32,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     long transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symColIndex2);
                     path.of(configuration.getRoot()).concat(tableName);
                     txMem.partialFile(configuration.getFilesFacade(), path.concat(TableUtils.TXN_FILE_NAME).$(),
-                            transientSymCountOffset + Integer.BYTES);
+                            transientSymCountOffset + Integer.BYTES, MemoryTag.MMAP_DEFAULT);
                     cache.of(configuration, path.of(configuration.getRoot()).concat(tableName), "symCol2", symColIndex2);
 
                     TableWriter.Row r = writer.newRow();
@@ -110,7 +111,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symColIndex2);
                     path.of(configuration.getRoot()).concat(tableName);
                     txMem.partialFile(configuration.getFilesFacade(), path.concat(TableUtils.TXN_FILE_NAME).$(),
-                            transientSymCountOffset + Integer.BYTES);
+                            transientSymCountOffset + Integer.BYTES, MemoryTag.MMAP_DEFAULT);
                     cache.of(configuration, path.of(configuration.getRoot()).concat(tableName), "symCol2", symColIndex2);
 
                     Assert.assertEquals(5, txMem.getInt(symCountOffset));

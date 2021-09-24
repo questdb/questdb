@@ -587,7 +587,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         private long _rptr;
 
         private ChunkBuffer(int sz) {
-            bufStart = Unsafe.malloc(sz + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length());
+            bufStart = Unsafe.malloc(sz + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
             bufStartOfData = bufStart + MAX_CHUNK_HEADER_SIZE;
             bufEndOfData = bufStartOfData + sz;
             clear();
@@ -596,7 +596,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         @Override
         public void close() {
             if (0 != bufStart) {
-                Unsafe.free(bufStart, bufEndOfData - bufStart + EOF_CHUNK.length());
+                Unsafe.free(bufStart, bufEndOfData - bufStart + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
                 bufStart = bufEndOfData = _wptr = _rptr = 0;
             }
         }

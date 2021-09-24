@@ -694,7 +694,7 @@ public class GeoHashesTest {
 
     private void testUnsafeFromStringTruncatingNl(CharSequence token, BiFunction<Long, Long, Void> code) {
         final int len = token.length();
-        final long lo = Unsafe.malloc(len);
+        final long lo = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         final long hi = lo + len;
         try {
             sun.misc.Unsafe unsafe = Unsafe.getUnsafe();
@@ -703,7 +703,7 @@ public class GeoHashesTest {
             }
             code.apply(lo, hi);
         } finally {
-            Unsafe.free(lo, len);
+            Unsafe.free(lo, len, MemoryTag.NATIVE_DEFAULT);
         }
     }
 }

@@ -52,6 +52,8 @@ public final class TestUtils {
 
     private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
 
+    private static final long[] memoryUsageByTag = new long[MemoryTag.SIZE];
+
     private TestUtils() {
     }
 
@@ -199,8 +201,8 @@ public final class TestUtils {
 
                     Assert.assertEquals(Files.length(fda), Files.length(fdb));
 
-                    long bufa = Unsafe.malloc(4096);
-                    long bufb = Unsafe.malloc(4096);
+                    long bufa = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
+                    long bufb = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
 
                     long offset = 0;
                     try {
@@ -221,8 +223,8 @@ public final class TestUtils {
                             }
                         }
                     } finally {
-                        Unsafe.free(bufa, 4096);
-                        Unsafe.free(bufb, 4096);
+                        Unsafe.free(bufa, 4096, MemoryTag.NATIVE_DEFAULT);
+                        Unsafe.free(bufb, 4096, MemoryTag.NATIVE_DEFAULT);
                     }
                 } finally {
                     Files.close(fdb);
@@ -240,7 +242,7 @@ public final class TestUtils {
             Assert.assertNotEquals(-1, fda);
 
             try {
-                long bufa = Unsafe.malloc(4096);
+                long bufa = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
                 final long str = toMemory(actual);
                 long offset = 0;
                 long strp = str;
@@ -273,8 +275,8 @@ public final class TestUtils {
 
                     Assert.assertEquals(strp - str, actual.length());
                 } finally {
-                    Unsafe.free(bufa, 4096);
-                    Unsafe.free(str, actual.length());
+                    Unsafe.free(bufa, 4096, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(str, actual.length(), MemoryTag.NATIVE_DEFAULT);
                 }
             } finally {
                 Files.close(fda);
@@ -376,6 +378,10 @@ public final class TestUtils {
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
         Path.clearThreadLocals();
         long mem = Unsafe.getMemUsed();
+        for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
+            memoryUsageByTag[i] = Unsafe.getMemUsedByTag(i);
+        }
+
         Assert.assertTrue("Initial file unsafe mem should be >= 0", mem >= 0);
         long fileCount = Files.getOpenFileCount();
         Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
@@ -383,6 +389,14 @@ public final class TestUtils {
         Path.clearThreadLocals();
         Assert.assertEquals(fileCount, Files.getOpenFileCount());
         Assert.assertEquals(mem, Unsafe.getMemUsed());
+
+        // Checks that the same tag used for allocation and freeing native memory
+        for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
+            final long actualMemByTag = Unsafe.getMemUsedByTag(i);
+            if (memoryUsageByTag[i] != actualMemByTag) {
+                Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i), memoryUsageByTag[i], actualMemByTag);
+            }
+        }
     }
 
     public static void assertReader(CharSequence expected, TableReader reader, MutableCharSink sink) {
@@ -654,7 +668,7 @@ public final class TestUtils {
     }
 
     public static long toMemory(CharSequence sequence) {
-        long ptr = Unsafe.malloc(sequence.length());
+        long ptr = Unsafe.malloc(sequence.length(), MemoryTag.NATIVE_DEFAULT);
         Chars.asciiStrCpy(sequence, sequence.length(), ptr);
         return ptr;
     }

@@ -27,6 +27,7 @@ package io.questdb.network;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 
 import java.io.Closeable;
@@ -43,7 +44,7 @@ public final class Epoll implements Closeable {
     public Epoll(EpollFacade epf, int capacity) {
         this.epf = epf;
         this.capacity = capacity;
-        this.events = _rPtr = Unsafe.calloc(EpollAccessor.SIZEOF_EVENT * (long) capacity);
+        this.events = _rPtr = Unsafe.calloc(EpollAccessor.SIZEOF_EVENT * (long) capacity, MemoryTag.NATIVE_DEFAULT);
         // todo: this can be unsuccessful
         this.epollFd = epf.epollCreate();
         Files.bumpFileCount(this.epollFd);
@@ -55,7 +56,7 @@ public final class Epoll implements Closeable {
             return;
         }
         epf.getNetworkFacade().close(epollFd, LOG);
-        Unsafe.free(events, EpollAccessor.SIZEOF_EVENT * (long) capacity);
+        Unsafe.free(events, EpollAccessor.SIZEOF_EVENT * (long) capacity, MemoryTag.NATIVE_DEFAULT);
         closed = true;
     }
 
