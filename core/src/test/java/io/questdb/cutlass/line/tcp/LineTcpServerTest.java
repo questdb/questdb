@@ -672,6 +672,23 @@ public class LineTcpServerTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSymbolAddedInO3ModeFirstRow2Lines() throws Exception {
+        maxMeasurementSize = 4096;
+        runInContext(() -> {
+            String lineData = "plug,room=6A watts=\"1\" 2631819999000\n" +
+                    "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
+                    "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
+            send(lineData, "plug", true, false);
+
+            String expected = "room\twatts\ttimestamp\tlabel\n" +
+                    "6C\t333\t1970-01-01T00:25:31.817902Z\tLine\n" +
+                    "6B\t22\t1970-01-01T00:27:11.817902Z\tPower\n" +
+                    "6A\t1\t1970-01-01T00:43:51.819999Z\t\n";
+            assertTable(expected, "plug");
+        });
+    }
+
     private void assertTable(CharSequence expected, CharSequence tableName) {
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
             assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
