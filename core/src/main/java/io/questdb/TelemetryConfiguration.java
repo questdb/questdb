@@ -25,6 +25,8 @@
 package io.questdb;
 
 public interface TelemetryConfiguration {
+    boolean getDisableCompletely();
+
     boolean getEnabled();
 
     int getQueueCapacity();
