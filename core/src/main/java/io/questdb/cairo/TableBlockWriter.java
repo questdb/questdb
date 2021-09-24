@@ -728,7 +728,7 @@ public class TableBlockWriter implements Closeable {
                 columnDataAddress += sz;
                 offset += sz;
             }
-
+            Unsafe.getUnsafe().putLong(columnIndexAddress, offset);
             partitionStruct.setColumnNRowsAdded(columnIndex, nRowsAdded);
             unmapFile(ff, indexMappingStart, indexMappingSz);
         }
@@ -763,7 +763,7 @@ public class TableBlockWriter implements Closeable {
                 columnDataAddress += sz;
                 offset += sz;
             }
-
+            Unsafe.getUnsafe().putLong(columnIndexAddress, offset);
             partitionStruct.setColumnNRowsAdded(columnIndex, nRowsAdded);
             unmapFile(ff, indexMappingStart, indexMappingSz);
         }

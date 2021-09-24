@@ -52,7 +52,6 @@ public class AbstractO3Test {
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
-    private static final RecordCursorPrinter printer = new RecordCursorPrinter();
 
     @BeforeClass
     public static void setupStatic() {
