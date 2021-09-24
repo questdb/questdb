@@ -1779,7 +1779,7 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testOver2GFile() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                    .col("a", ColumnType.INT)) {
+                    .col("a", ColumnType.LONG)) {
                 CairoTestUtils.create(model);
             }
 

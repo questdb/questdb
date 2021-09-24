@@ -541,7 +541,7 @@ public class MemoryCARWImplTest {
     @Test
     public void testEvenPageSize() {
         try (MemoryARW mem = new MemoryCARWImpl(32, Integer.MAX_VALUE)) {
-            assertStrings(mem, false);
+            assertStrings(mem);
         }
     }
 
@@ -849,34 +849,31 @@ public class MemoryCARWImplTest {
     @Test
     public void testNullBin() {
         try (MemoryARW mem = new MemoryCARWImpl(1024, Integer.MAX_VALUE)) {
-            final TestBinarySequence binarySequence = new TestBinarySequence();
-            final byte[] buf = new byte[0];
-            binarySequence.of(buf);
-            mem.putBin(null);
-            mem.putBin(0, 0);
-            mem.putBin(binarySequence);
-            long o1 = mem.putNullBin();
-
-            assertNull(mem.getBin(0));
-            assertNull(mem.getBin(8));
-            BinarySequence bsview = mem.getBin(16);
-            assertNotNull(bsview);
-            assertEquals(0, bsview.length());
-            assertNull(mem.getBin(o1));
+            testNullBin0(mem);
         }
     }
 
-    @Test
-    public void testOffPageSize() {
-        try (MemoryARW mem = new MemoryCARWImpl(12, Integer.MAX_VALUE)) {
-            assertStrings(mem, true);
-        }
+    static void testNullBin0(MemoryARW mem) {
+        final TestBinarySequence binarySequence = new TestBinarySequence();
+        final byte[] buf = new byte[0];
+        binarySequence.of(buf);
+        mem.putBin(null);
+        mem.putBin(0, 0);
+        long o1 = mem.putBin(binarySequence);
+        mem.putNullBin();
+
+        assertNull(mem.getBin(0));
+        assertNull(mem.getBin(8));
+        BinarySequence bsview = mem.getBin(16);
+        assertNotNull(bsview);
+        assertEquals(0, bsview.length());
+        assertNull(mem.getBin(o1));
     }
 
     @Test
     public void testOkSize() {
         try (MemoryARW mem = new MemoryCARWImpl(1024, Integer.MAX_VALUE)) {
-            assertStrings(mem, false);
+            assertStrings(mem);
         }
     }
 
@@ -968,14 +965,7 @@ public class MemoryCARWImplTest {
     @Test
     public void testSmallEven() {
         try (MemoryARW mem = new MemoryCARWImpl(2, Integer.MAX_VALUE)) {
-            assertStrings(mem, false);
-        }
-    }
-
-    @Test
-    public void testSmallOdd() {
-        try (MemoryARW mem = new MemoryCARWImpl(2, Integer.MAX_VALUE)) {
-            assertStrings(mem, true);
+            assertStrings(mem);
         }
     }
 
@@ -1001,64 +991,57 @@ public class MemoryCARWImplTest {
         assertEquals(4, Vm.getStorageLength(null));
     }
 
-    private void assertStrings(MemoryARW mem, boolean b) {
-        if (b) {
-            mem.putByte((byte) 1);
-        }
-
+    static void assertStrings(MemoryARW mem) {
         Assert.assertEquals(10, Vm.getStorageLength("123"));
         Assert.assertEquals(6, Vm.getStorageLength("x"));
 
         long o1 = mem.putStr("123");
         long o2 = mem.putStr("0987654321abcd");
-        Assert.assertEquals(o2 - o1, Vm.getStorageLength("123"));
+        Assert.assertEquals(o1, Vm.getStorageLength("123"));
         long o3 = mem.putStr(null);
-        Assert.assertEquals(o3 - o2, Vm.getStorageLength("0987654321abcd"));
+        Assert.assertEquals(o2 - o1, Vm.getStorageLength("0987654321abcd"));
         long o4 = mem.putStr("xyz123");
-        Assert.assertEquals(o4 - o3, Vm.getStorageLength(null));
+        Assert.assertEquals(o3 - o2, Vm.getStorageLength(null));
         long o5 = mem.putNullStr();
         long o6 = mem.putStr("123ohh4", 3, 3);
         long o7 = mem.putStr(null, 0, 2);
         long o8 = mem.putStr((char) 0);
         long o9 = mem.putStr('x');
+        Assert.assertEquals(o9, mem.getAppendOffset());
 
-        if (b) {
-            assertEquals(1, mem.getByte(0));
-        }
-
-        TestUtils.assertEquals("123", mem.getStr(o1));
-        assertEquals(3, mem.getStrLen(o1));
-        TestUtils.assertEquals("123", mem.getStr2(o1));
+        TestUtils.assertEquals("123", mem.getStr(0));
+        assertEquals(3, mem.getStrLen(0));
+        TestUtils.assertEquals("123", mem.getStr2(0));
 
         String expected = "0987654321abcd";
-        TestUtils.assertEquals("0987654321abcd", mem.getStr(o2));
-        TestUtils.assertEquals("0987654321abcd", mem.getStr2(o2));
+        TestUtils.assertEquals("0987654321abcd", mem.getStr(o1));
+        TestUtils.assertEquals("0987654321abcd", mem.getStr2(o1));
 
         for (int i = 0; i < expected.length(); i++) {
-            long offset = o2 + 4 + i * 2;
+            long offset = o1 + 4 + i * 2;
             assertEquals(expected.charAt(i), mem.getChar(offset));
         }
 
-        assertNull(mem.getStr(o3));
-        assertNull(mem.getStr2(o3));
-        TestUtils.assertEquals("xyz123", mem.getStr(o4));
-        TestUtils.assertEquals("xyz123", mem.getStr2(o4));
-        assertNull(mem.getStr(o5));
-        assertNull(mem.getStr2(o5));
-        assertEquals(-1, mem.getStrLen(o5));
+        assertNull(mem.getStr(o2));
+        assertNull(mem.getStr2(o2));
+        TestUtils.assertEquals("xyz123", mem.getStr(o3));
+        TestUtils.assertEquals("xyz123", mem.getStr2(o3));
+        assertNull(mem.getStr(o4));
+        assertNull(mem.getStr2(o4));
+        assertEquals(-1, mem.getStrLen(o4));
 
-        TestUtils.assertEquals("ohh", mem.getStr(o6));
-        assertNull(mem.getStr(o7));
+        TestUtils.assertEquals("ohh", mem.getStr(o5));
+        assertNull(mem.getStr(o6));
 
-        CharSequence s1 = mem.getStr(o1);
-        CharSequence s2 = mem.getStr2(o2);
+        CharSequence s1 = mem.getStr(0);
+        CharSequence s2 = mem.getStr2(o1);
         assertFalse(Chars.equals(s1, s2));
 
-        assertNull(mem.getStr(o8));
-        TestUtils.assertEquals("x", mem.getStr(o9));
+        assertNull(mem.getStr(o7));
+        TestUtils.assertEquals("x", mem.getStr(o8));
     }
 
-    private void testBinSequence0(long mem1Size, long mem2Size) {
+    static void testBinSequence0(long mem1Size, long mem2Size) {
         Rnd rnd = new Rnd();
         int n = 999;
 
@@ -1069,7 +1052,7 @@ public class MemoryCARWImplTest {
 
         try (MemoryARW mem = new MemoryCARWImpl(mem1Size, Integer.MAX_VALUE)) {
             Assert.assertEquals(Numbers.ceilPow2(mem1Size), mem.size());
-            long offset1 = 0;
+            long offset1 = 8;
             for (int i = 0; i < n; i++) {
                 long o;
                 if (rnd.nextPositiveInt() % 16 == 0) {
@@ -1086,10 +1069,10 @@ public class MemoryCARWImplTest {
                 }
 
                 o = mem.putBin(binarySequence);
-                Assert.assertEquals(offset1, o);
+                Assert.assertEquals(offset1 + sz, o);
                 offset1 += 8 + sz;
                 o = mem.putBin(bufAddr, sz);
-                Assert.assertEquals(offset1, o);
+                Assert.assertEquals(offset1+sz, o);
                 offset1 += 8 + sz;
             }
 

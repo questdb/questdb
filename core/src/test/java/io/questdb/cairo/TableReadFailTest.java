@@ -174,23 +174,6 @@ public class TableReadFailTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTodoPresentConstructor() throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
-
-            @Override
-            public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.TODO_FILE_NAME)) {
-                    return -1;
-                }
-                return super.openRO(name);
-            }
-
-        };
-
-        assertConstructorFail(ff);
-    }
-
-    @Test
     public void testTxnFileCannotOpenConstructor() throws Exception {
         FilesFacade ff = new FilesFacadeImpl() {
             @Override
