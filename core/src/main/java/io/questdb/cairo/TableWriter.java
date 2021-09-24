@@ -1160,34 +1160,6 @@ public class TableWriter implements Closeable {
         LOG.info().$("truncated [name=").$(tableName).$(']').$();
     }
 
-    public void updateMetadataVersion() {
-
-        checkDistressed();
-
-        commit();
-        // create new _meta.swp
-        copyMetadataAndUpdateVersion();
-
-        // close _meta so we can rename it
-        metaMem.close();
-
-        // rename _meta to _meta.prev
-        this.metaPrevIndex = rename(fileOperationRetryCount);
-
-        // rename _meta.swp to -_meta
-        restoreMetaFrom(META_SWAP_FILE_NAME, metaSwapIndex);
-
-        try {
-            // open _meta file
-            openMetaFile(ff, path, rootLen, metaMem);
-        } catch (CairoException err) {
-            throwDistressException(err);
-        }
-
-        txFile.bumpStructureVersion(this.denseSymbolMapWriters);
-        metadata.setTableVersion();
-    }
-
     public void updateSymbols(int columnIndex, SymbolMapReader symReader) {
         int nSourceSymbols = symReader.size();
         SymbolMapWriter symWriter = getSymbolMapWriter(columnIndex);
@@ -2018,7 +1990,6 @@ public class TableWriter implements Closeable {
     private void doClose(boolean truncate) {
         consumeO3PartitionRemoveTasks();
         boolean tx = inTransaction();
-        freeColumns(truncate & !distressed);
         freeSymbolMapWriters();
         freeIndexers();
         Misc.free(txFile);
@@ -2028,6 +1999,7 @@ public class TableWriter implements Closeable {
         Misc.free(indexMem);
         Misc.free(other);
         Misc.free(todoMem);
+        freeColumns(truncate & !distressed);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {
@@ -3468,7 +3440,6 @@ public class TableWriter implements Closeable {
         assert tgtIndxAddr != 0;
 
         // add max offset so that we do not have conditionals inside loop
-//        indexMem.putLong(valueCount * Long.BYTES, dataSize);
         final long offset = Vect.sortVarColumn(
                 mergedTimestampsAddr,
                 valueCount,
@@ -3562,23 +3533,22 @@ public class TableWriter implements Closeable {
 
             for (int i = 0; i < columnCount; i++) {
                 final CharSequence name = metadata.getColumnName(i);
-                final boolean indexed = metadata.isColumnIndexed(i);
+                final ColumnIndexer indexer = metadata.isColumnIndexed(i) ? indexers.getQuick(i) : null;
                 final long columnTop;
 
                 // prepare index writer if column requires indexing
-                if (indexed) {
+                if (indexer != null) {
                     // we have to create files before columns are open
                     // because we are reusing MAMemoryImpl object from columns list
                     createIndexFiles(name, metadata.getIndexValueBlockCapacity(i), plen, txFile.getTransientRowCount() < 1);
+                    indexer.closeSlider();
                 }
 
                 openColumnFiles(name, i, plen);
                 columnTop = readColumnTop(ff, path, name, plen, tempMem16b, true);
                 columnTops.extendAndSet(i, columnTop);
 
-                if (indexed) {
-                    ColumnIndexer indexer = indexers.getQuick(i);
-                    assert indexer != null;
+                if (indexer != null) {
                     indexer.configureFollowerAndWriter(configuration, path, name, getPrimaryColumn(i), columnTop);
                 }
             }

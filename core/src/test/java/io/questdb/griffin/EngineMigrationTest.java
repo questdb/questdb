@@ -95,6 +95,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void testGenerateTables() throws SqlException {
         generateMigrationTables();
+        engine.releaseAllWriters();
         assertData();
     }
 
@@ -118,6 +119,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     private void assertDay() throws SqlException {
+
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
@@ -143,6 +145,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "bbbbbb\n" +
                         "\n"
         );
+
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
