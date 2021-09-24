@@ -27,6 +27,7 @@ package io.questdb.cutlass.text;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.types.TypeManager;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.test.tools.TestUtils;
@@ -91,7 +92,7 @@ public class TextMetadataParserTest {
             Assert.assertEquals("[INT,DATE]", textMetadataParser.getColumnTypes().toString());
             Assert.assertEquals("[x,y]", textMetadataParser.getColumnNames().toString());
         } finally {
-            Unsafe.free(buf, in.length());
+            Unsafe.free(buf, in.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -105,7 +106,7 @@ public class TextMetadataParserTest {
             Assert.assertEquals(0, textMetadataParser.getColumnTypes().size());
             Assert.assertEquals(0, textMetadataParser.getColumnNames().size());
         } finally {
-            Unsafe.free(buf, in.length());
+            Unsafe.free(buf, in.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -191,7 +192,7 @@ public class TextMetadataParserTest {
             Assert.assertEquals(position, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), message);
         } finally {
-            Unsafe.free(buf, schema.length());
+            Unsafe.free(buf, schema.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 }

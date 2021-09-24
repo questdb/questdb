@@ -60,10 +60,10 @@ public class EngineMigration {
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
         final CairoConfiguration configuration=  engine.getConfiguration();
         int tempMemSize = 8;
-        long mem = Unsafe.malloc(tempMemSize);
+        long mem = Unsafe.malloc(tempMemSize, MemoryTag.NATIVE_DEFAULT);
 
         try (
-                MemoryARW virtualMem = Vm.getARWInstance(ff.getPageSize(), 8);
+                MemoryARW virtualMem = Vm.getARWInstance(ff.getPageSize(), 8, MemoryTag.NATIVE_DEFAULT);
                 Path path = new Path();
                 MemoryMARW rwMemory = Vm.getMARWInstance()
         ) {
@@ -104,7 +104,7 @@ public class EngineMigration {
                 }
             }
         } finally {
-            Unsafe.free(mem, tempMemSize);
+            Unsafe.free(mem, tempMemSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

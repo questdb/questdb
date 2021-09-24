@@ -24,6 +24,7 @@
 
 package org.questdb;
 
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -40,8 +41,8 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class MemCopyBenchmark {
     private final static long len = 1024 * 1024;
-    private static final long mem1 = Unsafe.malloc(len);
-    private static final long mem2 = Unsafe.malloc(len);
+    private static final long mem1 = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+    private static final long mem2 = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
     private static final byte[] a1 = new byte[(int) len];
     private static final byte[] a2 = new byte[(int) len];
 

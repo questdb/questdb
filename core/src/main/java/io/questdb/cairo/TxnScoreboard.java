@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 import io.questdb.std.str.LPSZ;
@@ -54,7 +55,7 @@ public class TxnScoreboard implements Closeable {
         // allocate above does not seem to update file system's size entry
         ff.truncate(fd, this.size);
         try {
-            this.mem = TableUtils.mapRW(ff, fd, this.size);
+            this.mem = TableUtils.mapRW(ff, fd, this.size, MemoryTag.MMAP_DEFAULT);
             init(mem, pow2EntryCount);
         } catch (Throwable e) {
             ff.close(fd);
@@ -80,7 +81,7 @@ public class TxnScoreboard implements Closeable {
     @Override
     public void close() {
         if (mem != 0) {
-            ff.munmap(mem, size);
+            ff.munmap(mem, size, MemoryTag.MMAP_DEFAULT);
             mem = 0;
         }
 

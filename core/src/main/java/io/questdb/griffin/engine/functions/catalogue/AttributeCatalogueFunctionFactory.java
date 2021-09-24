@@ -181,7 +181,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
                             path.concat(pname);
                             if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
                                 foundMetadataFile = true;
-                                metaMem.smallFile(ff, path);
+                                metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
                                 columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
                                 tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
                             }

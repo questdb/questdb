@@ -3239,11 +3239,11 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     private static long allocBlob() {
-        return Unsafe.malloc(blobLen);
+        return Unsafe.malloc(blobLen, MemoryTag.NATIVE_DEFAULT);
     }
 
     private static void freeBlob(long blob) {
-        Unsafe.free(blob, blobLen);
+        Unsafe.free(blob, blobLen, MemoryTag.NATIVE_DEFAULT);
     }
 
     private static void assertBin(Record r, Rnd exp, long blob, int index) {

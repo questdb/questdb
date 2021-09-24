@@ -1560,7 +1560,7 @@ public class SqlCompiler implements Closeable {
     private void copyTable(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
         try {
             int len = configuration.getSqlCopyBufferSize();
-            long buf = Unsafe.malloc(len);
+            long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
             try {
                 final CharSequence name = GenericLexer.assertNoDots(GenericLexer.unquote(model.getFileName().token), model.getFileName().position);
                 path.of(configuration.getInputRoot()).concat(name).$();
@@ -1592,7 +1592,7 @@ public class SqlCompiler implements Closeable {
                 }
             } finally {
                 textLoader.clear();
-                Unsafe.free(buf, len);
+                Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
             }
         } catch (TextException e) {
             // we do not expect JSON exception here
@@ -2598,7 +2598,7 @@ public class SqlCompiler implements Closeable {
 
             TableReaderMetadata sourceMetaData = reader.getMetadata();
             try {
-                mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$());
+                mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
                 sourceMetaData.cloneTo(mem);
 
                 // create symbol maps
@@ -2611,7 +2611,7 @@ public class SqlCompiler implements Closeable {
                         symbolMapCount++;
                     }
                 }
-                mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$());
+                mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
                 TableUtils.resetTxn(mem, symbolMapCount, 0L, TableUtils.INITIAL_TXN, 0L);
                 srcPath.trimTo(rootLen).concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
             } finally {

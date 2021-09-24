@@ -31,10 +31,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Numbers;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3OpenColumnTask;
@@ -703,7 +700,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             dstFixSize = dstLen << shl;
             if (dstFixMem == null || dstFixMem.getAppendAddressSize() < dstFixSize) {
                 dstFixOffset = (srcDataMax - srcDataTop) << shl;
-                dstFixAddr = mapRW(ff, Math.abs(dstFixFd), dstFixSize);
+                dstFixAddr = mapRW(ff, Math.abs(dstFixFd), dstFixSize, MemoryTag.MMAP_O3);
                 dstIndexOffset = dstFixOffset;
                 dstIndexAdjust = 0;
             } else {
@@ -831,7 +828,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             if (dstFixMem == null || dstFixMem.getAppendAddressSize() < dstFixSize) {
                 dstFixOffset = srcDataMax * Long.BYTES;
                 dstFixFd = -Math.abs(srcTimestampFd);
-                dstFixAddr = mapRW(ff, -dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, -dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
             } else {
                 dstFixAddr = dstFixMem.getAppendAddress();
                 dstFixOffset = 0;
@@ -956,7 +953,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             dstFixSize = (dstLen + 1) * Long.BYTES;
             if (dstFixMem == null || dstFixMem.getAppendAddressSize() < dstFixSize || dstVarMem.getAppendAddressSize() < l) {
                 dstFixOffset = (srcDataMax - srcDataTop) * Long.BYTES;
-                dstFixAddr = mapRW(ff, Math.abs(activeFixFd), dstFixSize);
+                dstFixAddr = mapRW(ff, Math.abs(activeFixFd), dstFixSize, MemoryTag.MMAP_O3);
 
                 if (dstFixOffset > 0) {
                     dstVarOffset = Unsafe.getUnsafe().getLong(dstFixAddr + dstFixOffset);
@@ -965,7 +962,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 }
 
                 dstVarSize = l + dstVarOffset;
-                dstVarAddr = mapRW(ff, Math.abs(activeVarFd), dstVarSize);
+                dstVarAddr = mapRW(ff, Math.abs(activeVarFd), dstVarSize, MemoryTag.MMAP_O3);
                 dstVarAdjust = 0;
             } else {
                 dstFixAddr = dstFixMem.getAppendAddress() - Long.BYTES;
@@ -1945,7 +1942,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 if (srcDataTop > prefixHi || prefixType == O3_BLOCK_O3) {
                     // extend the existing column down, we will be discarding it anyway
                     srcDataFixSize = srcDataActualBytes + srcDataMaxBytes;
-                    srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize);
+                    srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     setNull(columnType, srcDataFixAddr + srcDataActualBytes, srcDataTop);
                     Vect.memcpy(srcDataFixAddr, srcDataFixAddr + srcDataMaxBytes, srcDataActualBytes);
                     srcDataTop = 0;
@@ -1961,12 +1958,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             tmpBuf
                     );
                     srcDataFixSize = srcDataActualBytes;
-                    srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize);
+                    srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     srcDataFixOffset = 0;
                 }
             } else {
                 srcDataFixSize = srcDataMax << shl;
-                srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize);
+                srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                 srcDataFixOffset = 0;
             }
 
@@ -1975,7 +1972,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             pathToPartition.trimTo(pDirNameLen).concat(columnName).put(FILE_SUFFIX_D).$();
             dstFixFd = openRW(ff, pathToPartition, LOG);
             dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax - srcDataTop) << shl;
-            dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
+            dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
 
             // when prefix is "data" we need to reduce it by "srcDataTop"
             if (prefixType == O3_BLOCK_DATA) {
@@ -2173,7 +2170,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 if (srcDataTop > prefixHi || prefixType == O3_BLOCK_O3) {
                     // extend the existing column down, we will be discarding it anyway
                     srcDataFixSize = srcDataActualBytes + srcDataMaxBytes;
-                    srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize);
+                    srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
 
                     if (srcDataActualBytes > 0) {
                         srcDataVarSize = Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataActualBytes);
@@ -2184,7 +2181,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     if (ColumnType.isString(columnType)) {
                         srcDataVarOffset = srcDataVarSize;
                         srcDataVarSize += srcDataTop * Integer.BYTES + srcDataVarSize;
-                        srcDataVarAddr = mapRW(ff, srcVarFd, srcDataVarSize);
+                        srcDataVarAddr = mapRW(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
                         Vect.setMemoryInt(srcDataVarAddr + srcDataVarOffset, -1, srcDataTop);
 
                         // we need to shift copy the original column so that new block points at strings "below" the
@@ -2199,7 +2196,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     } else {
                         srcDataVarOffset = srcDataVarSize;
                         srcDataVarSize += srcDataTop * Long.BYTES + srcDataVarSize;
-                        srcDataVarAddr = mapRW(ff, srcVarFd, srcDataVarSize);
+                        srcDataVarAddr = mapRW(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
 
                         Vect.setMemoryLong(srcDataVarAddr + srcDataVarOffset, -1, srcDataTop);
 
@@ -2225,20 +2222,20 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             tmpBuf
                     );
                     srcDataFixSize = srcDataActualBytes;
-                    srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize);
+                    srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     srcDataFixOffset = 0;
 
                     srcDataVarSize = Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize - srcDataFixOffset);
-                    srcDataVarAddr = mapRO(ff, srcVarFd, srcDataVarSize);
+                    srcDataVarAddr = mapRO(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
                 }
             } else {
                 // var index column is n+1
                 srcDataFixSize = (srcDataMax + 1) * Long.BYTES;
-                srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize);
+                srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                 srcDataFixOffset = 0;
 
                 srcDataVarSize = Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize - Long.BYTES);
-                srcDataVarAddr = mapRO(ff, srcVarFd, srcDataVarSize);
+                srcDataVarAddr = mapRO(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
             }
 
             // upgrade srcDataTop to offset
@@ -2249,14 +2246,14 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             pathToPartition.put(FILE_SUFFIX_I).$();
             dstFixFd = openRW(ff, pathToPartition, LOG);
             dstFixSize = (srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop + 1) * Long.BYTES;
-            dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
+            dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
 
             pathToPartition.trimTo(pColNameLen);
             pathToPartition.put(FILE_SUFFIX_D).$();
             dstVarFd = openRW(ff, pathToPartition, LOG);
             dstVarSize = srcDataVarSize - srcDataVarOffset
                     + O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr);
-            dstVarAddr = mapRW(ff, dstVarFd, dstVarSize);
+            dstVarAddr = mapRW(ff, dstVarFd, dstVarSize, MemoryTag.MMAP_O3);
 
             if (prefixType == O3_BLOCK_DATA) {
                 dstFixAppendOffset1 = (prefixHi - prefixLo + 1 - srcDataTop) * Long.BYTES;
@@ -2471,17 +2468,17 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 setPath(pathToPartition.trimTo(plen), columnName, FILE_SUFFIX_I);
                 dstFixFd = openRW(ff, pathToPartition, LOG);
                 dstFixSize = (srcOooHi - srcOooLo + 1 + 1) * Long.BYTES;
-                dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
 
                 setPath(pathToPartition.trimTo(plen), columnName, FILE_SUFFIX_D);
                 dstVarFd = openRW(ff, pathToPartition, LOG);
                 dstVarSize = O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr);
-                dstVarAddr = mapRW(ff, dstVarFd, dstVarSize);
+                dstVarAddr = mapRW(ff, dstVarFd, dstVarSize, MemoryTag.MMAP_O3);
             } else {
                 setPath(pathToPartition.trimTo(plen), columnName, FILE_SUFFIX_D);
                 dstFixFd = openRW(ff, pathToPartition, LOG);
                 dstFixSize = (srcOooHi - srcOooLo + 1) << ColumnType.pow2SizeOf(Math.abs(columnType));
-                dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
                 if (isIndexed) {
                     BitmapIndexUtils.keyFileName(pathToPartition.trimTo(plen), columnName);
                     dstKFd = openRW(ff, pathToPartition, LOG);

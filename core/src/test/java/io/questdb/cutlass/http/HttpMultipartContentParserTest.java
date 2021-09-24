@@ -28,6 +28,7 @@ import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -73,10 +74,10 @@ public class HttpMultipartContentParserTest {
                             TestUtils.assertEquals(expected, sink);
                         }
                     } finally {
-                        Unsafe.free(pBoundary, boundary.length());
+                        Unsafe.free(pBoundary, boundary.length(), MemoryTag.NATIVE_DEFAULT);
                     }
                 } finally {
-                    Unsafe.free(p, len);
+                    Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });
@@ -100,10 +101,10 @@ public class HttpMultipartContentParserTest {
                     } catch (HttpException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "Malformed start boundary");
                     } finally {
-                        Unsafe.free(pBoundary, boundary.length());
+                        Unsafe.free(pBoundary, boundary.length(), MemoryTag.NATIVE_DEFAULT);
                     }
                 } finally {
-                    Unsafe.free(p, len);
+                    Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });
@@ -171,10 +172,10 @@ public class HttpMultipartContentParserTest {
                             TestUtils.assertEquals(expected, sink);
                         }
                     } finally {
-                        Unsafe.free(pBoundary, boundary.length());
+                        Unsafe.free(pBoundary, boundary.length(), MemoryTag.NATIVE_DEFAULT);
                     }
                 } finally {
-                    Unsafe.free(p, len);
+                    Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });
@@ -198,10 +199,10 @@ public class HttpMultipartContentParserTest {
                     } catch (HttpException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "Malformed start boundary");
                     } finally {
-                        Unsafe.free(pBoundary, boundary.length());
+                        Unsafe.free(pBoundary, boundary.length(), MemoryTag.NATIVE_DEFAULT);
                     }
                 } finally {
-                    Unsafe.free(p, len);
+                    Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });
@@ -264,10 +265,10 @@ public class HttpMultipartContentParserTest {
                         Assert.assertEquals("Break at " + breakAt, expected, sink.toString());
                         Assert.assertTrue("Break at " + breakAt, result);
                     } finally {
-                        Unsafe.free(pBoundary, boundary.length());
+                        Unsafe.free(pBoundary, boundary.length(), MemoryTag.NATIVE_DEFAULT);
                     }
                 } finally {
-                    Unsafe.free(p, len);
+                    Unsafe.free(p, len, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });

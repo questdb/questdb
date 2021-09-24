@@ -31,6 +31,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -61,7 +62,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         nf = configuration.getNetworkFacade();
         this.scheduler = scheduler;
         this.milliClock = configuration.getMillisecondClock();
-        recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize());
+        recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_DEFAULT);
         recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
         clear();
     }
@@ -76,7 +77,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     @Override
     public void close() {
         this.fd = -1;
-        Unsafe.free(recvBufStart, recvBufEnd - recvBufStart);
+        Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_DEFAULT);
         recvBufStart = recvBufEnd = recvBufPos = 0;
         protoParser.close();
         charSink.close();

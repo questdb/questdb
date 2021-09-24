@@ -42,8 +42,10 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private long sizeMsb;
     private long appendAddress = 0;
+    private final int memoryTag;
 
-    public MemoryCARWImpl(long pageSize, int maxPages) {
+    public MemoryCARWImpl(long pageSize, int maxPages, int memoryTag) {
+        this.memoryTag = memoryTag;
         this.maxPages = maxPages;
         setPageSize(pageSize);
     }
@@ -118,7 +120,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     public void clear() {
         if (pageAddress != 0) {
             long baseLength = lim - pageAddress;
-            Unsafe.free(pageAddress, baseLength);
+            Unsafe.free(pageAddress, baseLength, memoryTag);
             handleMemoryReleased();
         }
     }
@@ -191,9 +193,9 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
 
     protected long reallocateMemory(long currentBaseAddress, long currentSize, long newSize) {
         if (currentBaseAddress != 0) {
-            return Unsafe.realloc(currentBaseAddress, currentSize, newSize);
+            return Unsafe.realloc(currentBaseAddress, currentSize, newSize, memoryTag);
         }
-        return Unsafe.malloc(newSize);
+        return Unsafe.malloc(newSize, memoryTag);
     }
 
     protected final void setPageSize(long size) {

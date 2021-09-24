@@ -92,7 +92,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Path path = Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
         try {
             tableIdFd = TableUtils.openFileRWOrFail(ff, path);
-            this.tableIdMem = TableUtils.mapRW(ff, tableIdFd, tableIdMemSize);
+            this.tableIdMem = TableUtils.mapRW(ff, tableIdFd, tableIdMemSize, MemoryTag.MMAP_DEFAULT);
         } catch (Throwable e) {
             close();
             throw e;
@@ -161,7 +161,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void freeTableId() {
         if (tableIdMem != 0) {
-            configuration.getFilesFacade().munmap(tableIdMem, tableIdMemSize);
+            configuration.getFilesFacade().munmap(tableIdMem, tableIdMemSize, MemoryTag.MMAP_DEFAULT);
             tableIdMem = 0;
         }
         if (tableIdFd != -1) {
