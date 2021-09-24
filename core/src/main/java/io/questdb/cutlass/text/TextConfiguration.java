@@ -51,6 +51,8 @@ public interface TextConfiguration {
 
     int getTimestampAdapterPoolCapacity();
 
+    int getSymbolAdapterPoolCapacity();
+
     int getUtf8SinkSize();
 
     InputFormatConfiguration getInputFormatConfiguration();

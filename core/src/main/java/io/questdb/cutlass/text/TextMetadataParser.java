@@ -53,6 +53,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private static final int P_PATTERN = 3;
     private static final int P_LOCALE = 4;
     private static final int P_UTF8 = 5;
+    private static final int P_INDEX = 6;
     private static final CharSequenceIntHashMap propertyNameMap = new CharSequenceIntHashMap();
     private final DateLocaleFactory dateLocaleFactory;
     private final ObjectPool<FloatingCharSequence> csPool;
@@ -74,6 +75,8 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private CharSequence tableName;
     private int localePosition;
     private boolean utf8 = false;
+    private boolean index = false;
+    private boolean nocache = false;
 
     public TextMetadataParser(TextConfiguration textConfiguration, TypeManager typeManager) {
         this.columnNames = new ObjList<>();
@@ -155,6 +158,9 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                     case P_UTF8:
                         utf8 = SqlKeywords.isTrueKeyword(tag);
                         break;
+                    case P_INDEX:
+                        index = SqlKeywords.isTrueKeyword(tag);
+                        break;
                     default:
                         LOG.info().$("ignoring [table=").$(tableName).$(", value=").$(tag).$(']').$();
                         break;
@@ -194,6 +200,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         locale = null;
         localePosition = 0;
         utf8 = false;
+        index = false;
     }
 
     private CharSequence copy(CharSequence tag) {
@@ -249,6 +256,9 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                 }
                 columnTypes.add(typeManager.nextTimestampAdapter(utf8, timestampFormatFactory.get(pattern), timestampLocale));
                 break;
+            case ColumnType.SYMBOL:
+                columnTypes.add(typeManager.nextSymbolAdapter(index));
+                break;
             default:
                 columnTypes.add(typeManager.getTypeAdapter(type));
                 break;
@@ -293,5 +303,6 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         propertyNameMap.put("pattern", P_PATTERN);
         propertyNameMap.put("locale", P_LOCALE);
         propertyNameMap.put("utf8", P_UTF8);
+        propertyNameMap.put("index", P_INDEX);
     }
 }

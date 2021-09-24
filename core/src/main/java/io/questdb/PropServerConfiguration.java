@@ -247,6 +247,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int textAnalysisMaxLines;
     private int textLexerStringPoolCapacity;
     private int timestampAdapterPoolCapacity;
+    private int symbolAdapterPoolCapacity;
     private int utf8SinkSize;
     private MimeTypesCache mimeTypesCache;
     private String keepAliveHeader;
@@ -483,6 +484,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.textAnalysisMaxLines = getInt(properties, env, "http.text.analysis.max.lines", 1000);
                 this.textLexerStringPoolCapacity = getInt(properties, env, "http.text.lexer.string.pool.capacity", 64);
                 this.timestampAdapterPoolCapacity = getInt(properties, env, "http.text.timestamp.adapter.pool.capacity", 64);
+                this.symbolAdapterPoolCapacity = getInt(properties, env, "http.text.symbol.adapter.pool.capacity", 64);
                 this.utf8SinkSize = getIntSize(properties, env, "http.text.utf8.sink.size", 4096);
 
                 this.jsonQueryConnectionCheckFrequency = getInt(properties, env, "http.json.query.connection.check.frequency", 1_000_000);
@@ -1279,6 +1281,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getTimestampAdapterPoolCapacity() {
             return timestampAdapterPoolCapacity;
+        }
+
+        @Override
+        public int getSymbolAdapterPoolCapacity() {
+            return symbolAdapterPoolCapacity;
         }
 
         @Override

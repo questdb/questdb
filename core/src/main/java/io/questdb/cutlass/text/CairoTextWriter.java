@@ -388,12 +388,12 @@ public class CairoTextWriter implements Closeable, Mutable {
 
         @Override
         public int getIndexBlockCapacity(int columnIndex) {
-            return 0;
+            return configuration.getIndexValueBlockSize();
         }
 
         @Override
         public boolean isIndexed(int columnIndex) {
-            return false;
+            return types.getQuick(columnIndex).isIndexed();
         }
 
         @Override
