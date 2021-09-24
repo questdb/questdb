@@ -76,7 +76,6 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private int localePosition;
     private boolean utf8 = false;
     private boolean index = false;
-    private boolean nocache = false;
 
     public TextMetadataParser(TextConfiguration textConfiguration, TypeManager typeManager) {
         this.columnNames = new ObjList<>();

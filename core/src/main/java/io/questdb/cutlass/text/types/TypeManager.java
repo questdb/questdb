@@ -42,7 +42,8 @@ public class TypeManager implements Mutable {
     private final ObjectPool<DateUtf8Adapter> dateAdapterPool;
     private final ObjectPool<TimestampUtf8Adapter> timestampUtf8AdapterPool;
     private final ObjectPool<TimestampAdapter> timestampAdapterPool;
-    private final ObjectPool<SymbolAdapter> symbolAdapterPool;
+    private final SymbolAdapter indexedSymbolAdapter;
+    private final SymbolAdapter notIndexedSymbolAdapter;
     private final InputFormatConfiguration inputFormatConfiguration;
 
     public TypeManager(
@@ -52,7 +53,8 @@ public class TypeManager implements Mutable {
         this.dateAdapterPool = new ObjectPool<>(() -> new DateUtf8Adapter(utf8Sink), configuration.getDateAdapterPoolCapacity());
         this.timestampUtf8AdapterPool = new ObjectPool<>(() -> new TimestampUtf8Adapter(utf8Sink), configuration.getTimestampAdapterPoolCapacity());
         this.timestampAdapterPool = new ObjectPool<>(TimestampAdapter::new, configuration.getTimestampAdapterPoolCapacity());
-        this.symbolAdapterPool = new ObjectPool<>(SymbolAdapter::new, configuration.getSymbolAdapterPoolCapacity());
+        this.indexedSymbolAdapter = new SymbolAdapter(true);
+        this.notIndexedSymbolAdapter = new SymbolAdapter(false);
         this.inputFormatConfiguration = configuration.getInputFormatConfiguration();
         this.stringAdapter = new StringAdapter(utf8Sink);
         addDefaultProbes();
@@ -86,7 +88,6 @@ public class TypeManager implements Mutable {
         dateAdapterPool.clear();
         timestampUtf8AdapterPool.clear();
         timestampAdapterPool.clear();
-        symbolAdapterPool.clear();
     }
 
     public InputFormatConfiguration getInputFormatConfiguration() {
@@ -147,9 +148,7 @@ public class TypeManager implements Mutable {
     }
 
     public TypeAdapter nextSymbolAdapter(boolean indexed) {
-        SymbolAdapter adapter = symbolAdapterPool.next();
-        adapter.of(indexed);
-        return adapter;
+        return indexed ? indexedSymbolAdapter : notIndexedSymbolAdapter;
     }
 
     private void addDefaultProbes() {
