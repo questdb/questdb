@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 
 public final class LatestByArguments {
@@ -37,11 +38,11 @@ public final class LatestByArguments {
     private static final long FILTERED_SIZE_OFFSET = 6 * 8;
 
     public static long allocateMemory() {
-        return Unsafe.calloc(MEMORY_SIZE);
+        return Unsafe.calloc(MEMORY_SIZE, MemoryTag.NATIVE_DEFAULT);
     }
 
     public static long allocateMemoryArray(int elements) {
-        return Unsafe.calloc(MEMORY_SIZE * elements);
+        return Unsafe.calloc(MEMORY_SIZE * elements, MemoryTag.NATIVE_DEFAULT);
     }
 
     public static long getFilteredSize(long address) {
@@ -77,11 +78,11 @@ public final class LatestByArguments {
     }
 
     public static void releaseMemory(long address) {
-        Unsafe.free(address, MEMORY_SIZE);
+        Unsafe.free(address, MEMORY_SIZE, MemoryTag.NATIVE_DEFAULT);
     }
 
     public static void releaseMemoryArray(long address, int elements) {
-        Unsafe.free(address, MEMORY_SIZE * elements);
+        Unsafe.free(address, MEMORY_SIZE * elements, MemoryTag.NATIVE_DEFAULT);
     }
 
     public static void setHashesAddress(long address, long addr) {

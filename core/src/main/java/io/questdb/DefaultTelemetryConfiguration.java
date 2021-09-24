@@ -26,6 +26,11 @@ package io.questdb;
 
 public class DefaultTelemetryConfiguration implements TelemetryConfiguration {
     @Override
+    public boolean getDisableCompletely() {
+        return false;
+    }
+
+    @Override
     public boolean getEnabled() {
         return true;
     }

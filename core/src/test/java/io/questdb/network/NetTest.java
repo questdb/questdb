@@ -24,6 +24,7 @@
 
 package io.questdb.network;
 
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSequenceZ;
@@ -228,14 +229,14 @@ public class NetTest {
         Net.freeSockAddr(sockAddr);
 
         long serverFd = Net.accept(acceptFd);
-        long serverBuf = Unsafe.malloc(msgLen);
+        long serverBuf = Unsafe.malloc(msgLen, MemoryTag.NATIVE_DEFAULT);
         Assert.assertEquals(msgLen, Net.peek(serverFd, serverBuf, msgLen));
         lpsz.of(serverBuf);
         Assert.assertEquals(msg, lpsz.toString());
         Assert.assertEquals(msgLen, Net.recv(serverFd, serverBuf, msgLen));
         lpsz.of(serverBuf);
         Assert.assertEquals(msg, lpsz.toString());
-        Unsafe.free(serverBuf, msgLen);
+        Unsafe.free(serverBuf, msgLen, MemoryTag.NATIVE_DEFAULT);
         Net.close(serverFd);
 
         Net.close(acceptFd);

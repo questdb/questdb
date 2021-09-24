@@ -172,32 +172,32 @@ public final class Files {
         return 0;
     }
 
-    public static long mmap(long fd, long len, long offset, int flags) {
-        return mmap(fd, len, offset, flags, 0);
+    public static long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+        return mmap(fd, len, offset, flags, 0, memoryTag);
     }
 
-    public static long mmap(long fd, long len, long offset, int flags, long baseAddress) {
+    public static long mmap(long fd, long len, long offset, int flags, long baseAddress, int memoryTag) {
         long address = mmap0(fd, len, offset, flags, baseAddress);
         if (address != -1) {
-            Unsafe.recordMemAlloc(len);
+            Unsafe.recordMemAlloc(len, memoryTag);
         }
         return address;
     }
 
-    public static long mremap(long fd, long address, long previousSize, long newSize, long offset, int flags) {
-        Unsafe.recordMemAlloc(-previousSize);
+    public static long mremap(long fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
+        Unsafe.recordMemAlloc(-previousSize, memoryTag);
         address = mremap0(fd, address, previousSize, newSize, offset, flags);
         if (address != -1) {
-            Unsafe.recordMemAlloc(newSize);
+            Unsafe.recordMemAlloc(newSize, memoryTag);
         }
         return address;
     }
 
     public static native int msync(long addr, long len, boolean async);
 
-    public static void munmap(long address, long len) {
+    public static void munmap(long address, long len, int memoryTag) {
         if (address != 0 && munmap0(address, len) != -1) {
-            Unsafe.recordMemAlloc(-len);
+            Unsafe.recordMemAlloc(-len, memoryTag);
         }
     }
 
@@ -328,6 +328,15 @@ public final class Files {
     private native static boolean setLastModified(long lpszName, long millis);
 
     private static native boolean rename(long lpszOld, long lpszNew);
+
+    public static long ceilPageSize(long size) {
+        long pageCount = size / PAGE_SIZE;
+        long sz = pageCount * PAGE_SIZE;
+        if (sz < size) {
+            return sz + PAGE_SIZE;
+        }
+        return sz;
+    }
 
     static {
         Os.init();

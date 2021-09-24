@@ -29,5 +29,5 @@ import org.jetbrains.annotations.Nullable;
 
 public interface MemoryMARW extends MemoryMW, MemoryARW, MemoryMA, MemoryMR {
 
-    void of(FilesFacade ff, long fd, @Nullable CharSequence name, long size);
+    void of(FilesFacade ff, long fd, @Nullable CharSequence name, long size, int memoryTag);
 }

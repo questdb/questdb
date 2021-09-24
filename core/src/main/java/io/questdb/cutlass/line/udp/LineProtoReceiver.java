@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 
 public class LineProtoReceiver extends AbstractLineProtoReceiver {
@@ -38,7 +39,7 @@ public class LineProtoReceiver extends AbstractLineProtoReceiver {
             WorkerPool workerPool
     ) {
         super(configuration, engine, workerPool);
-        this.buf = Unsafe.malloc(this.bufLen = configuration.getMsgBufferSize());
+        this.buf = Unsafe.malloc(this.bufLen = configuration.getMsgBufferSize(), MemoryTag.NATIVE_DEFAULT);
         start();
     }
 
@@ -46,7 +47,7 @@ public class LineProtoReceiver extends AbstractLineProtoReceiver {
     public void close() {
         super.close();
         if (buf != 0) {
-            Unsafe.free(buf, bufLen);
+            Unsafe.free(buf, bufLen, MemoryTag.NATIVE_DEFAULT);
             buf = 0;
         }
     }

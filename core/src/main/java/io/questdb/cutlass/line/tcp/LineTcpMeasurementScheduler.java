@@ -440,14 +440,14 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         private LineTcpMeasurementEvent(int maxMeasurementSize, MicrosecondClock clock, LineProtoTimestampAdapter timestampAdapter) {
             bufSize = (long) (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1);
-            bufLo = Unsafe.malloc(bufSize);
+            bufLo = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
             this.clock = clock;
             this.timestampAdapter = timestampAdapter;
         }
 
         @Override
         public void close() {
-            Unsafe.free(bufLo, bufSize);
+            Unsafe.free(bufLo, bufSize, MemoryTag.NATIVE_DEFAULT);
             tableUpdateDetails = Misc.free(tableUpdateDetails);
             bufLo = 0;
         }

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 
 import java.io.Closeable;
@@ -36,7 +37,7 @@ public class LongChain implements Closeable, Mutable {
     private final TreeCursor cursor;
 
     public LongChain(long valuePageSize, int valueMaxPages) {
-        this.valueChain = Vm.getARWInstance(valuePageSize, valueMaxPages);
+        this.valueChain = Vm.getARWInstance(valuePageSize, valueMaxPages, MemoryTag.NATIVE_DEFAULT);
         this.cursor = new TreeCursor();
     }
 

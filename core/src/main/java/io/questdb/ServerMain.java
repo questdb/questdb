@@ -139,13 +139,13 @@ public class ServerMain {
         workerPool.assign(cairoEngine.getWriterMaintenanceJob());
         instancesToClean.add(cairoEngine);
 
-        // The TelemetryJob is always needed (even when telemetry is off) because it is responsible for
-        // updating the telemetry_config table.
-        final TelemetryJob telemetryJob = new TelemetryJob(cairoEngine, functionFactoryCache);
-        instancesToClean.add(telemetryJob);
+        if (!configuration.getCairoConfiguration().getTelemetryConfiguration().getDisableCompletely()) {
+            final TelemetryJob telemetryJob = new TelemetryJob(cairoEngine, functionFactoryCache);
+            instancesToClean.add(telemetryJob);
 
-        if (configuration.getCairoConfiguration().getTelemetryConfiguration().getEnabled()) {
-            workerPool.assign(telemetryJob);
+            if (configuration.getCairoConfiguration().getTelemetryConfiguration().getEnabled()) {
+                workerPool.assign(telemetryJob);
+            }
         }
 
         workerPool.assignCleaner(Path.CLEANER);
