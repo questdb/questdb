@@ -329,6 +329,15 @@ public final class Files {
 
     private static native boolean rename(long lpszOld, long lpszNew);
 
+    public static long ceilPageSize(long size) {
+        long pageCount = size / PAGE_SIZE;
+        long sz = pageCount * PAGE_SIZE;
+        if (sz < size) {
+            return sz + PAGE_SIZE;
+        }
+        return sz;
+    }
+
     static {
         Os.init();
         UTF_8 = StandardCharsets.UTF_8;

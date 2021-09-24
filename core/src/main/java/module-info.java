@@ -87,6 +87,7 @@ open module io.questdb {
     exports io.questdb.tasks;
     exports io.questdb.metrics;
     exports io.questdb.cairo.vm.api;
+    exports io.questdb.cairo.mig;
 
     provides FunctionFactory with
             // test functions

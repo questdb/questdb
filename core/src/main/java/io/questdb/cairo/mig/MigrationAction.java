@@ -22,18 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm.api;
+package io.questdb.cairo.mig;
 
-public interface MemoryMAR extends MemoryMA, MemoryMR, MemoryR {
-
-    @Override
-    default long getAppendAddress() {
-        long appendOffset = getAppendOffset();
-        return getPageAddress(pageIndex(appendOffset)) + offsetInPage(appendOffset);
-    }
-
-    @Override
-    default long getAppendAddressSize() {
-        return getPageSize() - offsetInPage(getAppendOffset());
-    }
+@FunctionalInterface
+interface MigrationAction {
+    void migrate(MigrationContext context);
 }
