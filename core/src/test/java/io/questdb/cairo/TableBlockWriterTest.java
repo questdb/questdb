@@ -41,6 +41,7 @@ import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TestUtils.LeakProneCode;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;

@@ -52,7 +52,7 @@ public class TxnScoreboard implements Closeable {
         this.fd = openCleanRW(ff, root, this.size);
 
         // truncate is required to give file a size
-        // the allocate above does not seem to update file system's size entry
+        // allocate above does not seem to update file system's size entry
         ff.truncate(fd, this.size);
         try {
             this.mem = TableUtils.mapRW(ff, fd, this.size, MemoryTag.MMAP_DEFAULT);

@@ -29,7 +29,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
@@ -54,7 +53,7 @@ public class MemoryPMAImpl extends MemoryPARWImpl implements MemoryMAR {
         super.close();
         if (fd != -1) {
             try {
-                Vm.bestEffortClose(ff, LOG, fd, truncate, sz, Files.PAGE_SIZE);
+                Vm.bestEffortClose(ff, LOG, fd, truncate, sz);
             } finally {
                 fd = -1;
             }

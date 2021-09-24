@@ -38,7 +38,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
 
     private static final long SEQUENCE_OFFSET;
     private final BitmapIndexWriter writer = new BitmapIndexWriter();
-    private final PagedSlidingReadOnlyMemory mem = new PagedSlidingReadOnlyMemory();
+    private final PagedSlidingReadOnlyMemory sliderMem = new PagedSlidingReadOnlyMemory();
     private long columnTop;
     @SuppressWarnings({"unused", "FieldCanBeLocal", "FieldMayBeFinal"})
     private volatile long sequence = 0L;
@@ -47,7 +47,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     @Override
     public void close() {
         Misc.free(writer);
-        Misc.free(mem);
+        Misc.free(sliderMem);
     }
 
     @Override
@@ -57,7 +57,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
 
     @Override
     public long getFd() {
-        return mem.getFd();
+        return sliderMem.getFd();
     }
 
     @Override
@@ -67,8 +67,8 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
 
     @Override
     public void refreshSourceAndIndex(long loRow, long hiRow) {
-        mem.updateSize();
-        index(mem, loRow, hiRow);
+        sliderMem.updateSize();
+        index(sliderMem, loRow, hiRow);
     }
 
     @Override
@@ -103,7 +103,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
         this.columnTop = columnTop;
         try {
             this.writer.of(configuration, path, name);
-            this.mem.of(columnMem, MemoryTag.MMAP_DEFAULT);
+            this.sliderMem.of(columnMem, MemoryTag.MMAP_DEFAULT);
         } catch (Throwable e) {
             this.close();
             throw e;
@@ -119,6 +119,11 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
             this.close();
             throw e;
         }
+    }
+
+    @Override
+    public void closeSlider() {
+        sliderMem.close();
     }
 
     @Override

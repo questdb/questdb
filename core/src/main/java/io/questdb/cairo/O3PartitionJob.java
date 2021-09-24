@@ -77,7 +77,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long tmpBuf
     ) {
         // is out of order data hitting the last partition?
-        // if so we do not need to re-open files and and write to existing file descriptors
+        // if so we do not need to re-open files and write to existing file descriptors
         final long o3TimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
         final RecordMetadata metadata = tableWriter.getMetadata();
         final int timestampIndex = metadata.getTimestampIndex();
@@ -623,9 +623,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int columnType,
             long timestampMergeIndexAddr,
             long srcOooFixAddr,
-            long srcOooFixSize,
             long srcOooVarAddr,
-            long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
@@ -667,9 +665,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 columnType,
                 timestampMergeIndexAddr,
                 srcOooFixAddr,
-                srcOooFixSize,
                 srcOooVarAddr,
-                srcOooVarSize,
                 srcOooLo,
                 srcOooHi,
                 srcOooMax,
@@ -773,23 +769,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final long activeVarFd;
                 final long srcDataTop;
                 final long srcOooFixAddr;
-                final long srcOooFixSize;
                 final long srcOooVarAddr;
-                final long srcOooVarSize;
                 if (!ColumnType.isVariableLength(columnType)) {
                     activeFixFd = mem1.getFd();
                     activeVarFd = 0;
                     srcOooFixAddr = oooMem1.addressOf(0);
-                    srcOooFixSize = oooMem1.getAppendOffset();
                     srcOooVarAddr = 0;
-                    srcOooVarSize = 0;
                 } else {
                     activeFixFd = mem2.getFd();
                     activeVarFd = mem1.getFd();
                     srcOooFixAddr = oooMem2.addressOf(0);
-                    srcOooFixSize = oooMem2.getAppendOffset();
                     srcOooVarAddr = oooMem1.addressOf(0);
-                    srcOooVarSize = oooMem1.getAppendOffset();
                 }
 
                 final CharSequence columnName = metadata.getColumnName(i);
@@ -820,9 +810,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
                                 timestampMergeIndexAddr,
                                 srcOooFixAddr,
-                                srcOooFixSize,
                                 srcOooVarAddr,
-                                srcOooVarSize,
                                 srcOooLo,
                                 srcOooHi,
                                 srcOooMax,
@@ -866,9 +854,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
                                 timestampMergeIndexAddr,
                                 srcOooFixAddr,
-                                srcOooFixSize,
                                 srcOooVarAddr,
-                                srcOooVarSize,
                                 srcOooLo,
                                 srcOooHi,
                                 srcOooMax,
@@ -936,9 +922,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int columnType,
             long timestampMergeIndexAddr,
             long srcOooFixAddr,
-            long srcOooFixSize,
             long srcOooVarAddr,
-            long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
@@ -985,9 +969,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     columnType,
                     timestampMergeIndexAddr,
                     srcOooFixAddr,
-                    srcOooFixSize,
                     srcOooVarAddr,
-                    srcOooVarSize,
                     srcOooLo,
                     srcOooHi,
                     srcOooMax,
@@ -1029,9 +1011,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     columnType,
                     timestampMergeIndexAddr,
                     srcOooFixAddr,
-                    srcOooFixSize,
                     srcOooVarAddr,
-                    srcOooVarSize,
                     srcOooLo,
                     srcOooHi,
                     srcOooMax,

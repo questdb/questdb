@@ -25,9 +25,7 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TestRecord;
-import io.questdb.griffin.engine.TestBinarySequence;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
@@ -47,12 +45,12 @@ public class MemoryPARWImplTest {
 
     @Test
     public void testBinSequence() {
-        testBinSequence0(700, 2048);
+        MemoryCARWImplTest.testBinSequence0(700, 2048);
     }
 
     @Test
     public void testBinSequence2() {
-        testBinSequence0(1024, 600);
+        MemoryCARWImplTest.testBinSequence0(1024, 600);
     }
 
     @Test
@@ -327,7 +325,7 @@ public class MemoryPARWImplTest {
     @Test
     public void testEvenPageSize() {
         try (MemoryPARWImpl mem = new MemoryPARWImpl(32, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            assertStrings(mem, false);
+            MemoryCARWImplTest.assertStrings(mem);
         }
     }
 
@@ -904,34 +902,14 @@ public class MemoryPARWImplTest {
     @Test
     public void testNullBin() {
         try (MemoryPARWImpl mem = new MemoryPARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            final TestBinarySequence binarySequence = new TestBinarySequence();
-            final byte[] buf = new byte[0];
-            binarySequence.of(buf);
-            mem.putBin(null);
-            mem.putBin(0, 0);
-            mem.putBin(binarySequence);
-            long o1 = mem.putNullBin();
-
-            assertNull(mem.getBin(0));
-            assertNull(mem.getBin(8));
-            BinarySequence bsview = mem.getBin(16);
-            assertNotNull(bsview);
-            assertEquals(0, bsview.length());
-            assertNull(mem.getBin(o1));
-        }
-    }
-
-    @Test
-    public void testOffPageSize() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(12, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            assertStrings(mem, true);
+            MemoryCARWImplTest.testNullBin0(mem);
         }
     }
 
     @Test
     public void testOkSize() {
         try (MemoryPARWImpl mem = new MemoryPARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            assertStrings(mem, false);
+            MemoryCARWImplTest.assertStrings(mem);
         }
     }
 
@@ -1023,14 +1001,7 @@ public class MemoryPARWImplTest {
     @Test
     public void testSmallEven() {
         try (MemoryPARWImpl mem = new MemoryPARWImpl(2, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            assertStrings(mem, false);
-        }
-    }
-
-    @Test
-    public void testSmallOdd() {
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(2, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            assertStrings(mem, true);
+            MemoryCARWImplTest.assertStrings(mem);
         }
     }
 
@@ -1054,150 +1025,6 @@ public class MemoryPARWImplTest {
         assertEquals(10, Vm.getStorageLength("xyz"));
         assertEquals(4, Vm.getStorageLength(""));
         assertEquals(4, Vm.getStorageLength(null));
-    }
-
-    private void assertStrings(MemoryPARWImpl mem, boolean b) {
-        if (b) {
-            mem.putByte((byte) 1);
-        }
-
-        Assert.assertEquals(10, Vm.getStorageLength("123"));
-        Assert.assertEquals(6, Vm.getStorageLength("x"));
-
-        long o1 = mem.putStr("123");
-        long o2 = mem.putStr("0987654321abcd");
-        Assert.assertEquals(o2 - o1, Vm.getStorageLength("123"));
-        long o3 = mem.putStr(null);
-        Assert.assertEquals(o3 - o2, Vm.getStorageLength("0987654321abcd"));
-        long o4 = mem.putStr("xyz123");
-        Assert.assertEquals(o4 - o3, Vm.getStorageLength(null));
-        long o5 = mem.putNullStr();
-        long o6 = mem.putStr("123ohh4", 3, 3);
-        long o7 = mem.putStr(null, 0, 2);
-        long o8 = mem.putStr((char) 0);
-        long o9 = mem.putStr('x');
-
-        if (b) {
-            assertEquals(1, mem.getByte(0));
-        }
-
-        TestUtils.assertEquals("123", mem.getStr(o1));
-        assertEquals(3, mem.getStrLen(o1));
-        TestUtils.assertEquals("123", mem.getStr2(o1));
-
-        String expected = "0987654321abcd";
-        TestUtils.assertEquals("0987654321abcd", mem.getStr(o2));
-        TestUtils.assertEquals("0987654321abcd", mem.getStr2(o2));
-
-        for (int i = 0; i < expected.length(); i++) {
-            long offset = o2 + 4 + i * 2;
-            assertEquals(expected.charAt(i), mem.getChar(offset));
-        }
-
-        assertNull(mem.getStr(o3));
-        assertNull(mem.getStr2(o3));
-        TestUtils.assertEquals("xyz123", mem.getStr(o4));
-        TestUtils.assertEquals("xyz123", mem.getStr2(o4));
-        assertNull(mem.getStr(o5));
-        assertNull(mem.getStr2(o5));
-        assertEquals(-1, mem.getStrLen(o5));
-
-        TestUtils.assertEquals("ohh", mem.getStr(o6));
-        assertNull(mem.getStr(o7));
-
-        CharSequence s1 = mem.getStr(o1);
-        CharSequence s2 = mem.getStr2(o2);
-        assertFalse(Chars.equals(s1, s2));
-
-        assertNull(mem.getStr(o8));
-        TestUtils.assertEquals("x", mem.getStr(o9));
-    }
-
-    private void testBinSequence0(long mem1Size, long mem2Size) {
-        Rnd rnd = new Rnd();
-        int n = 999;
-
-        final TestBinarySequence binarySequence = new TestBinarySequence();
-        final byte[] buffer = new byte[600];
-        final long bufAddr = Unsafe.malloc(buffer.length, MemoryTag.NATIVE_DEFAULT);
-        binarySequence.of(buffer);
-
-        try (MemoryPARWImpl mem = new MemoryPARWImpl(mem1Size, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            Assert.assertEquals(Numbers.ceilPow2(mem1Size), mem.getExtendSegmentSize());
-            long offset1 = 0;
-            for (int i = 0; i < n; i++) {
-                long o;
-                if (rnd.nextPositiveInt() % 16 == 0) {
-                    o = mem.putBin(null);
-                    Assert.assertEquals(offset1, o);
-                    offset1 += 8;
-                    continue;
-                }
-
-                int sz = buffer.length;
-                for (int j = 0; j < sz; j++) {
-                    buffer[j] = rnd.nextByte();
-                    Unsafe.getUnsafe().putByte(bufAddr + j, buffer[j]);
-                }
-
-                o = mem.putBin(binarySequence);
-                Assert.assertEquals(offset1, o);
-                offset1 += 8 + sz;
-                o = mem.putBin(bufAddr, sz);
-                Assert.assertEquals(offset1, o);
-                offset1 += 8 + sz;
-            }
-
-            try (MemoryPARWImpl mem2 = new MemoryPARWImpl(mem2Size, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                Assert.assertEquals(Numbers.ceilPow2(mem2Size), mem2.getExtendSegmentSize());
-                offset1 = 0;
-                for (int i = 0; i < n; i++) {
-                    BinarySequence sequence = mem.getBin(offset1);
-                    if (sequence == null) {
-                        offset1 += 8;
-                    } else {
-                        offset1 += 2 * (sequence.length() + 8);
-                    }
-
-                    mem2.putBin(sequence);
-                }
-
-                offset1 = 0;
-                long offset2 = 0;
-
-                // compare
-                for (int i = 0; i < n; i++) {
-                    BinarySequence sequence1 = mem.getBin(offset1);
-                    BinarySequence sequence2 = mem2.getBin(offset2);
-
-                    if (sequence1 == null) {
-                        assertNull(sequence2);
-                        Assert.assertEquals(TableUtils.NULL_LEN, mem2.getBinLen(offset2));
-                        offset1 += 8;
-                        offset2 += 8;
-                    } else {
-                        assertNotNull(sequence2);
-                        assertEquals(mem.getBinLen(offset1), mem2.getBinLen(offset2));
-                        assertEquals(sequence1.length(), sequence2.length());
-                        for (long l = 0, len = sequence1.length(); l < len; l++) {
-                            assertEquals(sequence1.byteAt(l), sequence2.byteAt(l));
-                        }
-
-                        offset1 += sequence1.length() + 8;
-                        sequence1 = mem.getBin(offset1);
-                        assertNotNull(sequence1);
-                        assertEquals(sequence1.length(), sequence2.length());
-                        for (long l = 0, len = sequence1.length(); l < len; l++) {
-                            assertEquals(sequence1.byteAt(l), sequence2.byteAt(l));
-                        }
-
-                        offset1 += sequence1.length() + 8;
-                        offset2 += sequence1.length() + 8;
-                    }
-                }
-            }
-        }
-        Unsafe.free(bufAddr, buffer.length, MemoryTag.NATIVE_DEFAULT);
     }
 
     private void testStrRnd(long offset, long pageSize) {

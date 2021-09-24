@@ -60,7 +60,7 @@ public interface MemoryM extends Closeable {
      * @param extendSegmentSize for those implementations that can need to extend mapped memory beyond available file size
  *                          should use this parameter as the increment size
      * @param size              size of the initial mapped memory when smaller than the actual file
-     * @param memoryTag
+     * @param memoryTag     memory tag for diagnostics
      */
     void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag);
 
@@ -69,10 +69,10 @@ public interface MemoryM extends Closeable {
     }
 
     default void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
-        of(ff, name, ff.getMapPageSize(), Long.MAX_VALUE, memoryTag);
+        of(ff, name, ff.getMapPageSize(), ff.length(name), memoryTag);
     }
 
     default void smallFile(FilesFacade ff, LPSZ name, int memoryTag) {
-        of(ff, name, ff.getPageSize(), Long.MAX_VALUE, memoryTag);
+        of(ff, name, ff.getPageSize(), ff.length(name), memoryTag);
     }
 }

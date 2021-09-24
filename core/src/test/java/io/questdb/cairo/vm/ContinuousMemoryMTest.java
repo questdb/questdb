@@ -297,7 +297,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             final long fd = TableUtils.openRW(ff, path, LOG);
             try {
                 MemoryMARW mem = Vm.getMARWInstance();
-                mem.of(ff, fd, null, Long.MAX_VALUE, MemoryTag.MMAP_DEFAULT);
+                mem.of(ff, fd, null, -1, MemoryTag.MMAP_DEFAULT);
 
                 mem.extend(ff.getMapPageSize() * 2);
 
@@ -366,7 +366,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             try {
                 MemoryMARW mem = Vm.getMARWInstance();
                 try {
-                    mem.of(ff, TableUtils.openRW(ff, path, LOG), null, Long.MAX_VALUE, MemoryTag.MMAP_DEFAULT);
+                    mem.of(ff, TableUtils.openRW(ff, path, LOG), null, -1, MemoryTag.MMAP_DEFAULT);
 
                     mem.extend(ff.getMapPageSize() * 2);
 
@@ -378,7 +378,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
                     mem.close();
                 }
 
-                Assert.assertEquals(ff.length(path), 1024);
+                Assert.assertEquals(ff.length(path), Files.PAGE_SIZE);
             } finally {
                 Assert.assertTrue(ff.remove(path));
             }
@@ -662,7 +662,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             try {
                 MemoryMARW mem = Vm.getMARWInstance();
                 try {
-                    mem.of(ff, path, FilesFacadeImpl._16M, Long.MAX_VALUE, MemoryTag.MMAP_DEFAULT);
+                    mem.of(ff, path, FilesFacadeImpl._16M, -1, MemoryTag.MMAP_DEFAULT);
                     // this is larger than page size
                     for (int i = 0; i < 3_000_000; i++) {
                         mem.putLong(i * 8, i + 1);
@@ -711,7 +711,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             try {
                 MemoryMARW mem = Vm.getMARWInstance();
                 try {
-                    mem.of(ff, path, FilesFacadeImpl._16M, Long.MAX_VALUE, MemoryTag.MMAP_DEFAULT);
+                    mem.of(ff, path, FilesFacadeImpl._16M, -1, MemoryTag.MMAP_DEFAULT);
                     // this is larger than page size
                     for (int i = 0; i < 3_000_000; i++) {
                         mem.putLong(i * 8, i + 1);
@@ -922,8 +922,9 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
                             FilesFacadeImpl.INSTANCE,
                             path,
                             sz,
-                            sz,
-                            MemoryTag.MMAP_DEFAULT);
+                            -1,
+                            MemoryTag.MMAP_DEFAULT
+                    );
 
                     MemoryCMR roMem = new MemoryCMRImpl(
                             FilesFacadeImpl.INSTANCE,
