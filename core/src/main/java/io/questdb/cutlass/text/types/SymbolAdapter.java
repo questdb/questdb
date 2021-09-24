@@ -27,14 +27,19 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cutlass.text.TextUtil;
-import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StringSink;
 
-public class SymbolAdapter extends AbstractTypeAdapter implements Mutable {
+public class SymbolAdapter extends AbstractTypeAdapter {
 
-    private boolean indexed;
+    private final StringSink utf8Sink;
+    private final boolean indexed;
+
+    public SymbolAdapter(boolean indexed) {
+        this.indexed = indexed;
+        this.utf8Sink = new StringSink();
+    }
+
 
     @Override
     public int getType() {
@@ -54,18 +59,8 @@ public class SymbolAdapter extends AbstractTypeAdapter implements Mutable {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        StringSink utf8Sink = Misc.getThreadLocalBuilder();
+        utf8Sink.clear();
         TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), utf8Sink);
         row.putSym(column, utf8Sink);
-    }
-
-    @Override
-    public void clear() {
-        indexed = false;
-    }
-
-    public SymbolAdapter of(boolean indexed) {
-        this.indexed = indexed;
-        return this;
     }
 }

@@ -112,11 +112,6 @@ public class DefaultTextConfiguration implements TextConfiguration {
     }
 
     @Override
-    public int getSymbolAdapterPoolCapacity() {
-        return 64;
-    }
-
-    @Override
     public int getUtf8SinkSize() {
         return 4096;
     }
