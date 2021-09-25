@@ -534,6 +534,19 @@ public class LineTcpServerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWriterTimestampField() throws Exception {
+        String lineData = "tab,tag=123t atimestamp=1000000t 1500000000000\n" +
+                "tab,tag=321t atimestamp=2000000t 1700000000000\n";
+        runInContext((server) -> {
+            send(server, lineData, "tab");
+            String expected = "tag\tatimestamp\ttimestamp\n" +
+                    "123t\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:25:00.000000Z\n" +
+                    "321t\t1970-01-01T00:00:02.000000Z\t1970-01-01T00:28:20.000000Z\n";
+            assertTable(expected, "tab");
+        });
+    }
+
+    @Test
     public void testWriterAllLongs() throws Exception {
         currentMicros = 1;
         try (TableModel m = new TableModel(configuration, "messages", PartitionBy.MONTH)) {
@@ -674,7 +687,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWrterCommitFails() throws Exception {
+    public void testWriterCommitFails() throws Exception {
         try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
             m.timestamp("ReceiveTime")
                     .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)

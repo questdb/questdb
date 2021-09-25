@@ -603,6 +603,13 @@ class LineTcpMeasurementScheduler implements Closeable {
                             bufPos += Byte.BYTES;
                             break;
                         }
+                        case NewLineProtoParser.ENTITY_TYPE_TIMESTAMP: {
+                            Unsafe.getUnsafe().putByte(bufPos, entity.getType());
+                            bufPos += Byte.BYTES;
+                            Unsafe.getUnsafe().putLong(bufPos, entity.getTimestampValue());
+                            bufPos += Long.BYTES;
+                            break;
+                        }
                         default:
                             // unsupported types are ignored
                             break;
@@ -875,6 +882,13 @@ class LineTcpMeasurementScheduler implements Closeable {
                             byte geohash = Unsafe.getUnsafe().getByte(bufPos);
                             bufPos += Byte.BYTES;
                             row.putByte(colIndex, geohash);
+                            break;
+                        }
+
+                        case NewLineProtoParser.ENTITY_TYPE_TIMESTAMP: {
+                            long ts = Unsafe.getUnsafe().getLong(bufPos);
+                            bufPos += Long.BYTES;
+                            row.putTimestamp(colIndex, ts);
                             break;
                         }
 
@@ -1555,5 +1569,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOSHORT] = ColumnType.getGeoHashTypeWithBits(16);
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOINT] = ColumnType.getGeoHashTypeWithBits(32);
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOLONG] = ColumnType.getGeoHashTypeWithBits(60);
+        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_TIMESTAMP] = ColumnType.TIMESTAMP;
     }
 }

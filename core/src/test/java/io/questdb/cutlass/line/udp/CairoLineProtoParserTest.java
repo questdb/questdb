@@ -346,6 +346,18 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampField() throws Exception {
+        final String expected = "tag\tatimestamp\ttimestamp\n" +
+                "123t\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:25:00.000000Z\n" +
+                "321t\t1970-01-01T00:00:02.000000Z\t1970-01-01T00:28:20.000000Z\n";
+
+        String lines = "tab,tag=123t atimestamp=1000000t 1500000000000\n" +
+                "tab,tag=321t atimestamp=2000000t 1700000000000\n";
+
+        assertThat(expected, lines, "tab");
+    }
+
+    @Test
     public void testBadTimestamp1() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
                 "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +

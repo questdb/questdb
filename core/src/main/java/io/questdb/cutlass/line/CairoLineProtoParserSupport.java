@@ -193,14 +193,18 @@ public class CairoLineProtoParserSupport {
                         return ColumnType.LONG256;
                     }
                     return valueLen == 1 ? ColumnType.SYMBOL : ColumnType.LONG;
-                case 'e':
-                case 'E':
-                    // tru(e)
-                    //  fals(e)
                 case 't':
+                    if (valueLen > 1) {
+                        return ColumnType.TIMESTAMP;
+                    }
+                    // fall through
                 case 'T':
                     // t
                     // T
+                case 'e':
+                case 'E':
+                    // tru(e)
+                    // fals(e)
                 case 'f':
                 case 'F':
                     // f
