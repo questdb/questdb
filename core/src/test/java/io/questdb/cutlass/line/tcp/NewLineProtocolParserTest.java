@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -114,7 +115,7 @@ public class NewLineProtocolParserTest extends BaseLineTcpContextTest {
             sink.put("t v=").put(value).put('\n');
             byte[] bytes = sink.toString().getBytes(StandardCharsets.UTF_8);
             final int len = bytes.length;
-            long mem = Unsafe.malloc(bytes.length);
+            long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < bytes.length; i++) {
                     Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
@@ -138,7 +139,7 @@ public class NewLineProtocolParserTest extends BaseLineTcpContextTest {
                     }
                 }
             } finally {
-                Unsafe.free(mem, bytes.length);
+                Unsafe.free(mem, bytes.length, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
