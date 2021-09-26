@@ -24,44 +24,18 @@
 
 package io.questdb.cutlass.text.types;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cutlass.text.TextUtil;
-import io.questdb.std.Mutable;
-import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
 
-public class TimestampUtf8Adapter extends AbstractTypeAdapter implements Mutable {
+public class TimestampUtf8Adapter extends TimestampAdapter {
     private final DirectCharSink utf8Sink;
-    private DateLocale locale;
-    private DateFormat format;
 
     public TimestampUtf8Adapter(DirectCharSink utf8Sink) {
         this.utf8Sink = utf8Sink;
-    }
-
-    @Override
-    public void clear() {
-        this.format = null;
-        this.locale = null;
-    }
-
-    @Override
-    public int getType() {
-        return ColumnType.TIMESTAMP;
-    }
-
-    @Override
-    public boolean probe(CharSequence text) {
-        try {
-            format.parse(text, locale);
-            return true;
-        } catch (NumericException e) {
-            return false;
-        }
     }
 
     @Override

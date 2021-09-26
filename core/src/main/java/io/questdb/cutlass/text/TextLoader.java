@@ -242,7 +242,12 @@ public class TextLoader implements Closeable, Mutable {
                 textMetadataParser.getColumnNames(),
                 textMetadataParser.getColumnTypes()
         );
-        textWriter.prepareTable(cairoSecurityContext, textLexer.getColumnNames(), textLexer.getColumnTypes());
+        textWriter.prepareTable(
+                cairoSecurityContext,
+                textLexer.getColumnNames(),
+                textLexer.getColumnTypes(),
+                textMetadataParser.getDesignatedColumnName(),
+                textMetadataParser.getDesignatedColumnIndex());
         textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter.getTextListener());
         state = LOAD_DATA;
     }

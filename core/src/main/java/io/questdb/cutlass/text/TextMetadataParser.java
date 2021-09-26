@@ -54,6 +54,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private static final int P_LOCALE = 4;
     private static final int P_UTF8 = 5;
     private static final int P_INDEX = 6;
+    private static final int P_DESIGNATED = 7;
     private static final CharSequenceIntHashMap propertyNameMap = new CharSequenceIntHashMap();
     private final DateLocaleFactory dateLocaleFactory;
     private final ObjectPool<FloatingCharSequence> csPool;
@@ -73,9 +74,12 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private long bufCapacity = 0;
     private int bufSize = 0;
     private CharSequence tableName;
+    private CharSequence designatedColumnName;
+    private int designatedColumnIdx = CairoTextWriter.NO_INDEX;
     private int localePosition;
     private boolean utf8 = false;
     private boolean index = false;
+    private boolean designated = false;
 
     public TextMetadataParser(TextConfiguration textConfiguration, TypeManager typeManager) {
         this.columnNames = new ObjList<>();
@@ -113,6 +117,14 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
 
     public ObjList<TypeAdapter> getColumnTypes() {
         return columnTypes;
+    }
+
+    public CharSequence getDesignatedColumnName() {
+        return designatedColumnName;
+    }
+
+    public int getDesignatedColumnIndex() {
+        return designatedColumnIdx;
     }
 
     @Override
@@ -160,6 +172,9 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                     case P_INDEX:
                         index = SqlKeywords.isTrueKeyword(tag);
                         break;
+                    case P_DESIGNATED:
+                        designated = SqlKeywords.isTrueKeyword(tag);
+                        break;
                     default:
                         LOG.info().$("ignoring [table=").$(tableName).$(", value=").$(tag).$(']').$();
                         break;
@@ -200,6 +215,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         localePosition = 0;
         utf8 = false;
         index = false;
+        designated = false;
     }
 
     private CharSequence copy(CharSequence tag) {
@@ -254,6 +270,10 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                     throw JsonException.$(0, "TIMESTAMP format pattern is required");
                 }
                 columnTypes.add(typeManager.nextTimestampAdapter(utf8, timestampFormatFactory.get(pattern), timestampLocale));
+                if (designated && designatedColumnIdx == CairoTextWriter.NO_INDEX) { // first wins, rest are ignored
+                    designatedColumnName = name;
+                    designatedColumnIdx = columnTypes.size() - 1;
+                }
                 break;
             case ColumnType.SYMBOL:
                 columnTypes.add(typeManager.nextSymbolAdapter(index));
@@ -301,6 +321,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         propertyNameMap.put("type", P_TYPE);
         propertyNameMap.put("pattern", P_PATTERN);
         propertyNameMap.put("locale", P_LOCALE);
+        propertyNameMap.put("designated", P_DESIGNATED);
         propertyNameMap.put("utf8", P_UTF8);
         propertyNameMap.put("index", P_INDEX);
     }

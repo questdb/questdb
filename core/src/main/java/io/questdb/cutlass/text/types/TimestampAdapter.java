@@ -27,14 +27,15 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectByteCharSequence;
 
 public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
-    private DateLocale locale;
-    private DateFormat format;
+    protected DateLocale locale;
+    protected DateFormat format;
 
     @Override
     public void clear() {
@@ -63,7 +64,7 @@ public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
     }
 
     public long getTimestamp(DirectByteCharSequence value) throws Exception {
-        return format.parse(value, locale);
+        return value.length() > 0 ? format.parse(value, locale) : Numbers.LONG_NaN;
     }
 
     public TimestampAdapter of(DateFormat format, DateLocale locale) {
