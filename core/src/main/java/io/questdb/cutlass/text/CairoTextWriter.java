@@ -305,17 +305,13 @@ public class CairoTextWriter implements Closeable, Mutable {
     void prepareTable(
             CairoSecurityContext cairoSecurityContext,
             ObjList<CharSequence> names,
-            ObjList<TypeAdapter> detectedTypes,
-            CharSequence designatedColumnName,
-            int designatedColumnIdx
+            ObjList<TypeAdapter> detectedTypes
     ) throws TextException {
         assert writer == null;
 
         if (detectedTypes.size() == 0) {
             throw CairoException.instance(0).put("cannot determine text structure");
         }
-        this.designatedTimestampColumnName = designatedColumnName;
-        this.designatedTimestampIndex = designatedColumnIdx;
 
         boolean canUpdateMetadata = true;
         switch (engine.getStatus(cairoSecurityContext, path, tableName)) {

@@ -415,13 +415,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                         pad(socket, TO_STRING_COL1_PAD, state.columnIndex);
                         pad(socket, TO_STRING_COL2_PAD, metadata.getColumnName(state.columnIndex));
                         if (!metadata.isColumnIndexed(state.columnIndex)) {
-                            if (metadata.getTimestampIndex() != state.columnIndex) {
-                                pad(socket, TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + 3, ColumnType.nameOf(metadata.getColumnType(state.columnIndex)));
-                            } else {
-                                StringSink sink = Misc.getThreadLocalBuilder();
-                                sink.put("[D] ").put(ColumnType.nameOf(metadata.getColumnType(state.columnIndex)));
-                                pad(socket, TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + 3, sink);
-                            }
+                            pad(socket, TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + 3, ColumnType.nameOf(metadata.getColumnType(state.columnIndex)));
                         } else {
                             StringSink sink = Misc.getThreadLocalBuilder();
                             sink.put("(idx/").put(metadata.getIndexValueBlockCapacity(state.columnIndex)).put(") ");

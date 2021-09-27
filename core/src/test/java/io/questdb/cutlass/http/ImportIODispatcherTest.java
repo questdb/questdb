@@ -29,7 +29,6 @@ import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -156,8 +155,7 @@ public class ImportIODispatcherTest {
             "  {\r\n" +
             "    \"name\": \"Pickup_DateTime\",\r\n" +
             "    \"type\": \"TIMESTAMP\",\r\n" +
-            "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\",\r\n" +
-            "    \"designated\": \"true\"\r\n" +
+            "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
             "  }\r\n" +
             "]\r\n" +
             "\r\n" +
@@ -236,7 +234,7 @@ public class ImportIODispatcherTest {
             "|              1  |                                              Col2  |                   STRING  |           0  |\r\n" +
             "|              2  |                                              Col3  |                   STRING  |           0  |\r\n" +
             "|              3  |                                              Col4  |                   STRING  |           0  |\r\n" +
-            "|              4  |                                   Pickup_DateTime  |            [D] TIMESTAMP  |           0  |\r\n" +
+            "|              4  |                                   Pickup_DateTime  |                TIMESTAMP  |           0  |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +
@@ -705,7 +703,7 @@ public class ImportIODispatcherTest {
                         }
                     });
                     new SendAndReceiveRequestBuilder().execute(
-                            "POST /upload?name=syms HTTP/1.1\r\n" +
+                            "POST /upload?name=syms&timestamp=ts HTTP/1.1\r\n" +
                                     "Host: localhost:9001\r\n" +
                                     "User-Agent: curl/7.64.0\r\n" +
                                     "Accept: */*\r\n" +
@@ -740,8 +738,7 @@ public class ImportIODispatcherTest {
                                     "  {\r\n" +
                                     "    \"name\": \"ts\",\r\n" +
                                     "    \"type\": \"TIMESTAMP\",\r\n" +
-                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\",\r\n" +
-                                    "    \"designated\": \"true\"\r\n" +
+                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
                                     "  }\r\n" +
                                     "]\r\n" +
                                     "\r\n" +
@@ -772,7 +769,7 @@ public class ImportIODispatcherTest {
                                     "|              1  |                                              col2  |                   SYMBOL  |           0  |\r\n" +
                                     "|              2  |                                              col3  |                   SYMBOL  |           0  |\r\n" +
                                     "|              3  |                                              col4  |                   STRING  |           0  |\r\n" +
-                                    "|              4  |                                                ts  |            [D] TIMESTAMP  |           0  |\r\n" +
+                                    "|              4  |                                                ts  |                TIMESTAMP  |           0  |\r\n" +
                                     "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                     "\r\n" +
                                     "00\r\n" +
@@ -799,7 +796,7 @@ public class ImportIODispatcherTest {
     }
 
     @Test
-    public void testImportDesignatedTsFromSchema1() throws Exception {
+    public void testImportDesignatedTsFromSchema() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
                 .withWorkerCount(1)
@@ -814,7 +811,7 @@ public class ImportIODispatcherTest {
                         }
                     });
                     new SendAndReceiveRequestBuilder().execute(
-                            "POST /upload?name=syms HTTP/1.1\r\n" +
+                            "POST /upload?name=syms&timestamp=ts1 HTTP/1.1\r\n" +
                                     "Host: localhost:9001\r\n" +
                                     "User-Agent: curl/7.64.0\r\n" +
                                     "Accept: */*\r\n" +
@@ -840,20 +837,17 @@ public class ImportIODispatcherTest {
                                     "  {\r\n" +
                                     "    \"name\": \"ts1\",\r\n" +
                                     "    \"type\": \"TIMESTAMP\",\r\n" +
-                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\",\r\n" +
-                                    "    \"designated\": \"true\"\r\n" +
+                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
                                     "  },\r\n" +
                                     "  {\r\n" +
                                     "    \"name\": \"ts2\",\r\n" +
                                     "    \"type\": \"TIMESTAMP\",\r\n" +
-                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\",\r\n" +
-                                    "    \"designated\": \"false\"\r\n" +
+                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
                                     "  },\r\n" +
                                     "  {\r\n" +
                                     "    \"name\": \"ts3\",\r\n" +
                                     "    \"type\": \"TIMESTAMP\",\r\n" +
-                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\",\r\n" +
-                                    "    \"designated\": \"true\"\r\n" +
+                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
                                     "  }\r\n" +
                                     "]\r\n" +
                                     "\r\n" +
@@ -882,122 +876,7 @@ public class ImportIODispatcherTest {
                                     "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                                     "|              0  |                                              col1  |                   SYMBOL  |           0  |\r\n" +
                                     "|              1  |                                              col2  |         (idx/256) SYMBOL  |           0  |\r\n" +
-                                    "|              2  |                                               ts1  |            [D] TIMESTAMP  |           1  |\r\n" +
-                                    "|              3  |                                               ts2  |                TIMESTAMP  |           0  |\r\n" +
-                                    "|              4  |                                               ts3  |                TIMESTAMP  |           0  |\r\n" +
-                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                    "\r\n" +
-                                    "00\r\n" +
-                                    "\r\n");
-                    if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
-                        Assert.fail();
-                    }
-                    try(TableReader reader = new TableReader(engine.getConfiguration(), "syms")) {
-                        TableReaderMetadata meta = reader.getMetadata();
-                        Assert.assertEquals(5, meta.getColumnCount());
-                        Assert.assertEquals(2, meta.getTimestampIndex());
-                        Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("col1"));
-                        Assert.assertFalse(meta.isColumnIndexed(0));
-                        Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("col2"));
-                        Assert.assertTrue(meta.isColumnIndexed(1));
-                        Assert.assertEquals(ColumnType.TIMESTAMP, meta.getColumnType("ts1"));
-                        Assert.assertFalse(meta.isColumnIndexed(2));
-                        Assert.assertEquals(ColumnType.TIMESTAMP, meta.getColumnType("ts2"));
-                        Assert.assertFalse(meta.isColumnIndexed(3));
-                        Assert.assertEquals(ColumnType.TIMESTAMP, meta.getColumnType("ts3"));
-                        Assert.assertFalse(meta.isColumnIndexed(4));
-                    }
-                    compiler.close();
-                });
-    }
-
-    @Test
-    public void testImportDesignatedTsFromSchema2() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .run(engine -> {
-                    setupSql(engine);
-                    final SOCountDownLatch waitForData = new SOCountDownLatch(1);
-                    engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                        if (event == PoolListener.EV_RETURN && "syms".equals(name)) {
-                            waitForData.countDown();
-                        }
-                    });
-                    new SendAndReceiveRequestBuilder().execute(
-                            "POST /upload?name=syms HTTP/1.1\r\n" +
-                                    "Host: localhost:9001\r\n" +
-                                    "User-Agent: curl/7.64.0\r\n" +
-                                    "Accept: */*\r\n" +
-                                    "Content-Length: 437760673\r\n" +
-                                    "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
-                                    "Expect: 100-continue\r\n" +
-                                    "\r\n" +
-                                    "--------------------------27d997ca93d2689d\r\n" +
-                                    "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
-                                    "Content-Type: application/octet-stream\r\n" +
-                                    "\r\n" +
-                                    "[\r\n" +
-                                    "  {\r\n" +
-                                    "    \"name\": \"col1\",\r\n" +
-                                    "    \"type\": \"SYMBOL\",\r\n" +
-                                    "    \"index\": \"false\",\r\n" +
-                                    "    \"designated\": \"true\"\r\n" +
-                                    "  },\r\n" +
-                                    "  {\r\n" +
-                                    "    \"name\": \"col2\",\r\n" +
-                                    "    \"type\": \"SYMBOL\",\r\n" +
-                                    "    \"index\": \"true\",\r\n" +
-                                    "    \"designated\": \"true\"\r\n" +
-                                    "  },\r\n" +
-                                    "  {\r\n" +
-                                    "    \"name\": \"ts1\",\r\n" +
-                                    "    \"type\": \"TIMESTAMP\",\r\n" +
-                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\",\r\n" +
-                                    "    \"designated\": \"true\"\r\n" +
-                                    "  },\r\n" +
-                                    "  {\r\n" +
-                                    "    \"name\": \"ts2\",\r\n" +
-                                    "    \"type\": \"TIMESTAMP\",\r\n" +
-                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\",\r\n" +
-                                    "    \"designated\": \"true\"\r\n" +
-                                    "  },\r\n" +
-                                    "  {\r\n" +
-                                    "    \"name\": \"ts3\",\r\n" +
-                                    "    \"type\": \"TIMESTAMP\",\r\n" +
-                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\",\r\n" +
-                                    "    \"designated\": \"false\"\r\n" +
-                                    "  }\r\n" +
-                                    "]\r\n" +
-                                    "\r\n" +
-                                    "--------------------------27d997ca93d2689d\r\n" +
-                                    "Content-Disposition: form-data; name=\"data\"; filename=\"table2.csv\"\r\n" +
-                                    "Content-Type: application/octet-stream\r\n" +
-                                    "\r\n" +
-                                    "col1,col2,ts1,ts2,ts3\r\n" +
-                                    "sym1,sym2,2017-02-01 00:30:00,,\r\n" +
-                                    "\r\n" +
-                                    "--------------------------27d997ca93d2689d--",
-                            "HTTP/1.1 200 OK\r\n" +
-                                    "Server: questDB/1.0\r\n" +
-                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                    "Transfer-Encoding: chunked\r\n" +
-                                    "Content-Type: text/plain; charset=utf-8\r\n" +
-                                    "\r\n" +
-                                    "0666\r\n" +
-                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                    "|      Location:  |                                              syms  |        Pattern  | Locale  |      Errors  |\r\n" +
-                                    "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
-                                    "|      Timestamp  |                                               ts1  |                 |         |              |\r\n" +
-                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                    "|   Rows handled  |                                                 1  |                 |         |              |\r\n" +
-                                    "|  Rows imported  |                                                 1  |                 |         |              |\r\n" +
-                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                    "|              0  |                                              col1  |                   SYMBOL  |           0  |\r\n" +
-                                    "|              1  |                                              col2  |         (idx/256) SYMBOL  |           0  |\r\n" +
-                                    "|              2  |                                               ts1  |            [D] TIMESTAMP  |           0  |\r\n" +
+                                    "|              2  |                                               ts1  |                TIMESTAMP  |           1  |\r\n" +
                                     "|              3  |                                               ts2  |                TIMESTAMP  |           0  |\r\n" +
                                     "|              4  |                                               ts3  |                TIMESTAMP  |           0  |\r\n" +
                                     "+-----------------------------------------------------------------------------------------------------------------+\r\n" +

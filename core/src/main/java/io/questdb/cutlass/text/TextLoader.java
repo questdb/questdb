@@ -37,7 +37,6 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -239,12 +238,7 @@ public class TextLoader implements Closeable, Mutable {
                 textMetadataParser.getColumnNames(),
                 textMetadataParser.getColumnTypes()
         );
-        textWriter.prepareTable(
-                cairoSecurityContext,
-                textLexer.getColumnNames(),
-                textLexer.getColumnTypes(),
-                textMetadataParser.getDesignatedColumnName(),
-                textMetadataParser.getDesignatedColumnIndex());
+        textWriter.prepareTable(cairoSecurityContext, textLexer.getColumnNames(), textLexer.getColumnTypes());
         textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter.getTextListener());
         state = LOAD_DATA;
     }
