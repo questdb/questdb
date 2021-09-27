@@ -35,23 +35,19 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.TimestampFormatFactory;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.DirectCharSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
 public class TypeManagerTest {
-    private static DirectCharSink utf8Sink;
     private static JsonLexer jsonLexer;
 
     @BeforeClass
     public static void setUp() {
-        utf8Sink = new DirectCharSink(64);
         jsonLexer = new JsonLexer(1024, 2048);
     }
 
     @AfterClass
     public static void tearDown() {
-        Misc.free(utf8Sink);
         Misc.free(jsonLexer);
     }
 
@@ -210,12 +206,12 @@ public class TypeManagerTest {
         );
 
         inputFormatConfiguration.parseConfiguration(jsonLexer, fileResource);
-        return new TypeManager(new DefaultTextConfiguration(fileResource), utf8Sink);
+        return new TypeManager(new DefaultTextConfiguration(fileResource));
     }
 
     private void testIllegalParameterForGetTypeAdapter(int columnType) {
         TextConfiguration textConfiguration = new DefaultTextConfiguration();
-        TypeManager typeManager = new TypeManager(textConfiguration, utf8Sink);
+        TypeManager typeManager = new TypeManager(textConfiguration);
         try {
             typeManager.getTypeAdapter(columnType);
             Assert.fail();

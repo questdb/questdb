@@ -117,7 +117,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final WeakAutoClosableObjectPool<TypesAndInsert> typesAndInsertPool;
     private final DateLocale locale;
     private final CharSequenceObjHashMap<TableWriter> pendingWriters;
-    private final DirectCharSink utf8Sink;
     private final TypeManager typeManager;
     private final AssociativeCache<TypesAndInsert> typesAndInsertCache;
     private final CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap;
@@ -173,8 +172,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             int workerCount
     ) {
         this.engine = engine;
-        this.utf8Sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
-        this.typeManager = new TypeManager(engine.getConfiguration().getTextConfiguration(), utf8Sink);
+        this.typeManager = new TypeManager(engine.getConfiguration().getTextConfiguration());
         this.nf = configuration.getNetworkFacade();
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
@@ -305,7 +303,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
         Misc.free(typesAndSelectCache);
         Misc.free(path);
-        Misc.free(utf8Sink);
     }
 
     @Override

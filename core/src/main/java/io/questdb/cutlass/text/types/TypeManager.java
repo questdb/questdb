@@ -46,12 +46,9 @@ public class TypeManager implements Mutable {
     private final ObjectPool<TimestampAdapter> timestampAdapterPool;
     private final InputFormatConfiguration inputFormatConfiguration;
 
-    public TypeManager(
-            TextConfiguration configuration,
-            DirectCharSink utf8Sink
-    ) {
-        this.dateAdapterPool = new ObjectPool<>(() -> new DateUtf8Adapter(utf8Sink), configuration.getDateAdapterPoolCapacity());
-        this.timestampUtf8AdapterPool = new ObjectPool<>(() -> new TimestampUtf8Adapter(utf8Sink), configuration.getTimestampAdapterPoolCapacity());
+    public TypeManager(TextConfiguration configuration) {
+        this.dateAdapterPool = new ObjectPool<>(DateUtf8Adapter::new, configuration.getDateAdapterPoolCapacity());
+        this.timestampUtf8AdapterPool = new ObjectPool<>(TimestampUtf8Adapter::new, configuration.getTimestampAdapterPoolCapacity());
         this.timestampAdapterPool = new ObjectPool<>(TimestampAdapter::new, configuration.getTimestampAdapterPoolCapacity());
         this.inputFormatConfiguration = configuration.getInputFormatConfiguration();
         addDefaultProbes();
@@ -61,7 +58,7 @@ public class TypeManager implements Mutable {
         final IntList dateUtf8Flags = inputFormatConfiguration.getDateUtf8Flags();
         for (int i = 0, n = dateFormats.size(); i < n; i++) {
             if (dateUtf8Flags.getQuick(i) == 1) {
-                probes.add(new DateUtf8Adapter(utf8Sink).of(dateFormats.getQuick(i), dateLocales.getQuick(i)));
+                probes.add(new DateUtf8Adapter().of(dateFormats.getQuick(i), dateLocales.getQuick(i)));
             } else {
                 probes.add(new DateAdapter().of(dateFormats.getQuick(i), dateLocales.getQuick(i)));
             }
@@ -72,7 +69,7 @@ public class TypeManager implements Mutable {
         final IntList timestampUtf8Flags = inputFormatConfiguration.getTimestampUtf8Flags();
         for (int i = 0, n = timestampFormats.size(); i < n; i++) {
             if (timestampUtf8Flags.getQuick(i) == 1) {
-                probes.add(new TimestampUtf8Adapter(utf8Sink).of(timestampFormats.getQuick(i), timestampLocales.getQuick(i)));
+                probes.add(new TimestampUtf8Adapter().of(timestampFormats.getQuick(i), timestampLocales.getQuick(i)));
             } else {
                 probes.add(new TimestampAdapter().of(timestampFormats.getQuick(i), timestampLocales.getQuick(i)));
             }

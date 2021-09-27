@@ -33,17 +33,11 @@ import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.StringSink;
 
 public class TimestampUtf8Adapter extends TimestampAdapter {
-    private final DirectCharSink utf8Sink;
-
-    public TimestampUtf8Adapter(DirectCharSink utf8Sink) {
-        this.utf8Sink = utf8Sink;
-    }
-
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value, StringSink tempSink) throws Exception {
-        utf8Sink.clear();
-        TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), utf8Sink);
-        row.putDate(column, format.parse(utf8Sink, locale));
+        tempSink.clear();
+        TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), tempSink);
+        row.putDate(column, format.parse(tempSink, locale));
     }
 
     public TimestampUtf8Adapter of(DateFormat format, DateLocale locale) {
