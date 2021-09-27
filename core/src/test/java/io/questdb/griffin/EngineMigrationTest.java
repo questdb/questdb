@@ -74,29 +74,39 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     @Test
     public void test416() throws IOException, SqlException {
-        doMigration("/migration/data_416.zip", false);
+        doMigration("/migration/data_416.zip", false, false);
     }
 
     @Test
     public void test417() throws IOException, SqlException {
-        doMigration("/migration/data_417.zip", true);
+        doMigration("/migration/data_417.zip", true, false);
     }
 
     @Test
     public void test419() throws IOException, SqlException {
-        doMigration("/migration/data_419.zip", true);
+        doMigration("/migration/data_419.zip", true, false);
     }
 
     @Test
     public void test420() throws IOException, SqlException {
-        doMigration("/migration/data_420.zip", true);
+        doMigration("/migration/data_420.zip", true, false);
+    }
+
+    @Test
+    public void test421() throws IOException, SqlException {
+        doMigration("/migration/data_421.zip", true, true);
+    }
+
+    @Test
+    public void test422() throws IOException, SqlException {
+        doMigration("/migration/data_422.zip", true, true);
     }
 
     @Test
     public void testGenerateTables() throws SqlException {
         generateMigrationTables();
         engine.releaseAllWriters();
-        assertData();
+        assertData(true);
     }
 
     private static void copyInputStream(byte[] buffer, File out, InputStream is) throws IOException {
@@ -110,12 +120,17 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertData() throws SqlException {
+    private void assertData(boolean withO3) throws SqlException {
         assertNoneNts();
         assertNone();
         assertDay();
         assertMonth();
         assertYear();
+        if (withO3) {
+            assertDayO3();
+            assertMonthO3();
+            assertYearO3();
+        }
     }
 
     private void assertDay() throws SqlException {
@@ -185,6 +200,75 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         );
     }
 
+    private void assertDayO3() throws SqlException {
+
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "t_day_ooo where m = null",
+                sink,
+                "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
+                        "113\tD\t-5450\t304258\t-35463\tNaN\tNaN\t\t1970-01-01T00:00:00.098394Z\tBGNP\t\tfalse\t\t0x77e1be06c460b246870c47c1891e7fd0ac87f7392b452025c6125e52fbd1dca5\t00000000 9a 09 23 b7 fe e0 66 8e ab be\t1970-01-01T00:56:40.000000Z\n" +
+                        "21\tU\t9394\t116017\t28613\t0.9541\t0.4462835932759871\t\t1969-12-31T23:59:52.698389Z\tJKUJD\tbbbbbb\ttrue\t\t0x77ff57ae7d4edbc04e01b7136579e35b6825ef23c1058aa9773e4dc6440131c1\t\t1970-01-24T04:30:00.000000Z\n" +
+                        "32\tE\t-22886\t-53239\t97228\t0.5323\t0.5460002994573423\t\t1969-12-31T23:59:54.421883Z\tCYRE\t\tfalse\t\t0xb2ca70c2dbad1880ed7c7deb78927731cb475df06066a1dec6cf26b6079345d1\t00000000 84 64\t1970-03-11T10:43:20.000000Z\n" +
+                        "63\tJ\t25414\t75639\tNaN\t0.4987\t0.012936401281057996\t1974-03-10T13:01:46.469Z\t1969-12-31T23:59:53.426029Z\tQGPO\taaa\ttrue\t\t0x4b22ca548f932a4446f90de2e997fd102edf54145e4416127c2111d1daa23099\t\t1970-06-12T00:56:40.000000Z\n" +
+                        "84\tR\t30808\t427742\t46236\t0.2773\t0.1394740703793117\t1981-08-30T12:40:12.324Z\t1969-12-31T23:59:52.637810Z\t\tbbbbbb\ttrue\t\t0x8c8b6a1300caf2bcb0db8b2fa736bbf8612b1789ba10fd0c54e1573b4caa7bbb\t\t1970-08-20T11:36:40.000000Z\n" +
+                        "103\tP\t-12598\t836287\t9492\t0.6398\t0.790078109706257\t1972-05-29T16:00:17.462Z\t1969-12-31T23:59:53.580725Z\tJVKW\taaa\tfalse\t\t0x61399f22a34531046a48b5b5f2d4aec3a9030c063a55bc306c9c559bb3c93d06\t\t1970-10-05T18:43:20.000000Z\n" +
+                        "51\tS\t22146\t687421\t-55216\t0.3373\t0.9526743205271402\t1975-10-16T05:00:17.425Z\t1970-01-01T00:00:00.009806Z\tHVYVJ\tc\tfalse\t\t0x945cf7e9f2855229a488c243dfc766564ebc51a2dd0ab714916913d81e6c9883\t00000000 16 4b\t1970-10-05T19:36:40.000000Z\n" +
+                        "66\tD\t-5300\t814924\t23886\t0.7993\t0.6834975299862411\t\t1969-12-31T23:59:55.960730Z\tRUCW\t\ttrue\t\t0xe6e8724e0d55db8bc5c2baab99008d37d61065128bd9ac80cdc779c297ba2d9b\t00000000 7d bf aa 4e c7 70 67 76\t1970-11-21T01:50:00.000000Z\n"
+        );
+
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "select distinct k from t_day_ooo",
+                sink,
+                "k\n" +
+                        "bbbbbb\n" +
+                        "aaa\n" +
+                        "c\n" +
+                        "\n"
+        );
+
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "t_day_ooo",
+                sink,
+                "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
+                        "67\tD\t4054\t129626\t-74037\t0.7730\t0.7504751831632615\t1973-12-02T23:46:21.858Z\t\tTRJK\tc\ttrue\tc\t0xadab9269a1afcfa8a209c923df856c3267c5f44b36a8e8be5304bb5970a2cbf4\t00000000 39 ae 3a 61 47 59\t1970-01-01T00:03:20.000000Z\n" +
+                        "113\tD\t-5450\t304258\t-35463\tNaN\tNaN\t\t1970-01-01T00:00:00.098394Z\tBGNP\t\tfalse\t\t0x77e1be06c460b246870c47c1891e7fd0ac87f7392b452025c6125e52fbd1dca5\t00000000 9a 09 23 b7 fe e0 66 8e ab be\t1970-01-01T00:56:40.000000Z\n" +
+                        "98\tZ\t30001\t552351\t-81397\tNaN\t0.8838658419954148\t1972-04-19T12:09:28.393Z\t1969-12-31T23:59:57.954401Z\t\tc\ttrue\tc\t0x8caf7921a1624ab15ab308699faa68fda07fbc4ac8e40c3e9ff3b6344e33baf7\t\t1970-01-24T03:36:40.000000Z\n" +
+                        "21\tU\t9394\t116017\t28613\t0.9541\t0.4462835932759871\t\t1969-12-31T23:59:52.698389Z\tJKUJD\tbbbbbb\ttrue\t\t0x77ff57ae7d4edbc04e01b7136579e35b6825ef23c1058aa9773e4dc6440131c1\t\t1970-01-24T04:30:00.000000Z\n" +
+                        "50\tL\t-23630\t625273\t10881\t0.4221\t0.1614220569523407\t1972-06-02T15:23:57.981Z\t1969-12-31T23:59:57.925772Z\tLMCH\tbbbbbb\tfalse\tc\t0x813df64652e4539f8d1704812a86db599d2f395397471617e8c0aa059fd2ff7e\t00000000 a1 26 4d 20 c7 3d 27 56\t1970-02-16T07:10:00.000000Z\n" +
+                        "89\tY\t11702\tNaN\t-66201\t0.4134\t0.5916798984476636\t1975-03-20T22:59:09.088Z\t1969-12-31T23:59:56.557344Z\tQOCKW\taaa\tfalse\taaa\t0x8b20bd04c1469d59a3aa669bc023de9b9ef4af4e7bb33b4886a6a1327a9305b4\t\t1970-02-16T08:03:20.000000Z\n" +
+                        "32\tE\t-22886\t-53239\t97228\t0.5323\t0.5460002994573423\t\t1969-12-31T23:59:54.421883Z\tCYRE\t\tfalse\t\t0xb2ca70c2dbad1880ed7c7deb78927731cb475df06066a1dec6cf26b6079345d1\t00000000 84 64\t1970-03-11T10:43:20.000000Z\n" +
+                        "63\tD\t-13237\t349682\t58269\t0.8900\tNaN\t1972-09-11T03:03:29.420Z\t1970-01-01T00:00:00.349012Z\tDLYD\tc\ttrue\tbbbbbb\t0xa372c456bef4dfd959efe9cc24ca36283f082f4bebd899165a04f2f61ae5f616\t00000000 64 f1 88 84 ce 2f 18 2f\t1970-03-11T11:36:40.000000Z\n" +
+                        "56\tE\t16923\t292702\t-42438\t0.2215\tNaN\t1977-04-25T05:00:52.665Z\t1969-12-31T23:59:59.551179Z\t\tc\tfalse\tc\t0xb6d3d8ef9d270659ba4505a45607a671dff633c8162db8f865999c7fce96f7cf\t00000000 af d9 c4 ce\t1970-04-03T14:16:40.000000Z\n" +
+                        "100\tL\t-21087\tNaN\t8483\t0.7222\t0.5367705697885076\t1972-07-04T16:07:22.633Z\t1969-12-31T23:59:59.259168Z\tKHWIH\tc\tfalse\tbbbbbb\t0xc04116c648bfc0cfc39a6577b9023ae683da24fefe793c735ee265e38b644743\t00000000 3a 95 54 64 f2 d2 d3 f2 0a\t1970-04-03T15:10:00.000000Z\n" +
+                        "127\tX\t-6754\t634555\t-58749\t0.4577\t0.1314717313816608\t1980-04-09T03:28:19.579Z\t1969-12-31T23:59:55.363250Z\tQKQWP\tbbbbbb\ttrue\taaa\t0x73545ffed36d6b39393354332407500c2e05793b7ac41bd651de5085560c403e\t00000000 b7 36 56 28\t1970-04-26T17:50:00.000000Z\n" +
+                        "117\tZ\t19280\t708029\t7629\t0.8897\t0.07729135833370693\t1971-05-26T20:32:30.186Z\t1969-12-31T23:59:57.260889Z\tDCXGB\tc\tfalse\tc\t0x58004b1cab1eb285a13e739a5d7f909b79a74566d6205b02943645787af3660a\t00000000 7f 19 83 5d\t1970-04-26T18:43:20.000000Z\n" +
+                        "74\tD\t22755\t47698\t83591\t0.3472\t0.9731459713995845\t\t1969-12-31T23:59:54.739164Z\tQBTJ\tbbbbbb\ttrue\taaa\t0x6129d17444242622658873ba5637c583d0364c5670e373daf33edd2f1a2f5dc1\t\t1970-05-19T21:23:20.000000Z\n" +
+                        "35\tV\t30763\t454782\t21576\t0.5490\t0.918078226055601\t1979-07-30T03:13:38.335Z\t1970-01-01T00:00:00.494497Z\t\taaa\tfalse\taaa\t0x4f957d6d4c11b309993e21df91a6c336b3ec12c7605e4d2bafc4e8011e9e8585\t00000000 d5 0e 13 5b 66 92 63\t1970-05-19T22:16:40.000000Z\n" +
+                        "63\tJ\t25414\t75639\tNaN\t0.4987\t0.012936401281057996\t1974-03-10T13:01:46.469Z\t1969-12-31T23:59:53.426029Z\tQGPO\taaa\ttrue\t\t0x4b22ca548f932a4446f90de2e997fd102edf54145e4416127c2111d1daa23099\t\t1970-06-12T00:56:40.000000Z\n" +
+                        "23\tW\t-22179\t668674\t56239\t0.7835\t0.8296487842503996\t\t1969-12-31T23:59:56.324655Z\tJEYIB\t\tfalse\taaa\t0x4b50c0b8b63364337f1dcc900e3d86d7766ea5bb46ac34808c3cb23cb3a3b1e5\t00000000 35 84 93 09 b6 0a a3\t1970-06-12T01:50:00.000000Z\n" +
+                        "38\tT\t28632\t871464\t36443\t0.4148\tNaN\t1977-07-08T09:49:37.136Z\t1969-12-31T23:59:56.876692Z\tMEFGB\taaa\ttrue\taaa\t0xcfe0f613a3f885e0872552c741a4f1a059cad7938cedb7127a7871adc5bc7187\t\t1970-07-05T04:30:00.000000Z\n" +
+                        "22\tW\t-31843\t141735\tNaN\t0.6956\t0.5746332516686926\t1982-04-17T13:14:14.137Z\t1969-12-31T23:59:59.172667Z\tNYLP\tbbbbbb\ttrue\taaa\t0x9e3c52f318512793aaa5c4e9097c6ff7e2a8f8b27f3bd0a7ba67ab8dc56779ab\t00000000 20 99 ca f5 23 fc 8b d3 da\t1970-07-05T05:23:20.000000Z\n" +
+                        "121\tM\t-10006\tNaN\t25084\t0.2586\t0.19090281591031055\t\t1969-12-31T23:59:58.529372Z\t\t\ttrue\tc\t0x5e0a5014c858a2155c54b8fe88c3f28bc0a5aa2b7a64749b82c0f0baa065b87a\t00000000 f7 32 58 95 1a dc\t1970-07-28T08:03:20.000000Z\n" +
+                        "94\tD\t2347\tNaN\tNaN\t0.3894\t0.8465458515997965\t1982-01-08T09:55:48.631Z\t1969-12-31T23:59:54.822700Z\tXOSCL\tc\tfalse\tc\t0x74320ff14ac6b0e5af43205486800f546a6dfe2359fcb48868895c6af864bc30\t00000000 23 8d 4e f2 24\t1970-07-28T08:56:40.000000Z\n" +
+                        "84\tR\t30808\t427742\t46236\t0.2773\t0.1394740703793117\t1981-08-30T12:40:12.324Z\t1969-12-31T23:59:52.637810Z\t\tbbbbbb\ttrue\t\t0x8c8b6a1300caf2bcb0db8b2fa736bbf8612b1789ba10fd0c54e1573b4caa7bbb\t\t1970-08-20T11:36:40.000000Z\n" +
+                        "79\tH\t-6052\t381347\t-2410\t0.4544\t0.6038174272571708\t1976-01-08T16:25:57.265Z\t1969-12-31T23:59:59.845206Z\tPTSGO\tbbbbbb\ttrue\tc\t0x8aea6385566991f9545056f68175de1951b91b80845e794446e152b713066729\t\t1970-08-20T12:30:00.000000Z\n" +
+                        "82\tT\t-5480\tNaN\t14044\t0.5195\t0.6153338736725058\t1979-01-05T16:34:18.864Z\t1969-12-31T23:59:57.923737Z\tXXXMG\taaa\tfalse\tc\t0xd6d5ed5cdda5769582614094132b92b270792b8a5cb4ad77c84691b43abf49bb\t00000000 d2 fa 8a 0d 8e\t1970-09-12T15:10:00.000000Z\n" +
+                        "23\tR\t7130\tNaN\t-16659\t0.3326\t0.716710988270706\t1978-07-29T09:01:38.361Z\t\tJFSHS\tc\ttrue\taaa\t0x8f5846b61894ad198cc85c25e3cab09d7dcccdd8d3e47403963c72b64fc90c3b\t00000000 cd 9a 8a 35 bf 30 e5\t1970-09-12T16:03:20.000000Z\n" +
+                        "103\tP\t-12598\t836287\t9492\t0.6398\t0.790078109706257\t1972-05-29T16:00:17.462Z\t1969-12-31T23:59:53.580725Z\tJVKW\taaa\tfalse\t\t0x61399f22a34531046a48b5b5f2d4aec3a9030c063a55bc306c9c559bb3c93d06\t\t1970-10-05T18:43:20.000000Z\n" +
+                        "51\tS\t22146\t687421\t-55216\t0.3373\t0.9526743205271402\t1975-10-16T05:00:17.425Z\t1970-01-01T00:00:00.009806Z\tHVYVJ\tc\tfalse\t\t0x945cf7e9f2855229a488c243dfc766564ebc51a2dd0ab714916913d81e6c9883\t00000000 16 4b\t1970-10-05T19:36:40.000000Z\n" +
+                        "72\tI\t-13055\t80205\t72212\t0.8594\tNaN\t1979-12-14T03:00:27.232Z\t1969-12-31T23:59:53.910807Z\tULUD\tc\tfalse\tc\t0x9ca139e6aa7bad8fd920224e4c134dc36257adb6f218cf114bf20bf3af7f0f21\t\t1970-10-28T22:16:40.000000Z\n" +
+                        "78\tG\t-17940\t80875\t-51648\t0.6760\t0.11832421260528181\t1975-05-31T11:59:53.684Z\t1969-12-31T23:59:58.301229Z\t\tc\ttrue\tc\t0x865d10d8ed10c87e834c69559a9466d6c203e9ee6688fb00a82be0da997d3319\t00000000 5b e4 24 6e 3b 78\t1970-10-28T23:10:00.000000Z\n" +
+                        "66\tD\t-5300\t814924\t23886\t0.7993\t0.6834975299862411\t\t1969-12-31T23:59:55.960730Z\tRUCW\t\ttrue\t\t0xe6e8724e0d55db8bc5c2baab99008d37d61065128bd9ac80cdc779c297ba2d9b\t00000000 7d bf aa 4e c7 70 67 76\t1970-11-21T01:50:00.000000Z\n" +
+                        "116\tW\t1209\tNaN\t-54703\t0.3827\t0.8336512245695875\t1973-04-20T21:58:44.387Z\t1969-12-31T23:59:57.953146Z\tWQLO\t\ttrue\taaa\t0x63d3edab19deae0e8de4fd1623e40b3592c091ab093e983862af3f4b563813ce\t00000000 21 13\t1970-11-21T02:43:20.000000Z\n"
+        );
+    }
+
     private void assertMonth() throws SqlException {
         TestUtils.assertSql(
                 compiler,
@@ -250,6 +334,73 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "25\tZ\t-6353\t96442\t-49636\tNaN\t0.40549501732612403\t1971-07-13T02:33:26.128Z\t1969-12-31T23:59:55.204464Z\t\t\tfalse\t\t0xb9b7551ff3f855ab6cf5a8f96caceffc3ed28138e7ede3ed9ec0ec50fa4f863b\t00000000 bb f4 7c 7a c2 a4 77 a6 8f aa\t1987-02-11T00:03:20.000000Z\n" +
                         "71\tD\t694\t772203\t-32603\t0.9552\t0.2769130518011955\t1978-12-25T19:08:51.960Z\t1969-12-31T23:59:55.754471Z\t\tc\tfalse\t\t0x310d0e7a171e7f3c97f6387cdfad01f8cd2b0e4fd8b234fba3804ab8de1f8951\t00000000 80 24 24 8c d4 48 55 31 89\t1987-09-30T11:36:40.000000Z\n" +
                         "103\tL\t18557\tNaN\t-19361\t0.1200\tNaN\t1970-08-08T18:27:58.955Z\t1969-12-31T23:59:58.439595Z\t\tc\ttrue\t\t0xbc7827bb6dc3ce15b85b002a9fea625b95bdcc28b3dfce1e85524b903924c9c2\t00000000 18 e2 56 c6 ce\t1988-05-18T23:10:00.000000Z\n"
+        );
+    }
+
+    private void assertMonthO3() throws SqlException {
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "t_month_ooo where m = null",
+                sink,
+                "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
+                        "76\tC\t-6159\tNaN\t-47298\tNaN\t0.04029576739795815\t1980-04-06T13:17:02.619Z\t1969-12-31T23:59:58.847174Z\tLCDE\taaa\ttrue\t\t0x8e5ff8afa4bb22ba555224aff85d7ae59e70afeef8bf7911cd2730f82982745b\t00000000 4f f8 0b 28 e3 e1 8a\t1970-01-10T06:16:40.000000Z\n" +
+                        "89\tR\t16737\t700506\tNaN\t0.8182\t0.48212733968742016\t1975-11-12T07:08:04.487Z\t1969-12-31T23:59:54.459793Z\tOCZXQ\tbbbbbb\tfalse\t\t0xace30dd772e713688fbec5064d883f3d63e84502157622acae3baa02ee6dc8b4\t00000000 73 ac 38 fe\t1970-02-18T14:43:20.000000Z\n" +
+                        "56\tN\t-13977\tNaN\tNaN\t0.3635\t0.4958708721417553\t\t1969-12-31T23:59:52.185697Z\tMIOXL\t\ttrue\t\t0xc49971608fded028c761f1bc5d5ba1e7abd10e7211586b4e60ca698146bc627f\t00000000 26 48 60 f4 8d\t1970-02-23T05:50:00.000000Z\n" +
+                        "120\tC\t20283\t24877\t-32701\t0.8412\t0.8276500637033738\t1972-04-27T14:53:51.600Z\t1970-01-01T00:00:00.375644Z\tLBCXT\t\ttrue\t\t0x1cd81105b3a98dad50dc5c1fc342d7d2b49280fe8b981e37bd73da8b84fba286\t00000000 7e 48 58 fd 26 62 c1\t1970-02-27T20:56:40.000000Z\n" +
+                        "39\tX\t-51\t722893\t-59953\t0.5886\t0.6523221269876124\t1975-04-04T19:38:40.208Z\t1969-12-31T23:59:53.255009Z\t\tbbbbbb\ttrue\t\t0x650974c3396b94babeadba139e982b7ac53bbab68a52aecd53ee535940320d7f\t00000000 ad 33\t1970-03-04T12:03:20.000000Z\n" +
+                        "35\tK\t-24686\t474219\t-44332\t0.2508\t0.5236698757856622\t1970-08-23T01:09:12.705Z\t1969-12-31T23:59:52.435593Z\t\taaa\ttrue\t\t0x459cc9560b19d18f53c435d3bdade7537d85f7f1e808a3f9b9cd793021444a58\t00000000 d7 a3 d4 71 f6\t1970-03-09T03:10:00.000000Z\n" +
+                        "74\tZ\t25607\tNaN\t-28785\t0.1262\t0.040739265188051266\t1976-02-23T13:06:41.835Z\t1969-12-31T23:59:57.049228Z\tPNVF\taaa\ttrue\t\t0x363a46a2eb524da5414d7fa89ef213b068d1deba7f3c9494b1ba038517282210\t00000000 d1 d8 bf 0f 44\t1970-03-11T10:43:20.000000Z\n"
+        );
+
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "select distinct k from t_month_ooo",
+                sink,
+                "k\n" +
+                        "c\n" +
+                        "aaa\n" +
+                        "bbbbbb\n" +
+                        "\n"
+        );
+
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "t_month_ooo",
+                sink,
+                "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
+                        "52\tT\t16706\t68378\t-78657\t0.4283\t0.7036706174814127\t1979-08-31T00:24:50.963Z\t1970-01-01T00:00:00.025861Z\t\tc\ttrue\taaa\t0xdef84e0878262440d0ba4a828304a4a587b372b44bb0b41a4b2afd479b9f1a5d\t00000000 5e 40 a1 90 1a 89 45\t1970-01-01T00:03:20.000000Z\n" +
+                        "75\tO\t-24469\t329502\t68133\t0.2097\t0.16862809174782356\t1979-08-24T21:09:47.607Z\t1969-12-31T23:59:54.013525Z\tNXOT\t\tfalse\tc\t0x7b989002d6aa701281bbcd72bd1f7e608e4adc097857a6bc65e761ec15e1c225\t00000000 a5 81\t1970-01-03T07:36:40.000000Z\n" +
+                        "80\tC\t19182\t591323\t-42206\t0.5649\t0.396391474383065\t1979-05-14T16:15:11.240Z\t1969-12-31T23:59:57.108301Z\tTDBP\t\ttrue\taaa\t0x9c7f2070b0cc7edfeaa931738c4ad4e99ef0dff8554c78544ac88fc3c5270afa\t00000000 0b 2a e3 59 93 d7 74 29\t1970-01-05T15:10:00.000000Z\n" +
+                        "95\tD\t4133\t-33210\tNaN\t0.5310\t0.5175107269089727\t1974-03-26T12:58:30.002Z\t1969-12-31T23:59:52.330043Z\tYWEHF\tc\ttrue\taaa\t0xb1ba46c06a603052aa207b62a4c841daa74d2c63e604400a38baf9691f2df4bb\t00000000 e7 80 1a 01 ca 41 f1 b2 d7 d2\t1970-01-07T22:43:20.000000Z\n" +
+                        "76\tC\t-6159\tNaN\t-47298\tNaN\t0.04029576739795815\t1980-04-06T13:17:02.619Z\t1969-12-31T23:59:58.847174Z\tLCDE\taaa\ttrue\t\t0x8e5ff8afa4bb22ba555224aff85d7ae59e70afeef8bf7911cd2730f82982745b\t00000000 4f f8 0b 28 e3 e1 8a\t1970-01-10T06:16:40.000000Z\n" +
+                        "92\tR\t31386\t142790\t-64322\t0.6880\t0.3677923764894949\t1971-11-27T22:10:28.232Z\t1969-12-31T23:59:52.232189Z\tEHRNV\tbbbbbb\ttrue\taaa\t0x68fde7f52733d3236f60d225c9aba26670d0731b570cb3c86b1f471ba0caef60\t\t1970-01-12T13:50:00.000000Z\n" +
+                        "112\tX\t5761\tNaN\t-13515\t0.3747\tNaN\t1977-11-25T18:01:47.338Z\t1969-12-31T23:59:59.184119Z\tTWPSY\taaa\tfalse\tc\t0xba795159793baa30a95aec8b1ac7e592928e19470aeb21839a3f5965984021f0\t\t1970-01-14T21:23:20.000000Z\n" +
+                        "116\tK\t23745\t407209\tNaN\t0.8128\t0.2964591833933836\t\t\t\taaa\tfalse\taaa\t0x8d946494f95206a9a90d15ea7f57ba72b0737231f15475039fb5ef39709f5e58\t00000000 35 26 62\t1970-01-17T04:56:40.000000Z\n" +
+                        "94\tJ\t27157\t35525\t56930\tNaN\tNaN\t1978-03-02T17:53:07.419Z\t1969-12-31T23:59:52.571813Z\tQTZQD\t\tfalse\tc\t0x3b951d41bcd140ba89a0cc367d7577bb77cf8bef01f93225233169c04307f97b\t\t1970-01-19T12:30:00.000000Z\n" +
+                        "75\tJ\t-3580\tNaN\t-9112\t0.3532\tNaN\t1977-08-15T07:30:38.221Z\t1969-12-31T23:59:55.422262Z\tTBHN\t\tfalse\tc\t0xea6b749f95e0d51ae9a3bab372dd22e39a757cc58991db9f86cbea14cdebf09d\t00000000 f4 c4 85 cb f8 b1 2a 73 7e 88\t1970-01-21T20:03:20.000000Z\n" +
+                        "100\tK\t-2630\t824498\t37222\t0.3388\t0.3872770161018947\t1972-04-22T00:31:45.747Z\t1969-12-31T23:59:52.459496Z\tIPOFZ\taaa\ttrue\taaa\t0x9a0900f7cd2597e564ecee003285eca04102030bdc7918c87f51eab58e779e4b\t00000000 57 0b 95 28 1e\t1970-01-24T03:36:40.000000Z\n" +
+                        "69\tL\t30296\t974380\t68487\tNaN\tNaN\t1975-12-18T03:18:15.800Z\t1969-12-31T23:59:54.647837Z\tWYOBO\tc\tfalse\tbbbbbb\t0x9f322a70a6423c6b74f6cbd8a4c9d70172041c8526332380be5ab00b4aa15cee\t00000000 93 7f ec 61 8c 98\t1970-01-26T11:10:00.000000Z\n" +
+                        "114\tX\t-490\t458006\t-5272\t0.3590\t0.49230847324498883\t\t1969-12-31T23:59:52.523436Z\tSYOHG\t\tfalse\tbbbbbb\t0xa86e1e4ddbcb3a517b09de6d670d06e4382010bb07cac0836409f95a76202073\t00000000 7a b8 1d 35\t1970-01-28T18:43:20.000000Z\n" +
+                        "82\tK\t-30102\t215419\t-89036\t0.7275\tNaN\t\t1970-01-01T00:00:00.121755Z\tBHOPD\taaa\tfalse\tbbbbbb\t0x379b618db3ea9e95341096f3681e0f3b78452cf81ed6114b64f543d22605edeb\t\t1970-01-31T02:16:40.000000Z\n" +
+                        "28\tC\t16073\tNaN\t-18651\t0.6824\tNaN\t\t1969-12-31T23:59:53.152188Z\tWCJH\taaa\tfalse\tbbbbbb\t0x5170c41c2c7e9fe986bb6a66dbc21d2aee5909790e5d1a098bf1c43993bae56b\t00000000 91 71 a5 ed bd 7c cc 1c 26\t1970-02-02T09:50:00.000000Z\n" +
+                        "106\tV\t14541\t889673\t59780\t0.1352\t0.8741489533047525\t1982-08-13T17:49:22.307Z\t1969-12-31T23:59:58.350462Z\t\tc\ttrue\tc\t0xb597b59d67719c8b96f829f24619bd2bc9c5e5e5cc982e1ad73df9edb71663cb\t00000000 7f 1d 87 08 e0 b1\t1970-02-07T00:56:40.000000Z\n" +
+                        "42\tK\t-5320\t863386\t58304\t0.6804\t0.4610606296625652\t\t1970-01-01T00:00:00.461219Z\tYNLE\taaa\ttrue\tbbbbbb\t0xdc1be99e9e4030bfee6a5e96e8b63bb8b45855c338559d9480d0a1ad8fee719f\t00000000 32 a6 b7 e5 8b 3b\t1970-02-09T08:30:00.000000Z\n" +
+                        "97\tS\t27070\t868093\t34640\tNaN\t0.28813673096485004\t1979-05-27T04:40:32.951Z\t1969-12-31T23:59:53.543837Z\tKHFMI\tbbbbbb\tfalse\tc\t0x3b6fe34c449aacf17655328bedb92906a815c3e69c772225b3f1338890fc4918\t00000000 dc 44\t1970-02-11T16:03:20.000000Z\n" +
+                        "53\tS\t-31442\t852730\t74861\tNaN\t0.8959861802210562\t1977-12-28T16:22:13.434Z\t1970-01-01T00:00:00.106444Z\tRJYJX\tbbbbbb\tfalse\tc\t0x390e3993f587f07a5aab095930a8f813a74d4b52092cc831b811d3ecc96dd4ac\t00000000 4d 10 15 fc 19 72\t1970-02-13T23:36:40.000000Z\n" +
+                        "115\tI\t18220\t-11965\t-94917\t0.0731\t0.24261979334147554\t1979-04-28T11:57:39.990Z\t1969-12-31T23:59:58.778213Z\tTCODK\tc\tfalse\taaa\t0xe78c07c28f640f0189f1710e1c678a864d61deaa06d3209794c950a551627f0e\t\t1970-02-16T07:10:00.000000Z\n" +
+                        "89\tR\t16737\t700506\tNaN\t0.8182\t0.48212733968742016\t1975-11-12T07:08:04.487Z\t1969-12-31T23:59:54.459793Z\tOCZXQ\tbbbbbb\tfalse\t\t0xace30dd772e713688fbec5064d883f3d63e84502157622acae3baa02ee6dc8b4\t00000000 73 ac 38 fe\t1970-02-18T14:43:20.000000Z\n" +
+                        "110\tX\t-8101\t467172\t34280\t0.4870\t0.9426365080361772\t\t1969-12-31T23:59:58.037553Z\tYQDL\tbbbbbb\ttrue\taaa\t0x7d2164549a44f33a060475948250929a718104314d8739a3a1982de2f0b2a569\t\t1970-02-20T22:16:40.000000Z\n" +
+                        "56\tN\t-13977\tNaN\tNaN\t0.3635\t0.4958708721417553\t\t1969-12-31T23:59:52.185697Z\tMIOXL\t\ttrue\t\t0xc49971608fded028c761f1bc5d5ba1e7abd10e7211586b4e60ca698146bc627f\t00000000 26 48 60 f4 8d\t1970-02-23T05:50:00.000000Z\n" +
+                        "64\tR\t-20528\t535246\tNaN\t0.5489\tNaN\t1978-09-28T08:03:21.550Z\t1969-12-31T23:59:57.601189Z\tFDWJR\t\tfalse\tc\t0xd792630d1b233450d50c70aa7a631a6281a73f5ba5e67bb740695327e2cbf5dc\t00000000 82 40 f8\t1970-02-25T13:23:20.000000Z\n" +
+                        "120\tC\t20283\t24877\t-32701\t0.8412\t0.8276500637033738\t1972-04-27T14:53:51.600Z\t1970-01-01T00:00:00.375644Z\tLBCXT\t\ttrue\t\t0x1cd81105b3a98dad50dc5c1fc342d7d2b49280fe8b981e37bd73da8b84fba286\t00000000 7e 48 58 fd 26 62 c1\t1970-02-27T20:56:40.000000Z\n" +
+                        "41\tE\t-14190\t506083\t-46237\t0.5432\t0.047501640528959\t\t1969-12-31T23:59:52.353217Z\tNPFG\tbbbbbb\tfalse\tbbbbbb\t0x78b9f0db3bbbf2ec41c0b3ddc8bb31b18b27a973c395ce5e9258f0846b760260\t00000000 fa d5\t1970-03-02T04:30:00.000000Z\n" +
+                        "39\tX\t-51\t722893\t-59953\t0.5886\t0.6523221269876124\t1975-04-04T19:38:40.208Z\t1969-12-31T23:59:53.255009Z\t\tbbbbbb\ttrue\t\t0x650974c3396b94babeadba139e982b7ac53bbab68a52aecd53ee535940320d7f\t00000000 ad 33\t1970-03-04T12:03:20.000000Z\n" +
+                        "41\tE\t-17464\t414570\t-44496\tNaN\t0.49098295150202786\t1980-09-10T18:34:09.161Z\t1969-12-31T23:59:59.087691Z\tRXWC\tc\tfalse\tc\t0xd4eee3564ee48f798a1c255e732fba3d3b69e155c2eefaa535f7b353cfaeb3f5\t00000000 1b 70 df ce 89 df 09 cd\t1970-03-06T19:36:40.000000Z\n" +
+                        "35\tK\t-24686\t474219\t-44332\t0.2508\t0.5236698757856622\t1970-08-23T01:09:12.705Z\t1969-12-31T23:59:52.435593Z\t\taaa\ttrue\t\t0x459cc9560b19d18f53c435d3bdade7537d85f7f1e808a3f9b9cd793021444a58\t00000000 d7 a3 d4 71 f6\t1970-03-09T03:10:00.000000Z\n" +
+                        "74\tZ\t25607\tNaN\t-28785\t0.1262\t0.040739265188051266\t1976-02-23T13:06:41.835Z\t1969-12-31T23:59:57.049228Z\tPNVF\taaa\ttrue\t\t0x363a46a2eb524da5414d7fa89ef213b068d1deba7f3c9494b1ba038517282210\t00000000 d1 d8 bf 0f 44\t1970-03-11T10:43:20.000000Z\n"
         );
     }
 
@@ -449,6 +600,72 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         );
     }
 
+    private void assertYearO3() throws SqlException {
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "t_year_ooo where m = null",
+                sink,
+                "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
+                        "30\tY\t28953\t940414\tNaN\t0.1489\t0.7201409952630464\t1973-04-19T19:30:20.534Z\t1969-12-31T23:59:52.777697Z\tCINNT\tc\ttrue\t\t0xa95f8be5525f99c26e4a67960aea1b73283d2a67ee18dcd8598b67e75160219d\t00000000 34 9c\t1972-07-14T22:16:40.000000Z\n" +
+                        "20\tG\t-32702\t466493\t10882\t0.5512\t0.9010953692323533\t1972-07-20T02:41:59.050Z\t1969-12-31T23:59:52.899932Z\tIMDCR\tbbbbbb\ttrue\t\t0xcf43b4a50c2f74dc88b0b3ebba859e225933bd4072be924aadb205299e434030\t\t1972-07-14T22:16:40.000000Z\n" +
+                        "88\tF\t22245\t-13115\t-35689\t0.5015\tNaN\t1971-06-28T04:50:13.659Z\t\tPTQJT\tc\tfalse\t\t0xd0095bafed48d2f18aac0415dc543d60482b3adb9e7d7c03336ec052bc6e05d9\t\t1975-01-26T20:30:00.000000Z\n" +
+                        "96\tR\t16953\t215865\t61524\tNaN\tNaN\t1972-10-04T00:24:18.418Z\t1969-12-31T23:59:56.858900Z\tRJYVL\taaa\tfalse\t\t0x11ed4bbe74444f5e5292bb1ea309179799270b730708699d9b2ab296918fa38b\t\t1975-09-15T08:03:20.000000Z\n" +
+                        "55\tJ\t-27369\t927084\t95531\t0.1805\t0.897470515136098\t1975-10-12T05:31:12.519Z\t1969-12-31T23:59:55.291662Z\tSNCQ\tbbbbbb\ttrue\t\t0xd8dd0c4574b8b817b4a20e63c638e3a661ce46dbb8356b314e8c222a0238c229\t00000000 cd dd ee 68 e0\t1976-12-21T07:10:00.000000Z\n" +
+                        "30\tH\t-39\tNaN\t-59605\t0.2678\t0.9748023951436231\t1970-07-07T01:26:05.143Z\t1969-12-31T23:59:56.029262Z\tPMYE\t\ttrue\t\t0x3b483074de6cc58a4dbde91603ddb6977f61d7b6275ba8735566b5b68a4470c8\t00000000 88 ed d7\t1978-11-15T17:50:00.000000Z\n"
+        );
+
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "select distinct k from t_year_ooo",
+                sink,
+                "k\n" +
+                        "c\n" +
+                        "bbbbbb\n" +
+                        "aaa\n" +
+                        "\n"
+        );
+
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "t_year_ooo",
+                sink,
+                "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
+                        "30\tE\t14468\t886907\tNaN\t0.8858\t0.31572235047445973\t1981-01-11T21:58:27.911Z\t1970-01-01T00:00:00.415843Z\tVBRV\t\ttrue\tbbbbbb\t0x96cc4fbcf71c771f8c667acbcfd84633b80d15f0235584bbbc044a6042cc92e7\t00000000 a6 c4 93 ba e3 49 e9 00 72 9a\t1970-01-01T00:03:20.000000Z\n" +
+                        "113\tU\t-2695\t631042\t86722\t0.8057\t0.22402711640228767\t1980-05-14T09:54:57.177Z\t1969-12-31T23:59:52.124262Z\tFRWQ\tc\tfalse\taaa\t0x5a7919272adc71e952998dfe330e0c8444b617902e3a8304aaeb546ee505d2fc\t00000000 7a 9e 98 62 91 37 59 e6 c6\t1970-01-01T00:03:20.000000Z\n" +
+                        "69\tP\t-3926\tNaN\t40091\t0.8425\t0.8544443116640783\t1973-01-17T18:40:51.857Z\t1969-12-31T23:59:58.817711Z\tGWLUJ\tbbbbbb\tfalse\taaa\t0xcb3c99a59632ac4799f28b74cec0474e4bc16b0a153acc8e8c59b84b0b5d67a7\t00000000 0f eb 4c 0b 80 75 b8 95\t1970-08-20T11:36:40.000000Z\n" +
+                        "84\tL\t-17526\t634700\t-85077\t0.1089\t0.6553548904692522\t1972-04-04T08:38:10.019Z\t1969-12-31T23:59:53.704195Z\t\tbbbbbb\tfalse\taaa\t0xcf4592fecc265767932a38f5e88af3fa86b332869d1b4ce2540d9372bb66e9bf\t00000000 13 37 0a 4f\t1970-08-20T11:36:40.000000Z\n" +
+                        "58\tP\t-26649\tNaN\t-52716\t0.7601\tNaN\t\t1969-12-31T23:59:54.485298Z\tGGWS\tbbbbbb\ttrue\tbbbbbb\t0x81c4016ca47000eac24045cec8ced74ad03ed320869f0089d7ae13f8c65f171b\t00000000 ba 75 42 71 c1 9c\t1971-04-08T23:10:00.000000Z\n" +
+                        "89\tP\t3916\t33585\tNaN\tNaN\t0.6566348556397864\t1979-08-24T19:15:35.854Z\t\t\taaa\tfalse\tc\t0xd5fe1fa737a93eeb7f4ccc7af35cb15f100903355479fa813c6b947abbb88504\t00000000 45 db 35 83 6d 84\t1971-04-08T23:10:00.000000Z\n" +
+                        "57\tZ\t8635\t145531\t5481\t0.5115\t0.3760853023577718\t1979-05-07T06:33:31.960Z\t1970-01-01T00:00:00.230019Z\tEXVM\taaa\ttrue\taaa\t0x226d162fd8fb1f8a4f10dc8a88ded0417a53808de72edbc45b9937de926e4cf1\t\t1971-11-26T10:43:20.000000Z\n" +
+                        "82\tV\t-3177\t222912\t16511\t0.9807\t0.10738520400294715\t1975-03-28T09:38:36.927Z\t1969-12-31T23:59:55.200488Z\tFMOW\t\tfalse\tc\t0x61ede67c0a12ff1e6b8a3e8aed4b1273c4540ce4d1327e646854dcd31a4c3b23\t00000000 a4 44 83\t1971-11-26T10:43:20.000000Z\n" +
+                        "30\tY\t28953\t940414\tNaN\t0.1489\t0.7201409952630464\t1973-04-19T19:30:20.534Z\t1969-12-31T23:59:52.777697Z\tCINNT\tc\ttrue\t\t0xa95f8be5525f99c26e4a67960aea1b73283d2a67ee18dcd8598b67e75160219d\t00000000 34 9c\t1972-07-14T22:16:40.000000Z\n" +
+                        "20\tG\t-32702\t466493\t10882\t0.5512\t0.9010953692323533\t1972-07-20T02:41:59.050Z\t1969-12-31T23:59:52.899932Z\tIMDCR\tbbbbbb\ttrue\t\t0xcf43b4a50c2f74dc88b0b3ebba859e225933bd4072be924aadb205299e434030\t\t1972-07-14T22:16:40.000000Z\n" +
+                        "121\tL\t19757\t406439\t37945\t0.0854\t0.7586845205228345\t1977-04-28T12:42:50.036Z\t1969-12-31T23:59:55.504894Z\tKMVSI\taaa\ttrue\taaa\t0x4a2a20a846be3ece98a801d0177bb11a6786ded1720890cd09b976925503d440\t00000000 c6 ec 59\t1973-03-03T09:50:00.000000Z\n" +
+                        "32\tC\t-6440\tNaN\t-92459\tNaN\tNaN\t\t1970-01-01T00:00:00.656222Z\t\t\ttrue\tbbbbbb\t0x92c7fd6f34274449cd144d84e7cc98e39bd071bf17f9949b3bfe8c70b742f51a\t00000000 a5 5c ae ed 86 eb 05\t1973-03-03T09:50:00.000000Z\n" +
+                        "117\tL\t-15020\t454612\t-72371\t0.5151\t0.6735927305413085\t\t1969-12-31T23:59:53.224828Z\t\taaa\ttrue\tbbbbbb\t0x937eb26b92dfa486720b23656233b262baf875d7d3daee70abd407d70bfc5a99\t00000000 a5 b5 9e 30 57\t1973-10-20T21:23:20.000000Z\n" +
+                        "94\tV\t17451\tNaN\t-77463\t0.8450\tNaN\t1975-09-05T12:28:55.858Z\t1969-12-31T23:59:56.130900Z\t\taaa\tfalse\tbbbbbb\t0xe4b09cba2585460abdfba5b5f9f389bb44f4371843728b38407e976ce3bce45b\t\t1973-10-20T21:23:20.000000Z\n" +
+                        "20\tV\t13404\t741055\tNaN\tNaN\t0.6531751152441161\t1982-07-20T14:24:59.486Z\t1970-01-01T00:00:00.413642Z\tPGQHU\t\ttrue\taaa\t0x4d4295eaba359d2d6d6874818b5f00f880a2e85f8b388eb1b94ac5bae67cb4f7\t00000000 39 83 94\t1974-06-09T08:56:40.000000Z\n" +
+                        "97\tT\t30348\tNaN\t8911\t0.0402\t0.6932671141793485\t1980-01-16T08:26:45.505Z\t1969-12-31T23:59:59.284446Z\tZQRX\t\ttrue\tbbbbbb\t0x7e990b52f5cb94959bf25a46aa5cd34975d22ffed02ea3862e9e238f49fcb13d\t00000000 0b 0c c2 db f5\t1974-06-09T08:56:40.000000Z\n" +
+                        "88\tF\t22245\t-13115\t-35689\t0.5015\tNaN\t1971-06-28T04:50:13.659Z\t\tPTQJT\tc\tfalse\t\t0xd0095bafed48d2f18aac0415dc543d60482b3adb9e7d7c03336ec052bc6e05d9\t\t1975-01-26T20:30:00.000000Z\n" +
+                        "20\tT\t-7964\t487134\tNaN\tNaN\t0.32481701097934323\t1974-11-07T16:01:35.907Z\t1969-12-31T23:59:59.891530Z\t\taaa\tfalse\tc\t0x52dcf8397eac98ef5c7fbc9524fe6d5978dd04a27388bd37af091f2ca528ddf3\t\t1975-01-26T20:30:00.000000Z\n" +
+                        "30\tE\t31733\t397670\t-81518\t0.6871\t0.22867035293136528\t1975-01-02T14:01:10.618Z\t1969-12-31T23:59:59.654430Z\tGCJDV\t\ttrue\tbbbbbb\t0x407df33a90d0f1f44251f05e203c6dd9939494de7eed643eda57a93265e1eb84\t\t1975-09-15T08:03:20.000000Z\n" +
+                        "96\tR\t16953\t215865\t61524\tNaN\tNaN\t1972-10-04T00:24:18.418Z\t1969-12-31T23:59:56.858900Z\tRJYVL\taaa\tfalse\t\t0x11ed4bbe74444f5e5292bb1ea309179799270b730708699d9b2ab296918fa38b\t\t1975-09-15T08:03:20.000000Z\n" +
+                        "38\tU\t-28620\t409568\t83809\t0.2451\t0.25770104717094067\t1979-06-18T07:13:42.738Z\t1969-12-31T23:59:57.566601Z\tRMKLJ\tc\tfalse\tc\t0x7f43807b07535592603732454d94094e4443d81103f8131a75b74fcd9a50133b\t00000000 de fe 0e\t1976-05-03T19:36:40.000000Z\n" +
+                        "75\tN\t-29738\tNaN\t40164\t0.9040\t0.9650799281003015\t1981-11-24T03:54:48.256Z\t1969-12-31T23:59:53.574580Z\t\tc\tfalse\tbbbbbb\t0xc99a8163c17b3ff9b1f85a5d7a4009a96f4d325aa734bef683a57bdd2374eb9d\t00000000 20 00\t1976-05-03T19:36:40.000000Z\n" +
+                        "124\tB\t-8962\t297563\t-7445\t0.3163\t0.3981679625290535\t1971-04-23T00:21:15.212Z\t1969-12-31T23:59:52.570474Z\t\tbbbbbb\ttrue\taaa\t0x6b6217ae8d71ba80af9fc14bce3cc2968263467bcaf1ea393870dad4697de33d\t\t1976-12-21T07:10:00.000000Z\n" +
+                        "55\tJ\t-27369\t927084\t95531\t0.1805\t0.897470515136098\t1975-10-12T05:31:12.519Z\t1969-12-31T23:59:55.291662Z\tSNCQ\tbbbbbb\ttrue\t\t0xd8dd0c4574b8b817b4a20e63c638e3a661ce46dbb8356b314e8c222a0238c229\t00000000 cd dd ee 68 e0\t1976-12-21T07:10:00.000000Z\n" +
+                        "109\tI\t-1994\t158125\t-37445\t0.9073\tNaN\t\t1969-12-31T23:59:54.144775Z\tCPWVE\taaa\tfalse\tbbbbbb\t0x59196c786d68585c6572182e069eefcdb2a403b44dc36cc982ce57a0a914d293\t00000000 61 75 d8 f2\t1977-08-09T18:43:20.000000Z\n" +
+                        "65\tW\t31029\t155464\t19282\t0.7803\t0.0862969811569263\t1980-06-14T10:26:11.590Z\t1969-12-31T23:59:56.595899Z\t\tbbbbbb\tfalse\tc\t0x888bf3c7dbd0143b79df4ef99efe0dba8fb872091fa178c6ccf47c760e3b4d37\t\t1977-08-09T18:43:20.000000Z\n" +
+                        "86\tM\t562\tNaN\t-32827\t0.0423\t0.3223371926728724\t1970-12-08T11:09:40.315Z\t1969-12-31T23:59:58.764688Z\tIUNM\t\ttrue\taaa\t0xbf3517c7b6484d12bd3ebedf47746a42c82b2a2afb88fb619de9e1ba0b0a0367\t00000000 d2 04 02 4a e7\t1978-03-29T06:16:40.000000Z\n" +
+                        "124\tT\t-11263\t816098\t3226\t0.5771\t0.6861586888119515\t1970-09-07T07:15:07.438Z\t1969-12-31T23:59:52.423847Z\tFHXM\tc\tfalse\tc\t0xa53f9fb342e92d02af45bc4664a03cc08ec2870883768abf6d607389e20eca5c\t00000000 0b b1 ec\t1978-03-29T06:16:40.000000Z\n" +
+                        "87\tZ\t13370\t597583\t-75904\t0.6440\tNaN\t1974-05-11T12:57:45.268Z\t1969-12-31T23:59:54.233609Z\tYUKU\tbbbbbb\ttrue\taaa\t0x878d272bf8aaf1418efa5ede5895af6aab253098b9889b19d6950c05179f68ba\t00000000 12 57 47 87 4e a8 48 36\t1978-11-15T17:50:00.000000Z\n" +
+                        "30\tH\t-39\tNaN\t-59605\t0.2678\t0.9748023951436231\t1970-07-07T01:26:05.143Z\t1969-12-31T23:59:56.029262Z\tPMYE\t\ttrue\t\t0x3b483074de6cc58a4dbde91603ddb6977f61d7b6275ba8735566b5b68a4470c8\t00000000 88 ed d7\t1978-11-15T17:50:00.000000Z\n"
+        );
+    }
+
     @NotNull
     private String commonColumns() {
         return " rnd_byte() a," +
@@ -468,13 +685,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 " rnd_bin(2,10, 2) o";
     }
 
-    private void doMigration(String dataZip, boolean freeTableId) throws IOException, SqlException {
+    private void doMigration(String dataZip, boolean freeTableId, boolean withO3) throws IOException, SqlException {
         if (freeTableId) {
             engine.freeTableId();
         }
         replaceDbContent(dataZip);
         EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, true);
-        assertData();
+        assertData(withO3);
     }
 
     private void generateMigrationTables() throws SqlException {
@@ -524,6 +741,60 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         ", timestamp_sequence(200000000L, 200000000000000L) ts" +
                         " from long_sequence(30)," +
                         "), index(m) timestamp(ts) partition by YEAR",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table t_day_ooo as (" +
+                        "select" +
+                        commonColumns() +
+                        ", timestamp_sequence(16 * 200000000L + 200000000L, 2000000000000L) ts" +
+                        " from long_sequence(15)" +
+                        "), index(m) timestamp(ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile("insert into t_day_ooo " +
+                        "select " +
+                        commonColumns() +
+                        ", timestamp_sequence(200000000L, 2000000000000L) ts" +
+                        " from long_sequence(15)",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table t_month_ooo as (" +
+                        "select" +
+                        commonColumns() +
+                        ", timestamp_sequence(16 * 200000000000L + 200000000L, 200000000000L) ts" +
+                        " from long_sequence(15)" +
+                        "), index(m) timestamp(ts) partition by MONTH",
+                sqlExecutionContext
+        );
+
+        compiler.compile("insert into t_month_ooo " +
+                        "select " +
+                        commonColumns() +
+                        ", timestamp_sequence(200000000L, 200000000000L) ts" +
+                        " from long_sequence(15)",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table t_year_ooo as (" +
+                        "select" +
+                        commonColumns() +
+                        ", timestamp_sequence(200000000L, 20000000000000L) ts" +
+                        " from long_sequence(15)," +
+                        "), index(m) timestamp(ts) partition by YEAR",
+                sqlExecutionContext
+        );
+
+        compiler.compile("insert into t_year_ooo " +
+                        "select " +
+                        commonColumns() +
+                        ", timestamp_sequence(200000000L, 20000000000000L) ts" +
+                        " from long_sequence(15)",
                 sqlExecutionContext
         );
     }
