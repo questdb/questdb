@@ -39,19 +39,18 @@ public class TypeManager implements Mutable {
     private final ObjList<TypeAdapter> probes = new ObjList<>();
     private final int probeCount;
     private final static StringAdapter stringAdapter = new StringAdapter();
+    private final static SymbolAdapter indexedSymbolAdapter = new SymbolAdapter(true);
+    private final static SymbolAdapter notIndexedSymbolAdapter = new SymbolAdapter(false);
     private final ObjectPool<DateUtf8Adapter> dateAdapterPool;
     private final ObjectPool<TimestampUtf8Adapter> timestampUtf8AdapterPool;
     private final ObjectPool<TimestampAdapter> timestampAdapterPool;
-    private final static SymbolAdapter indexedSymbolAdapter = new SymbolAdapter(true);
-    private final static SymbolAdapter notIndexedSymbolAdapter = new SymbolAdapter(false);
     private final InputFormatConfiguration inputFormatConfiguration;
 
     public TypeManager(
-            TextConfiguration configuration,
-            DirectCharSink utf8Sink
+            TextConfiguration configuration
     ) {
-        this.dateAdapterPool = new ObjectPool<>(() -> new DateUtf8Adapter(utf8Sink), configuration.getDateAdapterPoolCapacity());
-        this.timestampUtf8AdapterPool = new ObjectPool<>(() -> new TimestampUtf8Adapter(utf8Sink), configuration.getTimestampAdapterPoolCapacity());
+        this.dateAdapterPool = new ObjectPool<>(DateUtf8Adapter::new, configuration.getDateAdapterPoolCapacity());
+        this.timestampUtf8AdapterPool = new ObjectPool<>(TimestampUtf8Adapter::new, configuration.getTimestampAdapterPoolCapacity());
         this.timestampAdapterPool = new ObjectPool<>(TimestampAdapter::new, configuration.getTimestampAdapterPoolCapacity());
         this.inputFormatConfiguration = configuration.getInputFormatConfiguration();
         addDefaultProbes();
@@ -61,7 +60,7 @@ public class TypeManager implements Mutable {
         final IntList dateUtf8Flags = inputFormatConfiguration.getDateUtf8Flags();
         for (int i = 0, n = dateFormats.size(); i < n; i++) {
             if (dateUtf8Flags.getQuick(i) == 1) {
-                probes.add(new DateUtf8Adapter(utf8Sink).of(dateFormats.getQuick(i), dateLocales.getQuick(i)));
+                probes.add(new DateUtf8Adapter().of(dateFormats.getQuick(i), dateLocales.getQuick(i)));
             } else {
                 probes.add(new DateAdapter().of(dateFormats.getQuick(i), dateLocales.getQuick(i)));
             }
@@ -72,7 +71,7 @@ public class TypeManager implements Mutable {
         final IntList timestampUtf8Flags = inputFormatConfiguration.getTimestampUtf8Flags();
         for (int i = 0, n = timestampFormats.size(); i < n; i++) {
             if (timestampUtf8Flags.getQuick(i) == 1) {
-                probes.add(new TimestampUtf8Adapter(utf8Sink).of(timestampFormats.getQuick(i), timestampLocales.getQuick(i)));
+                probes.add(new TimestampUtf8Adapter().of(timestampFormats.getQuick(i), timestampLocales.getQuick(i)));
             } else {
                 probes.add(new TimestampAdapter().of(timestampFormats.getQuick(i), timestampLocales.getQuick(i)));
             }
