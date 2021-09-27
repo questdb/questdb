@@ -35,6 +35,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
@@ -160,12 +161,13 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     public void onFieldsNonPartitioned(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
         final TableWriter.Row w = writer.newRow();
+        StringSink tempSink = Misc.getThreadLocalBuilder();
         for (int i = 0; i < valuesLength; i++) {
             final DirectByteCharSequence dbcs = values.getQuick(i);
             if (dbcs.length() == 0) {
                 continue;
             }
-            if (onField(line, dbcs, w, i)) return;
+            if (onField(line, dbcs, w, i, tempSink)) return;
         }
         w.append();
     }
@@ -173,6 +175,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     public void onFieldsPartitioned(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
         final int timestampIndex = this.timestampIndex;
         DirectByteCharSequence dbcs = values.getQuick(timestampIndex);
+        StringSink tempSink = Misc.getThreadLocalBuilder();
         try {
             final TableWriter.Row w = writer.newRow(timestampAdapter.getTimestamp(dbcs));
             for (int i = 0; i < valuesLength; i++) {
@@ -180,7 +183,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 if (i == timestampIndex || dbcs.length() == 0) {
                     continue;
                 }
-                if (onField(line, dbcs, w, i)) return;
+                if (onField(line, dbcs, w, i, tempSink)) return;
             }
             w.append();
             checkMaxAndCommitLag();
@@ -223,9 +226,9 @@ public class CairoTextWriter implements Closeable, Mutable {
                 .$(']').$();
     }
 
-    private boolean onField(long line, DirectByteCharSequence dbcs, TableWriter.Row w, int i) {
+    private boolean onField(long line, DirectByteCharSequence dbcs, TableWriter.Row w, int i, StringSink tempSink) {
         try {
-            types.getQuick(i).write(w, i, dbcs);
+            types.getQuick(i).write(w, i, dbcs, tempSink);
         } catch (Exception ignore) {
             logError(line, i, dbcs);
             switch (atomicity) {

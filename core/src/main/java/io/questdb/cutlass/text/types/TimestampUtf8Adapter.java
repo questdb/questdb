@@ -30,6 +30,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.StringSink;
 
 public class TimestampUtf8Adapter extends TimestampAdapter {
     private final DirectCharSink utf8Sink;
@@ -39,7 +40,7 @@ public class TimestampUtf8Adapter extends TimestampAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, StringSink tempSink) throws Exception {
         utf8Sink.clear();
         TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), utf8Sink);
         row.putDate(column, format.parse(utf8Sink, locale));

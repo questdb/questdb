@@ -32,6 +32,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.StringSink;
 
 public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
     protected DateLocale locale;
@@ -59,7 +60,7 @@ public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, StringSink tempSink) throws Exception {
         row.putDate(column, format.parse(value, locale));
     }
 
