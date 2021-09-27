@@ -33,10 +33,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Chars;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class Base64FunctionFactory implements FunctionFactory {
@@ -55,14 +53,24 @@ public class Base64FunctionFactory implements FunctionFactory {
         final int maxLength = args.get(1).getInt(null);
 
         if (maxLength < 1) {
-            throw SqlException.$(argPositions.getQuick(1), "maxLength should be > 0");
+            throw SqlException.$(argPositions.getQuick(1), "maxLength has to be greater than 0");
         }
 
-        return new Base64Func(args.get(0), maxLength);
+        Function func = args.get(0);
+        if (func.isConstant()) {
+            StringSink sink = Misc.getThreadLocalBuilder();
+            sink.clear();
+            final BinarySequence bin = func.getBin(null);
+            Chars.base64Encode(bin, maxLength, sink);
+            return new StrConstant(sink);
+        }
+        return new Base64Func(func, maxLength);
     }
 
     private static class Base64Func extends StrFunction implements UnaryFunction {
-        private final StringSink buffer = new StringSink();
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
         private final Function data;
         private final int maxLength;
 
@@ -77,26 +85,25 @@ public class Base64FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isConstant() {
-            return getArg().isConstant();
-        }
-
-        @Override
         public CharSequence getStr(final Record rec) {
             final BinarySequence sequence = getArg().getBin(rec);
-            buffer.clear();
-            Chars.base64Encode(sequence, this.maxLength, buffer);
-            return buffer;
+            sinkA.clear();
+            Chars.base64Encode(sequence, this.maxLength, sinkA);
+            return sinkA;
         }
 
         @Override
         public CharSequence getStrB(final Record rec) {
-            return getStr(rec);
+            final BinarySequence sequence = getArg().getBin(rec);
+            sinkB.clear();
+            Chars.base64Encode(sequence, this.maxLength, sinkB);
+            return sinkB;
         }
 
         @Override
-        public int getStrLen(final Record rec) {
-            return buffer.length();
+        public void getStr(Record rec, CharSink sink) {
+            final BinarySequence sequence = getArg().getBin(rec);
+            Chars.base64Encode(sequence, this.maxLength, sink);
         }
     }
 }
