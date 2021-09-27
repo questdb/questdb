@@ -84,6 +84,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private Sequence pubSeq;
     private int nLoadCheckCycles = 0;
     private int nRebalances = 0;
+    private LineTcpServer.SchedulerListener listener;
 
     LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
@@ -331,6 +332,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                 }
             }
         }
+    }
+
+    void setListener(LineTcpServer.SchedulerListener listener) {
+        this.listener = listener;
     }
 
     private TableUpdateDetails startNewMeasurementEvent(NetworkIOJob netIoJob, NewLineProtoParser protoParser) {
@@ -1034,10 +1039,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                 return getColumnIndex0(colName);
             }
 
-            int getColumnTypeMeta(int colIndex) {
-                return geohashBitsSizeByColIdx.getQuick(colIndex + 1); // first val accounts for new cols, index -1
-            }
-
             private int getColumnIndex0(CharSequence colName) {
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                     TableReaderMetadata metadata = reader.getMetadata();
@@ -1068,6 +1069,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                     }
                     return colIndex;
                 }
+            }
+
+            int getColumnTypeMeta(int colIndex) {
+                return geohashBitsSizeByColIdx.getQuick(colIndex + 1); // first val accounts for new cols, index -1
             }
 
             int getSymbolIndex(int colIndex, CharSequence symValue) {
@@ -1347,6 +1352,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                                 tableUpdateDetailsByTableName.remove(tableName);
                                 idleTableUpdateDetailsByTableName.put(tableName, tableUpdateDetails);
                                 pubSeq.done(seq);
+                                if (listener != null) {
+                                    // table going idle
+                                    listener.onEvent(tableName, 1);
+                                }
                                 LOG.info().$("active table going idle [tableName=").$(tableName).I$();
                             }
                             return true;
