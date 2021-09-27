@@ -104,7 +104,7 @@ class MigrationActions {
 
         path.trimTo(plen).concat(META_FILE_NAME).$();
         try (TableReaderMetadata m = new TableReaderMetadata(ff)) {
-            m.of(path, 420);
+            m.of(path, 421);
             final int columnCount = m.getColumnCount();
             try (TxReader txReader = new TxReader(ff, path.trimTo(plen), m.getPartitionBy())) {
                 txReader.readUnchecked();
@@ -113,7 +113,7 @@ class MigrationActions {
                 if (partitionBy != PartitionBy.NONE) {
                     for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
                         setPathForPartition(path.trimTo(plen), m.getPartitionBy(), txReader.getPartitionTimestamp(partitionIndex), false);
-                        long txSuffix = txReader.getPartitionNameTxn(0);
+                        long txSuffix = txReader.getPartitionNameTxn(partitionIndex);
                         if (txSuffix > 0) {
                             txnPartition(path, txSuffix);
                         }
