@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
@@ -38,7 +39,7 @@ public class O3Utils {
     public static void freeBuf() {
         if (temp8ByteBuf != null) {
             for (int i = 0, n = temp8ByteBuf.length; i < n; i++) {
-                Unsafe.free(temp8ByteBuf[i], Long.BYTES);
+                Unsafe.free(temp8ByteBuf[i], Long.BYTES, MemoryTag.NATIVE_O3);
             }
             temp8ByteBuf = null;
         }
@@ -51,7 +52,7 @@ public class O3Utils {
     public static void initBuf(int workerCount) {
         temp8ByteBuf = new long[workerCount];
         for (int i = 0; i < workerCount; i++) {
-            temp8ByteBuf[i] = Unsafe.malloc(Long.BYTES);
+            temp8ByteBuf[i] = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_O3);
         }
     }
 
@@ -59,38 +60,12 @@ public class O3Utils {
         return temp8ByteBuf[worker];
     }
 
-    static long getVarColumnLength(
-            long srcLo,
-            long srcHi,
-            long srcFixAddr,
-            long srcFixSize,
-            long srcVarSize
-    ) {
-        final long lo = findVarOffset(srcFixAddr, srcLo, srcHi, srcVarSize);
-        final long hi;
-        if (srcHi + 1 == srcFixSize / Long.BYTES) {
-            hi = srcVarSize;
-        } else {
-            hi = findVarOffset(srcFixAddr, srcHi + 1, srcFixSize / Long.BYTES, srcVarSize);
-        }
-        return hi - lo;
+    static long getVarColumnLength(long srcLo, long srcHi, long srcFixAddr) {
+        return findVarOffset(srcFixAddr, srcHi + 1) - findVarOffset(srcFixAddr, srcLo);
     }
 
-    static long findVarOffset(long srcFixAddr, long srcLo, long srcHi, long srcVarSize) {
-        long lo = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
-        if (lo > -1) {
-            return lo;
-        }
-
-        // todo: test on a lot of NULL strings!
-        while (++srcLo < srcHi) {
-            lo = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
-            if (lo > -1) {
-                return lo;
-            }
-        }
-
-        return srcVarSize;
+    static long findVarOffset(long srcFixAddr, long srcLo) {
+        return Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
     }
 
     static void shiftCopyFixedSizeColumnData(
@@ -119,7 +94,7 @@ public class O3Utils {
 
     static void unmap(FilesFacade ff, long addr, long size) {
         if (addr != 0 && size > 0) {
-            ff.munmap(addr, size);
+            ff.munmap(addr, size, MemoryTag.MMAP_O3);
         }
     }
 

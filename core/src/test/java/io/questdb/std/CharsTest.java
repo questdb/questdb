@@ -121,7 +121,7 @@ public class CharsTest {
         }
 
         String in = expected.toString();
-        long p = Unsafe.malloc(8 * 0xffff);
+        long p = Unsafe.malloc(8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
         try {
             byte[] bytes = in.getBytes(StandardCharsets.UTF_8);
             for (int i = 0, n = bytes.length; i < n; i++) {
@@ -131,7 +131,7 @@ public class CharsTest {
             Chars.utf8Decode(p, p + bytes.length, b);
             TestUtils.assertEquals(in, b.toString());
         } finally {
-            Unsafe.free(p, 8 * 0xffff);
+            Unsafe.free(p, 8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -144,7 +144,7 @@ public class CharsTest {
         }
 
         String in = expected.toString();
-        long p = Unsafe.malloc(8 * 0xffff);
+        long p = Unsafe.malloc(8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
         try {
             byte[] bytes = in.getBytes(StandardCharsets.UTF_8);
             for (int i = 0, n = bytes.length; i < n; i++) {
@@ -155,7 +155,7 @@ public class CharsTest {
             Chars.utf8DecodeZ(p, b);
             TestUtils.assertEquals(in, b.toString());
         } finally {
-            Unsafe.free(p, 8 * 0xffff);
+            Unsafe.free(p, 8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

@@ -2800,9 +2800,9 @@ public class JoinTest extends AbstractGriffinTest {
 
             System.out.println(sink);
 
-            compiler.setFullSatJoins(true);
+            compiler.setFullFatJoins(true);
             assertSql(query, expected);
-            compiler.setFullSatJoins(false);
+            compiler.setFullFatJoins(false);
             assertSql(query, expected);
         }));
     }
@@ -2844,9 +2844,9 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compiler.setFullSatJoins(true);
+            compiler.setFullFatJoins(true);
             assertSql(query, expected);
-            compiler.setFullSatJoins(false);
+            compiler.setFullFatJoins(false);
             assertSql(query, expected);
         }));
     }
@@ -3777,9 +3777,9 @@ public class JoinTest extends AbstractGriffinTest {
                     "g2 as (select distinct * from t2)" +
                     "select * from g1 lt join g2 on g1.geo4 = g2.geo4";
 
-            compiler.setFullSatJoins(true);
+            compiler.setFullFatJoins(true);
             assertSql(sql, expected);
-            compiler.setFullSatJoins(false);
+            compiler.setFullFatJoins(false);
             assertSql(sql, expected);
         });
     }
@@ -3843,11 +3843,11 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     private void testFullFat(TestMethod method) throws Exception {
-        compiler.setFullSatJoins(true);
+        compiler.setFullFatJoins(true);
         try {
             method.run();
         } finally {
-            compiler.setFullSatJoins(false);
+            compiler.setFullFatJoins(false);
         }
     }
 

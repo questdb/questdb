@@ -25,6 +25,7 @@
 package io.questdb.log;
 
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSink;
@@ -40,7 +41,7 @@ public class LogRecordSink extends AbstractCharSink implements Closeable {
 
     LogRecordSink(int capacity) {
         int c = Numbers.ceilPow2(capacity);
-        this.address = _wptr = Unsafe.malloc(c);
+        this.address = _wptr = Unsafe.malloc(c, MemoryTag.NATIVE_DEFAULT);
         this.lim = address + c;
     }
 
@@ -50,7 +51,7 @@ public class LogRecordSink extends AbstractCharSink implements Closeable {
 
     @Override
     public void close() {
-        Unsafe.free(address, lim - address);
+        Unsafe.free(address, lim - address, MemoryTag.NATIVE_DEFAULT);
     }
 
     public long getAddress() {

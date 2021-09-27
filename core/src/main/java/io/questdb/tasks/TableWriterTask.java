@@ -25,6 +25,7 @@
 package io.questdb.tasks;
 
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
@@ -44,7 +45,7 @@ public class TableWriterTask implements Closeable {
     private long ip;
 
     public TableWriterTask(long size) {
-        data = Unsafe.calloc(size);
+        data = Unsafe.calloc(size, MemoryTag.NATIVE_REPL);
         this.dataSize = size;
         this.appendPtr = data;
         this.appendLim = data + dataSize;
@@ -53,7 +54,7 @@ public class TableWriterTask implements Closeable {
     @Override
     public void close() {
         if (dataSize > 0) {
-            Unsafe.free(data, dataSize);
+            Unsafe.free(data, dataSize, MemoryTag.NATIVE_REPL);
             dataSize = 0;
             appendPtr = 0;
             appendLim = 0;
@@ -163,7 +164,7 @@ public class TableWriterTask implements Closeable {
         assert dataSize > 0;
         if (size > dataSize) {
             long appendOffset = getAppendOffset();
-            data = Unsafe.realloc(data, dataSize, size);
+            data = Unsafe.realloc(data, dataSize, size, MemoryTag.NATIVE_REPL);
             dataSize = size;
             appendPtr = data + appendOffset;
             appendLim = data + dataSize;

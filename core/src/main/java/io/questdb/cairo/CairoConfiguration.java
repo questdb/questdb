@@ -167,6 +167,10 @@ public interface CairoConfiguration {
 
     CharSequence getRoot();
 
+    CharSequence getDbDirectory(); // env['cairo.root'], defaults to db
+
+    CharSequence getConfRoot(); // same as root/../conf
+
     int getSampleByIndexSearchPageSize();
 
     long getSpinLockTimeoutUs();

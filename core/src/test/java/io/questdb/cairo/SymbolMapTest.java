@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
@@ -46,8 +47,8 @@ public class SymbolMapTest extends AbstractCairoTest {
             try (
                     MemoryCMARW mem = Vm.getSmallCMARWInstance(
                             configuration.getFilesFacade(),
-                            path.concat(name).put(".o").$()
-                    )
+                            path.concat(name).put(".o").$(),
+                            MemoryTag.MMAP_DEFAULT)
             ) {
                 mem.putInt(symbolCapacity);
                 mem.putBool(useCache);

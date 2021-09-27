@@ -32,13 +32,14 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class TestSumTDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     // allocate just to test that close() is correctly invoked
-    private final long mem = Unsafe.malloc(1024);
+    private final long mem = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
     private int valueIndex;
 
     public TestSumTDoubleGroupByFunction(@NotNull Function arg) {
@@ -47,7 +48,7 @@ public class TestSumTDoubleGroupByFunction extends DoubleFunction implements Gro
 
     @Override
     public void close() {
-        Unsafe.free(mem, 1024);
+        Unsafe.free(mem, 1024, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Override

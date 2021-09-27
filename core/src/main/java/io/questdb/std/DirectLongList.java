@@ -42,7 +42,7 @@ public class DirectLongList implements Mutable, Closeable {
 
     public DirectLongList(long capacity) {
         this.capacity = (capacity * Long.BYTES);
-        this.address = Unsafe.malloc(this.capacity);
+        this.address = Unsafe.malloc(this.capacity, MemoryTag.NATIVE_LONG_LIST);
         this.start = this.pos = address;
         this.limit = pos + this.capacity;
     }
@@ -113,7 +113,7 @@ public class DirectLongList implements Mutable, Closeable {
     @Override
     public void close() {
         if (address != 0) {
-            Unsafe.free(address, capacity);
+            Unsafe.free(address, capacity, MemoryTag.NATIVE_LONG_LIST);
             address = 0;
         }
     }
@@ -183,7 +183,7 @@ public class DirectLongList implements Mutable, Closeable {
     private void extendBytes(long capacity) {
         final long oldCapacity = this.capacity;
         this.capacity = capacity;
-        long address = Unsafe.realloc(this.address, oldCapacity, capacity);
+        long address = Unsafe.realloc(this.address, oldCapacity, capacity, MemoryTag.NATIVE_LONG_LIST);
         this.pos = address + (this.pos - this.start);
         this.address = address;
         this.start = address;

@@ -24,10 +24,7 @@
 
 package org.questdb;
 
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 
 public class OooCppBenchmarkSetMemoryShuffle {
     private static final long BUFFER_MAX_SIZE = 256 * 1024 * 1024L;
@@ -41,16 +38,15 @@ public class OooCppBenchmarkSetMemoryShuffle {
     }
 
     private static void testSetMemoryShuffleToCsv() {
-        var r = new OooCppBenchmarkSetMemoryVanilla();
         long index = Unsafe.getUnsafe().allocateMemory(BUFFER_MAX_SIZE * 2);
         long src = Unsafe.getUnsafe().allocateMemory(BUFFER_MAX_SIZE);
         long dest = Unsafe.getUnsafe().allocateMemory(BUFFER_MAX_SIZE);
 
-        System.out.println(String.format("src=%d, dest=%d, index=%d\n", src, dest, index));
+        System.out.printf("src=%d, dest=%d, index=%d\n%n", src, dest, index);
         Rnd random = new Rnd();
         long size = BUFFER_MAX_SIZE / Long.BYTES;
         for (int i = 0; i < size; i++) {
-            Unsafe.getUnsafe().putLong(index + (i + 1) * Long.BYTES, Math.abs(random.nextLong()) %  size);
+            Unsafe.getUnsafe().putLong(index + (i + 1L) * Long.BYTES, Math.abs(random.nextLong()) %  size);
         }
 
         try {
@@ -59,48 +55,48 @@ public class OooCppBenchmarkSetMemoryShuffle {
 
             int iterations = 100;
             for (int i = 1; i < 50; i += 1) {
-                var timeout1 = runReshufle64(iterations, i, index, src, dest);
-                var timeout2 = runReshufle32(iterations, i, index, src, dest);
-                var timeout3 = runReshufle16(iterations, i, index, src, dest);
+                double timeout1 = runReshufle64(iterations, i, index, src, dest);
+                double timeout2 = runReshufle32(iterations, i, index, src, dest);
+                double timeout3 = runReshufle16(iterations, i, index, src, dest);
                 System.out.println("" + i + ", " + timeout1 + ", " + timeout2 + ", " + timeout3);
             }
         } finally {
-            Unsafe.free(index, BUFFER_MAX_SIZE * 2);
-            Unsafe.free(src, BUFFER_MAX_SIZE);
-            Unsafe.free(dest, BUFFER_MAX_SIZE);
+            Unsafe.free(index, BUFFER_MAX_SIZE * 2, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(src, BUFFER_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(dest, BUFFER_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
     private static double runReshufle64(int iterations, int mb, long index, long src, long dest) {
-        var nt = System.nanoTime();
+        long nt = System.nanoTime();
         long size = MB * mb / 8;
 
         for (int j = 0; j < iterations; j++) {
             Vect.indexReshuffle64Bit(src, dest, index, size);
         }
-        var timeout = System.nanoTime() - nt;
+        long timeout = System.nanoTime() - nt;
         return Math.round(timeout * 1E-1 / iterations) / 100.0;
     }
 
     private static double runReshufle32(int iterations, int mb, long index, long src, long dest) {
-        var nt = System.nanoTime();
+        long nt = System.nanoTime();
         long size = MB * mb / 4;
 
         for (int j = 0; j < iterations; j++) {
             Vect.indexReshuffle32Bit(src, dest, index, size);
         }
-        var timeout = System.nanoTime() - nt;
+        long timeout = System.nanoTime() - nt;
         return Math.round(timeout * 1E-1 / iterations) / 100.0;
     }
 
     private static double runReshufle16(int iterations, int mb, long index, long src, long dest) {
-        var nt = System.nanoTime();
+        long nt = System.nanoTime();
         long size = MB * mb / 2;
 
         for (int j = 0; j < iterations; j++) {
             Vect.indexReshuffle16Bit(src, dest, index, size);
         }
-        var timeout = System.nanoTime() - nt;
+        long timeout = System.nanoTime() - nt;
         return Math.round(timeout * 1E-1 / iterations) / 100.0;
     }
 }

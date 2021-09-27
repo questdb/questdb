@@ -101,7 +101,7 @@ public class Rnd {
         double x = nextDouble() * 180.0 - 90.0;
         double y = nextDouble() * 360.0 - 180.0;
         try {
-            return GeoHashes.fromCoordinates(x, y, bits);
+            return GeoHashes.fromCoordinatesDeg(x, y, bits);
         } catch (NumericException e) {
             // Should never happen
             return GeoHashes.NULL;

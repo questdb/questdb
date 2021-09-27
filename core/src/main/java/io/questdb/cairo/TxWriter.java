@@ -29,6 +29,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
@@ -154,7 +155,7 @@ public final class TxWriter extends TxReader implements Closeable {
     @Override
     protected MemoryCMR openTxnFile(FilesFacade ff, Path path) {
         if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-            return txMem = Vm.getSmallCMARWInstance(ff, path);
+            return txMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT);
         }
         throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
     }

@@ -53,6 +53,8 @@ public interface ColumnIndexer {
 
     void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnTop);
 
+    void closeSlider();
+
     void rollback(long maxRow);
 
     boolean tryLock(long expectedSequence);

@@ -55,24 +55,24 @@ public interface MemoryM extends Closeable {
 
     /**
      * Maps file to memory
-     *
-     * @param ff                the files facade - an abstraction used to simulate failures
+     *  @param ff                the files facade - an abstraction used to simulate failures
      * @param name              the name of the file
      * @param extendSegmentSize for those implementations that can need to extend mapped memory beyond available file size
-     *                          should use this parameter as the increment size
+ *                          should use this parameter as the increment size
      * @param size              size of the initial mapped memory when smaller than the actual file
+     * @param memoryTag     memory tag for diagnostics
      */
-    void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size);
+    void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag);
 
-    default void partialFile(FilesFacade ff, LPSZ name, long size) {
-        of(ff, name, ff.getMapPageSize(), size);
+    default void partialFile(FilesFacade ff, LPSZ name, long size, int memoryTag) {
+        of(ff, name, ff.getMapPageSize(), size, memoryTag);
     }
 
-    default void wholeFile(FilesFacade ff, LPSZ name) {
-        of(ff, name, ff.getMapPageSize(), Long.MAX_VALUE);
+    default void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
+        of(ff, name, ff.getMapPageSize(), ff.length(name), memoryTag);
     }
 
-    default void smallFile(FilesFacade ff, LPSZ name) {
-        of(ff, name, ff.getPageSize(), Long.MAX_VALUE);
+    default void smallFile(FilesFacade ff, LPSZ name, int memoryTag) {
+        of(ff, name, ff.getPageSize(), ff.length(name), memoryTag);
     }
 }

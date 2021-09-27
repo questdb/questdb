@@ -383,7 +383,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void testExplicitConstantGeoHash() throws SqlException, NumericException {
         int bits = 6 * 5;
-        int hash = (int) GeoHashes.fromCoordinates(39.9830487269087, 0.02405432769681642, bits);
+        int hash = (int) GeoHashes.fromCoordinatesDeg(39.9830487269087, 0.02405432769681642, bits);
         testConstantPassThru(new GeoIntConstant(hash, ColumnType.getGeoHashTypeWithBits(bits)));
         functions.clear();
         sink.clear();

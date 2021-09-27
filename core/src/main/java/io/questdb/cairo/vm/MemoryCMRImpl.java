@@ -31,13 +31,15 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.str.LPSZ;
 
 public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     private static final Log LOG = LogFactory.getLog(MemoryCMRImpl.class);
+    private int memoryTag = MemoryTag.MMAP_DEFAULT;
 
-    public MemoryCMRImpl(FilesFacade ff, LPSZ name, long size) {
-        of(ff, name, 0, size);
+    public MemoryCMRImpl(FilesFacade ff, LPSZ name, long size, int memoryTag) {
+        of(ff, name, 0, size, memoryTag);
     }
 
     public MemoryCMRImpl() {
@@ -46,7 +48,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     @Override
     public void close() {
         if (pageAddress != 0) {
-            ff.munmap(pageAddress, size);
+            ff.munmap(pageAddress, size, memoryTag);
             this.size = 0;
             this.pageAddress = 0;
         }
@@ -67,24 +69,26 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
+        this.memoryTag = memoryTag;
         openFile(ff, name);
         map(ff, name, size);
     }
 
-    protected void map(FilesFacade ff, LPSZ name, long size) {
-        size = Math.min(ff.length(fd), size);
+    protected void map(FilesFacade ff, LPSZ name, final long size) {
         this.size = size;
         if (size > 0) {
             try {
-                this.pageAddress = TableUtils.mapRO(ff, fd, size);
+                this.pageAddress = TableUtils.mapRO(ff, fd, size, memoryTag);
             } catch (Throwable e) {
                 close();
                 throw e;
             }
         } else {
+            assert size > -1;
             this.pageAddress = 0;
         }
+
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
     }
 
@@ -99,13 +103,12 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     private void setSize0(long newSize) {
-        newSize = Math.max(newSize, ff.length(fd));
         try {
             if (size > 0) {
-                pageAddress = TableUtils.mremap(ff, fd, pageAddress, size, newSize, Files.MAP_RO);
+                pageAddress = TableUtils.mremap(ff, fd, pageAddress, size, newSize, Files.MAP_RO, memoryTag);
             } else {
                 assert pageAddress == 0;
-                pageAddress = TableUtils.mapRO(ff, fd, newSize);
+                pageAddress = TableUtils.mapRO(ff, fd, newSize, memoryTag);
             }
             size = newSize;
         } catch (Throwable e) {

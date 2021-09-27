@@ -117,22 +117,22 @@ public class GeoHashes {
         return fromBitString(bits, start, Math.min(bits.length(), ColumnType.GEO_HASH_MAX_BITS_LENGTH + start));
     }
 
-    public static long fromCoordinates(double lat, double lng, int bits) throws NumericException {
+    public static long fromCoordinatesDeg(double lat, double lon, int bits) throws NumericException {
         if (lat < -90.0 || lat > 90.0) {
             throw NumericException.INSTANCE;
         }
-        if (lng < -180.0 || lng > 180.0) {
+        if (lon < -180.0 || lon > 180.0) {
             throw NumericException.INSTANCE;
         }
         if (bits < 0 || bits > ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
             throw NumericException.INSTANCE;
         }
-        return fromCoordinatesUnsafe(lat, lng, bits);
+        return fromCoordinatesDegUnsafe(lat, lon, bits);
     }
 
-    public static long fromCoordinatesUnsafe(double lat, double lng, int bits) {
+    public static long fromCoordinatesDegUnsafe(double lat, double lon, int bits) {
         long latq = (long)Math.scalb((lat + 90.0) / 180.0, 32);
-        long lngq = (long)Math.scalb((lng + 180.0) / 360.0, 32);
+        long lngq = (long)Math.scalb((lon + 180.0) / 360.0, 32);
         return Numbers.interleaveBits(latq, lngq) >>> (64 - bits);
     }
 
@@ -156,34 +156,22 @@ public class GeoHashes {
         return fromString(geohash, start, start + Math.min(length, MAX_STRING_LENGTH));
     }
 
-    public static void fromStringToBits(final CharSequenceHashSet prefixes, int columnType, final DirectLongList prefixesBits) {
-        prefixesBits.clear();
+    public static void addNormalizedGeoPrefix(long hash, int prefixType, int columnType, final LongList prefixes) throws NumericException {
+        final int bits = ColumnType.getGeoHashBits(prefixType);
         final int columnSize = ColumnType.sizeOf(columnType);
         final int columnBits = ColumnType.getGeoHashBits(columnType);
-        for (int i = 0, sz = prefixes.size(); i < sz; i++) {
-            try {
-                final CharSequence prefix = prefixes.get(i);
-                if (prefix == null || prefix.length() == 0) {
-                    continue;
-                }
-                final long hash = fromString(prefix, 0, prefix.length());
-                final int bits = 5 * prefix.length();
-                final int shift = columnBits - bits;
-                long norm = hash << shift;
-                long mask = bitmask(bits, shift);
-                mask |= 1L << (columnSize * 8 - 1); // set the most significant bit to ignore null from prefix matching
-                // if the prefix is more precise than hashes,
-                // exclude it from matching
-                if (bits > columnBits) {
-                    norm = 0L;
-                    mask = -1L;
-                }
-                prefixesBits.add(norm);
-                prefixesBits.add(mask);
-            } catch (NumericException e) {
-                // Skip invalid geo hashes
-            }
+
+        if (hash == NULL || bits > columnBits) {
+            throw NumericException.INSTANCE;
         }
+
+        final int shift = columnBits - bits;
+        long norm = hash << shift;
+        long mask = GeoHashes.bitmask(bits, shift);
+        mask |= 1L << (columnSize * 8 - 1); // set the most significant bit to ignore null from prefix matching
+
+        prefixes.add(norm);
+        prefixes.add(mask);
     }
 
     public static long fromStringTruncatingNl(CharSequence hash, int start, int end, int toBits) throws NumericException {
@@ -205,7 +193,7 @@ public class GeoHashes {
         }
         final int chars = Math.min((int) (hi - lo), MAX_STRING_LENGTH);
         int actualBits = 5 * chars;
-        if (actualBits < bits) {
+        if (actualBits < bits || bits == 0) {
             throw NumericException.INSTANCE;
         }
         long geohash = 0;

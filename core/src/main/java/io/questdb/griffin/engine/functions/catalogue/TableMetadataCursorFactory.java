@@ -238,7 +238,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
                     int pathLen = path.length();
                     try {
                         path.chop$().concat(tableName).concat(META_FILE_NAME).$();
-                        metaReader.of(path.$());
+                        metaReader.of(path.$(), ColumnType.VERSION);
 
                         // Pre-read as much as possible to skip record instead of failing on column fetch
                         tableId = metaReader.getId();
