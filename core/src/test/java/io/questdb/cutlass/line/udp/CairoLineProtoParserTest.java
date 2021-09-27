@@ -48,7 +48,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "abc\txyz\t10000\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
                 "woopsie\tdaisy\t2000\t3.0889100000000003\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
                 "444\td555\t510\t1.4000000000000001\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55\n" +
-                "666\t777\t410\t1.1\tcomment X\tfalse\t1970-01-01T00:01:40.000000Z\tNaN\n";
+                "666\t777\t410\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\tNaN\n";
 
         final String lines = "tab,tag=abc,tag2=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
                 "tab,tag=woopsie,tag2=daisy field=2000i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n" +
@@ -165,7 +165,8 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 .timestamp()) {
             CairoTestUtils.create(model);
         }
-        assertThat("char\ttimestamp\n",
+        assertThat("char\ttimestamp\n" +
+                        "\t1970-01-01T00:00:00.000000Z\n",
                 "x char=\n",
                 "x",
                 new DefaultCairoConfiguration(root) {
@@ -550,11 +551,12 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
                 "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
+                "\tNaN\t6\tfalse\tstring3\t2017-10-03T10:00:00.030000Z\trow3\n" +
+                "\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.050000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t2017-10-03T10:00:00.020000Z\n" +
-                "66\tbox\t7.9\t2017-10-03T10:00:00.030000Z\n";
+                "66\tbox\t7.9\t2017-10-03T10:00:00.040000Z\n";
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +
