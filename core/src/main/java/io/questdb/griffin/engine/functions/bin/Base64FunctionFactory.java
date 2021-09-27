@@ -40,8 +40,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
 public class Base64FunctionFactory implements FunctionFactory {
-    static final StringSink buffer = new StringSink();
-
     @Override
     public String getSignature() {
         return "base64(Ui)";
@@ -54,22 +52,13 @@ public class Base64FunctionFactory implements FunctionFactory {
                                 CairoConfiguration configuration,
                                 SqlExecutionContext sqlExecutionContext) throws SqlException {
 
-        final Function maxLengthArg = args.get(1);
-        final int maxLength = maxLengthArg.getInt(null);
+        final int maxLength = args.get(1).getInt(null);
 
         if (maxLength < 1) {
             throw SqlException.$(argPositions.getQuick(1), "maxLength should be > 0");
         }
 
-        final Function sequenceArg = args.get(0);
-        if (sequenceArg.isConstant()) {
-            BinarySequence sequence = sequenceArg.getBin(null);
-            buffer.clear();
-            Chars.base64Encode(sequence, maxLength, buffer);
-            return StrConstant.newInstance(buffer);
-        } else {
-            return new Base64Func(sequenceArg, maxLength);
-        }
+        return new Base64Func(args.get(0), maxLength);
     }
 
     private static class Base64Func extends StrFunction implements UnaryFunction {
@@ -85,6 +74,11 @@ public class Base64FunctionFactory implements FunctionFactory {
         @Override
         public Function getArg() {
             return data;
+        }
+
+        @Override
+        public boolean isConstant() {
+            return getArg().isConstant();
         }
 
         @Override

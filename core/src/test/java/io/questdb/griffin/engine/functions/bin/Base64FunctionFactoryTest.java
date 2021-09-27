@@ -24,22 +24,54 @@
 
 package io.questdb.griffin.engine.functions.bin;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import io.questdb.griffin.engine.TestBinarySequence;
+import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.std.Rnd;
+import org.junit.Before;
 import org.junit.Test;
 
 public class Base64FunctionFactoryTest extends AbstractFunctionFactoryTest {
+    private static final CairoEngine engine = new CairoEngine(configuration);
+    private static final SqlCompiler compiler = new SqlCompiler(engine);
+
+    @Before
+    public void setup() {
+        SharedRandom.RANDOM.set(new Rnd());
+    }
+
     @Test
-    public void testSimple() throws SqlException {
-        final TestBinarySequence testBinarySequence = new TestBinarySequence();
-        testBinarySequence.of("this is test".getBytes());
-        call(testBinarySequence, 100).andAssert("dGhpcyBpcyB0ZXN0");
+    public void testRandomBinSeq() throws SqlException {
+        assertQuery0("x\ty\n" +
+                        "00000000 ee 41 1d 15 55 8a\t7kEdFVWK\n" +
+                        "\t\n" +
+                        "00000000 d8 cc 14 ce f1 59\t2MwUzvFZ\n" +
+                        "00000000 c4 91 3b 72 db f3\txJE7ctvz\n" +
+                        "00000000 1b c7 88 de a0 79\tG8eI3qB5\n" +
+                        "00000000 77 15 68 61 26 af\tdxVoYSav\n" +
+                        "\t\n" +
+                        "00000000 95 94 36 53 49 b4\tlZQ2U0m0\n" +
+                        "\t\n" +
+                        "00000000 3b 08 a1 1e 38 8d\tOwihHjiN\n",
+                "select x, base64(x, 100) y from t",
+                "create table t as (select rnd_bin(6,6,1) x from long_sequence(10))");
     }
 
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new Base64FunctionFactory();
     }
+
+    private void assertQuery0(CharSequence expected, CharSequence sql, CharSequence ddl) throws SqlException {
+        if (ddl != null) {
+            compiler.compile(ddl, sqlExecutionContext);
+        }
+        RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
+        assertCursor(expected, factory.getCursor(sqlExecutionContext), factory.getMetadata(), true);
+    }
+
 }
