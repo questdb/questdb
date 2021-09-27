@@ -287,7 +287,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                             // on each iteration thread will do between 1 and 3 things:
                             // 1. it will open a random reader
                             // 2. it will read from one of readers it has opened
-                            // 3. it will close of of readers if has opened
+                            // 3. it will close one of readers it has opened
                             for (int i = 0; i < iterations; i++) {
 
                                 if (readers.size() == 0 || (readers.size() < 40 && rnd.nextPositiveInt() % 4 == 0)) {
