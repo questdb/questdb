@@ -27,10 +27,10 @@ package io.questdb.cutlass.line.tcp;
 import java.nio.charset.StandardCharsets;
 
 import io.questdb.std.MemoryTag;
+import io.questdb.cutlass.line.LineProtoLexerTest;
 import org.junit.Assert;
 
 import io.questdb.cutlass.line.LineProtoException;
-import io.questdb.cutlass.line.LineProtoLexerTest;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ErrorCode;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ParseResult;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ProtoEntity;
@@ -41,10 +41,57 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 
 public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
+
     private final NewLineProtoParser protoParser = new NewLineProtoParser();
     private ErrorCode lastErrorCode;
     private boolean onErrorLine;
     private long startOfLineAddr;
+
+    @Override
+    public void testNoTagValue1() {
+        assertThat("measurement,tag= field=x 10000\n", "measurement,tag= field=x 10000\n");
+    }
+
+    @Override
+    public void testNoTagValue2() {
+        assertThat("measurement,tag= field=x 10000\n", "measurement,tag=, field=x 10000\n");
+    }
+
+    @Override
+    public void testNoTagValue3() {
+        assertThat("measurement,tag=\n", "measurement,tag=");
+    }
+
+    @Override
+    public void testNoTagValue4() {
+        assertThat("measurement,tag=\n", "measurement,tag=\n");
+    }
+
+    @Override
+    public void testSkipLine() {
+        assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
+                        "measurement,tag=value3,tag2=value2 field=,field2=\"ok\"\n" +
+                        "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n",
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
+                        "measurement,tag=value3,tag2=value2 field=,field2=\"ok\"\n" +
+                        "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n");
+    }
+
+    @Override
+    public void testNoFieldValue2() {
+        assertThat("measurement,tag=x f= 10000\n", "measurement,tag=x f= 10000\n");
+    }
+
+    @Override
+    public void testNoFieldValue3() {
+        assertThat("measurement,tag=x f= 10000\n", "measurement,tag=x f=, 10000\n");
+    }
+
+
+    @Override
+    public void testDanglingCommaOnTag() {
+        assertThat("measurement,tag=value field=x 10000\n", "measurement,tag=value, field=x 10000\n");
+    }
 
     @Override
     protected void assertThat(CharSequence expected, byte[] line) throws LineProtoException {
@@ -198,7 +245,10 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
                     Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), sink);
                     sink.put('"');
                     break;
-
+                    case NewLineProtoParser.ENTITY_TYPE_INTEGER:
+                case NewLineProtoParser.ENTITY_TYPE_LONG256:
+                        sink.put(entity.getValue()).put('i');
+                        break;
                 default:
                     sink.put(entity.getValue());
             }
