@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
-import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -599,44 +598,6 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "@plant2", // discarded bad type symbol
                         "" // valid null
                 });
-    }
-
-    @Test
-    public void testInsertTooLargeAStringTableExists() throws Exception {
-        Rnd rnd = new Rnd();
-        assertType(ColumnType.STRING,
-                "value\ttimestamp\n",
-                new CharSequence[]{
-                        "\"" + rnd.nextString(NewLineProtoParser.MAX_ALLOWED_STRING_LEN + 1) + "\"", // discarded too long
-                        "" // valid null
-                });
-    }
-
-    @Test
-    public void testInsertTooLargeAStringTableDoesNotExist() throws Exception {
-        Rnd rnd = new Rnd();
-        runInContext(() -> {
-            sink.clear();
-            sink.put(table)
-                    .put(' ')
-                    .put(targetColumnName)
-                    .put("=\"")
-                    .put(rnd.nextString(NewLineProtoParser.MAX_ALLOWED_STRING_LEN + 1))
-                    .put("\" ")
-                    .put(1000000000)
-                    .put('\n');
-            recvBuffer = sink.toString();
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
-            closeContext();
-            try (TableReader ignored = new TableReader(new DefaultCairoConfiguration(root), table)) {
-                Assert.fail("table should have not been created");
-            } catch (CairoException expected) {
-                Assert.assertTrue(expected.getMessage().contains("[0] File not found:"));
-            }
-        });
     }
 
     @Test

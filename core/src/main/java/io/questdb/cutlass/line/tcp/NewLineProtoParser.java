@@ -35,7 +35,6 @@ import java.io.Closeable;
 
 public class NewLineProtoParser implements Closeable {
     public static final long NULL_TIMESTAMP = Numbers.LONG_NaN;
-    public static final int MAX_ALLOWED_STRING_LEN = 152; // 150 bytes plus quotes
     public static final byte ENTITY_TYPE_NULL = 0;
     public static final byte ENTITY_TYPE_TAG = 1;
     public static final byte ENTITY_TYPE_FLOAT = 2;
@@ -275,9 +274,8 @@ public class NewLineProtoParser implements Closeable {
         // the next completeEntity call, moving butAt to the next '"'
         entityLo = openQuoteIdx; // from the quote
         boolean scape = false;
-        final long limit = Math.min(bufHi, entityLo + MAX_ALLOWED_STRING_LEN + 1); // limit the size of strings
         bufAt += 2; // go to first byte of the string, past the '"'
-        while (bufAt < limit) { // consume until the next quote, '\n', or eof
+        while (bufAt < bufHi) { // consume until the next quote, '\n', or eof
             switch (Unsafe.getUnsafe().getByte(bufAt)) {
                 case (byte) '\\':
                     scape = !scape;
