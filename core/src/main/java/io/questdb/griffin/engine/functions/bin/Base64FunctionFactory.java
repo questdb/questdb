@@ -34,43 +34,13 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class Base64FunctionFactory implements FunctionFactory {
-
-    static final char[] base64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toCharArray();
     static final StringSink buffer = new StringSink();
-
-    static void base64encode(BinarySequence sequence, final int len, CharSink buffer) {
-        int pad = 0;
-        for (int i = 0; i < len; i += 3) {
-
-            int b = ((sequence.byteAt(i) & 0xFF) << 16) & 0xFFFFFF;
-            if (i + 1 < len) {
-                b |= (sequence.byteAt(i + 1) & 0xFF) << 8;
-            } else {
-                pad++;
-            }
-            if (i + 2 <len) {
-                b |= (sequence.byteAt(i + 2) & 0xFF);
-            } else {
-                pad++;
-            }
-
-            for (int j = 0; j < 4 - pad; j++) {
-                int c = (b & 0xFC0000) >> 18;
-                buffer.put(base64[c]);
-                b <<= 6;
-            }
-        }
-
-        for (int j = 0; j < pad; j++) {
-            buffer.put("=");
-        }
-    }
 
     @Override
     public String getSignature() {
@@ -94,11 +64,8 @@ public class Base64FunctionFactory implements FunctionFactory {
         final Function sequenceArg = args.get(0);
         if (sequenceArg.isConstant()) {
             BinarySequence sequence = sequenceArg.getBin(null);
-            final int len = (int)sequenceArg.getBinLen(null);
-            final int length = Math.min(len, maxLength);
-
             buffer.clear();
-            base64encode(sequence, length, buffer);
+            Chars.base64Encode(sequence, maxLength, buffer);
             return StrConstant.newInstance(buffer);
         } else {
             return new Base64Func(sequenceArg, maxLength);
@@ -123,9 +90,8 @@ public class Base64FunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStr(final Record rec) {
             final BinarySequence sequence = getArg().getBin(rec);
-            final int sequenceLen = (int)getArg().getBinLen(rec);
             buffer.clear();
-            base64encode(sequence, Math.min(sequenceLen, this.maxLength), buffer);
+            Chars.base64Encode(sequence, this.maxLength, buffer);
             return buffer;
         }
 
