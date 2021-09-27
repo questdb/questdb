@@ -797,7 +797,15 @@ class LineTcpMeasurementScheduler implements Closeable {
                         case NewLineProtoParser.ENTITY_TYPE_BOOLEAN: {
                             byte b = Unsafe.getUnsafe().getByte(bufPos);
                             bufPos += Byte.BYTES;
-                            row.putBool(colIndex, b == 1);
+                            final int colType = writer.getMetadata().getColumnType(colIndex);
+                            if (ColumnType.isBoolean(colType)) {
+                                row.putBool(colIndex, b == 1);
+                            } else {
+                                throw CairoException.instance(0)
+                                        .put("cast error for line protocol boolean [columnIndex=").put(colIndex)
+                                        .put(", columnType=").put(ColumnType.nameOf(colType))
+                                        .put(']');
+                            }
                             break;
                         }
 
@@ -888,7 +896,15 @@ class LineTcpMeasurementScheduler implements Closeable {
                         case NewLineProtoParser.ENTITY_TYPE_TIMESTAMP: {
                             long ts = Unsafe.getUnsafe().getLong(bufPos);
                             bufPos += Long.BYTES;
-                            row.putTimestamp(colIndex, ts);
+                            final int colType = writer.getMetadata().getColumnType(colIndex);
+                            if (ColumnType.isTimestamp(colType)) {
+                                row.putTimestamp(colIndex, ts);
+                            } else {
+                                throw CairoException.instance(0)
+                                        .put("cast error for line protocol timestamp [columnIndex=").put(colIndex)
+                                        .put(", columnType=").put(ColumnType.nameOf(colType))
+                                        .put(']');
+                            }
                             break;
                         }
 
