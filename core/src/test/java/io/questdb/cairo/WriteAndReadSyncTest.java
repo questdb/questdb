@@ -26,10 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Test;
@@ -72,12 +69,12 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
                         try {
                             barrier.await();
                             // over allocate
-                            long mem = TableUtils.mapRW(ff, fd1, (size) * Files.PAGE_SIZE);
+                            long mem = TableUtils.mapRW(ff, fd1, (size) * Files.PAGE_SIZE, MemoryTag.NATIVE_DEFAULT);
                             for (int i = 0; i < longCount; i++) {
                                 Unsafe.getUnsafe().putLong(mem + i * 8L, i);
                             }
                             readLatch.countDown();
-                            ff.munmap(mem, (size) * Files.PAGE_SIZE);
+                            ff.munmap(mem, (size) * Files.PAGE_SIZE, MemoryTag.NATIVE_DEFAULT);
                             ff.truncate(mem, longCount * 8);
                             FilesFacadeImpl.INSTANCE.close(fd1);
                         } catch (Throwable e) {
@@ -91,7 +88,7 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
                     long fd2 = TableUtils.openRO(ff, path, LOG);
                     try {
                         readLatch.await();
-                        long mem = TableUtils.mapRO(ff, fd2, longCount * 8);
+                        long mem = TableUtils.mapRO(ff, fd2, longCount * 8, MemoryTag.NATIVE_DEFAULT);
                         try {
                             for (int i = 0; i < longCount; i++) {
                                 long value = Unsafe.getUnsafe().getLong(mem + i * 8L);
@@ -100,7 +97,7 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
                                 }
                             }
                         } finally {
-                            ff.munmap(mem, longCount * 8);
+                            ff.munmap(mem, longCount * 8, MemoryTag.NATIVE_DEFAULT);
                         }
                     } finally {
                         ff.close(fd2);
