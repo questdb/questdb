@@ -45,7 +45,7 @@ public abstract class AbstractLineProtoReceiver extends SynchronizedJob implemen
     protected final CairoLineProtoParser parser;
     protected final NetworkFacade nf;
     private final AtomicBoolean running = new AtomicBoolean(false);
-    private final SOCountDownLatch started = new SOCountDownLatch();
+    private final SOCountDownLatch started = new SOCountDownLatch(1);
     private final SOCountDownLatch halted = new SOCountDownLatch(1);
     private final LineUdpReceiverConfiguration configuration;
     protected long fd;
@@ -120,6 +120,7 @@ public abstract class AbstractLineProtoReceiver extends SynchronizedJob implemen
     public void start() {
         if (configuration.ownThread() && running.compareAndSet(false, true)) {
             new Thread(() -> {
+                started.countDown();
                 if (configuration.ownThreadAffinity() != -1) {
                     Os.setCurrentThreadAffinity(configuration.ownThreadAffinity());
                 }
@@ -130,7 +131,6 @@ public abstract class AbstractLineProtoReceiver extends SynchronizedJob implemen
                 LOG.info().$("shutdown").$();
                 halted.countDown();
             }).start();
-            started.countDown();
         }
     }
 

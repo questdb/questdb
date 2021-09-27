@@ -24,9 +24,7 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.line.LineProtoSender;
-import io.questdb.test.tools.TestUtils;
+import io.questdb.cairo.*;
 
 public class LineUdpInsertIntGeoHashTest extends LineUdpInsertGeoHashTest {
     @Override
@@ -59,44 +57,33 @@ public class LineUdpInsertIntGeoHashTest extends LineUdpInsertGeoHashTest {
 
     @Override
     public void testTableHasGeoHashMessageDoesNot() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
-                    createTable(engine, 28);
-                    receiver.start();
-                    try (LineProtoSender sender = createLineProtoSender()) {
-                        sender.metric(tableName).field("location", "9").$(1000000000L);
-                        sender.metric(tableName).field("location", "4").$(2000000000L);
-                        sender.metric(tableName).field("location", "j").field("in", "yes").$(3000000000L);
-                        sender.flush();
-                    }
-                    assertReader(tableName,
-                            "geohash\ttimestamp\tlocation\tin\n" +
-                                    "\t1970-01-01T00:00:01.000000Z\t9\t\n" +
-                                    "\t1970-01-01T00:00:02.000000Z\t4\t\n" +
-                                    "\t1970-01-01T00:00:03.000000Z\tj\tyes\n",
-                            "location", "in");
-
-                    receiver.halt();
-                }
-            }
-        });
+        assertType(tableName,
+                targetColumnName,
+                ColumnType.getGeoHashTypeWithBits(28),
+                "geohash\ttimestamp\tcarrots\n" +
+                        "\t1970-01-01T00:00:01.000000Z\t9\n" +
+                        "\t1970-01-01T00:00:02.000000Z\t4\n" +
+                        "\t1970-01-01T00:00:03.000000Z\tj\n",
+                sender -> {
+                    sender.metric(tableName).field("carrots", "9").$(1000000000L);
+                    sender.metric(tableName).field("carrots", "4").$(2000000000L);
+                    sender.metric(tableName).field("carrots", "j").$(3000000000L);
+                },
+                "carrots"
+        );
     }
 
     @Override
     public void testExcessivelyLongGeoHashesAreTruncated() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
-                    createTable(engine, 20);
-                    receiver.start();
-                    sendGeoHashLine("sp052w92p1p8187");
-                    assertReader(tableName,
-                            "geohash\ttimestamp\n" +
-                                    "sp05\t1970-01-01T00:00:01.000000Z\n");
+        assertType(tableName,
+                targetColumnName,
+                ColumnType.getGeoHashTypeWithBits(20),
+                "geohash\ttimestamp\n" +
+                        "9v1s\t1970-01-01T00:00:01.000000Z\n",
+                sender -> {
+                    sender.metric(tableName).field(targetColumnName, "9v1s8hm7wpkssv1h").$(1_000_000_000);
                 }
-            }
-        });
+        );
     }
 
     @Override
@@ -115,33 +102,29 @@ public class LineUdpInsertIntGeoHashTest extends LineUdpInsertGeoHashTest {
 
     @Override
     public void testWrongCharGeoHashes() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
-                    createTable(engine, 31);
-                    receiver.start();
-                    sendGeoHashLine("sp018*");
-                    assertReader(tableName,
-                            "geohash\ttimestamp\n" +
-                                    "\t1970-01-01T00:00:01.000000Z\n");
+        assertType(tableName,
+                targetColumnName,
+                ColumnType.getGeoHashTypeWithBits(31),
+                "geohash\ttimestamp\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n",
+                sender -> {
+                    sender.metric(tableName).field(targetColumnName, "sp018*").$(1_000_000_000);
                 }
-            }
-        });
+        );
     }
 
     @Override
     public void testNullGeoHash() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
-                    createTable(engine, 30);
-                    receiver.start();
-                    sendGeoHashLine("");
-                    assertReader(tableName,
-                            "geohash\ttimestamp\n" +
-                                    "\t1970-01-01T00:00:01.000000Z\n");
+        assertType(tableName,
+                targetColumnName,
+                ColumnType.getGeoHashTypeWithBits(30),
+                "geohash\ttimestamp\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n",
+                sender -> {
+                    sender.metric(tableName).field(targetColumnName, "").$(1_000_000_000);
+                    sender.metric(tableName).field(targetColumnName, "null").$(1_000_000_000);
                 }
-            }
-        });
+        );
     }
 }
