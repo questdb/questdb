@@ -465,126 +465,138 @@ class LineTcpMeasurementScheduler implements Closeable {
                 timestamp = timestampAdapter.getMicros(timestamp);
             }
             long bufPos = bufLo;
+            long bufMax = bufLo + bufSize;
             Unsafe.getUnsafe().putLong(bufPos, timestamp);
             bufPos += Long.BYTES;
             int nEntities = protoParser.getnEntities();
             Unsafe.getUnsafe().putInt(bufPos, nEntities);
             bufPos += Integer.BYTES;
             for (int nEntity = 0; nEntity < nEntities; nEntity++) {
-                assert bufPos < (bufLo + bufSize + 6);
-                ProtoEntity entity = protoParser.getEntity(nEntity);
-                int colIndex = localDetails.getColumnIndex(entity.getName());
-                if (colIndex < 0) {
-                    int colNameLen = entity.getName().length();
-                    Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
-                    bufPos += Integer.BYTES;
-                    Vect.memcpy(entity.getName().getLo(), bufPos, colNameLen);
-                    bufPos += colNameLen;
-                } else {
-                    Unsafe.getUnsafe().putInt(bufPos, colIndex);
-                    bufPos += Integer.BYTES;
-                }
-                switch (entity.getType()) {
-                    case NewLineProtoParser.ENTITY_TYPE_TAG: {
-                        long tmpBufPos = bufPos;
-                        int l = entity.getValue().length();
-                        bufPos += Integer.BYTES + Byte.BYTES;
-                        long hi = bufPos + 2L * l;
-                        floatingCharSink.of(bufPos, hi);
-                        if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
-                            throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
-                        }
-
-                        int symIndex = tableUpdateDetails.getSymbolIndex(localDetails, colIndex, floatingCharSink);
-                        if (symIndex != SymbolTable.VALUE_NOT_FOUND) {
-                            bufPos = tmpBufPos;
-                            Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_CACHED_TAG);
-                            bufPos += Byte.BYTES;
-                            Unsafe.getUnsafe().putInt(bufPos, symIndex);
-                            bufPos += Integer.BYTES;
+                if (bufPos + Long.BYTES < bufMax) {
+                    ProtoEntity entity = protoParser.getEntity(nEntity);
+                    int colIndex = localDetails.getColumnIndex(entity.getName());
+                    if (colIndex < 0) {
+                        int colNameLen = entity.getName().length();
+                        Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
+                        bufPos += Integer.BYTES;
+                        if (bufPos + colNameLen < bufMax) {
+                            Vect.memcpy(entity.getName().getLo(), bufPos, colNameLen);
                         } else {
-                            Unsafe.getUnsafe().putByte(tmpBufPos, entity.getType());
-                            tmpBufPos += Byte.BYTES;
-                            Unsafe.getUnsafe().putInt(tmpBufPos, l);
-                            bufPos = hi;
+                            throw CairoException.instance(0).put("queue buffer overflow");
                         }
-                        break;
+                        bufPos += colNameLen;
+                    } else {
+                        Unsafe.getUnsafe().putInt(bufPos, colIndex);
+                        bufPos += Integer.BYTES;
                     }
-                    case NewLineProtoParser.ENTITY_TYPE_INTEGER: {
-                        Unsafe.getUnsafe().putByte(bufPos, entity.getType());
-                        bufPos += Byte.BYTES;
-                        Unsafe.getUnsafe().putLong(bufPos, entity.getIntegerValue());
-                        bufPos += Long.BYTES;
-                        break;
-                    }
-                    case NewLineProtoParser.ENTITY_TYPE_FLOAT: {
-                        Unsafe.getUnsafe().putByte(bufPos, entity.getType());
-                        bufPos += Byte.BYTES;
-                        Unsafe.getUnsafe().putDouble(bufPos, entity.getFloatValue());
-                        bufPos += Double.BYTES;
-                        break;
-                    }
-                    case NewLineProtoParser.ENTITY_TYPE_STRING:
-                    case NewLineProtoParser.ENTITY_TYPE_LONG256: {
-                        final int colTypeMeta = localDetails.getColumnTypeMeta(colIndex);
-                        if (colTypeMeta == 0) { // not a geohash
+                    switch (entity.getType()) {
+                        case NewLineProtoParser.ENTITY_TYPE_TAG: {
+                            long tmpBufPos = bufPos;
+                            int l = entity.getValue().length();
+                            bufPos += Integer.BYTES + Byte.BYTES;
+                            long hi = bufPos + 2L * l;
+                            if (hi < bufMax) {
+                                floatingCharSink.of(bufPos, hi);
+                                if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
+                                    throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
+                                }
+
+                                int symIndex = tableUpdateDetails.getSymbolIndex(localDetails, colIndex, floatingCharSink);
+                                if (symIndex != SymbolTable.VALUE_NOT_FOUND) {
+                                    bufPos = tmpBufPos;
+                                    Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_CACHED_TAG);
+                                    bufPos += Byte.BYTES;
+                                    Unsafe.getUnsafe().putInt(bufPos, symIndex);
+                                    bufPos += Integer.BYTES;
+                                } else {
+                                    Unsafe.getUnsafe().putByte(tmpBufPos, entity.getType());
+                                    tmpBufPos += Byte.BYTES;
+                                    Unsafe.getUnsafe().putInt(tmpBufPos, l);
+                                    bufPos = hi;
+                                }
+                            } else {
+                                throw CairoException.instance(0).put("queue buffer overflow");
+                            }
+                            break;
+                        }
+                        case NewLineProtoParser.ENTITY_TYPE_INTEGER: {
                             Unsafe.getUnsafe().putByte(bufPos, entity.getType());
                             bufPos += Byte.BYTES;
-                            int l = entity.getValue().length();
-                            Unsafe.getUnsafe().putInt(bufPos, l);
-                            bufPos += Integer.BYTES;
-                            long hi = bufPos + 2L * l;
-                            floatingCharSink.of(bufPos, hi);
-                            if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
-                                throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
-                            }
-                            bufPos = hi;
-                        } else {
-                            long geohash;
-                            try {
-                                geohash = GeoHashes.fromStringTruncatingNl(
-                                        entity.getValue().getLo(),
-                                        entity.getValue().getHi(),
-                                        Numbers.decodeLowShort(colTypeMeta));
-                            } catch (NumericException e) {
-                                geohash = GeoHashes.NULL;
-                            }
-                            switch (Numbers.decodeHighShort(colTypeMeta)) {
-                                default:
-                                    Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOLONG);
-                                    bufPos += Byte.BYTES;
-                                    Unsafe.getUnsafe().putLong(bufPos, geohash);
-                                    bufPos += Long.BYTES;
-                                    break;
-                                case ColumnType.GEOINT:
-                                    Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOINT);
-                                    bufPos += Byte.BYTES;
-                                    Unsafe.getUnsafe().putInt(bufPos, (int) geohash);
-                                    bufPos += Integer.BYTES;
-                                    break;
-                                case ColumnType.GEOSHORT:
-                                    Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOSHORT);
-                                    bufPos += Byte.BYTES;
-                                    Unsafe.getUnsafe().putShort(bufPos, (short) geohash);
-                                    bufPos += Short.BYTES;
-                                    break;
-                                case ColumnType.GEOBYTE:
-                                    Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOBYTE);
-                                    bufPos += Byte.BYTES;
-                                    Unsafe.getUnsafe().putByte(bufPos, (byte) geohash);
-                                    bufPos += Byte.BYTES;
-                                    break;
-                            }
+                            Unsafe.getUnsafe().putLong(bufPos, entity.getIntegerValue());
+                            bufPos += Long.BYTES;
+                            break;
                         }
-                        break;
+                        case NewLineProtoParser.ENTITY_TYPE_FLOAT: {
+                            Unsafe.getUnsafe().putByte(bufPos, entity.getType());
+                            bufPos += Byte.BYTES;
+                            Unsafe.getUnsafe().putDouble(bufPos, entity.getFloatValue());
+                            bufPos += Double.BYTES;
+                            break;
+                        }
+                        case NewLineProtoParser.ENTITY_TYPE_STRING:
+                        case NewLineProtoParser.ENTITY_TYPE_LONG256: {
+                            final int colTypeMeta = localDetails.getColumnTypeMeta(colIndex);
+                            if (colTypeMeta == 0) { // not a geohash
+                                Unsafe.getUnsafe().putByte(bufPos, entity.getType());
+                                bufPos += Byte.BYTES;
+                                int l = entity.getValue().length();
+                                Unsafe.getUnsafe().putInt(bufPos, l);
+                                bufPos += Integer.BYTES;
+                                long hi = bufPos + 2L * l;
+                                floatingCharSink.of(bufPos, hi);
+                                if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
+                                    throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
+                                }
+                                bufPos = hi;
+                            } else {
+                                long geohash;
+                                try {
+                                    geohash = GeoHashes.fromStringTruncatingNl(
+                                            entity.getValue().getLo(),
+                                            entity.getValue().getHi(),
+                                            Numbers.decodeLowShort(colTypeMeta));
+                                } catch (NumericException e) {
+                                    geohash = GeoHashes.NULL;
+                                }
+                                switch (Numbers.decodeHighShort(colTypeMeta)) {
+                                    default:
+                                        Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOLONG);
+                                        bufPos += Byte.BYTES;
+                                        Unsafe.getUnsafe().putLong(bufPos, geohash);
+                                        bufPos += Long.BYTES;
+                                        break;
+                                    case ColumnType.GEOINT:
+                                        Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOINT);
+                                        bufPos += Byte.BYTES;
+                                        Unsafe.getUnsafe().putInt(bufPos, (int) geohash);
+                                        bufPos += Integer.BYTES;
+                                        break;
+                                    case ColumnType.GEOSHORT:
+                                        Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOSHORT);
+                                        bufPos += Byte.BYTES;
+                                        Unsafe.getUnsafe().putShort(bufPos, (short) geohash);
+                                        bufPos += Short.BYTES;
+                                        break;
+                                    case ColumnType.GEOBYTE:
+                                        Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOBYTE);
+                                        bufPos += Byte.BYTES;
+                                        Unsafe.getUnsafe().putByte(bufPos, (byte) geohash);
+                                        bufPos += Byte.BYTES;
+                                        break;
+                                }
+                            }
+                            break;
+                        }
+                        case NewLineProtoParser.ENTITY_TYPE_BOOLEAN: {
+                            Unsafe.getUnsafe().putByte(bufPos, entity.getType());
+                            bufPos += Byte.BYTES;
+                            Unsafe.getUnsafe().putByte(bufPos, (byte) (entity.getBooleanValue() ? 1 : 0));
+                            bufPos += Byte.BYTES;
+                            break;
+                        }
                     }
-                    case NewLineProtoParser.ENTITY_TYPE_BOOLEAN: {
-                        Unsafe.getUnsafe().putByte(bufPos, entity.getType());
-                        bufPos += Byte.BYTES;
-                        Unsafe.getUnsafe().putByte(bufPos, (byte) (entity.getBooleanValue() ? 1 : 0));
-                        bufPos += Byte.BYTES;
-                        break;
-                    }
+                } else {
+                    throw CairoException.instance(0).put("queue buffer overflow");
                 }
             }
             threadId = tableUpdateDetails.writerThreadId;

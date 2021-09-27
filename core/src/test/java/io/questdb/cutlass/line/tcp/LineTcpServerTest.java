@@ -241,6 +241,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
         });
     }
 
+
     @Test
     public void testGoodAuthenticated() throws Exception {
         test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, 768, 1_000, false);

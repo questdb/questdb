@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ParseResult;
 import io.questdb.log.Log;
@@ -138,7 +139,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
 
     private void doHandleDisconnectEvent() {
         if (protoParser.getBufferAddress() == recvBufEnd) {
-            LOG.error().$('[').$(fd).$("] buffer overflow [msgBufferSize=").$(recvBufEnd - recvBufStart).$(']').$();
+            LOG.error().$('[').$(fd).$("] buffer overflow [line.tcp.msg.buffer.size=").$(recvBufEnd - recvBufStart).$(']').$();
             return;
         }
 
@@ -214,8 +215,11 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                         break;
                     }
                 }
-            } catch (RuntimeException ex) {
-                LOG.error().$('[').$(fd).$("] could not process line data").$(ex).$();
+            } catch (CairoException ex) {
+                LOG.error().$('[').$(fd).$("] could not process line data [msg=").$(ex.getFlyweightMessage()).I$();
+                return IOContextResult.NEEDS_DISCONNECT;
+            } catch (Throwable ex) {
+                LOG.error().$('[').$(fd).$("] could not process line data [ex=").$(ex).I$();
                 return IOContextResult.NEEDS_DISCONNECT;
             }
         }
