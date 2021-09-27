@@ -74,29 +74,34 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     @Test
     public void test416() throws IOException, SqlException {
-        doMigration("/migration/data_416.zip", false);
+        doMigration("/migration/data_416.zip", false, false);
     }
 
     @Test
     public void test417() throws IOException, SqlException {
-        doMigration("/migration/data_417.zip", true);
+        doMigration("/migration/data_417.zip", true, false);
     }
 
     @Test
     public void test419() throws IOException, SqlException {
-        doMigration("/migration/data_419.zip", true);
+        doMigration("/migration/data_419.zip", true, false);
     }
 
     @Test
     public void test420() throws IOException, SqlException {
-        doMigration("/migration/data_420.zip", true);
+        doMigration("/migration/data_420.zip", true, false);
+    }
+
+    @Test
+    public void test421() throws IOException, SqlException {
+        doMigration("/migration/data_421.zip", true, true);
     }
 
     @Test
     public void testGenerateTables() throws SqlException {
         generateMigrationTables();
         engine.releaseAllWriters();
-        assertData();
+        assertData(true);
     }
 
     private static void copyInputStream(byte[] buffer, File out, InputStream is) throws IOException {
@@ -110,20 +115,23 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertData() throws SqlException {
+    private void assertData(boolean withO3) throws SqlException {
         assertNoneNts();
         assertNone();
-        assertDay();
+        assertDay("t_day");
+        if (withO3) {
+            assertDay("t_day_ooo");
+        }
         assertMonth();
         assertYear();
     }
 
-    private void assertDay() throws SqlException {
+    private void assertDay(String tableName) throws SqlException {
 
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "t_day where m = null",
+                tableName + " where m = null",
                 sink,
                 "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
                         "77\tW\t-29635\t36806\t39204\t0.0244\t0.4452645911659644\t1974-10-14T05:22:22.780Z\t1970-01-01T00:00:00.181107Z\tJJDSR\tbbbbbb\ttrue\t\t0xd89fec5fab3f4af1a0ca0ec5d6448e2d798d79cb982de744b96a662a0b9f32d7\t00000000 aa 41 c5 55 ef\t1970-06-12T00:56:40.000000Z\n" +
@@ -468,13 +476,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 " rnd_bin(2,10, 2) o";
     }
 
-    private void doMigration(String dataZip, boolean freeTableId) throws IOException, SqlException {
+    private void doMigration(String dataZip, boolean freeTableId, boolean withO3) throws IOException, SqlException {
         if (freeTableId) {
             engine.freeTableId();
         }
         replaceDbContent(dataZip);
         EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, true);
-        assertData();
+        assertData(withO3);
     }
 
     private void generateMigrationTables() throws SqlException {
@@ -508,6 +516,24 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         );
 
         compiler.compile(
+                "create table t_day_ooo as (" +
+                        "select" +
+                        commonColumns() +
+                        ", timestamp_sequence(16 * 200000000L + 200000000L, 2000000000000L) ts" +
+                        " from long_sequence(15)" +
+                        "), index(m) timestamp(ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile("insert into t_day_ooo " +
+                        "select " +
+                        commonColumns() +
+                        ", timestamp_sequence(200000000L, 2000000000000L) ts" +
+                        " from long_sequence(15)",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
                 "create table t_month as (" +
                         "select" +
                         commonColumns() +
@@ -516,6 +542,16 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "), index(m) timestamp(ts) partition by MONTH",
                 sqlExecutionContext
         );
+
+//        compiler.compile(
+//                "create table t_month_ooo as (" +
+//                        "select" +
+//                        commonColumns() +
+//                        ", timestamp_sequence(200000000L, 20000000000000L) ts" +
+//                        " from long_sequence(30)," +
+//                        "), index(m) timestamp(ts) partition by MONTH",
+//                sqlExecutionContext
+//        );
 
         compiler.compile(
                 "create table t_year as (" +
@@ -526,5 +562,15 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "), index(m) timestamp(ts) partition by YEAR",
                 sqlExecutionContext
         );
+
+//        compiler.compile(
+//                "create table t_year_ooo as (" +
+//                        "select" +
+//                        commonColumns() +
+//                        ", timestamp_sequence(200000000L, 200000000000000L) ts" +
+//                        " from long_sequence(30)," +
+//                        "), index(m) timestamp(ts) partition by YEAR",
+//                sqlExecutionContext
+//        );
     }
 }

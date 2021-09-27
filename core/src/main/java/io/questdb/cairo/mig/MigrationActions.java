@@ -97,6 +97,50 @@ class MigrationActions {
         }
     }
 
+    public static void bumpVarColumnIndexFix(MigrationContext migrationContext) {
+        final FilesFacade ff = migrationContext.getFf();
+        Path path = migrationContext.getTablePath();
+        int plen = path.length();
+
+        path.trimTo(plen).concat(META_FILE_NAME).$();
+        try (TableReaderMetadata m = new TableReaderMetadata(ff)) {
+            m.of(path, 420);
+            final int columnCount = m.getColumnCount();
+            try (TxReader txReader = new TxReader(ff, path.trimTo(plen), m.getPartitionBy())) {
+                txReader.readUnchecked();
+                int partitionCount = txReader.getPartitionCount();
+                int partitionBy = m.getPartitionBy();
+                if (partitionBy != PartitionBy.NONE) {
+                    for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                        setPathForPartition(path.trimTo(plen), m.getPartitionBy(), txReader.getPartitionTimestamp(partitionIndex), false);
+                        long txSuffix = txReader.getPartitionNameTxn(0);
+                        if (txSuffix > 0) {
+                            txnPartition(path, txSuffix);
+                        }
+                        int plen2 = path.length();
+                        long rowCount = txReader.getPartitionSize(partitionIndex);
+                        if (rowCount > 0) {
+                            boolean success = bumpVarColumnIndex0(migrationContext, ff, path, m, columnCount, plen2, rowCount);
+                            if (!success) {
+                                throw CairoException.instance(0).put("cannot migrate table, column file error [path=").put(path).put("]");
+                            }
+                        }
+                    }
+                } else {
+                    path.concat(DEFAULT_PARTITION_NAME);
+                    int plen2 = path.length();
+                    long rowCount = txReader.getPartitionSize(0);
+                    if (rowCount > 0) {
+                        boolean success = bumpVarColumnIndex0(migrationContext, ff, path, m, columnCount, plen2, rowCount);
+                        if (!success) {
+                            throw CairoException.instance(0).put("cannot migrate table, column file error [path=").put(path).put("]");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     public static void updateColumnTypeIds(MigrationContext migrationContext) {
         LOG.info().$("updating column type IDs [table=").$(migrationContext.getTablePath()).I$();
         final FilesFacade ff = migrationContext.getFf();
@@ -132,7 +176,7 @@ class MigrationActions {
         rwMem.close();
     }
 
-    private static void bumpVarColumnIndex0(MigrationContext migrationContext, FilesFacade ff, Path path, TableReaderMetadata m, int columnCount, int plen2, long rowCount) {
+    private static boolean bumpVarColumnIndex0(MigrationContext migrationContext, FilesFacade ff, Path path, TableReaderMetadata m, int columnCount, int plen2, long rowCount) {
         long mem = migrationContext.getTempMemory();
         for (int i = 0; i < columnCount; i++) {
             int columnType = ColumnType.tagOf(m.getColumnType(i));
@@ -180,6 +224,7 @@ class MigrationActions {
                         ff.close(fd);
                     } else {
                         LOG.error().$("column file does not exist [path=").$(path).I$();
+                        return false;
                     }
                 }
                 break;
@@ -193,6 +238,7 @@ class MigrationActions {
                         long offset = columnRowCount * 8L;
                         if (fileLen < offset) {
                             LOG.error().$("file is too short [path=").$(path).I$();
+                            return false;
                         } else {
                             if (ff.allocate(fd, offset + 8)) {
                                 if (ff.read(fd, mem, 8, offset - 8L) == 8) {
@@ -217,15 +263,18 @@ class MigrationActions {
                                         ff.close(fd2);
                                     } else {
                                         LOG.error().$("could not read column file [path=").$(path).I$();
+                                        return false;
                                     }
                                 }
                             } else {
                                 LOG.error().$("could not allocate extra 8 bytes [file=").$(path).I$();
+                                return false;
                             }
                         }
                         ff.close(fd);
                     } else {
                         LOG.error().$("column file does not exist [path=").$(path).I$();
+                        return false;
                     }
                 }
                 break;
@@ -233,6 +282,7 @@ class MigrationActions {
                     break;
             }
         }
+        return true;
     }
 
     static void assignTableId(MigrationContext migrationContext) {

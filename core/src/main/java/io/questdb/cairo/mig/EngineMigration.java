@@ -43,6 +43,7 @@ public class EngineMigration {
     public static final int VERSION_TBL_META_COMMIT_LAG = 419;
     public static final int VERSION_COLUMN_TYPE_ENCODING_CHANGED = 420;
     public static final int VERSION_VAR_COLUMN_CHANGED = 421;
+    public static final int VERSION_VAR_COLUMN_CHANGED_MIGRATION_FIX = 422;
     public static final int VERSION_THAT_ADDED_TABLE_ID = 417;
 
     // All offsets hardcoded here in case TableUtils offset calculation changes
@@ -250,5 +251,6 @@ public class EngineMigration {
         setByVersion(VERSION_TBL_META_COMMIT_LAG, MigrationActions::addTblMetaCommitLag, 0);
         setByVersion(VERSION_COLUMN_TYPE_ENCODING_CHANGED, MigrationActions::updateColumnTypeIds, 1);
         setByVersion(VERSION_VAR_COLUMN_CHANGED, MigrationActions::bumpVarColumnIndex, 1);
+//        setByVersion(VERSION_VAR_COLUMN_CHANGED_MIGRATION_FIX, MigrationActions::bumpVarColumnIndexFix, 1);
     }
 }
