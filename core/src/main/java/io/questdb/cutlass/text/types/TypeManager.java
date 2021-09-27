@@ -36,14 +36,14 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectCharSink;
 
 public class TypeManager implements Mutable {
+    private final static StringAdapter stringAdapter = new StringAdapter();
+    private final static SymbolAdapter indexedSymbolAdapter = new SymbolAdapter(true);
+    private final static SymbolAdapter notIndexedSymbolAdapter = new SymbolAdapter(false);
     private final ObjList<TypeAdapter> probes = new ObjList<>();
     private final int probeCount;
-    private final StringAdapter stringAdapter;
     private final ObjectPool<DateUtf8Adapter> dateAdapterPool;
     private final ObjectPool<TimestampUtf8Adapter> timestampUtf8AdapterPool;
     private final ObjectPool<TimestampAdapter> timestampAdapterPool;
-    private final SymbolAdapter indexedSymbolAdapter;
-    private final SymbolAdapter notIndexedSymbolAdapter;
     private final InputFormatConfiguration inputFormatConfiguration;
 
     public TypeManager(
@@ -53,10 +53,7 @@ public class TypeManager implements Mutable {
         this.dateAdapterPool = new ObjectPool<>(() -> new DateUtf8Adapter(utf8Sink), configuration.getDateAdapterPoolCapacity());
         this.timestampUtf8AdapterPool = new ObjectPool<>(() -> new TimestampUtf8Adapter(utf8Sink), configuration.getTimestampAdapterPoolCapacity());
         this.timestampAdapterPool = new ObjectPool<>(TimestampAdapter::new, configuration.getTimestampAdapterPoolCapacity());
-        this.indexedSymbolAdapter = new SymbolAdapter(true);
-        this.notIndexedSymbolAdapter = new SymbolAdapter(false);
         this.inputFormatConfiguration = configuration.getInputFormatConfiguration();
-        this.stringAdapter = new StringAdapter(utf8Sink);
         addDefaultProbes();
 
         final ObjList<DateFormat> dateFormats = inputFormatConfiguration.getDateFormats();

@@ -29,6 +29,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.StringSink;
 
 public final class ShortAdapter extends AbstractTypeAdapter {
 
@@ -48,7 +49,7 @@ public final class ShortAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, StringSink tempSink) throws Exception {
         row.putShort(column, SqlKeywords.isNullKeyword(value) ?  (short) 0 : (short) Numbers.parseInt(value));
     }
 }

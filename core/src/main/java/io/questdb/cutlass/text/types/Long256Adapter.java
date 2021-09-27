@@ -31,6 +31,7 @@ import io.questdb.std.Long256Util;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.StringSink;
 
 public final class Long256Adapter extends AbstractTypeAdapter {
 
@@ -68,7 +69,7 @@ public final class Long256Adapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, StringSink tempSink) {
         row.putLong256(column, SqlKeywords.isNullKeyword(value) ? null : value);
     }
 }

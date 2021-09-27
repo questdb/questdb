@@ -32,12 +32,10 @@ import io.questdb.std.str.StringSink;
 
 public class SymbolAdapter extends AbstractTypeAdapter {
 
-    private final StringSink utf8Sink;
     private final boolean indexed;
 
     public SymbolAdapter(boolean indexed) {
         this.indexed = indexed;
-        this.utf8Sink = new StringSink();
     }
 
 
@@ -58,9 +56,9 @@ public class SymbolAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        utf8Sink.clear();
-        TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), utf8Sink);
-        row.putSym(column, utf8Sink);
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, StringSink tempSink) throws Exception {
+        tempSink.clear();
+        TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), tempSink);
+        row.putSym(column, tempSink);
     }
 }

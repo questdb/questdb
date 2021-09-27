@@ -66,7 +66,7 @@ public class UnsupportedProbeTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testString() {
-        new StringAdapter(null).probe("xyz");
+        new StringAdapter().probe("xyz");
     }
 
     @Test(expected = UnsupportedOperationException.class)

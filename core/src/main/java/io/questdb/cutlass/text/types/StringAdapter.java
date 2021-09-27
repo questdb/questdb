@@ -28,15 +28,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.StringSink;
 
 public class StringAdapter extends AbstractTypeAdapter {
-
-    private final DirectCharSink utf8Sink;
-
-    public StringAdapter(DirectCharSink utf8Sink) {
-        this.utf8Sink = utf8Sink;
-    }
 
     @Override
     public int getType() {
@@ -50,9 +44,9 @@ public class StringAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        utf8Sink.clear();
-        TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), utf8Sink);
-        row.putStr(column, utf8Sink);
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, StringSink tempSink) throws Exception {
+        tempSink.clear();
+        TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), tempSink);
+        row.putStr(column, tempSink);
     }
 }
