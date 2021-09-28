@@ -159,6 +159,10 @@ public class TxReader implements Closeable {
         return structureVersion;
     }
 
+    public int getSymbolCount(int columnIndex) {
+        return roTxMem.getInt(TableUtils.getSymbolWriterTransientIndexOffset(columnIndex));
+    }
+
     public long getTransientRowCount() {
         return transientRowCount;
     }
