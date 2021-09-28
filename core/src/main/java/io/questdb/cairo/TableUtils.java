@@ -489,6 +489,7 @@ public final class TableUtils {
                                     .$(", read=").$(n)
                                     .$(", errno=").$(ff.errno())
                                     .I$();
+                            return 0;
                         }
                     }
                     return Unsafe.getUnsafe().getLong(buf);
@@ -768,13 +769,31 @@ public final class TableUtils {
     public static long readLongAtOffset(FilesFacade ff, Path path, long tempMem8b, long offset) {
         final long fd = TableUtils.openRO(ff, path, LOG);
         try {
-            if (ff.read(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
-                throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
-            }
-            return Unsafe.getUnsafe().getLong(tempMem8b);
+            return readLongOrFail(ff, fd, offset, tempMem8b, path);
         } finally {
             ff.close(fd);
         }
+    }
+
+    public static long readLongOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
+        if (ff.read(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
+            throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
+        }
+        return Unsafe.getUnsafe().getLong(tempMem8b);
+    }
+
+    public static void writeLongOrFail(FilesFacade ff, long fd, long offset, long value, long tempMem8b, Path path) {
+        Unsafe.getUnsafe().putLong(tempMem8b, value);
+        if (ff.write(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
+            throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
+        }
+    }
+
+    public static long readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
+        if (ff.read(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
+            throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
+        }
+        return Unsafe.getUnsafe().getInt(tempMem8b);
     }
 
     static LPSZ topFile(Path path, CharSequence columnName) {
