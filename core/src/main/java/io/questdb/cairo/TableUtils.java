@@ -808,7 +808,7 @@ public final class TableUtils {
     public static void writeLongOrFail(FilesFacade ff, long fd, long offset, long value, long tempMem8b, Path path) {
         Unsafe.getUnsafe().putLong(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
-            throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
+            throw CairoException.instance(ff.errno()).put("Cannot write: ").put(path);
         }
     }
 
