@@ -559,4 +559,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public int getLatestByQueueCapacity() {
         return 32;
     }
+
+    @Override
+    public int getBinaryEncodingMaxLength() {
+        return 32768;
+    }
 }

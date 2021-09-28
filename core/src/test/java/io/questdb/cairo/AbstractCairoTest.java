@@ -63,6 +63,7 @@ public class AbstractCairoTest {
     protected static Metrics metrics = Metrics.enabled();
     protected static int capacity = -1;
     protected static int sampleByIndexSearchPageSize;
+    protected static int binaryEncodingMaxLength = -1;
     protected static CharSequence defaultMapType;
 
     @Rule
@@ -118,6 +119,11 @@ public class AbstractCairoTest {
 
             public int getSampleByIndexSearchPageSize() {
                 return sampleByIndexSearchPageSize > 0 ? sampleByIndexSearchPageSize : super.getSampleByIndexSearchPageSize();
+            }
+
+            @Override
+            public int getBinaryEncodingMaxLength() {
+                return binaryEncodingMaxLength > 0 ? binaryEncodingMaxLength : super.getBinaryEncodingMaxLength();
             }
 
             @Override

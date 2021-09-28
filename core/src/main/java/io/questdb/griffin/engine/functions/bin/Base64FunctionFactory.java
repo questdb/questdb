@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
@@ -57,14 +56,8 @@ public class Base64FunctionFactory implements FunctionFactory {
         }
 
         Function func = args.get(0);
-        if (func.isConstant()) {
-            StringSink sink = Misc.getThreadLocalBuilder();
-            sink.clear();
-            final BinarySequence bin = func.getBin(null);
-            Chars.base64Encode(bin, maxLength, sink);
-            return new StrConstant(sink);
-        }
-        return new Base64Func(func, maxLength);
+        final int length = Math.min(maxLength, configuration.getBinaryEncodingMaxLength());
+        return new Base64Func(func, length);
     }
 
     private static class Base64Func extends StrFunction implements UnaryFunction {

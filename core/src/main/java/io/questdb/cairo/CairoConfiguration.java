@@ -253,4 +253,6 @@ public interface CairoConfiguration {
     boolean isO3QuickSortEnabled();
 
     int getLatestByQueueCapacity();
+
+    int getBinaryEncodingMaxLength();
 }

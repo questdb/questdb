@@ -349,6 +349,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinSndBufSize;
     private final int latestByQueueCapacity;
     private final int sampleByIndexSearchPageSize;
+    private final int binaryEncodingMaxLength;
 
     public PropServerConfiguration(
             String root,
@@ -763,6 +764,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.metricsEnabled = getBoolean(properties, env, "metrics.enabled", false);
 
             this.buildInformation = buildInformation;
+            this.binaryEncodingMaxLength = getInt(properties, env, "binarydata.encoding.maxlength", 32768);
         }
     }
 
@@ -1960,6 +1962,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getLatestByQueueCapacity() {
             return latestByQueueCapacity;
+        }
+
+        @Override
+        public int getBinaryEncodingMaxLength() {
+            return binaryEncodingMaxLength;
         }
     }
 
