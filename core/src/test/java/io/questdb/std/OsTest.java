@@ -24,8 +24,12 @@
 
 package io.questdb.std;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import org.junit.Assert;
+import org.junit.ClassRule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
