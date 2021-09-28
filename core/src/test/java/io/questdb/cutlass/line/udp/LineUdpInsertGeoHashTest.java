@@ -25,13 +25,9 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cutlass.line.LineProtoSender;
-import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import java.util.function.Supplier;
@@ -62,42 +58,16 @@ abstract class LineUdpInsertGeoHashTest extends LineUdpInsertTest {
     public abstract void testNullGeoHash() throws Exception;
 
     protected static void assertGeoHash(int columnBits, int lineGeoSizeChars, int numLines, String expected) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
-                    createTable(engine, columnBits);
-                    receiver.start();
-                    sendGeoHashLines(numLines, lineGeoSizeChars);
-                    assertReader(tableName, expected);
-                }
-            }
-        });
-    }
-
-    protected static void createTable(CairoEngine engine, int bitsPrecision) {
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-            CairoTestUtils.create(model.col(targetColumnName, ColumnType.getGeoHashTypeWithBits(bitsPrecision)).timestamp());
-        }
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "pleasure")) {
-            writer.warmUp();
-        }
-    }
-
-    protected static void sendGeoHashLine(String value) {
-        try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 1024, 1)) {
-            sender.metric(tableName).field(targetColumnName, value).$(1_000_000_000);
-            sender.flush();
-        }
-    }
-
-    private static void sendGeoHashLines(int numLines, int charsPrecision) {
-        Supplier<String> rnd = randomGeoHashGenerator(charsPrecision);
-        try (LineProtoSender sender = createLineProtoSender()) {
-            for (int i = 0; i < numLines; i++) {
-                sender.metric(tableName).field(targetColumnName, rnd.get()).$((long) ((i + 1) * 1e9));
-            }
-            sender.flush();
-        }
+        assertType(tableName,
+                targetColumnName,
+                ColumnType.getGeoHashTypeWithBits(columnBits),
+                expected,
+                sender -> {
+                    Supplier<String> rnd = randomGeoHashGenerator(lineGeoSizeChars);
+                    for (int i = 0; i < numLines; i++) {
+                        sender.metric(tableName).field(targetColumnName, rnd.get()).$((long) ((i + 1) * 1e9));
+                    }
+                });
     }
 
     private static Supplier<String> randomGeoHashGenerator(int chars) {

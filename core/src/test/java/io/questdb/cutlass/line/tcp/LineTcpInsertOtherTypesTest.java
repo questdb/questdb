@@ -22,15 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.udp;
+package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
-import io.questdb.cutlass.line.LineProtoSender;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
-
-public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
-    static final String tableName = "other";
+public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
+    static final String table = "other";
     static final String targetColumnName = "value";
 
     @Test
@@ -44,7 +44,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "\t1970-01-01T00:00:09.000000Z\n" +
                         "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:10.000000Z\n" +
                         "294247-01-10T04:00:54.775807Z\t1970-01-01T00:00:11.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "1630933921000i", // valid
                         "1630933921000", // discarded bad type double
                         "\"1970-01-01T00:00:05.000000Z\"", // discarded bad type string
@@ -73,7 +73,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "\t1970-01-01T00:00:09.000000Z\n" +
                         "1970-01-01T00:00:00.000Z\t1970-01-01T00:00:10.000000Z\n" +
                         "292278994-08-17T07:12:55.807Z\t1970-01-01T00:00:11.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "1630933921000i", // valid
                         "1630933921000", // discarded bad type double
                         "\"1970-01-01T00:00:05.000000Z\"", // discarded bad type string
@@ -102,8 +102,10 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "9223372036854775807\t1970-01-01T00:00:05.000000Z\n" +
                         "-9223372036854775807\t1970-01-01T00:00:06.000000Z\n" +
                         "NaN\t1970-01-01T00:00:07.000000Z\n" +
+                        "1\t1970-01-01T00:00:14.000000Z\n" +
+                        "0\t1970-01-01T00:00:15.000000Z\n" +
                         "NaN\t1970-01-01T00:00:19.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "0i", // valid
                         "100i", // valid
                         "-0i", // valid equals 0
@@ -117,8 +119,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-92233720368\"54775808i \"and joy=yes", // discarded bad type symbol
                         "0x12i", // discarded bad type long256
                         "0", // discarded bad type double
-                        "true", // discarded bad type boolean (unlike TCP: valid, true casts down to 1)
-                        "false", // discarded bad type boolean (unlike TCP: valid, true casts down to 0)
+                        "true", // valid, true casts down to 1
+                        "false", // valid, true casts down to 0
                         "-0", // discarded bad type double
                         "-100", // discarded bad type double
                         "null", // discarded bad type symbol
@@ -136,8 +138,10 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "9223372036854775807\t1970-01-01T00:00:05.000000Z\n" +
                         "-9223372036854775807\t1970-01-01T00:00:06.000000Z\n" +
                         "NaN\t1970-01-01T00:00:07.000000Z\n" +
+                        "1\t1970-01-01T00:00:15.000000Z\n" +
+                        "0\t1970-01-01T00:00:16.000000Z\n" +
                         "NaN\t1970-01-01T00:00:20.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "0i", // valid
                         "100i", // valid
                         "-0i", // valid equals 0
@@ -152,8 +156,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-92233720368\"54775808i \"and joy=yes", // discarded bad type symbol
                         "0x12i", // discarded bad type long256
                         "0", // discarded bad type double
-                        "true", // discarded bad type boolean (unlike TCP: valid, true casts down to 1)
-                        "false", // discarded bad type boolean (unlike TCP: valid, true casts down to 0)
+                        "true", // valid, true casts down to 1
+                        "false", // valid, true casts down to 0
                         "-0", // discarded bad type double
                         "-100", // discarded bad type double
                         "null", // discarded bad type symbol
@@ -169,18 +173,17 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "100\t1970-01-01T00:00:02.000000Z\n" +
                         "0\t1970-01-01T00:00:03.000000Z\n" +
                         "-100\t1970-01-01T00:00:04.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:05.000000Z\n" +
                         "NaN\t1970-01-01T00:00:06.000000Z\n" +
                         "2147483647\t1970-01-01T00:00:07.000000Z\n" +
                         "-2147483647\t1970-01-01T00:00:08.000000Z\n" +
                         "NaN\t1970-01-01T00:00:11.000000Z\n" +
                         "NaN\t1970-01-01T00:00:19.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "0i", // valid
                         "100i", // valid
                         "-0i", // valid equals 0
                         "-100i", // valid
-                        "9223372036854775808i", // valid NaN, same as null (unlike TCP: discarded bad value == Long.MIN_VALUE with no - sign, taken as symbol)
+                        "9223372036854775808i", // discarded bad value == Long.MIN_VALUE with no - sign, taken as symbol
                         "-9223372036854775808i", // valid NaN, same as null
                         "2147483647i", // valid
                         "-2147483647i", // valid
@@ -211,7 +214,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-2147483647\t1970-01-01T00:00:08.000000Z\n" +
                         "-2147483648\t1970-01-01T00:00:11.000000Z\n" +
                         "NaN\t1970-01-01T00:00:19.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "0i", // valid
                         "100i", // valid
                         "-0i", // valid equals 0
@@ -244,26 +247,21 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-100\t1970-01-01T00:00:04.000000Z\n" +
                         "32767\t1970-01-01T00:00:05.000000Z\n" +
                         "-32767\t1970-01-01T00:00:06.000000Z\n" +
-                        "0\t1970-01-01T00:00:07.000000Z\n" +
                         "0\t1970-01-01T00:00:08.000000Z\n" +
-                        "0\t1970-01-01T00:00:09.000000Z\n" +
-                        "0\t1970-01-01T00:00:10.000000Z\n" +
-                        "0\t1970-01-01T00:00:11.000000Z\n" +
-                        "0\t1970-01-01T00:00:12.000000Z\n" +
                         "0\t1970-01-01T00:00:19.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "0i", // valid
                         "100i", // valid
                         "-0i", // valid equals 0
                         "-100i", // valid
                         "32767i", // valid
                         "-32767i", // valid
-                        "9223372036854775808i", // valid NaN, same as null, a short value of 0 (unlike TCP: discarded bad value == Long.MIN_VALUE with no - sign, taken as symbol)
+                        "9223372036854775808i", // discarded bad value == Long.MIN_VALUE with no - sign, taken as symbol
                         "-9223372036854775808i", // valid NaN, same as null, a short value of 0
-                        "2147483647i", // valid NaN, same as null, a short value of 0 (unlike TCP: discarded out of range)
-                        "-2147483647i", // valid NaN, same as null, a short value of 0 (unlike TCP: discarded out of range)
-                        "-2147483648i", // valid NaN, same as null, a short value of 0 (unlike TCP: discarded out of range)
-                        "2147483648i", // valid NaN, same as null, a short value of 0 (unlike TCP: discarded out of range)
+                        "2147483647i", // discarded out of range
+                        "-2147483647i", // discarded out of range
+                        "-2147483648i", // discarded out of range
+                        "2147483648i", // discarded out of range
                         "2147483648", // discarded bad type double
                         "null", // discarded bad type symbol
                         "0", // discarded bad type double
@@ -286,7 +284,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-2147483648\t1970-01-01T00:00:08.000000Z\n" +
                         "2147483648\t1970-01-01T00:00:09.000000Z\n" +
                         "NaN\t1970-01-01T00:00:15.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "0i", // valid, taken as long, no way to make a short
                         "100i", // valid
                         "-0i", // valid equals 0
@@ -316,7 +314,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "127\t1970-01-01T00:00:05.000000Z\n" +
                         "-128\t1970-01-01T00:00:06.000000Z\n" +
                         "0\t1970-01-01T00:00:14.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "0i", // valid
                         "100i", // valid
                         "-0i", // valid equals 0
@@ -345,7 +343,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-2147483648\t1970-01-01T00:00:06.000000Z\n" +
                         "-127\t1970-01-01T00:00:07.000000Z\n" +
                         "NaN\t1970-01-01T00:00:13.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "0i", // valid, taken as long, no way to make a short
                         "100i", // valid
                         "-0i", // valid equals 0
@@ -371,7 +369,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "\t1970-01-01T00:00:03.000000Z\n" +
                         "N\t1970-01-01T00:00:05.000000Z\n" +
                         "N\t1970-01-01T00:00:07.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "\"1630933921000\"", // valid
                         "\"1970-01-01T00:00:05.000000Z\"", // valid
                         "", // valid null
@@ -391,7 +389,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "\t1970-01-01T00:00:01.000000Z\n" +
                         "0x1234\t1970-01-01T00:00:05.000000Z\n" +
                         "\t1970-01-01T00:00:08.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "", // valid null
                         "\"\"", // discarded bad type string
                         "null", // discarded bad type symbol
@@ -409,7 +407,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "0x1234\t1970-01-01T00:00:01.000000Z\n" +
                         "\t1970-01-01T00:00:02.000000Z\n" +
                         "0x056789543288867543333668887654\t1970-01-01T00:00:05.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "0x1234i", // valid long256
                         "", // valid null
                         "null", // discarded bad type symbol
@@ -436,7 +434,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "false\t1970-01-01T00:00:10.000000Z\n" +
                         "false\t1970-01-01T00:00:11.000000Z\n" +
                         "false\t1970-01-01T00:00:12.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "true", // valid
                         "tRUe", // valid
                         "TRUE", // valid
@@ -467,7 +465,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "false\t1970-01-01T00:00:10.000000Z\n" +
                         "false\t1970-01-01T00:00:11.000000Z\n" +
                         "false\t1970-01-01T00:00:12.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "true", // valid
                         "tRUe", // valid
                         "TRUE", // valid
@@ -498,7 +496,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "@plant2\t1970-01-01T00:00:08.000000Z\n" +
                         "@plant\t1970-01-01T00:00:09.000000Z\n" +
                         "\t1970-01-01T00:00:11.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "e", // valid
                         "xxx", // valid
                         "paff", // valid
@@ -526,7 +524,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "@plant2\t1970-01-01T00:00:08.000000Z\n" +
                         "@plant\t1970-01-01T00:00:09.000000Z\n" +
                         "\t1970-01-01T00:00:11.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "e", // valid
                         "xxx", // valid
                         "paff", // valid
@@ -553,7 +551,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "tt\\\"tt\\\" \\\n" +
                         " =, ,=\\\"\t1970-01-01T00:00:12.000000Z\n" +
                         "\t1970-01-01T00:00:15.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "\"e\"", // valid
                         "\"xxx\"", // valid
                         "\"paff\"", // valid
@@ -583,7 +581,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "tt\\\"tt\\\" \\\n" +
                         " =, ,=\\\"\t1970-01-01T00:00:12.000000Z\n" +
                         "\t1970-01-01T00:00:15.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "\"e\"", // valid
                         "\"xxx\"", // valid
                         "\"paff\"", // valid
@@ -623,7 +621,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-123.0\t1970-01-01T00:00:17.000000Z\n" +
                         "NaN\t1970-01-01T00:00:18.000000Z\n" +
                         "NaN\t1970-01-01T00:00:19.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "1.6x", // discarded bad type symbol
                         "1.7976931348623157E308", // valid
                         "0.425667788123", // valid
@@ -666,7 +664,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-123.0\t1970-01-01T00:00:17.000000Z\n" +
                         "NaN\t1970-01-01T00:00:18.000000Z\n" +
                         "NaN\t1970-01-01T00:00:19.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "1.7976931348623156E308", // valid
                         "0.425667788123", // valid
                         "1.6x", // discarded bad type symbol
@@ -709,7 +707,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "NaN\t1970-01-01T00:00:15.000000Z\n" +
                         "NaN\t1970-01-01T00:00:16.000000Z\n" +
                         "NaN\t1970-01-01T00:00:17.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "0.425667788123", // valid
                         "3.14159265358979323846", // valid
                         "1.35E-12", // valid equals 0
@@ -749,7 +747,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-123.0\t1970-01-01T00:00:14.000000Z\n" +
                         "NaN\t1970-01-01T00:00:15.000000Z\n" +
                         "NaN\t1970-01-01T00:00:16.000000Z\n",
-                new String[]{
+                new CharSequence[]{
                         "0.425667788123", // valid, but interpreted as double, cannot make float columns
                         "3.14159265358979323846", // valid
                         "1.35E-12", // valid
@@ -770,20 +768,33 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                 });
     }
 
-
-    private static void assertTypeNoTable(String expected, String[] values) throws Exception {
+    protected void assertTypeNoTable(String expected, CharSequence[] values) throws Exception {
         assertType(ColumnType.UNDEFINED, expected, values);
     }
 
-    private static void assertType(int columnType, String expected, String[] values) throws Exception {
-        assertType(tableName, targetColumnName, columnType, expected, sender -> {
+    protected void assertType(int columnType, String expected, CharSequence[] values) throws Exception {
+        if (columnType != ColumnType.UNDEFINED) {
+            try (TableModel model = new TableModel(configuration, table, PartitionBy.NONE)) {
+                CairoTestUtils.create(model.col(targetColumnName, columnType).timestamp());
+            }
+        }
+        runInContext(() -> {
+            sink.clear();
             long ts = 0L;
             for (int i = 0; i < values.length; i++) {
-                ((LineProtoSender) sender.metric(tableName).put(' ')
-                        .encodeUtf8(targetColumnName)) // this method belongs to a super class that returns this
-                        .put('=')
-                        .put(values[i]) // field method decorates this token, I want full control
-                        .$(ts += 1000000000);
+                sink.put(table)
+                        .put(' ').put(targetColumnName).put('=').put(values[i])
+                        .put(' ').put(ts += 1000000000)
+                        .put('\n');
+            }
+            recvBuffer = sink.toString();
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), table)) {
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
     }
