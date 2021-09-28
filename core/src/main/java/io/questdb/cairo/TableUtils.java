@@ -74,13 +74,13 @@ public final class TableUtils {
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final long META_COLUMN_DATA_SIZE = 16;
     public static final long META_OFFSET_COLUMN_TYPES = 128;
+    public static final long TX_OFFSET_MIN_TIMESTAMP = 24;
+    public static final long TX_OFFSET_MAX_TIMESTAMP = 32;
     static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     // transaction file structure
     static final long TX_OFFSET_TXN = 0;
-    public static final long TX_OFFSET_MIN_TIMESTAMP = 24;
-    public static final long TX_OFFSET_MAX_TIMESTAMP = 32;
     static final long TX_OFFSET_DATA_VERSION = 48;
     static final long TX_OFFSET_PARTITION_TABLE_VERSION = 56;
     static final long TX_OFFSET_MAP_WRITER_COUNT = 72;
@@ -263,6 +263,19 @@ public final class TableUtils {
                 return Timestamps.ADD_YYYY;
             default:
                 throw new UnsupportedOperationException("partition by " + partitionBy + " does not have add method");
+        }
+    }
+
+    public static Timestamps.TimestampFloorMethod getPartitionFloor(int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                return Timestamps.FLOOR_DD;
+            case PartitionBy.MONTH:
+                return Timestamps.FLOOR_MM;
+            case PartitionBy.YEAR:
+                return Timestamps.FLOOR_YYYY;
+            default:
+                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have floor method");
         }
     }
 
@@ -501,6 +514,32 @@ public final class TableUtils {
         } finally {
             path.trimTo(plen);
         }
+    }
+
+    public static long readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
+        if (ff.read(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
+            throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
+        }
+        return Unsafe.getUnsafe().getInt(tempMem8b);
+    }
+
+    public static long readLongAtOffset(FilesFacade ff, Path path, long tempMem8b, long offset) {
+        final long fd = TableUtils.openRO(ff, path, LOG);
+        try {
+            return readLongOrFail(ff, fd, offset, tempMem8b, path);
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    public static long readLongOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
+        if (ff.read(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
+            if (path != null) {
+                throw CairoException.instance(ff.errno()).put("could not read long [path=").put(path).put(", fd=").put(fd).put(", offset=").put(offset);
+            }
+            throw CairoException.instance(ff.errno()).put("could not read long [fd=").put(fd).put(", offset=").put(offset);
+        }
+        return Unsafe.getUnsafe().getLong(tempMem8b);
     }
 
     public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
@@ -766,34 +805,11 @@ public final class TableUtils {
         }
     }
 
-    public static long readLongAtOffset(FilesFacade ff, Path path, long tempMem8b, long offset) {
-        final long fd = TableUtils.openRO(ff, path, LOG);
-        try {
-            return readLongOrFail(ff, fd, offset, tempMem8b, path);
-        } finally {
-            ff.close(fd);
-        }
-    }
-
-    public static long readLongOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
-        if (ff.read(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
-            throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
-        }
-        return Unsafe.getUnsafe().getLong(tempMem8b);
-    }
-
     public static void writeLongOrFail(FilesFacade ff, long fd, long offset, long value, long tempMem8b, Path path) {
         Unsafe.getUnsafe().putLong(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
             throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
         }
-    }
-
-    public static long readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
-        if (ff.read(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
-            throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
-        }
-        return Unsafe.getUnsafe().getInt(tempMem8b);
     }
 
     static LPSZ topFile(Path path, CharSequence columnName) {
@@ -896,19 +912,6 @@ public final class TableUtils {
                 return fmtDefault;
             default:
                 throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
-        }
-    }
-
-    public static Timestamps.TimestampFloorMethod getPartitionFloor(int partitionBy) {
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                return Timestamps.FLOOR_DD;
-            case PartitionBy.MONTH:
-                return Timestamps.FLOOR_MM;
-            case PartitionBy.YEAR:
-                return Timestamps.FLOOR_YYYY;
-            default:
-                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have floor method");
         }
     }
 
