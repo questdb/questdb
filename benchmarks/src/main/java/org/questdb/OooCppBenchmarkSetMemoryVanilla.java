@@ -24,6 +24,7 @@
 
 package org.questdb;
 
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -40,7 +41,7 @@ public class OooCppBenchmarkSetMemoryVanilla {
     }
 
     private static void testSetMemoryVanillaToCsv() {
-        var r = new OooCppBenchmarkSetMemoryVanilla();
+        OooCppBenchmarkSetMemoryVanilla r = new OooCppBenchmarkSetMemoryVanilla();
         r.mallocBuffer();
 
         // warmup
@@ -52,16 +53,16 @@ public class OooCppBenchmarkSetMemoryVanilla {
 
         int iterations = 500;
         for (int i = 1; i < 50; i += 1) {
-            var timeout1 = runDoubleKs(iterations, i);
-            var timeout2 = runLongsKs(iterations, i, Long.MIN_VALUE);
-            var timeout3 = runLongsKs(iterations, i, -1L);
+            double timeout1 = runDoubleKs(iterations, i);
+            double timeout2 = runLongsKs(iterations, i, Long.MIN_VALUE);
+            double timeout3 = runLongsKs(iterations, i, -1L);
             System.out.println("" + i + ", " + timeout1 + ", " + timeout2 + ", " + timeout3);
         }
         r.freeBuffer();
     }
 
     private static double runDoubleKs(int iterations, int i) {
-        var nt = System.nanoTime();
+        long nt = System.nanoTime();
         for (int j = 0; j < iterations; j++) {
             Vect.setMemoryDouble(
                     buffer,
@@ -69,12 +70,12 @@ public class OooCppBenchmarkSetMemoryVanilla {
                     i * MB / Double.BYTES
             );
         }
-        var timeout = System.nanoTime() - nt;
+        long timeout = System.nanoTime() - nt;
         return Math.round(timeout * 1E-1 / iterations) / 100.0;
     }
 
     private static double runLongsKs(int iterations, int i, long value) {
-        var nt = System.nanoTime();
+        long nt = System.nanoTime();
         for (int j = 0; j < iterations; j++) {
             Vect.setMemoryLong(
                     buffer,
@@ -82,7 +83,7 @@ public class OooCppBenchmarkSetMemoryVanilla {
                     i * MB / Long.BYTES
             );
         }
-        var timeout = System.nanoTime() - nt;
+        long timeout = System.nanoTime() - nt;
         return Math.round(timeout * 1E-1 / iterations) / 100.0;
     }
 
@@ -91,6 +92,6 @@ public class OooCppBenchmarkSetMemoryVanilla {
     }
 
     public void freeBuffer() {
-        Unsafe.free(buffer, BUFFER_MAX_SIZE);
+        Unsafe.free(buffer, BUFFER_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
     }
 }

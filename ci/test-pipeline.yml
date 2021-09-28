@@ -11,9 +11,16 @@ variables:
   DIFF_CONVER_THRESHOLD_PCT: 50
 
 stages:
-  - stage: StartBuildAgent
-    displayName: "Start Building Agent"
+  - stage: CheckChanges
+    displayName: "Check Changes"
+    jobs:
+      - template: templates/check-changes-job.yml
+
+  - stage: SelfHostedRunTestsBranches
+    displayName: "Self Hosted Running tests"
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    dependsOn:
+      - CheckChanges
     jobs:
       - job: StartArmAgent
         displayName: 'Start ARM Agent'
@@ -57,33 +64,11 @@ stages:
               echo "Agent found ..."
             name: 'Check_agent'
             displayName: 'Check agent'
+      - template: templates/self-hosted-jobs.yml
 
-  - stage: RunTestsBranches
-    displayName: "Running tests"
-    condition: or(succeeded(), eq(variables['System.PullRequest.IsFork'], 'true'))
+  - stage: HostedRunTestsBranches
+    displayName: "Hosted Running tests"
+    dependsOn:
+      - CheckChanges
     jobs:
-      - job: CheckChanges
-        displayName: 'Check changes'
-        pool:
-          vmImage: "ubuntu-latest"
-        steps:
-          - checkout: none
-          - bash: |
-              if [ -z "$PR_ID" ]
-              then
-                # No PR - cannot detect changed files, default to true
-                echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
-              else
-                CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PR_ID/files -s  | grep -oP 'filename": "core/*\/\K[^.]+')
-                if [ -z "$CHANGED_CORE_FILES" ]
-                  then
-                    echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]false"
-                  else
-                    echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
-                fi
-              fi
-            env:
-              PR_ID: $(System.PullRequest.PullRequestNumber)
-            name: check_changes
-            displayName: 'Check changed files'
-      - template: templates/jobs.yml
+      - template: templates/hosted-jobs.yml

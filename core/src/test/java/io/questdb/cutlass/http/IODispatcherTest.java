@@ -220,11 +220,11 @@ public class IODispatcherTest {
 
                             connectLatch.await();
 
-                            long buffer = Unsafe.malloc(2048);
+                            long buffer = Unsafe.malloc(2048, MemoryTag.NATIVE_DEFAULT);
                             try {
                                 Assert.assertEquals(1024, Net.recv(fd, buffer, 1024));
                             } finally {
-                                Unsafe.free(buffer, 2048);
+                                Unsafe.free(buffer, 2048, MemoryTag.NATIVE_DEFAULT);
                             }
 
 
@@ -303,11 +303,11 @@ public class IODispatcherTest {
                         TestUtils.assertConnect(fd, socketAddr);
 
                         int bufLen = 512;
-                        long mem = Unsafe.malloc(bufLen);
+                        long mem = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
                         try {
                             Assert.assertEquals(-2, Net.recv(fd, mem, bufLen));
                         } finally {
-                            Unsafe.free(mem, bufLen);
+                            Unsafe.free(mem, bufLen, MemoryTag.NATIVE_DEFAULT);
                         }
                     } finally {
                         Net.close(fd);
@@ -2663,7 +2663,7 @@ public class IODispatcherTest {
                             Assert.assertEquals(0, NetworkFacadeImpl.INSTANCE.setTcpNoDelay(fd, true));
 
                             final int len = request.length() * 2;
-                            long ptr = Unsafe.malloc(len);
+                            long ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
                             try {
                                 int sent = 0;
                                 int reqLen = request.length();
@@ -2687,7 +2687,7 @@ public class IODispatcherTest {
                                 }
                                 Assert.assertTrue("disconnect expected", disconnected);
                             } finally {
-                                Unsafe.free(ptr, len);
+                                Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);
                             }
                         } finally {
                             NetworkFacadeImpl.INSTANCE.freeSockAddr(sockAddr);
@@ -4258,7 +4258,7 @@ public class IODispatcherTest {
                             nf.configureNonBlocking(fd);
 
                             long bufLen = request.length();
-                            long ptr = Unsafe.malloc(bufLen);
+                            long ptr = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
                             try {
                                 new SendAndReceiveRequestBuilder()
                                         .withNetworkFacade(nf)
@@ -4267,7 +4267,7 @@ public class IODispatcherTest {
                                         .withExpectDisconnect(true)
                                         .executeUntilDisconnect(request, fd, 200, ptr, clientStateListener);
                             } finally {
-                                Unsafe.free(ptr, bufLen);
+                                Unsafe.free(ptr, bufLen, MemoryTag.NATIVE_DEFAULT);
                             }
                         } finally {
                             nf.freeSockAddr(sockAddr);
@@ -4609,7 +4609,7 @@ public class IODispatcherTest {
                 LongHashSet closedFds = new LongHashSet();
 
                 final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
-                final long buf = Unsafe.malloc(4096);
+                final long buf = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
                 final int N = activeConnectionLimit + listenBackLog;
                 try {
                     for (int i = 0; i < N; i++) {
@@ -4675,7 +4675,7 @@ public class IODispatcherTest {
                             }
                         }
                     } finally {
-                        Unsafe.free(mem, request.length());
+                        Unsafe.free(mem, request.length(), MemoryTag.NATIVE_DEFAULT);
                     }
                 } finally {
                     for (int i = 0; i < openFds.size(); i++) {
@@ -4685,7 +4685,7 @@ public class IODispatcherTest {
                         }
                     }
                     Net.freeSockAddr(sockAddr);
-                    Unsafe.free(buf, 4096);
+                    Unsafe.free(buf, 4096, MemoryTag.NATIVE_DEFAULT);
                     Assert.assertFalse(configuration.getActiveConnectionLimit() < dispatcher.getConnectionCount());
                     serverRunning.set(false);
                     serverHaltLatch.await();
@@ -4759,7 +4759,7 @@ public class IODispatcherTest {
                 serverThread = new Thread("test-io-dispatcher") {
                     @Override
                     public void run() {
-                        long smem = Unsafe.malloc(1);
+                        long smem = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
                         try {
                             IORequestProcessor<IOContext> requestProcessor = (operation, context) -> {
                                 long fd = context.getFd();
@@ -4791,7 +4791,7 @@ public class IODispatcherTest {
                                 Thread.yield();
                             } while (!isInterrupted());
                         } finally {
-                            Unsafe.free(smem, 1);
+                            Unsafe.free(smem, 1, MemoryTag.NATIVE_DEFAULT);
                             serverLatch.countDown();
                         }
                     }
@@ -4878,7 +4878,7 @@ public class IODispatcherTest {
                 }
             } finally {
                 Net.freeSockAddr(sockAddr);
-                Unsafe.free(mem, request.length());
+                Unsafe.free(mem, request.length(), MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -5006,7 +5006,7 @@ public class IODispatcherTest {
                             "\r\n";
                     final int len = request.length() * 2;
                     final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-                    long ptr = Unsafe.malloc(len);
+                    long ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
                     try {
                         int sent = 0;
                         int reqLen = request.length();
@@ -5031,7 +5031,7 @@ public class IODispatcherTest {
                             }
                         }
                     } finally {
-                        Unsafe.free(ptr, len);
+                        Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);
                     }
                 } finally {
                     NetworkFacadeImpl.INSTANCE.freeSockAddr(sockAddr);
@@ -5157,7 +5157,7 @@ public class IODispatcherTest {
                         long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                         try {
                             int netBufferLen = 4 * 1024;
-                            long buffer = Unsafe.calloc(netBufferLen);
+                            long buffer = Unsafe.calloc(netBufferLen, MemoryTag.NATIVE_DEFAULT);
                             try {
 
                                 // send request to server to download file we just created
@@ -5262,7 +5262,7 @@ public class IODispatcherTest {
                                 // and few more 304s
                                 sendAndReceive(NetworkFacadeImpl.INSTANCE, request2, expectedResponseHeader2, 4, 0, false);
                             } finally {
-                                Unsafe.free(buffer, netBufferLen);
+                                Unsafe.free(buffer, netBufferLen, MemoryTag.NATIVE_DEFAULT);
                             }
                         } finally {
                             Net.freeSockAddr(sockAddr);
@@ -5327,7 +5327,7 @@ public class IODispatcherTest {
                                 TestUtils.assertConnect(fd, sockAddr);
 
                                 int netBufferLen = 4 * 1024;
-                                long buffer = Unsafe.calloc(netBufferLen);
+                                long buffer = Unsafe.calloc(netBufferLen, MemoryTag.NATIVE_DEFAULT);
                                 try {
 
                                     // send request to server to download file we just created
@@ -5414,7 +5414,7 @@ public class IODispatcherTest {
                                     // and few more 304s
                                     sendAndReceive(NetworkFacadeImpl.INSTANCE, request2, expectedResponseHeader2, 4, 0, false);
                                 } finally {
-                                    Unsafe.free(buffer, netBufferLen);
+                                    Unsafe.free(buffer, netBufferLen, MemoryTag.NATIVE_DEFAULT);
                                 }
                             } finally {
                                 Net.freeSockAddr(sockAddr);
@@ -5487,7 +5487,7 @@ public class IODispatcherTest {
                         long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                         try {
                             int netBufferLen = 4 * 1024;
-                            long buffer = Unsafe.calloc(netBufferLen);
+                            long buffer = Unsafe.calloc(netBufferLen, MemoryTag.NATIVE_DEFAULT);
                             try {
 
                                 // send request to server to download file we just created
@@ -5624,7 +5624,7 @@ public class IODispatcherTest {
                                 }
 
                             } finally {
-                                Unsafe.free(buffer, netBufferLen);
+                                Unsafe.free(buffer, netBufferLen, MemoryTag.NATIVE_DEFAULT);
                             }
                         } finally {
                             Net.freeSockAddr(sockAddr);
@@ -5757,7 +5757,7 @@ public class IODispatcherTest {
                         try {
                             Assert.assertEquals(len, Net.send(fd, buffer, len));
                         } finally {
-                            Unsafe.free(buffer, len);
+                            Unsafe.free(buffer, len, MemoryTag.NATIVE_DEFAULT);
                         }
 
                         // do not disconnect right away, wait for server to receive the request
@@ -5946,7 +5946,7 @@ public class IODispatcherTest {
 
                             TestUtils.assertEquals(expectedResponse, sink2);
                         } finally {
-                            Unsafe.free(buffer, len);
+                            Unsafe.free(buffer, len, MemoryTag.NATIVE_DEFAULT);
                         }
 
                         Assert.assertEquals(0, Net.close(fd));
@@ -6094,7 +6094,7 @@ public class IODispatcherTest {
                             Os.sleep(1000);
                             Assert.assertEquals(len - part1, Net.send(fd, buffer + part1, len - part1));
                         } finally {
-                            Unsafe.free(buffer, len);
+                            Unsafe.free(buffer, len, MemoryTag.NATIVE_DEFAULT);
                         }
 
                         contextClosedLatch.await();
@@ -6289,7 +6289,7 @@ public class IODispatcherTest {
                     for (int j = 0; j < serverThreadCount; j++) {
                         new Thread(() -> {
                             final StringSink sink = new StringSink();
-                            final long responseBuf = Unsafe.malloc(32);
+                            final long responseBuf = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
                             Unsafe.getUnsafe().putByte(responseBuf, (byte) 'A');
 
                             final HttpRequestProcessor processor = new HttpRequestProcessor() {
@@ -6355,7 +6355,7 @@ public class IODispatcherTest {
                                 );
                             }
 
-                            Unsafe.free(responseBuf, 32);
+                            Unsafe.free(responseBuf, 32, MemoryTag.NATIVE_DEFAULT);
                             serverHaltLatch.countDown();
                         }).start();
                     }
@@ -6378,7 +6378,7 @@ public class IODispatcherTest {
                                             LOG.info().$("i=").$(i).$(", j=").$(k).$();
                                             Assert.assertEquals('A', Unsafe.getUnsafe().getByte(buffer));
                                         } finally {
-                                            Unsafe.free(buffer, len);
+                                            Unsafe.free(buffer, len, MemoryTag.NATIVE_DEFAULT);
                                         }
                                     } finally {
                                         Net.close(fd);
@@ -6628,7 +6628,7 @@ public class IODispatcherTest {
         }
         long fd = Files.openAppend(path);
 
-        long buf = Unsafe.malloc(1048576); // 1Mb buffer
+        long buf = Unsafe.malloc(1048576, MemoryTag.NATIVE_DEFAULT); // 1Mb buffer
         for (int i = 0; i < 1048576; i++) {
             Unsafe.getUnsafe().putByte(buf + i, rnd.nextByte());
         }
@@ -6639,7 +6639,7 @@ public class IODispatcherTest {
 
         Files.close(fd);
         Files.setLastModified(path, lastModified);
-        Unsafe.free(buf, 1048576);
+        Unsafe.free(buf, 1048576, MemoryTag.NATIVE_DEFAULT);
     }
 
     private static class QueryThread extends Thread {
@@ -6684,7 +6684,7 @@ public class IODispatcherTest {
 
     private static class HelloContext implements IOContext {
         private final long fd;
-        private final long buffer = Unsafe.malloc(1024);
+        private final long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
         private final SOCountDownLatch closeLatch;
         private final IODispatcher<HelloContext> dispatcher;
 
@@ -6696,7 +6696,7 @@ public class IODispatcherTest {
 
         @Override
         public void close() {
-            Unsafe.free(buffer, 1024);
+            Unsafe.free(buffer, 1024, MemoryTag.NATIVE_DEFAULT);
             closeLatch.countDown();
         }
 

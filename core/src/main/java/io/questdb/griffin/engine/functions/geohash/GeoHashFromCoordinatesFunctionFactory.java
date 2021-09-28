@@ -79,7 +79,7 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
                 throw SqlException.$(argPositions.getQuick(1), "latitude must be in [-90.0..90.0] range");
             }
 
-            return Constants.getGeoHashConstantWithType(GeoHashes.fromCoordinatesUnsafe(lat, lon, bits), type);
+            return Constants.getGeoHashConstantWithType(GeoHashes.fromCoordinatesDegUnsafe(lat, lon, bits), type);
         } else {
             return new FromCoordinatesFixedBitsFunction(lonArg, latArg, bits);
         }
@@ -101,7 +101,7 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
             try {
                 double lon = this.lon.getDouble(rec);
                 double lat = this.lat.getDouble(rec);
-                return GeoHashes.fromCoordinates(lat, lon, bits);
+                return GeoHashes.fromCoordinatesDeg(lat, lon, bits);
             } catch (NumericException e) {
                 return GeoHashes.NULL;
             }

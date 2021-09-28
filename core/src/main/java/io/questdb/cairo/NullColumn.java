@@ -181,12 +181,12 @@ public class NullColumn implements MemoryMR {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void wholeFile(FilesFacade ff, LPSZ name) {
+    public void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
         throw new UnsupportedOperationException();
     }
 }

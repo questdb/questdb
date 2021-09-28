@@ -28,6 +28,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
@@ -141,7 +142,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "xyz", "testing")) {
                     barrier.await();
                     long ts = 0;
-                    long addr = Unsafe.malloc(128);
+                    long addr = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
                     try {
                         Rnd rnd = new Rnd();
                         for (int i = 0; i < n; i++) {
@@ -157,7 +158,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                             ts += timestampIncrement;
                         }
                     } finally {
-                        Unsafe.free(addr, 128);
+                        Unsafe.free(addr, 128, MemoryTag.NATIVE_DEFAULT);
                     }
                 } catch (Throwable e) {
                     e.printStackTrace();
@@ -212,7 +213,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "xyz", "testing")) {
                 long ts = 0;
-                long addr = Unsafe.malloc(blobSize);
+                long addr = Unsafe.malloc(blobSize, MemoryTag.NATIVE_DEFAULT);
                 try {
 
                     Rnd rnd = new Rnd();
@@ -254,7 +255,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                         Assert.assertEquals(n / 2, count);
                     }
                 } finally {
-                    Unsafe.free(addr, blobSize);
+                    Unsafe.free(addr, blobSize, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });
@@ -271,7 +272,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
 
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "xyz", "testing")) {
                 long ts = 0;
-                long addr = Unsafe.malloc(blobSize);
+                long addr = Unsafe.malloc(blobSize, MemoryTag.NATIVE_DEFAULT);
                 try {
 
                     Rnd rnd = new Rnd();
@@ -318,7 +319,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                         Assert.assertEquals(n / 2, count);
                     }
                 } finally {
-                    Unsafe.free(addr, blobSize);
+                    Unsafe.free(addr, blobSize, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });

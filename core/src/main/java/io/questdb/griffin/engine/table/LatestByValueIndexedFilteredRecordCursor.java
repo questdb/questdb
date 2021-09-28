@@ -72,7 +72,7 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
     private void findRecord() {
 
         DataFrame frame;
-        OUT:
+        found = false;
         while ((frame = this.dataFrameCursor.next()) != null) {
             final int partitionIndex = frame.getPartitionIndex();
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
@@ -85,7 +85,7 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
                 recordA.setRecordIndex(cursor.next());
                 if (filter.getBool(recordA)) {
                     found = true;
-                    break OUT;
+                    return;
                 }
             }
         }
@@ -101,8 +101,8 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
         this.dataFrameCursor = dataFrameCursor;
         this.recordA.of(dataFrameCursor.getTableReader());
         this.recordB.of(dataFrameCursor.getTableReader());
+        filter.init(this, executionContext);
         findRecord();
         hasNext = found;
-        filter.init(this, executionContext);
     }
 }

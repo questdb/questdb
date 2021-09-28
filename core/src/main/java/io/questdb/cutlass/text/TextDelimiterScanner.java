@@ -27,6 +27,7 @@ package io.questdb.cutlass.text;
 import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
@@ -76,7 +77,7 @@ public class TextDelimiterScanner implements Closeable {
         this.lineCountLimit = configuration.getTextAnalysisMaxLines();
         this.matrixRowSize = 256 * Integer.BYTES;
         this.matrixSize = matrixRowSize * lineCountLimit;
-        this.matrix = Unsafe.malloc(this.matrixSize);
+        this.matrix = Unsafe.malloc(this.matrixSize, MemoryTag.NATIVE_DEFAULT);
         this.maxRequiredDelimiterStdDev = configuration.getMaxRequiredDelimiterStdDev();
         this.maxRequiredLineLengthStdDev = configuration.getMaxRequiredLineLengthStdDev();
     }
@@ -92,7 +93,7 @@ public class TextDelimiterScanner implements Closeable {
 
     @Override
     public void close() {
-        Unsafe.free(matrix, matrixSize);
+        Unsafe.free(matrix, matrixSize, MemoryTag.NATIVE_DEFAULT);
     }
 
     private void bumpCountAt(int line, byte bytePosition, int increment) {

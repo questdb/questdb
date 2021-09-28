@@ -55,7 +55,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
 
     public Path(int capacity) {
         this.capacity = capacity;
-        this.ptr = this.wptr = Unsafe.malloc(capacity + 1);
+        this.ptr = this.wptr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_DEFAULT);
     }
 
     public static void clearThreadLocals() {
@@ -105,7 +105,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     @Override
     public void close() {
         if (ptr != 0) {
-            Unsafe.free(ptr, capacity + 1);
+            Unsafe.free(ptr, capacity + 1, MemoryTag.NATIVE_DEFAULT);
             ptr = 0;
         }
     }
@@ -223,7 +223,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
 
     private void checkClosed() {
         if (ptr == 0) {
-            this.ptr = this.wptr = Unsafe.malloc(capacity + 1);
+            this.ptr = this.wptr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -285,7 +285,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     private void extend(int len) {
-        long p = Unsafe.realloc(ptr, this.capacity + 1, len + 1);
+        long p = Unsafe.realloc(ptr, this.capacity + 1, len + 1, MemoryTag.NATIVE_DEFAULT);
         long d = wptr - ptr;
         this.ptr = p;
         this.wptr = p + d;

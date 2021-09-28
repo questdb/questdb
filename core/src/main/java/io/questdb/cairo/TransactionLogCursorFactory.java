@@ -29,10 +29,7 @@ import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Long256;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 
@@ -112,7 +109,8 @@ public class TransactionLogCursorFactory implements RecordCursorFactory {
             if (ColumnType.isVariableLength(columnType)) {
                 col.wholeFile(
                         configuration.getFilesFacade(),
-                        TableUtils.iFile(path.trimTo(plen), columnName)
+                        TableUtils.iFile(path.trimTo(plen), columnName),
+                        MemoryTag.NATIVE_REPL
                 );
 
                 col = columns.getQuick(i * 2 + 1);
@@ -123,12 +121,14 @@ public class TransactionLogCursorFactory implements RecordCursorFactory {
 
                 col.wholeFile(
                         configuration.getFilesFacade(),
-                        TableUtils.dFile(path.trimTo(plen), columnName)
+                        TableUtils.dFile(path.trimTo(plen), columnName),
+                        MemoryTag.NATIVE_REPL
                 );
             } else {
                 col.wholeFile(
                         configuration.getFilesFacade(),
-                        TableUtils.dFile(path.trimTo(plen), columnName)
+                        TableUtils.dFile(path.trimTo(plen), columnName),
+                        MemoryTag.NATIVE_REPL
                 );
             }
         }

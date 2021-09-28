@@ -69,6 +69,10 @@ const QuestDBHighlightRules = function (this: HighlightRules) {
         regex: "[+-]?\\d+(?:(?:\\.\\d*)?(?:[eE][+-]?\\d+)?)?\\b",
       },
       {
+        token: "entity.name.function", // geohash literal
+        regex: "\#{1,2}([a-zA-Z_$]|[a-zA-Z0-9_$])*\\b",
+      },
+      {
         token: keywordMapper,
         regex: "[a-zA-Z_$][a-zA-Z0-9_$]*\\b",
       },

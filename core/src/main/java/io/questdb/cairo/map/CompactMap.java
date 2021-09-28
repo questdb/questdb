@@ -142,8 +142,8 @@ public class CompactMap implements Map {
     }
 
     CompactMap(int pageSize, @Transient ColumnTypes keyTypes, @Transient ColumnTypes valueTypes, long keyCapacity, double loadFactor, HashFunction hashFunction, int maxResizes, int maxPages) {
-        this.entries = Vm.getARWInstance(pageSize, maxPages);
-        this.entrySlots = Vm.getARWInstance(pageSize, maxPages);
+        this.entries = Vm.getARWInstance(pageSize, maxPages, MemoryTag.NATIVE_COMPACT_MAP);
+        this.entrySlots = Vm.getARWInstance(pageSize, maxPages, MemoryTag.NATIVE_COMPACT_MAP);
         try {
             this.loadFactor = loadFactor;
             this.columnOffsets = new long[keyTypes.getColumnCount() + valueTypes.getColumnCount()];

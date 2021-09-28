@@ -28,6 +28,7 @@ import io.questdb.cutlass.line.LineProtoSender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkError;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 
 import java.nio.charset.StandardCharsets;
@@ -59,7 +60,7 @@ public class AuthenticatedLineTCPProtoSender extends LineTCPProtoSender {
 
     public void authenticate() throws NetworkError {
         if (buffer == -1) {
-            buffer = Unsafe.malloc(BUF_SZ);
+            buffer = Unsafe.malloc(BUF_SZ, MemoryTag.NATIVE_DEFAULT);
         }
 
         // Send key id
@@ -124,7 +125,7 @@ public class AuthenticatedLineTCPProtoSender extends LineTCPProtoSender {
     @Override
     public void close() {
         if (buffer != -1) {
-            Unsafe.free(buffer, BUF_SZ);
+            Unsafe.free(buffer, BUF_SZ, MemoryTag.NATIVE_DEFAULT);
             buffer = -1;
         }
         super.close();

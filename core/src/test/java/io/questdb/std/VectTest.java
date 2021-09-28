@@ -47,7 +47,7 @@ public class VectTest {
             long indexPtr3 = seedAndSort(count);
             long indexPtr4 = seedAndSort(count);
 
-            long struct = Unsafe.malloc(Long.BYTES * 8);
+            long struct = Unsafe.malloc(Long.BYTES * 8, MemoryTag.NATIVE_DEFAULT);
             Unsafe.getUnsafe().putLong(struct, indexPtr1);
             Unsafe.getUnsafe().putLong(struct + Long.BYTES, count);
 
@@ -64,11 +64,11 @@ public class VectTest {
                 assertIndexAsc(count * 4, merged);
                 Vect.freeMergedIndex(merged);
             } finally {
-                Unsafe.free(indexPtr1, count * 2 * Long.BYTES);
-                Unsafe.free(indexPtr2, count * 2 * Long.BYTES);
-                Unsafe.free(indexPtr3, count * 2 * Long.BYTES);
-                Unsafe.free(indexPtr4, count * 2 * Long.BYTES);
-                Unsafe.free(struct, Long.BYTES * 8);
+                Unsafe.free(indexPtr1, count * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(indexPtr2, count * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(indexPtr3, count * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(indexPtr4, count * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(struct, Long.BYTES * 8, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -79,7 +79,7 @@ public class VectTest {
         try {
             assertIndexAsc(150, indexPtr);
         } finally {
-            Unsafe.free(indexPtr, 150 * 2 * Long.BYTES);
+            Unsafe.free(indexPtr, 150 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -92,7 +92,7 @@ public class VectTest {
         long indexPtr2 = seedAndSort(count2);
         long indexPtr3 = seedAndSort(count3);
 
-        long struct = Unsafe.malloc(Long.BYTES * 6);
+        long struct = Unsafe.malloc(Long.BYTES * 6, MemoryTag.NATIVE_DEFAULT);
         Unsafe.getUnsafe().putLong(struct, indexPtr1);
         Unsafe.getUnsafe().putLong(struct + Long.BYTES, count1);
         Unsafe.getUnsafe().putLong(struct + 2 * Long.BYTES, indexPtr2);
@@ -104,10 +104,10 @@ public class VectTest {
             assertIndexAsc(count1 + count2 + count3, merged);
             Vect.freeMergedIndex(merged);
         } finally {
-            Unsafe.free(indexPtr1, count1 * 2 * Long.BYTES);
-            Unsafe.free(indexPtr2, count2 * 2 * Long.BYTES);
-            Unsafe.free(indexPtr3, count3 * 2 * Long.BYTES);
-            Unsafe.free(struct, Long.BYTES * 6);
+            Unsafe.free(indexPtr1, count1 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(indexPtr2, count2 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(indexPtr3, count3 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(struct, Long.BYTES * 6, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -118,7 +118,7 @@ public class VectTest {
         long indexPtr1 = seedAndSort(count1);
         long indexPtr2 = seedAndSort(count2);
 
-        long struct = Unsafe.malloc(Long.BYTES * 4);
+        long struct = Unsafe.malloc(Long.BYTES * 4, MemoryTag.NATIVE_DEFAULT);
         Unsafe.getUnsafe().putLong(struct, indexPtr1);
         Unsafe.getUnsafe().putLong(struct + Long.BYTES, count1);
         Unsafe.getUnsafe().putLong(struct + 2 * Long.BYTES, indexPtr2);
@@ -128,9 +128,9 @@ public class VectTest {
             assertIndexAsc(count1 + count2, merged);
             Vect.freeMergedIndex(merged);
         } finally {
-            Unsafe.free(indexPtr1, count1 * 2 * Long.BYTES);
-            Unsafe.free(indexPtr2, count2 * 2 * Long.BYTES);
-            Unsafe.free(struct, Long.BYTES * 4);
+            Unsafe.free(indexPtr1, count1 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(indexPtr2, count2 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(struct, Long.BYTES * 4, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -141,7 +141,7 @@ public class VectTest {
         long indexPtr1 = seedAndSort(count1);
         long indexPtr2 = seedAndSort(count2);
 
-        long struct = Unsafe.malloc(Long.BYTES * 4);
+        long struct = Unsafe.malloc(Long.BYTES * 4, MemoryTag.NATIVE_DEFAULT);
         Unsafe.getUnsafe().putLong(struct, indexPtr1);
         Unsafe.getUnsafe().putLong(struct + Long.BYTES, count1);
         Unsafe.getUnsafe().putLong(struct + 2 * Long.BYTES, indexPtr2);
@@ -151,9 +151,9 @@ public class VectTest {
             assertIndexAsc(count1 + count2, merged);
             Vect.freeMergedIndex(merged);
         } finally {
-            Unsafe.free(indexPtr1, count1 * 2 * Long.BYTES);
-            Unsafe.free(indexPtr2, count2 * 2 * Long.BYTES);
-            Unsafe.free(struct, Long.BYTES * 4);
+            Unsafe.free(indexPtr1, count1 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(indexPtr2, count2 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(struct, Long.BYTES * 4, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -163,7 +163,7 @@ public class VectTest {
         long indexPtr1 = seedAndSort(count);
         long indexPtr2 = seedAndSort(count);
 
-        long struct = Unsafe.malloc(Long.BYTES * 4);
+        long struct = Unsafe.malloc(Long.BYTES * 4, MemoryTag.NATIVE_DEFAULT);
         Unsafe.getUnsafe().putLong(struct, indexPtr1);
         Unsafe.getUnsafe().putLong(struct + Long.BYTES, count);
         Unsafe.getUnsafe().putLong(struct + 2 * Long.BYTES, indexPtr2);
@@ -173,9 +173,9 @@ public class VectTest {
             assertIndexAsc(count * 2, merged);
             Vect.freeMergedIndex(merged);
         } finally {
-            Unsafe.free(indexPtr1, count * 2 * Long.BYTES);
-            Unsafe.free(indexPtr2, count * 2 * Long.BYTES);
-            Unsafe.free(struct, Long.BYTES * 4);
+            Unsafe.free(indexPtr1, count * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(indexPtr2, count * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(struct, Long.BYTES * 4, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -200,14 +200,14 @@ public class VectTest {
 
     @Test
     public void testSortOne() {
-        final long indexAddr = Unsafe.malloc(2 * Long.BYTES);
+        final long indexAddr = Unsafe.malloc(2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         try {
             seedMem(1, indexAddr);
             long expected = Unsafe.getUnsafe().getLong(indexAddr);
             Vect.sortLongIndexAscInPlace(indexAddr, 1);
             Assert.assertEquals(expected, Unsafe.getUnsafe().getLong(indexAddr));
         } finally {
-            Unsafe.free(indexAddr, 2 * Long.BYTES);
+            Unsafe.free(indexAddr, 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -216,7 +216,7 @@ public class VectTest {
         int[] sizes = new int[]{0, 1, 3, 4, 5, 7, 9, 15, 20, 1024 * 1024 - 1, 1024 * 1024, 1024 * 1024 + 1, 2_000_000, 10_000_000};
         long[] values = new long[]{-1, 0, 1, Long.MIN_VALUE, Long.MAX_VALUE, 0xabcd};
         long buffSize = sizes[sizes.length - 1] * Long.BYTES;
-        long buffer = Unsafe.malloc(buffSize);
+        long buffer = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
 
         try {
             for (int size : sizes) {
@@ -231,7 +231,7 @@ public class VectTest {
                 }
             }
         } finally {
-            Unsafe.free(buffer, buffSize);
+            Unsafe.free(buffer, buffSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -241,7 +241,7 @@ public class VectTest {
         double[] values = new double[]{-1, 0, 1, Double.MIN_VALUE, Double.MAX_VALUE, Double.NaN, 1.0023455};
         int typeBytes = Double.BYTES;
         long buffSize = sizes[sizes.length - 1] * typeBytes;
-        long buffer = Unsafe.malloc(buffSize);
+        long buffer = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
 
         try {
             for (int size : sizes) {
@@ -256,7 +256,7 @@ public class VectTest {
                 }
             }
         } finally {
-            Unsafe.free(buffer, buffSize);
+            Unsafe.free(buffer, buffSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -266,7 +266,7 @@ public class VectTest {
         float[] values = new float[]{-1, 0, 1, Float.MIN_VALUE, Float.MAX_VALUE, Float.NaN, 1.0023455f};
         int typeBytes = Float.BYTES;
         long buffSize = sizes[sizes.length - 1] * typeBytes;
-        long buffer = Unsafe.malloc(buffSize);
+        long buffer = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
 
         try {
             for (int size : sizes) {
@@ -281,7 +281,7 @@ public class VectTest {
                 }
             }
         } finally {
-            Unsafe.free(buffer, buffSize);
+            Unsafe.free(buffer, buffSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -291,7 +291,7 @@ public class VectTest {
         int[] values = new int[]{-1, 0, 1, Integer.MIN_VALUE, Integer.MAX_VALUE, 0xabcd};
         int typeBytes = Integer.BYTES;
         long buffSize = sizes[sizes.length - 1] * typeBytes;
-        long buffer = Unsafe.malloc(buffSize);
+        long buffer = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
 
         try {
             for (int size : sizes) {
@@ -306,7 +306,7 @@ public class VectTest {
                 }
             }
         } finally {
-            Unsafe.free(buffer, buffSize);
+            Unsafe.free(buffer, buffSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -319,7 +319,7 @@ public class VectTest {
         short[] values = new short[]{-1, 0, 1, Short.MIN_VALUE, Short.MAX_VALUE, 0xabc};
         int typeBytes = Short.BYTES;
         long buffSize = sizes[sizes.length - 1] * typeBytes + maxOffset;
-        long buffer = Unsafe.malloc(buffSize);
+        long buffer = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
 
         try {
             for (int offset: offsetBytes) {
@@ -336,7 +336,7 @@ public class VectTest {
                 }
             }
         } finally {
-            Unsafe.free(buffer, buffSize);
+            Unsafe.free(buffer, buffSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -348,9 +348,9 @@ public class VectTest {
         long buffSize = maxSize * typeBytes;
 
         int indexBuffSize = maxSize * Long.BYTES * 2;
-        long index = Unsafe.malloc(indexBuffSize);
-        long dst = Unsafe.malloc(buffSize);
-        long src = Unsafe.malloc(buffSize);
+        long index = Unsafe.malloc(indexBuffSize, MemoryTag.NATIVE_DEFAULT);
+        long dst = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+        long src = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
 
         for(int i = 0; i < maxSize; i++) {
             long offset = (2 * i + 1) * Long.BYTES;
@@ -376,9 +376,9 @@ public class VectTest {
                     }
             }
         } finally {
-            Unsafe.free(index, indexBuffSize);
-            Unsafe.free(src, buffSize);
-            Unsafe.free(dst, buffSize);
+            Unsafe.free(index, indexBuffSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(src, buffSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(dst, buffSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -387,8 +387,8 @@ public class VectTest {
         int maxSize = 1024*1024;
         int[] sizes = {1024, 4096, maxSize};
         int buffSize = 1024 + 4096 + maxSize;
-        long from = Unsafe.malloc(buffSize);
-        long to = Unsafe.malloc(maxSize);
+        long from = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+        long to = Unsafe.malloc(maxSize, MemoryTag.NATIVE_DEFAULT);
 
         try {
             // initialize from buffer
@@ -410,8 +410,8 @@ public class VectTest {
                 offset += size;
             }
         } finally {
-            Unsafe.free(from, buffSize);
-            Unsafe.free(to, maxSize);
+            Unsafe.free(from, buffSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(to, maxSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -425,7 +425,7 @@ public class VectTest {
     }
 
     private long seedAndSort(int count) {
-        final long indexAddr = Unsafe.malloc(count * 2L * Long.BYTES);
+        final long indexAddr = Unsafe.malloc(count * 2L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         seedMem(count, indexAddr);
         Vect.sortLongIndexAscInPlace(indexAddr, count);
         return indexAddr;
@@ -441,13 +441,13 @@ public class VectTest {
 
     private void testSort(int count) {
         final int size = count * 2 * Long.BYTES;
-        final long indexAddr = Unsafe.malloc(size);
+        final long indexAddr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
             seedMem(count, indexAddr);
             Vect.sortLongIndexAscInPlace(indexAddr, count);
             assertIndexAsc(count, indexAddr);
         } finally {
-            Unsafe.free(indexAddr, size);
+            Unsafe.free(indexAddr, size, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

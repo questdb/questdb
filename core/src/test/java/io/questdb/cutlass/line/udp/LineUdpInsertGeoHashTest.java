@@ -84,7 +84,7 @@ abstract class LineUdpInsertGeoHashTest extends LineUdpInsertTest {
     }
 
     protected static void sendGeoHashLine(String value) {
-        try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 256 * 1024, 1)) {
+        try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 1024, 1)) {
             sender.metric(tableName).field(targetColumnName, value).$(1_000_000_000);
             sender.flush();
         }

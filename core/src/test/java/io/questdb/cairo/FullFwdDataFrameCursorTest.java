@@ -1109,7 +1109,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long mmap(long fd, long len, long offset, int flags) {
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                     // mess with the target FD
                     if (fd == this.fd) {
                         if (mapCount == 1) {
@@ -1117,18 +1117,18 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         }
                         mapCount++;
                     }
-                    return super.mmap(fd, len, offset, flags);
+                    return super.mmap(fd, len, offset, flags, memoryTag);
                 }
 
                 @Override
-                public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode) {
+                public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                     if (fd == this.fd) {
                         if (mapCount == 1) {
                             return -1;
                         }
                         mapCount++;
                     }
-                    return super.mremap(fd, addr, previousSize, newSize, offset, mode);
+                    return super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
                 }
 
                 @Override
@@ -1263,12 +1263,12 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long mmap(long fd, long len, long offset, int flags) {
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                     // mess with the target FD
                     if (fd == this.fd) {
                         return -1;
                     }
-                    return super.mmap(fd, len, offset, flags);
+                    return super.mmap(fd, len, offset, flags, memoryTag);
                 }
 
                 @Override
@@ -1452,7 +1452,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long mmap(long fd, long len, long offset, int flags) {
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                     // mess with the target FD
                     if (fd == this.fd) {
                         if (mapCount == 1) {
@@ -1460,11 +1460,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         }
                         mapCount++;
                     }
-                    return super.mmap(fd, len, offset, flags);
+                    return super.mmap(fd, len, offset, flags, memoryTag);
                 }
 
                 @Override
-                public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode) {
+                public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                     // mess with the target FD
                     if (fd == this.fd) {
                         if (mapCount == 1) {
@@ -1472,7 +1472,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         }
                         mapCount++;
                     }
-                    return super.mremap(fd, addr, previousSize, newSize, offset, mode);
+                    return super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
                 }
 
                 @Override

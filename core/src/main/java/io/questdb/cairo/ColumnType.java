@@ -42,8 +42,7 @@ import io.questdb.std.str.StringSink;
  */
 public final class ColumnType {
     // column type version as written to the metadata file
-    public static final int VERSION = 420;
-    public static final int VERSION_THAT_ADDED_TABLE_ID = 417;
+    public static final int VERSION = 422;
 
     public static final short UNDEFINED = 0;
     public static final short BOOLEAN = 1;
@@ -86,7 +85,7 @@ public final class ColumnType {
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     // For function overload the priority is taken from left to right
     private static final short[][] overloadPriority = {
-            /* 0 UNDEFINED  */  {DOUBLE, FLOAT, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
+            /* 0 UNDEFINED  */  {DOUBLE, FLOAT, STRING, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
             /* 1  BOOLEAN   */, {BOOLEAN}
             /* 2  BYTE      */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
             /* 3  SHORT     */, {SHORT, INT, LONG, FLOAT, DOUBLE}
@@ -122,7 +121,7 @@ public final class ColumnType {
     }
 
     public static int getGeoHashTypeWithBits(int bits) {
-        assert bits > 0;
+        assert bits > 0 && bits <= GEO_HASH_MAX_BITS_LENGTH;
         // this logic relies on GeoHash type value to be clustered together
         return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
     }

@@ -487,7 +487,7 @@ public class CompactMapTest extends AbstractCairoTest {
             try (TableWriter writer = new TableWriter(configuration, "x")) {
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row row = writer.newRow();
-                    long rndGeohash = GeoHashes.fromCoordinates(rnd.nextDouble() * 180 - 90, rnd.nextDouble() * 360 - 180, precisionBits);
+                    long rndGeohash = GeoHashes.fromCoordinatesDeg(rnd.nextDouble() * 180 - 90, rnd.nextDouble() * 360 - 180, precisionBits);
                     row.putLong(0, i);
                     row.putGeoHash(1, rndGeohash);
                     row.append();

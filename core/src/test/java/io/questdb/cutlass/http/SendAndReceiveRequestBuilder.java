@@ -28,16 +28,13 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.locks.LockSupport;
 
-import io.questdb.std.Os;
+import io.questdb.std.*;
 import org.junit.Assert;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.Chars;
-import io.questdb.std.IntList;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.ByteSequence;
 import io.questdb.test.tools.TestUtils;
 
@@ -349,13 +346,13 @@ public class SendAndReceiveRequestBuilder {
 
     private void executeWithSocket(String request, CharSequence response, long fd) {
         final int len = Math.max(response.length(), request.length()) * 2;
-        long ptr = Unsafe.malloc(len);
+        long ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int j = 0; j < requestCount; j++) {
                 executeExplicit(request, fd, response, len, ptr, null);
             }
         } finally {
-            Unsafe.free(ptr, len);
+            Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

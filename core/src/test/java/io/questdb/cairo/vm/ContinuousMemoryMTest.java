@@ -297,7 +297,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             final long fd = TableUtils.openRW(ff, path, LOG);
             try {
                 MemoryMARW mem = Vm.getMARWInstance();
-                mem.of(ff, fd, null, Long.MAX_VALUE);
+                mem.of(ff, fd, null, -1, MemoryTag.MMAP_DEFAULT);
 
                 mem.extend(ff.getMapPageSize() * 2);
 
@@ -366,7 +366,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             try {
                 MemoryMARW mem = Vm.getMARWInstance();
                 try {
-                    mem.of(ff, TableUtils.openRW(ff, path, LOG), null, Long.MAX_VALUE);
+                    mem.of(ff, TableUtils.openRW(ff, path, LOG), null, -1, MemoryTag.MMAP_DEFAULT);
 
                     mem.extend(ff.getMapPageSize() * 2);
 
@@ -378,7 +378,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
                     mem.close();
                 }
 
-                Assert.assertEquals(ff.length(path), 1024);
+                Assert.assertEquals(ff.length(path), Files.PAGE_SIZE);
             } finally {
                 Assert.assertTrue(ff.remove(path));
             }
@@ -597,8 +597,8 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
                         FilesFacadeImpl.INSTANCE,
                         path,
                         0,
-                        0
-                );
+                        0,
+                        MemoryTag.MMAP_DEFAULT);
                 rwMem.close();
                 Assert.assertEquals(0, rwMem.getPageCount());
             }
@@ -662,7 +662,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             try {
                 MemoryMARW mem = Vm.getMARWInstance();
                 try {
-                    mem.of(ff, path, FilesFacadeImpl._16M, Long.MAX_VALUE);
+                    mem.of(ff, path, FilesFacadeImpl._16M, -1, MemoryTag.MMAP_DEFAULT);
                     // this is larger than page size
                     for (int i = 0; i < 3_000_000; i++) {
                         mem.putLong(i * 8, i + 1);
@@ -689,12 +689,12 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             boolean failTruncate = false;
 
             @Override
-            public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode) {
+            public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                 if (--counter < 0) {
                     failTruncate = true;
                     return -1;
                 }
-                return super.mremap(fd, addr, previousSize, newSize, offset, mode);
+                return super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
             }
 
             @Override
@@ -711,7 +711,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             try {
                 MemoryMARW mem = Vm.getMARWInstance();
                 try {
-                    mem.of(ff, path, FilesFacadeImpl._16M, Long.MAX_VALUE);
+                    mem.of(ff, path, FilesFacadeImpl._16M, -1, MemoryTag.MMAP_DEFAULT);
                     // this is larger than page size
                     for (int i = 0; i < 3_000_000; i++) {
                         mem.putLong(i * 8, i + 1);
@@ -732,7 +732,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
 
                 // we expect memory to zero out the file, which failed to truncate
 
-                try (MemoryMR roMem = new MemoryCMRImpl(ff, path, fileLen)) {
+                try (MemoryMR roMem = new MemoryCMRImpl(ff, path, fileLen, MemoryTag.MMAP_DEFAULT)) {
                     Assert.assertEquals(fileLen, roMem.size());
 
                     for (int i = 0; i < fileLen; i++) {
@@ -922,14 +922,15 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
                             FilesFacadeImpl.INSTANCE,
                             path,
                             sz,
-                            sz
+                            -1,
+                            MemoryTag.MMAP_DEFAULT
                     );
 
                     MemoryCMR roMem = new MemoryCMRImpl(
                             FilesFacadeImpl.INSTANCE,
                             path,
-                            sz
-                    )
+                            sz,
+                            MemoryTag.MMAP_DEFAULT)
             ) {
                 code.run(rwMem, roMem);
             } finally {
