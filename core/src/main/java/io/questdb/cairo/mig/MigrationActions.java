@@ -63,48 +63,22 @@ class MigrationActions {
         }
     }
 
-    public static void bumpVarColumnIndex(MigrationContext migrationContext) {
-        final FilesFacade ff = migrationContext.getFf();
-        Path path = migrationContext.getTablePath();
-        int plen = path.length();
-
-        path.trimTo(plen).concat(META_FILE_NAME).$();
-        try (TableReaderMetadata m = new TableReaderMetadata(ff)) {
-            m.of(path, 420);
-            final int columnCount = m.getColumnCount();
-            try (TxReader txReader = new TxReader(ff, path.trimTo(plen), m.getPartitionBy())) {
-                txReader.readUnchecked();
-                int partitionCount = txReader.getPartitionCount();
-                int partitionBy = m.getPartitionBy();
-                if (partitionBy != PartitionBy.NONE) {
-                    for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-                        setPathForPartition(path.trimTo(plen), m.getPartitionBy(), txReader.getPartitionTimestamp(partitionIndex), false);
-                        int plen2 = path.length();
-                        long rowCount = txReader.getPartitionSize(partitionIndex);
-                        if (rowCount > 0) {
-                            bumpVarColumnIndex0(migrationContext, ff, path, m, columnCount, plen2, rowCount);
-                        }
-                    }
-                } else {
-                    path.concat(DEFAULT_PARTITION_NAME);
-                    int plen2 = path.length();
-                    long rowCount = txReader.getPartitionSize(0);
-                    if (rowCount > 0) {
-                        bumpVarColumnIndex0(migrationContext, ff, path, m, columnCount, plen2, rowCount);
-                    }
-                }
-            }
-        }
+    public static void mig606(MigrationContext migrationContext) {
+        updateVarColumnSize(migrationContext, 420);
     }
 
-    public static void bumpVarColumnIndexFix(MigrationContext migrationContext) {
+    public static void mig607(MigrationContext migrationContext) {
+        updateVarColumnSize(migrationContext, 421);
+    }
+
+    private static void updateVarColumnSize(MigrationContext migrationContext, int metadataVersionToExpect) {
         final FilesFacade ff = migrationContext.getFf();
         Path path = migrationContext.getTablePath();
         int plen = path.length();
 
         path.trimTo(plen).concat(META_FILE_NAME).$();
         try (TableReaderMetadata m = new TableReaderMetadata(ff)) {
-            m.of(path, 421);
+            m.of(path, metadataVersionToExpect);
             final int columnCount = m.getColumnCount();
             try (TxReader txReader = new TxReader(ff, path.trimTo(plen), m.getPartitionBy())) {
                 txReader.readUnchecked();
@@ -114,7 +88,7 @@ class MigrationActions {
                     for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
                         setPathForPartition(path.trimTo(plen), m.getPartitionBy(), txReader.getPartitionTimestamp(partitionIndex), false);
                         long txSuffix = txReader.getPartitionNameTxn(partitionIndex);
-                        if (txSuffix > 0) {
+                        if (txSuffix > -1) {
                             txnPartition(path, txSuffix);
                         }
                         int plen2 = path.length();
@@ -141,7 +115,7 @@ class MigrationActions {
         }
     }
 
-    public static void updateColumnTypeIds(MigrationContext migrationContext) {
+    public static void mig605(MigrationContext migrationContext) {
         LOG.info().$("updating column type IDs [table=").$(migrationContext.getTablePath()).I$();
         final FilesFacade ff = migrationContext.getFf();
         Path path = migrationContext.getTablePath();
