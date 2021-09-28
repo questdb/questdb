@@ -524,23 +524,21 @@ class LineTcpMeasurementScheduler implements Closeable {
                             }
                             break;
                         }
-                        case NewLineProtoParser.ENTITY_TYPE_INTEGER: {
+                        case NewLineProtoParser.ENTITY_TYPE_INTEGER:
                             Unsafe.getUnsafe().putByte(bufPos, entity.getType());
                             bufPos += Byte.BYTES;
                             Unsafe.getUnsafe().putLong(bufPos, entity.getIntegerValue());
                             bufPos += Long.BYTES;
                             break;
-                        }
-                        case NewLineProtoParser.ENTITY_TYPE_FLOAT: {
+                        case NewLineProtoParser.ENTITY_TYPE_FLOAT:
                             Unsafe.getUnsafe().putByte(bufPos, entity.getType());
                             bufPos += Byte.BYTES;
                             Unsafe.getUnsafe().putDouble(bufPos, entity.getFloatValue());
                             bufPos += Double.BYTES;
                             break;
-                        }
                         case NewLineProtoParser.ENTITY_TYPE_STRING:
                         case NewLineProtoParser.ENTITY_TYPE_SYMBOL:
-                    case NewLineProtoParser.ENTITY_TYPE_LONG256: {
+                        case NewLineProtoParser.ENTITY_TYPE_LONG256: {
                             final int colTypeMeta = localDetails.getColumnTypeMeta(colIndex);
                             if (colTypeMeta == 0) { // not a geohash
                                 Unsafe.getUnsafe().putByte(bufPos, entity.getType());
