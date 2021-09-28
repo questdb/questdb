@@ -209,7 +209,6 @@ public final class Unsafe {
         assert mem >= 0;
         assert  memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
         COUNTERS[memoryTag].add(size);
-        assert COUNTERS[memoryTag].sum() >= 0;
     }
 
     private static int msb(int value) {
