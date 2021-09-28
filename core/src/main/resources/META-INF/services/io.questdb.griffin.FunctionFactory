@@ -543,4 +543,7 @@ io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory
 # geohash functions
 io.questdb.griffin.engine.functions.geohash.GeoHashFromCoordinatesFunctionFactory
 
+# bin functions
+io.questdb.griffin.engine.functions.bin.Base64FunctionFactory
+
 io.questdb.griffin.engine.functions.catalogue.TypeOfFunctionFactory
