@@ -63,85 +63,7 @@ class MigrationActions {
         }
     }
 
-    public static void bumpVarColumnIndex(MigrationContext migrationContext) {
-        final FilesFacade ff = migrationContext.getFf();
-        Path path = migrationContext.getTablePath();
-        int plen = path.length();
-
-        path.trimTo(plen).concat(META_FILE_NAME).$();
-        try (TableReaderMetadata m = new TableReaderMetadata(ff)) {
-            m.of(path, 420);
-            final int columnCount = m.getColumnCount();
-            try (TxReader txReader = new TxReader(ff, path.trimTo(plen), m.getPartitionBy())) {
-                txReader.readUnchecked();
-                int partitionCount = txReader.getPartitionCount();
-                int partitionBy = m.getPartitionBy();
-                if (partitionBy != PartitionBy.NONE) {
-                    for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-                        setPathForPartition(path.trimTo(plen), m.getPartitionBy(), txReader.getPartitionTimestamp(partitionIndex), false);
-                        int plen2 = path.length();
-                        long rowCount = txReader.getPartitionSize(partitionIndex);
-                        if (rowCount > 0) {
-                            bumpVarColumnIndex0(migrationContext, ff, path, m, columnCount, plen2, rowCount);
-                        }
-                    }
-                } else {
-                    path.concat(DEFAULT_PARTITION_NAME);
-                    int plen2 = path.length();
-                    long rowCount = txReader.getPartitionSize(0);
-                    if (rowCount > 0) {
-                        bumpVarColumnIndex0(migrationContext, ff, path, m, columnCount, plen2, rowCount);
-                    }
-                }
-            }
-        }
-    }
-
-    public static void bumpVarColumnIndexFix(MigrationContext migrationContext) {
-        final FilesFacade ff = migrationContext.getFf();
-        Path path = migrationContext.getTablePath();
-        int plen = path.length();
-
-        path.trimTo(plen).concat(META_FILE_NAME).$();
-        try (TableReaderMetadata m = new TableReaderMetadata(ff)) {
-            m.of(path, 421);
-            final int columnCount = m.getColumnCount();
-            try (TxReader txReader = new TxReader(ff, path.trimTo(plen), m.getPartitionBy())) {
-                txReader.readUnchecked();
-                int partitionCount = txReader.getPartitionCount();
-                int partitionBy = m.getPartitionBy();
-                if (partitionBy != PartitionBy.NONE) {
-                    for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-                        setPathForPartition(path.trimTo(plen), m.getPartitionBy(), txReader.getPartitionTimestamp(partitionIndex), false);
-                        long txSuffix = txReader.getPartitionNameTxn(partitionIndex);
-                        if (txSuffix > 0) {
-                            txnPartition(path, txSuffix);
-                        }
-                        int plen2 = path.length();
-                        long rowCount = txReader.getPartitionSize(partitionIndex);
-                        if (rowCount > 0) {
-                            boolean success = bumpVarColumnIndex0(migrationContext, ff, path, m, columnCount, plen2, rowCount);
-                            if (!success) {
-                                throw CairoException.instance(0).put("cannot migrate table, column file error [path=").put(path).put("]");
-                            }
-                        }
-                    }
-                } else {
-                    path.concat(DEFAULT_PARTITION_NAME);
-                    int plen2 = path.length();
-                    long rowCount = txReader.getPartitionSize(0);
-                    if (rowCount > 0) {
-                        boolean success = bumpVarColumnIndex0(migrationContext, ff, path, m, columnCount, plen2, rowCount);
-                        if (!success) {
-                            throw CairoException.instance(0).put("cannot migrate table, column file error [path=").put(path).put("]");
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    public static void updateColumnTypeIds(MigrationContext migrationContext) {
+    public static void mig605(MigrationContext migrationContext) {
         LOG.info().$("updating column type IDs [table=").$(migrationContext.getTablePath()).I$();
         final FilesFacade ff = migrationContext.getFf();
         Path path = migrationContext.getTablePath();
@@ -176,110 +98,143 @@ class MigrationActions {
         rwMem.close();
     }
 
+    public static void mig606(MigrationContext migrationContext) {
+        updateVarColumnSize(migrationContext, 420);
+    }
+
+    public static void mig607(MigrationContext migrationContext) {
+        updateVarColumnSize(migrationContext, 421);
+    }
+
+    private static void updateVarColumnSize(MigrationContext migrationContext, int metadataVersionToExpect) {
+        final FilesFacade ff = migrationContext.getFf();
+        Path path = migrationContext.getTablePath();
+        int plen = path.length();
+
+        path.trimTo(plen).concat(META_FILE_NAME).$();
+        try (TableReaderMetadata m = new TableReaderMetadata(ff)) {
+            m.of(path, metadataVersionToExpect);
+            final int columnCount = m.getColumnCount();
+            try (TxReader txReader = new TxReader(ff, path.trimTo(plen), m.getPartitionBy())) {
+                txReader.readUnchecked();
+                int partitionCount = txReader.getPartitionCount();
+                int partitionBy = m.getPartitionBy();
+                if (partitionBy != PartitionBy.NONE) {
+                    for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                        setPathForPartition(path.trimTo(plen), m.getPartitionBy(), txReader.getPartitionTimestamp(partitionIndex), false);
+                        long txSuffix = txReader.getPartitionNameTxn(partitionIndex);
+                        if (txSuffix > -1) {
+                            txnPartition(path, txSuffix);
+                        }
+                        int plen2 = path.length();
+                        long rowCount = txReader.getPartitionSize(partitionIndex);
+                        if (rowCount > 0) {
+                            boolean success = bumpVarColumnIndex0(migrationContext, ff, path, m, columnCount, plen2, rowCount);
+                            if (!success) {
+                                throw CairoException.instance(0).put("cannot migrate table, column file error [path=").put(path).put("]");
+                            }
+                        }
+                    }
+                } else {
+                    path.concat(DEFAULT_PARTITION_NAME);
+                    int plen2 = path.length();
+                    long rowCount = txReader.getPartitionSize(0);
+                    if (rowCount > 0) {
+                        boolean success = bumpVarColumnIndex0(migrationContext, ff, path, m, columnCount, plen2, rowCount);
+                        if (!success) {
+                            throw CairoException.instance(0).put("cannot migrate table, column file error [path=").put(path).put("]");
+                        }
+                    }
+                }
+
+                // update symbol maps
+                long mem = migrationContext.getTempMemory();
+                int sc = 0;
+                for (int i = 0; i < columnCount; i++) {
+                    if (ColumnType.tagOf(m.getColumnType(i)) == ColumnType.SYMBOL) {
+                        SymbolMapWriter.offsetFileName(path.trimTo(plen), m.getColumnName(i));
+                        final int symbolCount = txReader.getSymbolCount(sc);
+                        long fd = TableUtils.openRW(ff, path, LOG);
+                        try {
+                            long fileLen = ff.length(fd);
+                            long offset = SymbolMapWriter.HEADER_SIZE + symbolCount * 8L;
+                            if (symbolCount > 0) {
+                                if (fileLen < offset) {
+                                    LOG.error().$("file is too short [path=").$(path).I$();
+                                } else {
+                                    TableUtils.allocateDiskSpace(ff, fd, offset + 8);
+                                    long dataOffset = TableUtils.readLongOrFail(ff, fd, offset - 8L, mem, path);
+                                    // string length
+                                    SymbolMapWriter.charFileName(path.trimTo(plen), m.getColumnName(i));
+                                    long fd2 = TableUtils.openRO(ff, path, LOG);
+                                    try {
+                                        long len = TableUtils.readIntOrFail(ff, fd2, dataOffset, mem, path);
+                                        if (len == -1) {
+                                            dataOffset += 4;
+                                        } else {
+                                            dataOffset += 4 + len * 2L;
+                                        }
+                                        TableUtils.writeLongOrFail(ff, fd, offset, dataOffset, mem, path);
+                                    } finally {
+                                        ff.close(fd2);
+                                    }
+                                }
+                            }
+                        } finally {
+                            ff.close(fd);
+                        }
+                        sc++;
+                    }
+                }
+            }
+        }
+    }
+
     private static boolean bumpVarColumnIndex0(MigrationContext migrationContext, FilesFacade ff, Path path, TableReaderMetadata m, int columnCount, int plen2, long rowCount) {
         long mem = migrationContext.getTempMemory();
         for (int i = 0; i < columnCount; i++) {
             int columnType = ColumnType.tagOf(m.getColumnType(i));
-            switch (columnType) {
-                case ColumnType.STRING: {
-                    final long columnTop = readColumnTop(ff, path.trimTo(plen2), m.getColumnName(i), plen2, mem, false);
-                    final long columnRowCount = rowCount - columnTop;
-                    iFile(path.trimTo(plen2), m.getColumnName(i));
-                    long fd = ff.openRW(path);
-                    if (fd != -1) {
-                        long fileLen = ff.length(fd);
-                        long offset = columnRowCount * 8L;
-                        if (fileLen < offset) {
-                            LOG.error().$("file is too short [path=").$(path).I$();
-                        } else {
-                            if (ff.allocate(fd, offset + 8)) {
-                                if (ff.read(fd, mem, 8, offset - 8L) == 8) {
-                                    long dataOffset = Unsafe.getUnsafe().getLong(mem);
-                                    // string length
-                                    dFile(path.trimTo(plen2), m.getColumnName(i));
-                                    long fd2 = ff.openRO(path);
-                                    if (fd2 != -1) {
-                                        if (ff.read(fd2, mem, 4, dataOffset) == 4) {
-                                            long len = Unsafe.getUnsafe().getInt(mem);
-                                            if (len == -1) {
-                                                dataOffset += 4;
-                                            } else {
-                                                dataOffset += 4 + len * 2L;
-                                            }
-
-                                            // write this value back to index column
-                                            Unsafe.getUnsafe().putLong(mem, dataOffset);
-                                            // todo: this might fail - fail the migration ?
-                                            ff.write(fd, mem, 8, offset);
-                                        }
-                                        ff.close(fd2);
-                                    } else {
-                                        LOG.error().$("could not read column file [path=").$(path).I$();
-                                    }
+            if (columnType == ColumnType.STRING || columnType == ColumnType.BINARY) {
+                final long columnTop = readColumnTop(ff, path.trimTo(plen2), m.getColumnName(i), plen2, mem, false);
+                final long columnRowCount = rowCount - columnTop;
+                iFile(path.trimTo(plen2), m.getColumnName(i));
+                long fd = TableUtils.openRW(ff, path, LOG);
+                try {
+                    long fileLen = ff.length(fd);
+                    long offset = columnRowCount * 8L;
+                    if (fileLen < offset) {
+                        LOG.error().$("file is too short [path=").$(path).I$();
+                        return false;
+                    } else {
+                        TableUtils.allocateDiskSpace(ff, fd, offset + 8);
+                        long dataOffset = TableUtils.readLongOrFail(ff, fd, offset - 8L, mem, path);
+                        dFile(path.trimTo(plen2), m.getColumnName(i));
+                        final long fd2 = TableUtils.openRO(ff, path, LOG);
+                        try {
+                            if (columnType == ColumnType.BINARY) {
+                                long len = TableUtils.readLongOrFail(ff, fd2, dataOffset, mem, path);
+                                if (len == -1) {
+                                    dataOffset += 8;
+                                } else {
+                                    dataOffset += 8 + len;
                                 }
                             } else {
-                                LOG.error().$("could not allocate extra 8 bytes [file=").$(path).I$();
-                            }
-                        }
-                        ff.close(fd);
-                    } else {
-                        LOG.error().$("column file does not exist [path=").$(path).I$();
-                        return false;
-                    }
-                }
-                break;
-                case ColumnType.BINARY: {
-                    final long columnTop = readColumnTop(ff, path.trimTo(plen2), m.getColumnName(i), plen2, mem, false);
-                    final long columnRowCount = rowCount - columnTop;
-                    iFile(path.trimTo(plen2), m.getColumnName(i));
-                    long fd = ff.openRW(path);
-                    if (fd != -1) {
-                        long fileLen = ff.length(fd);
-                        long offset = columnRowCount * 8L;
-                        if (fileLen < offset) {
-                            LOG.error().$("file is too short [path=").$(path).I$();
-                            return false;
-                        } else {
-                            if (ff.allocate(fd, offset + 8)) {
-                                if (ff.read(fd, mem, 8, offset - 8L) == 8) {
-                                    long dataOffset = Unsafe.getUnsafe().getLong(mem);
-                                    // string length
-                                    dFile(path.trimTo(plen2), m.getColumnName(i));
-                                    long fd2 = ff.openRO(path);
-                                    if (fd2 != -1) {
-                                        if (ff.read(fd2, mem, 8, dataOffset) == 8) {
-                                            long len = Unsafe.getUnsafe().getLong(mem);
-                                            if (len == -1) {
-                                                dataOffset += 8;
-                                            } else {
-                                                dataOffset += 8 + len;
-                                            }
-
-                                            // write this value back to index column
-                                            Unsafe.getUnsafe().putLong(mem, dataOffset);
-                                            // todo: this might fail - fail the migration ?
-                                            ff.write(fd, mem, 8, offset);
-                                        }
-                                        ff.close(fd2);
-                                    } else {
-                                        LOG.error().$("could not read column file [path=").$(path).I$();
-                                        return false;
-                                    }
+                                long len = TableUtils.readIntOrFail(ff, fd2, dataOffset, mem, path);
+                                if (len == -1) {
+                                    dataOffset += 4;
+                                } else {
+                                    dataOffset += 4 + 2 * len;
                                 }
-                            } else {
-                                LOG.error().$("could not allocate extra 8 bytes [file=").$(path).I$();
-                                return false;
+
                             }
+                        } finally {
+                            ff.close(fd2);
                         }
-                        ff.close(fd);
-                    } else {
-                        LOG.error().$("column file does not exist [path=").$(path).I$();
-                        return false;
+                        TableUtils.writeLongOrFail(ff, fd, offset, dataOffset, mem, path);
                     }
+                } finally {
+                    ff.close(fd);
                 }
-                break;
-                default:
-                    break;
             }
         }
         return true;
