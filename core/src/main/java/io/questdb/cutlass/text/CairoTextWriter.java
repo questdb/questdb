@@ -167,7 +167,7 @@ public class CairoTextWriter implements Closeable, Mutable {
             if (dbcs.length() == 0) {
                 continue;
             }
-            if (onField(line, dbcs, w, i, tempSink)) return;
+            if (onField(line, dbcs, w, i)) return;
         }
         w.append();
     }
@@ -175,7 +175,6 @@ public class CairoTextWriter implements Closeable, Mutable {
     public void onFieldsPartitioned(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
         final int timestampIndex = this.timestampIndex;
         DirectByteCharSequence dbcs = values.getQuick(timestampIndex);
-        StringSink tempSink = Misc.getThreadLocalBuilder();
         try {
             final TableWriter.Row w = writer.newRow(timestampAdapter.getTimestamp(dbcs));
             for (int i = 0; i < valuesLength; i++) {
@@ -183,7 +182,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 if (i == timestampIndex || dbcs.length() == 0) {
                     continue;
                 }
-                if (onField(line, dbcs, w, i, tempSink)) return;
+                if (onField(line, dbcs, w, i)) return;
             }
             w.append();
             checkMaxAndCommitLag();
@@ -226,7 +225,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 .$(']').$();
     }
 
-    private boolean onField(long line, DirectByteCharSequence dbcs, TableWriter.Row w, int i, StringSink tempSink) {
+    private boolean onField(long line, DirectByteCharSequence dbcs, TableWriter.Row w, int i) {
         try {
             types.getQuick(i).write(w, i, dbcs, tempSink);
         } catch (Exception ignore) {
