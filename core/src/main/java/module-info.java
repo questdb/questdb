@@ -87,6 +87,7 @@ open module io.questdb {
     exports io.questdb.tasks;
     exports io.questdb.metrics;
     exports io.questdb.cairo.vm.api;
+    exports io.questdb.cairo.mig;
 
     provides FunctionFactory with
             // test functions
@@ -314,6 +315,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastLongToSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToLong256FunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToBooleanFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastLongToGeoHashFunctionFactory,
 //                  cast long256 to ...,
             io.questdb.griffin.engine.functions.cast.CastLong256ToShortFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLong256ToByteFunctionFactory,
@@ -539,6 +541,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.RangeCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetKeywordsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.TableMetadataCursorFactory,
+            io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory,
 //                  concat()
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
             // replace()
@@ -563,6 +566,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,
             // geohash functions
             io.questdb.griffin.engine.functions.geohash.GeoHashFromCoordinatesFunctionFactory,
+            // bin functions
+            io.questdb.griffin.engine.functions.bin.Base64FunctionFactory,
             // bit operations
             BitwiseAndLongFunctionFactory,
             BitwiseOrLongFunctionFactory,

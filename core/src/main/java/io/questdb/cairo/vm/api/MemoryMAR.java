@@ -24,8 +24,6 @@
 
 package io.questdb.cairo.vm.api;
 
-import io.questdb.cairo.vm.MemoryPMAImpl;
-
 public interface MemoryMAR extends MemoryMA, MemoryMR, MemoryR {
 
     @Override

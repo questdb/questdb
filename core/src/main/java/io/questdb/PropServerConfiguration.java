@@ -54,6 +54,7 @@ import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
@@ -63,6 +64,7 @@ import java.util.Properties;
 
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
+    public static final String DB_DIRECTORY = "db";
     private final IODispatcherConfiguration httpIODispatcherConfiguration = new PropHttpIODispatcherConfiguration();
     private final WaitProcessorConfiguration httpWaitProcessorConfiguration = new PropWaitProcessorConfiguration();
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
@@ -161,6 +163,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
     private final boolean pgEnabled;
     private final boolean telemetryEnabled;
+    private final boolean telemetryDisableCompletely;
     private final int telemetryQueueCapacity;
     private final LineTcpReceiverConfiguration lineTcpReceiverConfiguration = new PropLineTcpReceiverConfiguration();
     private final IODispatcherConfiguration lineTcpReceiverDispatcherConfiguration = new PropLineTcpReceiverIODispatcherConfiguration();
@@ -180,7 +183,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlAnalyticRowIdMaxPages;
     private final int sqlAnalyticTreeKeyPageSize;
     private final int sqlAnalyticTreeKeyMaxPages;
-    private final String databaseRoot;
+    private final String root;
+    private final String dbDirectory;
+    private final String confRoot;
     private final long maxRerunWaitCapMs;
     private final double rerunExponentialWaitMultiplier;
     private final int rerunInitialWaitQueueSize;
@@ -344,6 +349,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinSndBufSize;
     private final int latestByQueueCapacity;
     private final int sampleByIndexSearchPageSize;
+    private final int binaryEncodingMaxLength;
 
     public PropServerConfiguration(
             String root,
@@ -354,21 +360,23 @@ public class PropServerConfiguration implements ServerConfiguration {
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
 
-        final String databaseRoot = getString(properties, env, "cairo.root", "db");
         this.mkdirMode = getInt(properties, env, "cairo.mkdir.mode", 509);
 
-        if (new File(databaseRoot).isAbsolute()) {
-            this.databaseRoot = databaseRoot;
+        this.dbDirectory = getString(properties, env, "cairo.root", DB_DIRECTORY);
+        if (new File(this.dbDirectory).isAbsolute()) {
+            this.root = this.dbDirectory;
+            this.confRoot = confRoot(this.root); // ../conf
         } else {
-            this.databaseRoot = new File(root, databaseRoot).getAbsolutePath();
+            this.root = new File(root, this.dbDirectory).getAbsolutePath();
+            this.confRoot = new File(root, CONFIG_DIRECTORY).getAbsolutePath();
         }
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         try (Path path = new Path()) {
-            ff.mkdirs(path.of(this.databaseRoot).slash$(), this.mkdirMode);
-            path.of(this.databaseRoot).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+            ff.mkdirs(path.of(this.root).slash$(), this.mkdirMode);
+            path.of(this.root).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
             final long tableIndexFd = TableUtils.openFileRWOrFail(ff, path);
             final long fileSize = ff.length(tableIndexFd);
             if (fileSize < Long.BYTES) {
@@ -378,14 +386,14 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
             }
 
-            final long tableIndexMem = TableUtils.mapRWOrClose(ff, tableIndexFd, Files.PAGE_SIZE);
+            final long tableIndexMem = TableUtils.mapRWOrClose(ff, tableIndexFd, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
             Rnd rnd = new Rnd(getCairoConfiguration().getMicrosecondClock().getTicks(), getCairoConfiguration().getMillisecondClock().getTicks());
             if (Os.compareAndSwap(tableIndexMem + Long.BYTES, 0, rnd.nextLong()) == 0) {
                 Unsafe.getUnsafe().putLong(tableIndexMem + Long.BYTES * 2, rnd.nextLong());
             }
             this.instanceHashLo = Unsafe.getUnsafe().getLong(tableIndexMem + Long.BYTES);
             this.instanceHashHi = Unsafe.getUnsafe().getLong(tableIndexMem + Long.BYTES * 2);
-            ff.munmap(tableIndexMem, Files.PAGE_SIZE);
+            ff.munmap(tableIndexMem, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
             ff.close(tableIndexFd);
             ///
 
@@ -665,6 +673,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.txn.scoreboard.entry.count", 16384));
             this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.latestby.queue.capacity", 32));
             this.telemetryEnabled = getBoolean(properties, env, "telemetry.enabled", true);
+            this.telemetryDisableCompletely = getBoolean(properties, env, "telemetry.disable.completely", false);
             this.telemetryQueueCapacity = getInt(properties, env, "telemetry.queue.capacity", 512);
 
             parseBindTo(properties, env, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
@@ -702,7 +711,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpConnectionPoolInitialCapacity = getInt(properties, env, "line.tcp.connection.pool.capacity", 64);
                 this.lineTcpTimestampAdapter = getLineTimestampAdaptor(properties, env, "line.tcp.timestamp");
                 this.lineTcpMsgBufferSize = getIntSize(properties, env, "line.tcp.msg.buffer.size", 32768);
-                this.lineTcpMaxMeasurementSize = getIntSize(properties, env, "line.tcp.max.measurement.size", 4096);
+                this.lineTcpMaxMeasurementSize = getIntSize(properties, env, "line.tcp.max.measurement.size", 32768);
                 if (lineTcpMaxMeasurementSize > lineTcpMsgBufferSize) {
                     throw new IllegalArgumentException(
                             "line.tcp.max.measurement.size (" + this.lineTcpMaxMeasurementSize + ") cannot be more than line.tcp.msg.buffer.size (" + this.lineTcpMsgBufferSize + ")");
@@ -755,7 +764,33 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.metricsEnabled = getBoolean(properties, env, "metrics.enabled", false);
 
             this.buildInformation = buildInformation;
+            this.binaryEncodingMaxLength = getInt(properties, env, "binarydata.encoding.maxlength", 32768);
         }
+    }
+
+    public static String confRoot(CharSequence dbRoot) {
+        if (dbRoot != null) {
+            int len = dbRoot.length();
+            int end = len;
+            boolean needsSlash = true;
+            for (int i = len - 1; i > -1; --i) {
+                if (dbRoot.charAt(i) == Files.SEPARATOR) {
+                    if (i == len - 1) {
+                        continue;
+                    }
+                    end = i + 1;
+                    needsSlash = false;
+                    break;
+                }
+            }
+            StringSink sink = Misc.getThreadLocalBuilder();
+            sink.put(dbRoot, 0, end);
+            if (needsSlash) {
+                sink.put(Files.SEPARATOR);
+            }
+            return sink.put(PropServerConfiguration.CONFIG_DIRECTORY).toString();
+        }
+        return null;
     }
 
     @Override
@@ -1551,7 +1586,17 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public CharSequence getRoot() {
-            return databaseRoot;
+            return root;
+        }
+
+        @Override
+        public CharSequence getDbDirectory() {
+            return dbDirectory;
+        }
+
+        @Override
+        public CharSequence getConfRoot() {
+            return confRoot;
         }
 
         @Override
@@ -1917,6 +1962,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getLatestByQueueCapacity() {
             return latestByQueueCapacity;
+        }
+
+        @Override
+        public int getBinaryEncodingMaxLength() {
+            return binaryEncodingMaxLength;
         }
     }
 
@@ -2600,6 +2650,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropTelemetryConfiguration implements TelemetryConfiguration {
+
+        @Override
+        public boolean getDisableCompletely() {
+            return telemetryDisableCompletely;
+        }
 
         @Override
         public boolean getEnabled() {

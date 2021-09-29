@@ -28,6 +28,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -168,7 +169,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
 
                 try (MemoryMA mem = Vm.getMAInstance()) {
 
-                    mem.of(FilesFacadeImpl.INSTANCE, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), pageSize);
+                    mem.of(FilesFacadeImpl.INSTANCE, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), pageSize, MemoryTag.MMAP_DEFAULT);
 
                     mem.putInt(columnCount);
                     mem.putInt(PartitionBy.NONE);
@@ -208,7 +209,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
 
                 try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path)) {
                     try (MemoryCMARW mem = Vm.getCMARWInstance()) {
-                        mem.smallFile(FilesFacadeImpl.INSTANCE, path);
+                        mem.smallFile(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT);
                         mem.jumpTo(0);
                         mem.putInt(columnCount);
                         mem.skip(len - 4);
@@ -217,7 +218,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                     try {
                         metadata.createTransitionIndex();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "Incorrect columnCount");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "Invalid metadata at ");
                     }
                 }
             }

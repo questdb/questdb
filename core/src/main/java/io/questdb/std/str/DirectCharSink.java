@@ -24,6 +24,7 @@
 
 package io.questdb.std.str;
 
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
@@ -36,7 +37,7 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
     private long hi;
 
     public DirectCharSink(long capacity) {
-        ptr = Unsafe.malloc(capacity);
+        ptr = Unsafe.malloc(capacity, MemoryTag.NATIVE_DEFAULT);
         this.capacity = capacity;
         this.lo = ptr;
         this.hi = ptr + capacity;
@@ -49,7 +50,7 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
 
     @Override
     public void close() {
-        Unsafe.free(ptr, capacity);
+        Unsafe.free(ptr, capacity, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Override
@@ -118,7 +119,7 @@ public class DirectCharSink extends AbstractCharSink implements MutableCharSink,
     }
 
     private void resize(long cap) {
-        long temp = Unsafe.realloc(ptr, capacity, cap);
+        long temp = Unsafe.realloc(ptr, capacity, cap, MemoryTag.NATIVE_DEFAULT);
         int len = (int) (lo - ptr);
         this.ptr = temp;
         this.capacity = cap;

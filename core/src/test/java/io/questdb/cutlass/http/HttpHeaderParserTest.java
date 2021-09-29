@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -57,7 +58,7 @@ public class HttpHeaderParserTest {
                 TestUtils.assertEquals("hello", hp.getContentDispositionName());
                 Assert.assertNull(hp.getContentDispositionFilename());
             } finally {
-                Unsafe.free(p, v.length());
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -74,7 +75,7 @@ public class HttpHeaderParserTest {
                 TestUtils.assertEquals("xyz.dat", hp.getContentDispositionFilename());
                 TestUtils.assertEquals("form-data", hp.getContentDisposition());
             } finally {
-                Unsafe.free(p, v.length());
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -91,7 +92,7 @@ public class HttpHeaderParserTest {
             } catch (HttpException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Malformed Content-Disposition header");
             } finally {
-                Unsafe.free(p, v.length());
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -108,7 +109,7 @@ public class HttpHeaderParserTest {
             } catch (HttpException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "missing value [key=name]");
             } finally {
-                Unsafe.free(p, v.length());
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -125,7 +126,7 @@ public class HttpHeaderParserTest {
             } catch (HttpException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "unclosed quote");
             } finally {
-                Unsafe.free(p, v.length());
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -140,7 +141,7 @@ public class HttpHeaderParserTest {
                 hp.parse(p, p + v.length(), false);
                 TestUtils.assertEquals("hello", hp.getContentDispositionName());
             } finally {
-                Unsafe.free(p, v.length());
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -157,7 +158,7 @@ public class HttpHeaderParserTest {
                 TestUtils.assertEquals("form-data", hp.getContentDisposition());
                 Assert.assertNull(hp.getContentDispositionFilename());
             } finally {
-                Unsafe.free(p, v.length());
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -173,7 +174,7 @@ public class HttpHeaderParserTest {
                 TestUtils.assertEquals("text/html", hp.getContentType());
                 TestUtils.assertEquals("utf-8", hp.getCharset());
             } finally {
-                Unsafe.free(p, v.length());
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -190,7 +191,7 @@ public class HttpHeaderParserTest {
             } catch (HttpException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Malformed Content-Type header");
             } finally {
-                Unsafe.free(p, v.length());
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
 
             }
         });
@@ -205,7 +206,7 @@ public class HttpHeaderParserTest {
             hp.parse(p, p + v.length(), false);
             TestUtils.assertEquals("text/html", hp.getContentType());
         } finally {
-            Unsafe.free(p, v.length());
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -219,7 +220,7 @@ public class HttpHeaderParserTest {
             TestUtils.assertEquals("text/html", hp.getContentType());
             TestUtils.assertEquals("\r\n------WebKitFormBoundaryQ3pdBTBXxEFUWDML", hp.getBoundary());
         } finally {
-            Unsafe.free(p, v.length());
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -232,7 +233,7 @@ public class HttpHeaderParserTest {
             hp.parse(p, p + v.length(), false);
             TestUtils.assertEquals("text/html", hp.getContentType());
         } finally {
-            Unsafe.free(p, v.length());
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -247,7 +248,7 @@ public class HttpHeaderParserTest {
                 hp.parse(p, p + request.length(), true);
                 Assert.assertNull(hp.getUrlParam("accept"));
             } finally {
-                Unsafe.free(p, request.length());
+                Unsafe.free(p, request.length(), MemoryTag.NATIVE_DEFAULT);
             }
         }
     }
@@ -264,7 +265,7 @@ public class HttpHeaderParserTest {
         } catch (HttpException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "header is too large");
         } finally {
-            Unsafe.free(p, v.length());
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -278,7 +279,7 @@ public class HttpHeaderParserTest {
         } catch (HttpException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "url is too long");
         } finally {
-            Unsafe.free(p, v.length());
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -294,7 +295,7 @@ public class HttpHeaderParserTest {
             } catch (HttpException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid query encoding");
             } finally {
-                Unsafe.free(p, v.length());
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -311,7 +312,7 @@ public class HttpHeaderParserTest {
             } catch (HttpException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid query encoding");
             } finally {
-                Unsafe.free(p, v.length());
+                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -329,7 +330,7 @@ public class HttpHeaderParserTest {
                     assertHeaders(hp);
                 }
             } finally {
-                Unsafe.free(p, request.length());
+                Unsafe.free(p, request.length(), MemoryTag.NATIVE_DEFAULT);
             }
         }
     }
@@ -342,7 +343,7 @@ public class HttpHeaderParserTest {
             hp.parse(p, p + v.length(), true);
             TestUtils.assertEquals("/xyz", hp.getUrl());
         } finally {
-            Unsafe.free(p, v.length());
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -355,7 +356,7 @@ public class HttpHeaderParserTest {
             TestUtils.assertEquals("'a'", hp.getUrlParam("x"));
             TestUtils.assertEquals("b", hp.getUrlParam("y"));
         } finally {
-            Unsafe.free(p, v.length());
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -370,7 +371,7 @@ public class HttpHeaderParserTest {
             TestUtils.assertEquals("ab ba", hp.getUrlParam("z"));
             TestUtils.assertEquals("2", hp.getUrlParam("w"));
         } finally {
-            Unsafe.free(p, v.length());
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -384,7 +385,7 @@ public class HttpHeaderParserTest {
             TestUtils.assertEquals("b c", hp.getUrlParam("y"));
             TestUtils.assertEquals("123", hp.getUrlParam("z"));
         } finally {
-            Unsafe.free(p, v.length());
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -397,7 +398,7 @@ public class HttpHeaderParserTest {
             TestUtils.assertEquals("a", hp.getUrlParam("x"));
             TestUtils.assertEquals("b c", hp.getUrlParam("y"));
         } finally {
-            Unsafe.free(p, v.length());
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -410,7 +411,7 @@ public class HttpHeaderParserTest {
             TestUtils.assertEquals("a", hp.getUrlParam("x"));
             TestUtils.assertEquals("b", hp.getUrlParam("y"));
         } finally {
-            Unsafe.free(p, v.length());
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -423,7 +424,7 @@ public class HttpHeaderParserTest {
             TestUtils.assertEquals("a", hp.getUrlParam("x"));
             TestUtils.assertEquals("b", hp.getUrlParam("y"));
         } finally {
-            Unsafe.free(p, v.length());
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -437,7 +438,7 @@ public class HttpHeaderParserTest {
             TestUtils.assertEquals("b", hp.getUrlParam("y"));
             Assert.assertNull(hp.getUrlParam("z"));
         } finally {
-            Unsafe.free(p, v.length());
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -452,7 +453,7 @@ public class HttpHeaderParserTest {
             TestUtils.assertEquals("a", hp.getUrlParam("x"));
             TestUtils.assertEquals("b", hp.getUrlParam("y"));
         } finally {
-            Unsafe.free(p, v.length());
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -464,7 +465,7 @@ public class HttpHeaderParserTest {
                 hp.parse(p, p + request.length(), true);
                 assertHeaders(hp);
             } finally {
-                Unsafe.free(p, request.length());
+                Unsafe.free(p, request.length(), MemoryTag.NATIVE_DEFAULT);
             }
         }
     }

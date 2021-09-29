@@ -55,7 +55,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         int plen = path.length();
         try {
             final FilesFacade ff = configuration.getFilesFacade();
-            try (MemoryA mem = Vm.getSmallAInstance(ff, BitmapIndexUtils.keyFileName(path, name))) {
+            try (MemoryA mem = Vm.getSmallAInstance(ff, BitmapIndexUtils.keyFileName(path, name), MemoryTag.MMAP_DEFAULT)) {
                 BitmapIndexWriter.initKeyMemory(mem, Numbers.ceilPow2(valueBlockCapacity));
             }
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), name));
@@ -195,7 +195,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 try (MemoryMARW mem = Vm.getMARWInstance()) {
                     try (Path path = new Path()) {
                         path.of(configuration.getRoot()).concat("x").put(".k").$();
-                        mem.wholeFile(configuration.getFilesFacade(), path);
+                        mem.wholeFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
                     }
 
                     long offset = BitmapIndexUtils.getKeyEntryOffset(0);
@@ -258,8 +258,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void munmap(long address, long size) {
-                    super.munmap(address, size);
+                public void munmap(long address, long size, int memoryTag) {
+                    super.munmap(address, size, memoryTag);
                     count++;
                 }
             }
@@ -317,8 +317,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     Path path = new Path();
                     MemoryCMARW mem = Vm.getSmallCMARWInstance(
                             configuration.getFilesFacade(),
-                            path.of(root).concat("x").put(".k").$()
-                    )
+                            path.of(root).concat("x").put(".k").$(),
+                            MemoryTag.MMAP_DEFAULT)
             ) {
                 // change sequence but not sequence check
                 long seq = mem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
@@ -623,7 +623,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 try (MemoryMARW mem = Vm.getMARWInstance()) {
                     try (Path path = new Path()) {
                         path.of(configuration.getRoot()).concat("x").put(".k").$();
-                        mem.smallFile(configuration.getFilesFacade(), path);
+                        mem.smallFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
                     }
 
                     long offset = BitmapIndexUtils.getKeyEntryOffset(0);
@@ -657,8 +657,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void munmap(long address, long size) {
-                    super.munmap(address, size);
+                public void munmap(long address, long size, int memoryTag) {
+                    super.munmap(address, size, memoryTag);
                     count++;
                 }
             }
@@ -716,8 +716,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     Path path = new Path();
                     MemoryCMARW mem = Vm.getSmallCMARWInstance(
                             configuration.getFilesFacade(),
-                            path.of(root).concat("x").put(".k").$()
-                    )
+                            path.of(root).concat("x").put(".k").$(),
+                            MemoryTag.MMAP_DEFAULT)
             ) {
                 // change sequence but not sequence check
                 long seq = mem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
@@ -773,14 +773,14 @@ public class BitmapIndexTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (MemoryMAR mem = Vm.getMARInstance()) {
 
-                mem.wholeFile(configuration.getFilesFacade(), path.concat("x.dat").$());
+                mem.wholeFile(configuration.getFilesFacade(), path.concat("x.dat").$(), MemoryTag.MMAP_DEFAULT);
 
                 for (int i = 0; i < N; i++) {
                     mem.putInt(rnd.nextPositiveInt() & (MOD - 1));
                 }
 
                 try (PagedSlidingReadOnlyMemory rwin = new PagedSlidingReadOnlyMemory()) {
-                    rwin.of(mem);
+                    rwin.of(mem, MemoryTag.MMAP_DEFAULT);
 
                     create(configuration, path.trimTo(plen), "x", N / MOD / 128);
                     try (BitmapIndexWriter writer = new BitmapIndexWriter()) {
@@ -1065,6 +1065,20 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 mem.putLong(300);
                 mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - mem.getAppendOffset());
             }
+
+            // Memory impl will round truncate size to the OS page size.
+            // Therefore, truncate file manually to below the expected file size
+
+            final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            try (Path path  = new Path()) {
+                path.of(configuration.getRoot()).concat("x").put(".k").$();
+                long fd = TableUtils.openFileRWOrFail(ff, path);
+                try {
+                    ff.truncate(fd, 64);
+                } finally {
+                    ff.close(fd);
+                }
+            }
             assertWriterConstructorFail("Key count");
         });
     }
@@ -1155,8 +1169,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             return Vm.getSmallCMARWInstance(
                     configuration.getFilesFacade(),
-                    path.of(configuration.getRoot()).concat("x").put(".k").$()
-            );
+                    path.of(configuration.getRoot()).concat("x").put(".k").$(),
+                    MemoryTag.MMAP_DEFAULT);
         }
     }
 

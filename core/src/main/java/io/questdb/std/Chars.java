@@ -27,13 +27,48 @@ package io.questdb.std;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.Numbers.hexDigits;
 
 public final class Chars {
+    static final char[] base64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toCharArray();
+
     private Chars() {
+    }
+
+    public static void base64Encode(BinarySequence sequence, final int maxLength, CharSink buffer) {
+        if (sequence == null) {
+            return;
+        }
+        final long len = Math.min(maxLength, sequence.length());
+        int pad = 0;
+        for (int i = 0; i < len; i += 3) {
+
+            int b = ((sequence.byteAt(i) & 0xFF) << 16) & 0xFFFFFF;
+            if (i + 1 < len) {
+                b |= (sequence.byteAt(i + 1) & 0xFF) << 8;
+            } else {
+                pad++;
+            }
+            if (i + 2 <len) {
+                b |= (sequence.byteAt(i + 2) & 0xFF);
+            } else {
+                pad++;
+            }
+
+            for (int j = 0; j < 4 - pad; j++) {
+                int c = (b & 0xFC0000) >> 18;
+                buffer.put(base64[c]);
+                b <<= 6;
+            }
+        }
+
+        for (int j = 0; j < pad; j++) {
+            buffer.put("=");
+        }
     }
 
     public static void asciiCopyTo(char[] chars, int start, int len, long dest) {
@@ -458,7 +493,7 @@ public final class Chars {
         if (value.charAt(0) != '.') {
             return true;
         }
-        return len == 1 || len == 2 && value.charAt(1) != '.';
+        return len == 2 && value.charAt(1) != '.';
     }
 
     public static CharSequence repeat(String s, int times) {

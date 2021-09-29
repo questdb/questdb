@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.network.NetworkFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 
 import java.io.Closeable;
@@ -42,7 +43,7 @@ public class HttpSqlExecutionInterruptor implements SqlExecutionInterruptor, Clo
         this.nf = configuration.getNetworkFacade();
         this.nIterationsPerCheck = configuration.getCountOfIterationsPerCheck();
         this.bufferSize = configuration.getBufferSize();
-        buffer = Unsafe.malloc(bufferSize);
+        buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
     }
 
     @Override
@@ -89,7 +90,7 @@ public class HttpSqlExecutionInterruptor implements SqlExecutionInterruptor, Clo
 
     @Override
     public void close() {
-        Unsafe.free(buffer, bufferSize);
+        Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_HTTP_CONN);
         buffer = 0;
         fd = -1;
     }

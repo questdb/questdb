@@ -34,7 +34,7 @@ public final class Rosti {
 
     public static long alloc(ColumnTypes types, long capacity) {
         final int columnCount = types.getColumnCount();
-        final long mem = Unsafe.malloc(4L * columnCount);
+        final long mem = Unsafe.malloc(4L * columnCount, MemoryTag.NATIVE_DEFAULT);
         try {
             long p = mem;
             for (int i = 0; i < columnCount; i++) {
@@ -43,16 +43,16 @@ public final class Rosti {
             }
             // this is not an exact size of memory allocated for Rosti, but this is useful to
             // track that we free these maps
-            Unsafe.recordMemAlloc(FAKE_ALLOC_SIZE);
+            Unsafe.recordMemAlloc(FAKE_ALLOC_SIZE, MemoryTag.NATIVE_DEFAULT);
             return alloc(mem, columnCount, Numbers.ceilPow2(capacity) - 1);
         } finally {
-            Unsafe.free(mem, 4L * columnCount);
+            Unsafe.free(mem, 4L * columnCount, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
     public static void free(long pRosti) {
         free0(pRosti);
-        Unsafe.recordMemAlloc(-FAKE_ALLOC_SIZE);
+        Unsafe.recordMemAlloc(-FAKE_ALLOC_SIZE, MemoryTag.NATIVE_DEFAULT);
     }
 
     private static native void free0(long pRosti);

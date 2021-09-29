@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -99,7 +100,7 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         }
         final Rnd rnd = new Rnd();
         final int bufferSize = 1024;
-        long buffer = Unsafe.malloc(bufferSize);
+        long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try (TableModel model = CairoTestUtils.getAllTypesModel(configuration, partitionBy)) {
             model.timestamp();
             CairoTestUtils.create(model);

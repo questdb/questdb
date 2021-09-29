@@ -33,23 +33,21 @@ public interface MemoryCARW extends MemoryCR, MemoryARW {
 
     default long putBin(BinarySequence value) {
         if (value != null) {
-            final long offset = getAppendOffset();
             final long len = value.length();
             long addr = appendAddressFor(len + Long.BYTES);
             Unsafe.getUnsafe().putLong(addr, len);
             value.copyTo(addr + Long.BYTES, 0, len);
-            return offset;
+            return getAppendOffset();
         }
         return putNullBin();
     }
 
     default long putBin(long from, long len) {
         if (len > 0) {
-            final long offset = getAppendOffset();
             long addr = appendAddressFor(len + Long.BYTES);
             Unsafe.getUnsafe().putLong(addr, len);
             Vect.memcpy(from, addr + Long.BYTES, len);
-            return offset;
+            return getAppendOffset();
         }
         return putNullBin();
     }
@@ -119,15 +117,13 @@ public interface MemoryCARW extends MemoryCR, MemoryARW {
     }
 
     default long putNullBin() {
-        final long offset = getAppendOffset();
         putLong(TableUtils.NULL_LEN);
-        return offset;
+        return getAppendOffset();
     }
 
     default long putNullStr() {
-        final long offset = getAppendOffset();
         putInt(TableUtils.NULL_LEN);
-        return offset;
+        return getAppendOffset();
     }
 
     default void putShort(short value) {
@@ -140,11 +136,10 @@ public interface MemoryCARW extends MemoryCR, MemoryARW {
 
     default long putStr(char value) {
         if (value != 0) {
-            final long offset = getAppendOffset();
             long addr = appendAddressFor(Integer.BYTES + Character.BYTES);
             Unsafe.getUnsafe().putInt(addr, 1);
             Unsafe.getUnsafe().putChar(addr + Integer.BYTES, value);
-            return offset;
+            return getAppendOffset();
         }
         return putNullStr();
     }
@@ -236,12 +231,11 @@ public interface MemoryCARW extends MemoryCR, MemoryARW {
     }
 
     default long putStrUnsafe(CharSequence value, int pos, int len) {
-        final long offset = getAppendOffset();
         final long storageLen = Vm.getStorageLength(len);
         final long addr = appendAddressFor(storageLen);
         Unsafe.getUnsafe().putInt(addr, len);
         Chars.copyStrChars(value, pos, len, addr + Integer.BYTES);
-        return offset;
+        return getAppendOffset();
     }
 
     void replacePage(long address, long size);

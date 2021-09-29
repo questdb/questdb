@@ -46,7 +46,7 @@ public class AbstractCairoTest {
 
     protected static final StringSink sink = new StringSink();
     protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
-    private final static Log LOG = LogFactory.getLog(AbstractCairoTest.class);
+    protected final static Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
@@ -63,6 +63,7 @@ public class AbstractCairoTest {
     protected static Metrics metrics = Metrics.enabled();
     protected static int capacity = -1;
     protected static int sampleByIndexSearchPageSize;
+    protected static int binaryEncodingMaxLength = -1;
     protected static CharSequence defaultMapType;
 
     @Rule
@@ -118,6 +119,11 @@ public class AbstractCairoTest {
 
             public int getSampleByIndexSearchPageSize() {
                 return sampleByIndexSearchPageSize > 0 ? sampleByIndexSearchPageSize : super.getSampleByIndexSearchPageSize();
+            }
+
+            @Override
+            public int getBinaryEncodingMaxLength() {
+                return binaryEncodingMaxLength > 0 ? binaryEncodingMaxLength : super.getBinaryEncodingMaxLength();
             }
 
             @Override

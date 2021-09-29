@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.griffin.engine.TestBinarySequence;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.FileNameExtractorCharSequence;
 import io.questdb.std.str.Path;
@@ -34,6 +35,8 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Random;
+import java.util.Base64;
 
 public class CharsTest {
     private static final FileNameExtractorCharSequence extractor = new FileNameExtractorCharSequence();
@@ -47,6 +50,34 @@ public class CharsTest {
     @Test
     public void testEmptyString() {
         TestUtils.assertEquals("", extractor.of(""));
+    }
+
+    @Test
+    public void testBase64Encode() {
+        final StringSink sink = new StringSink();
+        final TestBinarySequence testBinarySequence = new TestBinarySequence();
+        sink.clear();
+        Chars.base64Encode(testBinarySequence.of("this is a test".getBytes()), 100, sink);
+        Assert.assertEquals(sink.toString(), "dGhpcyBpcyBhIHRlc3Q=");
+        sink.clear();
+        Chars.base64Encode(testBinarySequence.of("this is a test".getBytes()), 4, sink);
+        Assert.assertEquals(sink.toString(), "dGhpcw==");
+        // ignore the null
+        Chars.base64Encode(null, 4, sink);
+        Assert.assertEquals(sink.toString(), "dGhpcw==");
+
+        // random part
+        Random rand = new Random(System.currentTimeMillis());
+        int len = rand.nextInt(100)+1;
+        byte[] bytes = new byte[len];
+        for (int i = 0; i < len; i++) {
+            bytes[i] = (byte)rand.nextInt(0xFF);
+        }
+        testBinarySequence.of(bytes);
+        sink.clear();
+        Chars.base64Encode(testBinarySequence, (int)testBinarySequence.length(), sink);
+        byte[] decoded = Base64.getDecoder().decode(sink.toString());
+        Assert.assertArrayEquals(bytes, decoded);
     }
 
     @Test
@@ -121,7 +152,7 @@ public class CharsTest {
         }
 
         String in = expected.toString();
-        long p = Unsafe.malloc(8 * 0xffff);
+        long p = Unsafe.malloc(8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
         try {
             byte[] bytes = in.getBytes(StandardCharsets.UTF_8);
             for (int i = 0, n = bytes.length; i < n; i++) {
@@ -131,7 +162,7 @@ public class CharsTest {
             Chars.utf8Decode(p, p + bytes.length, b);
             TestUtils.assertEquals(in, b.toString());
         } finally {
-            Unsafe.free(p, 8 * 0xffff);
+            Unsafe.free(p, 8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -144,7 +175,7 @@ public class CharsTest {
         }
 
         String in = expected.toString();
-        long p = Unsafe.malloc(8 * 0xffff);
+        long p = Unsafe.malloc(8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
         try {
             byte[] bytes = in.getBytes(StandardCharsets.UTF_8);
             for (int i = 0, n = bytes.length; i < n; i++) {
@@ -155,7 +186,7 @@ public class CharsTest {
             Chars.utf8DecodeZ(p, b);
             TestUtils.assertEquals(in, b.toString());
         } finally {
-            Unsafe.free(p, 8 * 0xffff);
+            Unsafe.free(p, 8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line;
 
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -144,12 +145,13 @@ public class LineProtoLexerTest {
 
     @Test
     public void testNoFieldValue2() {
-        assertError("measurement,tag=x f= 10000", LineProtoParser.EVT_FIELD_VALUE, LineProtoParser.ERROR_EMPTY, 20);
+        assertError("measurement,tag=x f= 10000", 0, 0, 0);
+        assertThat("measurement,tag=x f= 10000\n", "measurement,tag=x f= 10000\n");
     }
 
     @Test
     public void testNoFieldValue3() {
-        assertError("measurement,tag=x f=, 10000", LineProtoParser.EVT_FIELD_VALUE, LineProtoParser.ERROR_EMPTY, 20);
+        assertError("measurement,tag=x f=, 10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 21);
     }
 
     @Test
@@ -240,10 +242,12 @@ public class LineProtoLexerTest {
     @Test
     public void testSkipLine() {
         assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
+                        "measurement,tag=value3,tag2=value2 field=,field2=\"ok\"\n" +
                         "measurement,tag=value3,tag2=value2 field=-- error --\n" +
                         "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n",
                 "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
                         "measurement,tag=value3,tag2=value2 field=,field2=\"ok\"\n" +
+                        "measurement,tag=value3,tag2=value2 field= field2=\"not ok\"\n" +
                         "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n");
     }
 
@@ -280,7 +284,7 @@ public class LineProtoLexerTest {
 
     protected void assertError(CharSequence line, int state, int code, int position) throws LineProtoException {
         byte[] bytes = line.toString().getBytes(StandardCharsets.UTF_8);
-        long mem = Unsafe.malloc(bytes.length);
+        long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
             final int len = bytes.length;
             for (int i = 0; i < len; i++) {
@@ -298,17 +302,17 @@ public class LineProtoLexerTest {
                 Assert.assertEquals(position, lineAssemblingParser.errorPosition);
             }
         } finally {
-            Unsafe.free(mem, bytes.length);
+            Unsafe.free(mem, bytes.length, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
-    private void assertThat(CharSequence expected, CharSequence line) throws LineProtoException {
+    protected void assertThat(CharSequence expected, CharSequence line) throws LineProtoException {
         assertThat(expected, line.toString().getBytes(StandardCharsets.UTF_8));
     }
 
     protected void assertThat(CharSequence expected, byte[] line) throws LineProtoException {
         final int len = line.length;
-        long mem = Unsafe.malloc(line.length);
+        long mem = Unsafe.malloc(line.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < len; i++) {
                 Unsafe.getUnsafe().putByte(mem + i, line[i]);
@@ -345,7 +349,7 @@ public class LineProtoLexerTest {
             smallBufLexer.parseLast();
             TestUtils.assertEquals(expected, sink);
         } finally {
-            Unsafe.free(mem, len);
+            Unsafe.free(mem, len, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -401,7 +405,7 @@ public class LineProtoLexerTest {
 
         @Override
         public void onLineEnd(CharSequenceCache cache) {
-           sink.put('\n');
+            sink.put('\n');
 
             // assert that cached token match
             for (Map.Entry<Long, String> e : tokens.entrySet()) {

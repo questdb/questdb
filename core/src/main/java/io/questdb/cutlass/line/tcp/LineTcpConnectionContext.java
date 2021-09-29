@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ParseResult;
 import io.questdb.log.Log;
@@ -31,6 +32,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -61,7 +63,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         nf = configuration.getNetworkFacade();
         this.scheduler = scheduler;
         this.milliClock = configuration.getMillisecondClock();
-        recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize());
+        recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_DEFAULT);
         recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
         clear();
     }
@@ -76,7 +78,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     @Override
     public void close() {
         this.fd = -1;
-        Unsafe.free(recvBufStart, recvBufEnd - recvBufStart);
+        Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_DEFAULT);
         recvBufStart = recvBufEnd = recvBufPos = 0;
         protoParser.close();
         charSink.close();
@@ -137,7 +139,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
 
     private void doHandleDisconnectEvent() {
         if (protoParser.getBufferAddress() == recvBufEnd) {
-            LOG.error().$('[').$(fd).$("] buffer overflow [msgBufferSize=").$(recvBufEnd - recvBufStart).$(']').$();
+            LOG.error().$('[').$(fd).$("] buffer overflow [line.tcp.msg.buffer.size=").$(recvBufEnd - recvBufStart).$(']').$();
             return;
         }
 
@@ -213,8 +215,11 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                         break;
                     }
                 }
-            } catch (RuntimeException ex) {
-                LOG.error().$('[').$(fd).$("] could not process line data").$(ex).$();
+            } catch (CairoException ex) {
+                LOG.error().$('[').$(fd).$("] could not process line data [msg=").$(ex.getFlyweightMessage()).I$();
+                return IOContextResult.NEEDS_DISCONNECT;
+            } catch (Throwable ex) {
+                LOG.error().$('[').$(fd).$("] could not process line data [ex=").$(ex).I$();
                 return IOContextResult.NEEDS_DISCONNECT;
             }
         }

@@ -24,10 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.BuildInformation;
-import io.questdb.BuildInformationHolder;
-import io.questdb.DefaultTelemetryConfiguration;
-import io.questdb.TelemetryConfiguration;
+import io.questdb.*;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.*;
@@ -42,6 +39,7 @@ import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 public class DefaultCairoConfiguration implements CairoConfiguration {
 
     private final CharSequence root;
+    private final CharSequence confRoot;
 
     private final TextConfiguration textConfiguration = new DefaultTextConfiguration();
 
@@ -54,6 +52,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
+        this.confRoot = PropServerConfiguration.confRoot(root);
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
@@ -182,6 +181,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public CharSequence getRoot() {
         return root;
+    }
+
+    @Override
+    public CharSequence getDbDirectory() {
+        return PropServerConfiguration.DB_DIRECTORY;
+    }
+
+    @Override
+    public CharSequence getConfRoot() {
+        return confRoot;
     }
 
     @Override
@@ -549,5 +558,10 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getLatestByQueueCapacity() {
         return 32;
+    }
+
+    @Override
+    public int getBinaryEncodingMaxLength() {
+        return 32768;
     }
 }

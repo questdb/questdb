@@ -35,7 +35,7 @@ public final class Zip {
 
     static {
         Os.init();
-        gzipHeader = Unsafe.calloc(Numbers.ceilPow2(gzipHeaderLen));
+        gzipHeader = Unsafe.calloc(Numbers.ceilPow2(gzipHeaderLen), MemoryTag.NATIVE_DEFAULT);
         long p = gzipHeader;
         Unsafe.getUnsafe().putByte(p++, (byte) GZIP_MAGIC);
         Unsafe.getUnsafe().putByte(p++, (byte) (GZIP_MAGIC >> 8));

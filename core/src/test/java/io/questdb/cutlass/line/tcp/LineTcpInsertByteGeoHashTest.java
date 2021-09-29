@@ -29,17 +29,43 @@ import org.junit.Test;
 
 public class LineTcpInsertByteGeoHashTest extends LineTcpInsertGeoHashTest {
     @Test
-    public void testInsertMissingGeoHashHasNoEffect() throws Exception {
-        for (int b = 5; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b += 5) {
-            if (b > 5) {
-                setUp();
-            }
-            // NewLineProtoParser.putValue does not accept zero len entity values
-            assertGeoHash(b,
-                    "tracking geohash=,here=\"no\" 1000000000\n",
-                    "geohash\ttimestamp\n");
-            tearDown();
-        }
+    public void testInsertNoValueByteGeoHash() throws Exception {
+        assertGeoHash(5,
+                "tracking geohash=,here=\"no\" 1000000000\n",
+                "geohash\ttimestamp\there\n" +
+                        "\t1970-01-01T00:00:01.000000Z\tno\n");
+    }
+
+    @Test
+    public void testInsertNoValueShortGeoHash() throws Exception {
+        assertGeoHash(10,
+                "tracking geohash=,here=\"no\" 1000000000\n",
+                "geohash\ttimestamp\there\n" +
+                        "\t1970-01-01T00:00:01.000000Z\tno\n");
+    }
+
+    @Test
+    public void testInsertNoValueIntGeoHash() throws Exception {
+        assertGeoHash(30,
+                "tracking geohash=,here=\"no\" 1000000000\n",
+                "geohash\ttimestamp\there\n" +
+                        "\t1970-01-01T00:00:01.000000Z\tno\n");
+    }
+
+    @Test
+    public void testInsertNoValueLongGeoHash() throws Exception {
+        assertGeoHash(60,
+                "tracking geohash=,here=\"no\" 1000000000\n",
+                "geohash\ttimestamp\there\n" +
+                        "\t1970-01-01T00:00:01.000000Z\tno\n");
+    }
+
+    @Test
+    public void test() throws Exception {
+        assertGeoHash(10,
+                "tracking geohash=,here=\"no\" 1000000000\n",
+                "geohash\ttimestamp\there\n" +
+                        "\t1970-01-01T00:00:01.000000Z\tno\n");
     }
 
     @Override

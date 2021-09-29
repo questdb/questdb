@@ -113,6 +113,15 @@ public class LineTcpServer implements Closeable {
         Misc.free(dispatcher);
     }
 
+    public void setSchedulerListener(SchedulerListener listener) {
+        scheduler.setListener(listener);
+    }
+
+    @FunctionalInterface
+    public interface SchedulerListener {
+        void onEvent(CharSequence tableName, int event);
+    }
+
     private class LineTcpConnectionContextFactory implements IOContextFactory<LineTcpConnectionContext>, Closeable, EagerThreadSetup {
         private final ThreadLocal<WeakObjectPool<LineTcpConnectionContext>> contextPool;
         private boolean closed = false;

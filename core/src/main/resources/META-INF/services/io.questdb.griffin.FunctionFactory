@@ -251,6 +251,7 @@ io.questdb.griffin.engine.functions.cast.CastNullFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToSymbolFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToLong256FunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToBooleanFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastLongToGeoHashFunctionFactory
 
 # cast long256 to ...
 io.questdb.griffin.engine.functions.cast.CastLong256ToShortFunctionFactory
@@ -493,6 +494,7 @@ io.questdb.griffin.engine.functions.catalogue.ProcCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.RangeCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetKeywordsFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.TableMetadataCursorFactory
+io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory
 
 # concat()
 io.questdb.griffin.engine.functions.str.ConcatFunctionFactory
@@ -540,5 +542,8 @@ io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory
 
 # geohash functions
 io.questdb.griffin.engine.functions.geohash.GeoHashFromCoordinatesFunctionFactory
+
+# bin functions
+io.questdb.griffin.engine.functions.bin.Base64FunctionFactory
 
 io.questdb.griffin.engine.functions.catalogue.TypeOfFunctionFactory
