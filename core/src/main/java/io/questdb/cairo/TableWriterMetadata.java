@@ -37,6 +37,7 @@ public class TableWriterMetadata extends BaseRecordMetadata {
     private final int id;
     private int maxUncommittedRows;
     private long commitLag;
+    private final int metaFileSize;
 
     public TableWriterMetadata(FilesFacade ff, MemoryMR metaMem) {
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
@@ -71,6 +72,7 @@ public class TableWriterMetadata extends BaseRecordMetadata {
             }
             offset += Vm.getStorageLength(name);
         }
+        metaFileSize = (int)offset;
     }
 
     public int getSymbolMapCount() {
@@ -152,5 +154,9 @@ public class TableWriterMetadata extends BaseRecordMetadata {
 
     public void setCommitLag(long micros) {
         this.commitLag = micros;
+    }
+
+    public int getFileDataSize() {
+        return metaFileSize;
     }
 }

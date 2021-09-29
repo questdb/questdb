@@ -767,7 +767,7 @@ public class TableWriter implements Closeable {
     }
 
     public long getRawMetaMemorySize() {
-        return metaMem.size();
+        return metadata.getFileDataSize();
     }
 
     public long getRawTxnMemory() {
