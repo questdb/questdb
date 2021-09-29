@@ -948,10 +948,10 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP"),
                 new TypeVal(ColumnType.FLOAT, "NaN:FLOAT"),
                 new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE"),
-                new TypeVal(ColumnType.geohashWithPrecision(3), ":GEOHASH(3b)"),
-                new TypeVal(ColumnType.geohashWithPrecision(10), ":GEOHASH(2c)"),
-                new TypeVal(ColumnType.geohashWithPrecision(20), ":GEOHASH(4c)"),
-                new TypeVal(ColumnType.geohashWithPrecision(60), ":GEOHASH(12c)")};
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(3), ":GEOHASH(3b)"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(10), ":GEOHASH(2c)"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(20), ":GEOHASH(4c)"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(60), ":GEOHASH(12c)")};
 
         testAggregations(aggregateFunctions, aggregateColTypes);
     }

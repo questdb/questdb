@@ -24,6 +24,7 @@
 
 package io.questdb.network;
 
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSequenceZ;
@@ -75,7 +76,7 @@ public class NetTest {
         }).start();
 
         barrier.await();
-        Thread.sleep(500);
+        Os.sleep(500);
         Net.abortAccept(fileDescriptor.get());
         Assert.assertTrue(haltLatch.await(2, TimeUnit.SECONDS));
     }
@@ -110,10 +111,10 @@ public class NetTest {
         new Thread(() -> {
             try {
                 barrier.await();
-                long clientfd = Net.accept(fd);
-                Net.appendIP4(sink, Net.getPeerIP(clientfd));
-                Net.configureNoLinger(clientfd);
-                Net.close(clientfd);
+                long clientFd = Net.accept(fd);
+                Net.appendIP4(sink, Net.getPeerIP(clientFd));
+                Net.configureNoLinger(clientFd);
+                Net.close(clientFd);
             } catch (Exception e) {
                 threadFailed.set(true);
                 e.printStackTrace();
@@ -132,7 +133,7 @@ public class NetTest {
             if (sockFd >= 0) {
                 break;
             }
-            Thread.sleep(5);
+            Os.sleep(5);
         }
         Assert.assertEquals(0, sockFd);
         Assert.assertTrue(haltLatch.await(10, TimeUnit.SECONDS));
@@ -228,14 +229,14 @@ public class NetTest {
         Net.freeSockAddr(sockAddr);
 
         long serverFd = Net.accept(acceptFd);
-        long serverBuf = Unsafe.malloc(msgLen);
+        long serverBuf = Unsafe.malloc(msgLen, MemoryTag.NATIVE_DEFAULT);
         Assert.assertEquals(msgLen, Net.peek(serverFd, serverBuf, msgLen));
         lpsz.of(serverBuf);
         Assert.assertEquals(msg, lpsz.toString());
         Assert.assertEquals(msgLen, Net.recv(serverFd, serverBuf, msgLen));
         lpsz.of(serverBuf);
         Assert.assertEquals(msg, lpsz.toString());
-        Unsafe.free(serverBuf, msgLen);
+        Unsafe.free(serverBuf, msgLen, MemoryTag.NATIVE_DEFAULT);
         Net.close(serverFd);
 
         Net.close(acceptFd);
@@ -255,11 +256,11 @@ public class NetTest {
     }
 
     @Test
-    public void testReusePort() throws InterruptedException {
+    public void testReusePort() {
         long fd1 = Net.socketUdp();
         try {
             bindSocket(fd1);
-            Thread.sleep(1000L);
+            Os.sleep(1000L);
             long fd2 = Net.socketUdp();
             try {
                 bindSocket(fd2);

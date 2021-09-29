@@ -62,6 +62,15 @@ public class CharsTest {
     }
 
     @Test
+    public void testIsOnlyDecimals() {
+        Assert.assertTrue(Chars.isOnlyDecimals("9876543210123456789"));
+        Assert.assertFalse(Chars.isOnlyDecimals(""));
+        Assert.assertFalse(Chars.isOnlyDecimals(" "));
+        Assert.assertFalse(Chars.isOnlyDecimals("99 "));
+        Assert.assertFalse(Chars.isOnlyDecimals("987654321a123456789"));
+    }
+
+    @Test
     public void testNameFromPath() {
         StringBuilder name = new StringBuilder();
         name.append(separator).append("xyz").append(separator).append("dir1").append(separator).append("dir2").append(separator).append("this is my name");
@@ -112,7 +121,7 @@ public class CharsTest {
         }
 
         String in = expected.toString();
-        long p = Unsafe.malloc(8 * 0xffff);
+        long p = Unsafe.malloc(8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
         try {
             byte[] bytes = in.getBytes(StandardCharsets.UTF_8);
             for (int i = 0, n = bytes.length; i < n; i++) {
@@ -122,7 +131,7 @@ public class CharsTest {
             Chars.utf8Decode(p, p + bytes.length, b);
             TestUtils.assertEquals(in, b.toString());
         } finally {
-            Unsafe.free(p, 8 * 0xffff);
+            Unsafe.free(p, 8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -135,7 +144,7 @@ public class CharsTest {
         }
 
         String in = expected.toString();
-        long p = Unsafe.malloc(8 * 0xffff);
+        long p = Unsafe.malloc(8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
         try {
             byte[] bytes = in.getBytes(StandardCharsets.UTF_8);
             for (int i = 0, n = bytes.length; i < n; i++) {
@@ -146,7 +155,7 @@ public class CharsTest {
             Chars.utf8DecodeZ(p, b);
             TestUtils.assertEquals(in, b.toString());
         } finally {
-            Unsafe.free(p, 8 * 0xffff);
+            Unsafe.free(p, 8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

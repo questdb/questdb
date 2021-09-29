@@ -65,10 +65,10 @@ public class NullConstantTest {
         Assert.assertEquals(Long256NullConstant.INSTANCE.getLong(null), constant.getLong(null));
         Assert.assertEquals(Long256NullConstant.INSTANCE.getLong256A(null), constant.getLong256A(null));
         Assert.assertEquals(Long256NullConstant.INSTANCE.getLong256B(null), constant.getLong256B(null));
-        Assert.assertEquals(GeoHashes.NULL, constant.getGeoHashLong(null));
-        Assert.assertEquals(GeoHashes.BYTE_NULL, constant.getGeoHashByte(null));
-        Assert.assertEquals(GeoHashes.INT_NULL, constant.getGeoHashInt(null));
-        Assert.assertEquals(GeoHashes.SHORT_NULL, constant.getGeoHashShort(null));
+        Assert.assertEquals(GeoHashes.NULL, constant.getGeoLong(null));
+        Assert.assertEquals(GeoHashes.BYTE_NULL, constant.getGeoByte(null));
+        Assert.assertEquals(GeoHashes.INT_NULL, constant.getGeoInt(null));
+        Assert.assertEquals(GeoHashes.SHORT_NULL, constant.getGeoShort(null));
         Assert.assertNull(constant.getRecord(null));
 
         StringSink sink = new StringSink();

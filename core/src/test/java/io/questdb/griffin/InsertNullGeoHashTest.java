@@ -25,7 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import static io.questdb.griffin.InsertNullTest.expectedNullInserts;
@@ -69,10 +69,70 @@ public class InsertNullGeoHashTest extends AbstractGriffinTest {
         assertGeoHashQueryForAllValidBitSizes("where geohash != geohash", 0, false);
     }
 
+    @Test
+    public void testInsertGeoNullByte() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table g(a geohash(4b))", sqlExecutionContext);
+            compiler.compile("insert into g values (cast(null as geohash(5b)))", sqlExecutionContext);
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "g",
+                    sink,
+                    "a\n"
+            );
+        });
+    }
+
+    @Test
+    public void testInsertGeoNullShort() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table g(a geohash(12b))", sqlExecutionContext);
+            compiler.compile("insert into g values (cast(null as geohash(14b)))", sqlExecutionContext);
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "g",
+                    sink,
+                    "a\n"
+            );
+        });
+    }
+
+    @Test
+    public void testInsertGeoNullInt() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table g(a geohash(22b))", sqlExecutionContext);
+            compiler.compile("insert into g values (cast(null as geohash(24b)))", sqlExecutionContext);
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "g",
+                    sink,
+                    "a\n"
+            );
+        });
+    }
+
+    @Test
+    public void testInsertGeoNullLong() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table g(a geohash(42b))", sqlExecutionContext);
+            compiler.compile("insert into g values (cast(null as geohash(44b)))", sqlExecutionContext);
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "g",
+                    sink,
+                    "a\n"
+            );
+        });
+    }
+
     private void assertGeoHashQueryForAllValidBitSizes(String queryExtra,
                                                        int expectedEmptyLines,
                                                        boolean supportsRandomAccess) throws Exception {
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
             if (b > 1) {
                 setUp();
             }
@@ -82,7 +142,7 @@ public class InsertNullGeoHashTest extends AbstractGriffinTest {
                         "geohash " + queryExtra,
                         String.format(
                                 "create table geohash (geohash %s)",
-                                ColumnType.nameOf(ColumnType.geohashWithPrecision(b))),
+                                ColumnType.nameOf(ColumnType.getGeoHashTypeWithBits(b))),
                         null,
                         String.format(
                                 "insert into geohash select null from long_sequence(%d)",

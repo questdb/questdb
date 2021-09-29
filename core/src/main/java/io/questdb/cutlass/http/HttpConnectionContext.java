@@ -74,7 +74,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         this.multipartContentHeaderParser = new HttpHeaderParser(configuration.getMultipartHeaderBufferSize(), csPool);
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
         this.recvBufferSize = configuration.getRecvBufferSize();
-        this.recvBuffer = Unsafe.malloc(recvBufferSize);
+        this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
         this.responseSink = new HttpResponseSink(configuration);
         this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
@@ -118,7 +118,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         responseSink.close();
         headerParser.close();
         localValueMap.close();
-        Unsafe.free(recvBuffer, recvBufferSize);
+        Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
         if (this.pendingRetry) {
             LOG.error().$("Closed context with retry pending.").$();
         }
@@ -595,21 +595,24 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     }
 
     private boolean handleClientSend() {
-        assert resumeProcessor != null;
-        try {
-            responseSink.resumeSend();
-            resumeProcessor.resumeSend(this);
-            clear();
-            return true;
-        } catch (PeerIsSlowToReadException ignore) {
-            resumeProcessor.parkRequest(this);
-            LOG.debug().$("peer is slow reader").$();
-            dispatcher.registerChannel(this, IOOperation.WRITE);
-        } catch (PeerDisconnectedException ignore) {
-            handlePeerDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
-        } catch (ServerDisconnectException ignore) {
-            LOG.info().$("kicked out [fd=").$(fd).$(']').$();
-            dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_SEND);
+        if (resumeProcessor != null) {
+            try {
+                responseSink.resumeSend();
+                resumeProcessor.resumeSend(this);
+                clear();
+                return true;
+            } catch (PeerIsSlowToReadException ignore) {
+                resumeProcessor.parkRequest(this);
+                LOG.debug().$("peer is slow reader").$();
+                dispatcher.registerChannel(this, IOOperation.WRITE);
+            } catch (PeerDisconnectedException ignore) {
+                handlePeerDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
+            } catch (ServerDisconnectException ignore) {
+                LOG.info().$("kicked out [fd=").$(fd).$(']').$();
+                dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_SEND);
+            }
+        } else {
+            LOG.error().$("spurious write request [fd=").$(fd).I$();
         }
         return false;
     }

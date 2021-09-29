@@ -68,17 +68,18 @@ public final class TableUtils {
     public static final String FILE_SUFFIX_D = ".d";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
+    public static final DateFormat fmtDay;
+    public static final DateFormat fmtMonth;
+    public static final DateFormat fmtYear;
+    public static final String DEFAULT_PARTITION_NAME = "default";
+    public static final long META_OFFSET_COLUMN_TYPES = 128;
     static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
-    static final DateFormat fmtDay;
-    static final DateFormat fmtMonth;
-    static final DateFormat fmtYear;
-    static final String DEFAULT_PARTITION_NAME = "default";
     // transaction file structure
     static final long TX_OFFSET_TXN = 0;
-    static final long TX_OFFSET_MIN_TIMESTAMP = 24;
-    static final long TX_OFFSET_MAX_TIMESTAMP = 32;
+    public static final long TX_OFFSET_MIN_TIMESTAMP = 24;
+    public static final long TX_OFFSET_MAX_TIMESTAMP = 32;
     static final long TX_OFFSET_DATA_VERSION = 48;
     static final long TX_OFFSET_PARTITION_TABLE_VERSION = 56;
     static final long TX_OFFSET_TRANSACTION_LOG_TXN = 72;
@@ -107,9 +108,8 @@ public final class TableUtils {
     // INT - symbol map count, this is a variable part of transaction file
     // below this offset we will have INT values for symbol map size
     static final long META_OFFSET_PARTITION_BY = 4;
-    static final long META_COLUMN_DATA_SIZE = 32;
+    public static final long META_COLUMN_DATA_SIZE = 32;
     static final long META_COLUMN_DATA_RESERVED = 3;
-    static final long META_OFFSET_COLUMN_TYPES = 128;
     static final int META_FLAG_BIT_INDEXED = 1;
     static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
     static final String TODO_FILE_NAME = "_todo_";
@@ -161,7 +161,7 @@ public final class TableUtils {
 
         final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.$(), LOG) : 0;
         try (MemoryMARW mem = memory) {
-            mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$());
+            mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             mem.jumpTo(0);
             final int count = structure.getColumnCount();
             path.trimTo(rootLen);
@@ -213,7 +213,7 @@ public final class TableUtils {
                     symbolMapCount++;
                 }
             }
-            mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$());
+            mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L);
             resetTodoLog(ff, path, rootLen, mem);
             // allocate txn scoreboard
@@ -231,6 +231,10 @@ public final class TableUtils {
         }
     }
 
+    public static LPSZ dFile(Path path, CharSequence columnName) {
+        return path.concat(columnName).put(FILE_SUFFIX_D).$();
+    }
+
     public static long createTransitionIndex(
             MemoryR masterMeta,
             MemoryR slaveMeta,
@@ -242,7 +246,7 @@ public final class TableUtils {
         final long pTransitionIndex;
         final int size = n * 16;
 
-        long index = pTransitionIndex = Unsafe.calloc(size);
+        long index = pTransitionIndex = Unsafe.calloc(size, MemoryTag.NATIVE_DEFAULT);
         Unsafe.getUnsafe().putInt(index, size);
         Unsafe.getUnsafe().putInt(index + 4, masterColumnCount);
         index += 8;
@@ -301,7 +305,7 @@ public final class TableUtils {
         if (address == 0) {
             return;
         }
-        Unsafe.free(address, Unsafe.getUnsafe().getInt(address));
+        Unsafe.free(address, Unsafe.getUnsafe().getInt(address), MemoryTag.NATIVE_DEFAULT);
     }
 
     public static long getColumnHash(MemoryR metaMem, int columnIndex) {
@@ -351,6 +355,10 @@ public final class TableUtils {
 
     public static long getTxMemSize(int symbolWriterCount, int attachedPartitionsSize) {
         return getPartitionTableIndexOffset(symbolWriterCount, attachedPartitionsSize);
+    }
+
+    public static LPSZ iFile(Path path, CharSequence columnName) {
+        return path.concat(columnName).put(FILE_SUFFIX_I).$();
     }
 
     public static long getTxMemorySize(long txMem) {
@@ -447,12 +455,12 @@ public final class TableUtils {
         path.put(".lock").$();
     }
 
-    public static long mapRO(FilesFacade ff, long fd, long size) {
-        return mapRO(ff, fd, size, 0);
+    public static long mapRO(FilesFacade ff, long fd, long size, int memoryTag) {
+        return mapRO(ff, fd, size, 0, memoryTag);
     }
 
-    public static long mapRO(FilesFacade ff, long fd, long size, long offset) {
-        final long address = ff.mmap(fd, size, offset, Files.MAP_RO);
+    public static long mapRO(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
+        final long address = ff.mmap(fd, size, offset, Files.MAP_RO, memoryTag);
         if (address == FilesFacade.MAP_FAILED) {
             throw CairoException.instance(ff.errno())
                     .put("could not mmap ")
@@ -465,22 +473,22 @@ public final class TableUtils {
         return address;
     }
 
-    public static long mapRW(FilesFacade ff, long fd, long size) {
-        return mapRW(ff, fd, size, 0);
+    public static long mapRW(FilesFacade ff, long fd, long size, int memoryTag) {
+        return mapRW(ff, fd, size, 0, memoryTag);
     }
 
-    public static long mapRW(FilesFacade ff, long fd, long size, long offset) {
+    public static long mapRW(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
         allocateDiskSpace(ff, fd, size + offset);
-        long addr = ff.mmap(fd, size, offset, Files.MAP_RW);
+        long addr = ff.mmap(fd, size, offset, Files.MAP_RW, memoryTag);
         if (addr > -1) {
             return addr;
         }
         throw CairoException.instance(ff.errno()).put("could not mmap column [fd=").put(fd).put(", size=").put(size).put(']');
     }
 
-    public static long mapRWOrClose(FilesFacade ff, long fd, long size) {
+    public static long mapRWOrClose(FilesFacade ff, long fd, long size, int memoryTag) {
         try {
-            return TableUtils.mapRW(ff, fd, size);
+            return TableUtils.mapRW(ff, fd, size, memoryTag);
         } catch (CairoException e) {
             ff.close(fd);
             throw e;
@@ -493,9 +501,9 @@ public final class TableUtils {
             long prevAddress,
             long prevSize,
             long newSize,
-            int mapMode
-    ) {
-        final long page = ff.mremap(fd, prevAddress, prevSize, newSize, 0, mapMode);
+            int mapMode,
+            int memoryTag) {
+        final long page = ff.mremap(fd, prevAddress, prevSize, newSize, 0, mapMode, memoryTag);
         if (page == FilesFacade.MAP_FAILED) {
             int errno = ff.errno();
             // Closing memory will truncate size to current append offset.
@@ -533,6 +541,40 @@ public final class TableUtils {
         throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(']');
     }
 
+    /**
+     * path member variable has to be set to location of "top" file.
+     *
+     * @return number of rows column doesn't have when column was added to table that already had data.
+     */
+    public static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen, long buf, boolean failIfCouldNotRead) {
+        try {
+            if (ff.exists(topFile(path.chop$(), name))) {
+                final long fd = TableUtils.openRO(ff, path, LOG);
+                try {
+                    long n;
+                    if ((n = ff.read(fd, buf, 8, 0)) != 8) {
+                        if (failIfCouldNotRead) {
+                            throw CairoException.instance(Os.errno())
+                                    .put("could not read top of column [file=").put(path)
+                                    .put(", read=").put(n).put(']');
+                        } else {
+                            LOG.error().$("could not read top of column [file=").$(path)
+                                    .$(", read=").$(n)
+                                    .$(", errno=").$(ff.errno())
+                                    .I$();
+                        }
+                    }
+                    return Unsafe.getUnsafe().getLong(buf);
+                } finally {
+                    ff.close(fd);
+                }
+            }
+            return 0L;
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
     public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
         if (!ff.rename(src, dst)) {
             throw CairoException.instance(ff.errno()).put("could not rename ").put(src).put(" -> ").put(dst);
@@ -540,7 +582,7 @@ public final class TableUtils {
     }
 
     public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MemoryMARW mem) {
-        mem.smallFile(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$());
+        mem.smallFile(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
         mem.jumpTo(0);
         mem.putLong(24, 0); // txn check
         Unsafe.getUnsafe().storeFence();
@@ -672,11 +714,19 @@ public final class TableUtils {
         }
     }
 
-    public static void validate(FilesFacade ff, MemoryMR metaMem, LowerCaseCharSequenceIntHashMap nameIndex) {
+    public static void validate(
+            FilesFacade ff,
+            MemoryMR metaMem,
+            LowerCaseCharSequenceIntHashMap nameIndex,
+            int expectedVersion
+    ) {
         try {
             final int metaVersion = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
-            if (ColumnType.VERSION != metaVersion && metaVersion != 404) {
-                throw validationException(metaMem).put("Metadata version does not match runtime version");
+            if (expectedVersion != metaVersion) {
+                throw validationException(metaMem)
+                        .put("Metadata version does not match runtime version [expected=").put(expectedVersion)
+                        .put(", actual=").put(metaVersion)
+                        .put(']');
             }
 
             final int columnCount = metaMem.getInt(META_OFFSET_COUNT);
@@ -768,20 +818,31 @@ public final class TableUtils {
             long tempBuf
     ) {
         topFile(path, columnName);
-        final long fd = openRW(ff, path, LOG);
+        long fd = openRW(ff, path, LOG);
         try {
             //noinspection SuspiciousNameCombination
             Unsafe.getUnsafe().putLong(tempBuf, columnTop);
-            allocateDiskSpace(ff, fd, Long.BYTES);
-            if (ff.write(fd, tempBuf, Long.BYTES, 0) != Long.BYTES) {
-                throw CairoException.instance(ff.errno()).put("could not write top file [path=").put(path).put(']');
+            try {
+                allocateDiskSpace(ff, fd, Long.BYTES);
+                if (ff.write(fd, tempBuf, Long.BYTES, 0) != Long.BYTES) {
+                    throw CairoException.instance(ff.errno()).put("could not write top file [path=").put(path).put(']');
+                }
+            } catch (Throwable e) {
+                ff.close(fd);
+                fd = -1;
+                if (!ff.remove(path)) {
+                    LOG.error().$("could not remove top file, please delete manually [file=").$(path).I$();
+                }
+                throw e;
             }
         } finally {
-            ff.close(fd);
+            if (fd != -1) {
+                ff.close(fd);
+            }
         }
     }
 
-    static long readLongAtOffset(FilesFacade ff, Path path, long tempMem8b, long offset) {
+    public static long readLongAtOffset(FilesFacade ff, Path path, long tempMem8b, long offset) {
         final long fd = TableUtils.openRO(ff, path, LOG);
         try {
             if (ff.read(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
@@ -793,44 +854,12 @@ public final class TableUtils {
         }
     }
 
-    /**
-     * path member variable has to be set to location of "top" file.
-     *
-     * @return number of rows column doesn't have when column was added to table that already had data.
-     */
-    static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen, long buf) {
-        try {
-            if (ff.exists(topFile(path.chop$(), name))) {
-                final long fd = TableUtils.openRO(ff, path, LOG);
-                try {
-                    if (ff.read(fd, buf, 8, 0) != 8) {
-                        throw CairoException.instance(Os.errno()).put("Cannot read top of column ").put(path);
-                    }
-                    return Unsafe.getUnsafe().getLong(buf);
-                } finally {
-                    ff.close(fd);
-                }
-            }
-            return 0L;
-        } finally {
-            path.trimTo(plen);
-        }
-    }
-
-    static LPSZ dFile(Path path, CharSequence columnName) {
-        return path.concat(columnName).put(FILE_SUFFIX_D).$();
-    }
-
     static LPSZ transactionLogDir(Path path, long txn) {
         return path.concat("log").put('.').put(txn);
     }
 
     static LPSZ topFile(Path path, CharSequence columnName) {
         return path.concat(columnName).put(".top").$();
-    }
-
-    static LPSZ iFile(Path path, CharSequence columnName) {
-        return path.concat(columnName).put(FILE_SUFFIX_I).$();
     }
 
     static long getColumnFlags(MemoryR metaMem, int columnIndex) {
@@ -862,7 +891,7 @@ public final class TableUtils {
 
                 if (!ff.exists(path) || ff.remove(path)) {
                     try {
-                        mem.smallFile(ff, path);
+                        mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
                         mem.jumpTo(0);
                         return index;
                     } catch (CairoException e) {
@@ -892,7 +921,7 @@ public final class TableUtils {
                 path.put('.').put(swapIndex);
             }
             path.$();
-            mem.smallFile(ff, path);
+            mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
         } finally {
             path.trimTo(rootLen);
         }
@@ -932,7 +961,7 @@ public final class TableUtils {
         }
     }
 
-    static Timestamps.TimestampFloorMethod getPartitionFloor(int partitionBy) {
+    public static Timestamps.TimestampFloorMethod getPartitionFloor(int partitionBy) {
         switch (partitionBy) {
             case PartitionBy.DAY:
                 return Timestamps.FLOOR_DD;
@@ -975,7 +1004,7 @@ public final class TableUtils {
                 final long fd = TableUtils.openRO(ff, path, LOG);
                 try {
                     long fileSize = ff.length(fd);
-                    long mappedMem = mapRO(ff, fd, fileSize);
+                    long mappedMem = mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
                     try {
                         long minTimestamp;
                         long maxTimestamp = timestamp;
@@ -997,7 +1026,7 @@ public final class TableUtils {
                         }
                         return size;
                     } finally {
-                        ff.munmap(mappedMem, fileSize);
+                        ff.munmap(mappedMem, fileSize, MemoryTag.MMAP_DEFAULT);
                     }
                 } finally {
                     ff.close(fd);

@@ -160,23 +160,23 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
-    public byte getGeoHashByte(int col) {
-        return getFunction(col).getGeoHashByte(base);
+    public byte getGeoByte(int col) {
+        return getFunction(col).getGeoByte(base);
     }
 
     @Override
-    public short getGeoHashShort(int col) {
-        return getFunction(col).getGeoHashShort(base);
+    public short getGeoShort(int col) {
+        return getFunction(col).getGeoShort(base);
     }
 
     @Override
-    public int getGeoHashInt(int col) {
-        return getFunction(col).getGeoHashInt(base);
+    public int getGeoInt(int col) {
+        return getFunction(col).getGeoInt(base);
     }
 
     @Override
-    public long getGeoHashLong(int col) {
-        return getFunction(col).getGeoHashLong(base);
+    public long getGeoLong(int col) {
+        return getFunction(col).getGeoLong(base);
     }
 
     @Override

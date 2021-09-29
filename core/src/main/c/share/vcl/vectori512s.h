@@ -1547,7 +1547,7 @@ static inline Vec64c permute64(Vec64c const a) {
                     EList<uint16_t, 32> u = {{0}};       // list to return
                     for (int i = 0; i < 64; i += 2) {    // loop through even indexes
                         uint16_t ix = indexs[i] & 63;
-                        // source bytes with odd position are in opposite 16-bit word becase of 32-bit rotation
+                        // source bytes with odd position are in opposite 16-bit word because of 32-bit rotation
                         u.a[i>>1] = ((ix >> 1) ^ (ix & 1)) | (((ix & 1) ^ 1) << 5); 
                     }
                     return u;

@@ -159,22 +159,22 @@ public class SymbolFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHash() {
-        function.getGeoHashLong(null);
+    public void testGeoLong() {
+        function.getGeoLong(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashInt() {
-        function.getGeoHashInt(null);
+    public void testGeoInt() {
+        function.getGeoInt(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashByte() {
-        function.getGeoHashByte(null);
+    public void testGeoByte() {
+        function.getGeoByte(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoHashShor() {
-        function.getGeoHashShort(null);
+    public void testGeoShort() {
+        function.getGeoShort(null);
     }
 }

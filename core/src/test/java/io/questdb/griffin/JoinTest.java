@@ -2719,7 +2719,43 @@ public class JoinTest extends AbstractGriffinTest {
         }));
     }
 
-    private void testJoinWithGeohash() throws Exception {
+    @Test
+    public void testJoinOfTablesWithReservedWordsColNames() throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " x as i, " +
+                        " x*2 as \"in\", " +
+                        " x*3 as \"from\" " +
+                        " from long_sequence(3)" +
+                        ")",
+                sqlExecutionContext
+        );
+
+        assertSql("select \"in\", \"from\" from x",
+                "in\tfrom\n" +
+                "2\t3\n" +
+                "4\t6\n" +
+                "6\t9\n");
+
+        assertSql("select x.\"in\", x.\"from\", x1.\"in\", x1.\"from\" " +
+                "from x " +
+                "join x as x1 on x.i = x1.i",
+                "in\tfrom\tin1\tfrom1\n" +
+                "2\t3\t2\t3\n" +
+                "4\t6\t4\t6\n" +
+                "6\t9\t6\t9\n");
+
+        assertSql("select *, x.\"in\" + x1.\"from\" " +
+                        "from x " +
+                        "join x as x1 on x.i = x1.i",
+                "i\tin\tfrom\ti1\tin1\tfrom1\tcolumn\n" +
+                        "1\t2\t3\t1\t2\t3\t5\n" +
+                        "2\t4\t6\t2\t4\t6\t10\n" +
+                        "3\t6\t9\t3\t6\t9\t15\n");
+    }
+
+    private void testJoinWithGeoHash() throws Exception {
         testFullFat(() -> assertMemoryLeak(() -> {
             final String query = "with x1 as (select distinct * from x)," +
                     "y1 as (select distinct * from y) " +
@@ -2754,9 +2790,19 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compiler.setFullSatJoins(true);
+            sink.clear();
+            TestUtils.printSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink
+            );
+
+            System.out.println(sink);
+
+            compiler.setFullFatJoins(true);
             assertSql(query, expected);
-            compiler.setFullSatJoins(false);
+            compiler.setFullFatJoins(false);
             assertSql(query, expected);
         }));
     }
@@ -2798,9 +2844,9 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compiler.setFullSatJoins(true);
+            compiler.setFullFatJoins(true);
             assertSql(query, expected);
-            compiler.setFullSatJoins(false);
+            compiler.setFullFatJoins(false);
             assertSql(query, expected);
         }));
     }
@@ -3731,9 +3777,9 @@ public class JoinTest extends AbstractGriffinTest {
                     "g2 as (select distinct * from t2)" +
                     "select * from g1 lt join g2 on g1.geo4 = g2.geo4";
 
-            compiler.setFullSatJoins(true);
+            compiler.setFullFatJoins(true);
             assertSql(sql, expected);
-            compiler.setFullSatJoins(false);
+            compiler.setFullFatJoins(false);
             assertSql(sql, expected);
         });
     }
@@ -3741,7 +3787,7 @@ public class JoinTest extends AbstractGriffinTest {
     @Test
     public void testJoinWithGeohashCompactMap() throws Exception {
         defaultMapType = "compact";
-        testJoinWithGeohash();
+        testJoinWithGeoHash();
     }
 
     @Test
@@ -3753,7 +3799,7 @@ public class JoinTest extends AbstractGriffinTest {
     @Test
     public void testJoinWithGeohashFastMap() throws Exception {
         defaultMapType = "fast";
-        testJoinWithGeohash();
+        testJoinWithGeoHash();
     }
 
     @Test
@@ -3797,11 +3843,11 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     private void testFullFat(TestMethod method) throws Exception {
-        compiler.setFullSatJoins(true);
+        compiler.setFullFatJoins(true);
         try {
             method.run();
         } finally {
-            compiler.setFullSatJoins(false);
+            compiler.setFullFatJoins(false);
         }
     }
 

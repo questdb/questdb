@@ -30,12 +30,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.griffin.engine.functions.GeoHashFunction;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
-import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
+import io.questdb.griffin.engine.functions.*;
 import io.questdb.griffin.engine.functions.constants.Constants;
-import io.questdb.griffin.engine.functions.constants.GeoHashConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.ObjList;
@@ -48,7 +44,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
 
     private static final EqGeoHashGeoHashFunctionFactory factory = new EqGeoHashGeoHashFunctionFactory();
     private final Function geoByteNullNonConstFunction =
-            createGeoValueFunction(ColumnType.geohashWithPrecision(1), GeoHashes.BYTE_NULL, false);
+            createGeoValueFunction(ColumnType.getGeoHashTypeWithBits(1), GeoHashes.BYTE_NULL, false);
 
     private ObjList<Function> args;
 
@@ -61,26 +57,26 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testSameTypeAndValue() {
         createEqFunctionAndAssert(
-                0, ColumnType.geohashWithPrecision(31),
-                0, ColumnType.geohashWithPrecision(31),
+                0, ColumnType.getGeoHashTypeWithBits(31),
+                0, ColumnType.getGeoHashTypeWithBits(31),
                 true,
-                false);
+                false
+        );
     }
 
     @Test
     public void testSameTypeAndValueConst() {
         createEqFunctionAndAssertConst(
-                0, ColumnType.geohashWithPrecision(31),
-                0, ColumnType.geohashWithPrecision(31),
-                true,
-                true);
+                ColumnType.getGeoHashTypeWithBits(31),
+                ColumnType.getGeoHashTypeWithBits(31)
+        );
     }
 
     @Test
     public void testSameTypeAndValueNonConst() {
         createEqFunctionAndAssert(
-                0, ColumnType.geohashWithPrecision(31),
-                0, ColumnType.geohashWithPrecision(31),
+                0, ColumnType.getGeoHashTypeWithBits(31),
+                0, ColumnType.getGeoHashTypeWithBits(31),
                 true,
                 false);
     }
@@ -88,8 +84,8 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testDifferentTypeAndValue() {
         createEqFunctionAndAssert(
-                0, ColumnType.geohashWithPrecision(31),
-                10, ColumnType.geohashWithPrecision(12),
+                0, ColumnType.getGeoHashTypeWithBits(31),
+                10, ColumnType.getGeoHashTypeWithBits(12),
                 false,
                 true);
     }
@@ -97,8 +93,8 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testSameTypeDifferentValue() {
         createEqFunctionAndAssert(
-                0, ColumnType.geohashWithPrecision(31),
-                10, ColumnType.geohashWithPrecision(31),
+                0, ColumnType.getGeoHashTypeWithBits(31),
+                10, ColumnType.getGeoHashTypeWithBits(31),
                 false,
                 false);
     }
@@ -106,48 +102,49 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testDifferentTypeSameValue() {
         createEqFunctionAndAssert(
-                10, ColumnType.geohashWithPrecision(31),
-                10, ColumnType.geohashWithPrecision(30),
+                10, ColumnType.getGeoHashTypeWithBits(31),
+                10, ColumnType.getGeoHashTypeWithBits(30),
                 false,
-                true);
+                true
+        );
     }
 
     @Test
     public void testSameTypeSameNonConstInt() {
         createEqFunctionNonConstAndAssert(
-                (int)1E9, ColumnType.geohashWithPrecision(30),
-                (int)1E9, ColumnType.geohashWithPrecision(30),
-                true,
-                false);
+                (int) 1E9, ColumnType.getGeoHashTypeWithBits(30),
+                (int) 1E9, ColumnType.getGeoHashTypeWithBits(30),
+                true
+        );
     }
 
     @Test
     public void testSameTypeSameNonConstLong() {
         createEqFunctionNonConstAndAssert(
-                (long) 1E12, ColumnType.geohashWithPrecision(32),
-                (long) 1E12 + 1, ColumnType.geohashWithPrecision(32),
-                false,
-                false);
+                (long) 1E12, ColumnType.getGeoHashTypeWithBits(32),
+                (long) 1E12 + 1, ColumnType.getGeoHashTypeWithBits(32),
+                false
+        );
     }
 
     @Test
     public void testSameTypeSameNonConstShort() {
         short value = new Rnd().nextShort();
         createEqFunctionNonConstAndAssert(
-                value, ColumnType.geohashWithPrecision(15),
-                value + 1, ColumnType.geohashWithPrecision(15),
-                false,
-                false);
+                value, ColumnType.getGeoHashTypeWithBits(15),
+                value + 1, ColumnType.getGeoHashTypeWithBits(15),
+                false
+        );
     }
 
     @Test
     public void testSameTypeSameNonConstByte() {
         byte value = new Rnd().nextByte();
         createEqFunctionNonConstAndAssert(
-                value, ColumnType.geohashWithPrecision(2),
-                value, ColumnType.geohashWithPrecision(2),
-                true,
-                false);
+                value, ColumnType.getGeoHashTypeWithBits(2),
+                value, ColumnType.getGeoHashTypeWithBits(2),
+                true
+        );
     }
 
     @Test
@@ -167,8 +164,8 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNull3() {
         createEqFunctionAndAssert(
-                GeoHashes.NULL, ColumnType.geohashWithPrecision(1),
-                GeoHashes.NULL, ColumnType.geohashWithPrecision(1),
+                GeoHashes.NULL, ColumnType.getGeoHashTypeWithBits(1),
+                GeoHashes.NULL, ColumnType.getGeoHashTypeWithBits(1),
                 true,
                 false
         );
@@ -177,10 +174,10 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNull4() {
         createEqFunctionAndAssert(
-                GeoHashes.NULL, ColumnType.geohashWithPrecision(12),
-                GeoHashes.NULL, ColumnType.geohashWithPrecision(1),
-                false,
-                true
+                GeoHashes.NULL, ColumnType.getGeoHashTypeWithBits(12),
+                GeoHashes.NULL, ColumnType.getGeoHashTypeWithBits(1),
+                true,
+                false
         );
     }
 
@@ -194,16 +191,15 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNull6() {
         args.add(NullConstant.NULL);
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
-            args.setPos(1);
-            args.add(nullConstantForBitsPrecision(b));
+        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
+            args.extendAndSet(1, nullConstantForBitsPrecision(b));
             createEqFunctionAndAssert(true);
         }
     }
 
     @Test
     public void testNull7() {
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
             args.clear();
             args.add(nullConstantForBitsPrecision(b));
             args.add(NullConstant.NULL);
@@ -213,11 +209,11 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testNull8() {
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
             args.clear();
             args.add(nullConstantForBitsPrecision(b));
             args.add(nullConstantForBitsPrecision(((b + 1) % 60) + 1));
-            createEqFunctionAndAssert(false);
+            createEqFunctionAndAssert(true);
         }
     }
 
@@ -240,32 +236,30 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testConstConst1() {
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
             args.clear();
-            int type = ColumnType.geohashWithPrecision(b);
-            args.add(GeoHashConstant.newInstance(0, type));
-            args.add(GeoHashConstant.newInstance(0, type));
+            args.add(Constants.getGeoHashConstant(0, b));
+            args.add(Constants.getGeoHashConstant(0, b));
             createEqFunctionAndAssert(true);
         }
     }
 
     @Test
     public void testConstConst2() {
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
             args.clear();
-            int type = ColumnType.geohashWithPrecision(b);
-            args.add(GeoHashConstant.newInstance(1, type));
-            args.add(GeoHashConstant.newInstance(0, type));
+            args.add(Constants.getGeoHashConstant(0, b));
+            args.add(Constants.getGeoHashConstant(1, b));
             createEqFunctionAndAssert(false);
         }
     }
 
     @Test
     public void testConstConst3() {
-        for (int b = 1; b <= GeoHashes.MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
             args.clear();
-            args.add(GeoHashConstant.newInstance(1, ColumnType.geohashWithPrecision(b)));
-            args.add(GeoHashConstant.newInstance(1, ColumnType.geohashWithPrecision(((b + 1) % 60) + 1)));
+            args.add(Constants.getGeoHashConstant(1, b));
+            args.add(Constants.getGeoHashConstant(1, ((b + 1) % 60) + 1));
             createEqFunctionAndAssert(false);
         }
     }
@@ -274,9 +268,9 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     public void testConstHalfConst1() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table geohash as (" +
-                    "select " +
-                    "    cast('sp052w92p1' as GeOhAsH(50b)) geohash from long_sequence(1)" +
-                    ")",
+                            "select " +
+                            "    cast('sp052w92p1' as GeOhAsH(50b)) geohash from long_sequence(1)" +
+                            ")",
                     sqlExecutionContext);
             assertSql(
                     "geohash where cast('sp052w92p1p' as gEoHaSh(10c)) = geohash",
@@ -301,6 +295,15 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                             "11010001011\t11010001011\n"
             );
         });
+    }
+
+    @Test
+    public void testCastGeoHashToNullEqNull() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "select cast(null as geohash(1c)) = null",
+                "column\n" +
+                        "true\n"
+        ));
     }
 
     @Test
@@ -333,46 +336,46 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
         createEqFunctionAndAssert(expectConst, expectedEq);
     }
 
-    private void createEqFunctionNonConstAndAssert(long hash1, int typep1, long hash2, int typep2, boolean expectedEq, boolean expectConst) {
+    private void createEqFunctionNonConstAndAssert(long hash1, int typep1, long hash2, int typep2, boolean expectedEq) {
         args.add(createGeoValueFunction(typep1, hash1, false));
         args.add(createGeoValueFunction(typep2, hash2, false));
-        createEqFunctionAndAssert(expectConst, expectedEq);
+        createEqFunctionAndAssert(false, expectedEq);
     }
 
-    private void createEqFunctionAndAssertConst(long hash1, int typep1, long hash2, int typep2, boolean expectedEq, boolean expectConst) {
-        args.add(createGeoValueFunction(typep1, hash1, true));
-        args.add(createGeoValueFunction(typep2, hash2, true));
-        createEqFunctionAndAssert(expectConst, expectedEq);
+    private void createEqFunctionAndAssertConst(int typep1, int typep2) {
+        args.add(createGeoValueFunction(typep1, 0, true));
+        args.add(createGeoValueFunction(typep2, 0, true));
+        createEqFunctionAndAssert(true, true);
     }
 
     private static Function createGeoValueFunction(int typep1, long hash1, boolean isConstant) {
-        switch (ColumnType.sizeOf(typep1)) {
-            case 1:
-                return new EasyGeoHashFunction(typep1, isConstant) {
+        switch (ColumnType.tagOf(typep1)) {
+            case ColumnType.GEOBYTE:
+                return new EasyGeoByteFunction(typep1, isConstant) {
                     @Override
-                    public byte getGeoHashByte(Record rec) {
+                    public byte getGeoByte(Record rec) {
                         return (byte) hash1;
                     }
                 };
-            case 2:
-                return new EasyGeoHashFunction(typep1, isConstant) {
+            case ColumnType.GEOSHORT:
+                return new EasyGeoShortFunction(typep1, isConstant) {
                     @Override
-                    public short getGeoHashShort(Record rec) {
+                    public short getGeoShort(Record rec) {
                         return (short) hash1;
                     }
                 };
-            case 4:
-                return new EasyGeoHashFunction(typep1, isConstant) {
+            case ColumnType.GEOINT:
+                return new EasyGeoIntFunction(typep1, isConstant) {
                     @Override
-                    public int getGeoHashInt(Record rec) {
+                    public int getGeoInt(Record rec) {
                         return (int) hash1;
                     }
                 };
 
-            case 8:
-                return new EasyGeoHashFunction(typep1, isConstant) {
+            case ColumnType.GEOLONG:
+                return new EasyGeoLongFunction(typep1, isConstant) {
                     @Override
-                    public long getGeoHashLong(Record rec) {
+                    public long getGeoLong(Record rec) {
                         return hash1;
                     }
                 };
@@ -381,7 +384,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     private static Function nullConstantForBitsPrecision(int bits) {
-        return Constants.getNullConstant(ColumnType.geohashWithPrecision(bits));
+        return Constants.getNullConstant(ColumnType.getGeoHashTypeWithBits(bits));
     }
 
     private void createEqFunctionAndAssert(boolean expectedEq) {
@@ -389,47 +392,73 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     private void createEqFunctionAndAssert(boolean isConstant, boolean expectedEq) {
-        Function func =  factory.newInstance(-1, args, null, null, null);
-        Assert.assertEquals(expectedEq, func.getBool(null));
-        Assert.assertEquals(isConstant, func.isConstant());
-        if (func instanceof NegatableBooleanFunction) {
-            try {
-                NegatingFunctionFactory nf = new NegatingFunctionFactory("noteq", factory);
-                func = nf.newInstance(-1, args, null, null, null);
-                Assert.assertEquals(!expectedEq, func.getBool(null));
-            } catch (SqlException e) {
-                e.printStackTrace();
-                Assert.fail();
+        try {
+            Function func = factory.newInstance(-1, args, null, null, null);
+            Assert.assertEquals(expectedEq, func.getBool(null));
+            Assert.assertEquals(isConstant, func.isConstant());
+            if (func instanceof NegatableBooleanFunction) {
+                try {
+                    NegatingFunctionFactory nf = new NegatingFunctionFactory("noteq", factory);
+                    func = nf.newInstance(-1, args, null, null, null);
+                    Assert.assertEquals(!expectedEq, func.getBool(null));
+                } catch (SqlException e) {
+                    e.printStackTrace();
+                    Assert.fail();
+                }
             }
+        } catch (SqlException e) {
+            Assert.fail(e.getMessage());
         }
     }
 
-    private static class EasyGeoHashFunction extends GeoHashFunction {
+    private abstract static class EasyGeoByteFunction extends GeoByteFunction {
         private final boolean isConst;
 
-        protected EasyGeoHashFunction(int type, boolean isConst) {
+        protected EasyGeoByteFunction(int type, boolean isConst) {
             super(type);
             this.isConst = isConst;
         }
 
         @Override
-        public byte getGeoHashByte(Record rec) {
-            throw new UnsupportedOperationException();
+        public boolean isConstant() {
+            return isConst;
+        }
+    }
+
+    private abstract static class EasyGeoIntFunction extends GeoIntFunction {
+        private final boolean isConst;
+
+        protected EasyGeoIntFunction(int type, boolean isConst) {
+            super(type);
+            this.isConst = isConst;
         }
 
         @Override
-        public short getGeoHashShort(Record rec) {
-            throw new UnsupportedOperationException();
+        public boolean isConstant() {
+            return isConst;
+        }
+    }
+
+    private abstract static class EasyGeoShortFunction extends GeoShortFunction {
+        private final boolean isConst;
+
+        protected EasyGeoShortFunction(int type, boolean isConst) {
+            super(type);
+            this.isConst = isConst;
         }
 
         @Override
-        public int getGeoHashInt(Record rec) {
-            throw new UnsupportedOperationException();
+        public boolean isConstant() {
+            return isConst;
         }
+    }
 
-        @Override
-        public long getGeoHashLong(Record rec) {
-            throw new UnsupportedOperationException();
+    private abstract static class EasyGeoLongFunction extends GeoLongFunction {
+        private final boolean isConst;
+
+        protected EasyGeoLongFunction(int type, boolean isConst) {
+            super(type);
+            this.isConst = isConst;
         }
 
         @Override

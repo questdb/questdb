@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.std.Numbers;
-import io.questdb.std.Unsafe;
 
 public final class LongNullUtils {
     private static final long[] LONG_NULLs = new long[ColumnType.MAX];
@@ -37,7 +36,6 @@ public final class LongNullUtils {
     }
 
     static {
-        long buffer = Unsafe.malloc(8);
         for (int i = 0, n = LONG_NULLs.length; i < n; i++) {
             switch (i) {
                 case ColumnType.LONG:
@@ -52,18 +50,17 @@ public final class LongNullUtils {
                     break;
 
                 case ColumnType.FLOAT:
-                    Unsafe.getUnsafe().putLong(buffer, 0L);
-                    Unsafe.getUnsafe().putFloat(buffer, Float.NaN);
-                    LONG_NULLs[i] = Unsafe.getUnsafe().getLong(buffer);
+                    LONG_NULLs[i] = Float.floatToIntBits(Float.NaN);
                     break;
 
                 case ColumnType.DOUBLE:
-                    Unsafe.getUnsafe().putLong(buffer, 0L);
-                    Unsafe.getUnsafe().putDouble(buffer, Double.NaN);
-                    LONG_NULLs[i] = Unsafe.getUnsafe().getLong(buffer);
+                    LONG_NULLs[i] = Double.doubleToLongBits(Double.NaN);
                     break;
 
-                case ColumnType.GEOHASH:
+                case ColumnType.GEOBYTE:
+                case ColumnType.GEOSHORT:
+                case ColumnType.GEOINT:
+                case ColumnType.GEOLONG:
                     LONG_NULLs[i] = GeoHashes.NULL;
                     break;
 
@@ -72,7 +69,5 @@ public final class LongNullUtils {
                     break;
             }
         }
-
-        Unsafe.free(buffer, 8);
     }
 }

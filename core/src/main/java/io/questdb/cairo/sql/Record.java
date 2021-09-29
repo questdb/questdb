@@ -276,42 +276,42 @@ public interface Record {
     }
 
     /**
-     * Gets the value of a byte geohash column by index
+     * Gets the value of a byte GeoHash column by index
      *
      * @param col numeric index of the column
      * @return geohash
      */
-    default byte getGeoHashByte(int col) {
+    default byte getGeoByte(int col) {
         throw new UnsupportedOperationException();
     }
 
     /**
-     * Gets the value of a short geohash column by index
+     * Gets the value of a short GeoHash column by index
      *
      * @param col numeric index of the column
      * @return geohash
      */
-    default short getGeoHashShort(int col) {
+    default short getGeoShort(int col) {
         throw new UnsupportedOperationException();
     }
 
     /**
-     * Gets the value of an int geohash column by index
+     * Gets the value of an int GeoHash column by index
      *
      * @param col numeric index of the column
      * @return geohash
      */
-    default int getGeoHashInt(int col) {
+    default int getGeoInt(int col) {
         throw new UnsupportedOperationException();
     }
 
     /**
-     * Gets the value of a long geohash column by index
+     * Gets the value of a long GeoHash column by index
      *
      * @param col numeric index of the column
      * @return geohash
      */
-    default long getGeoHashLong(int col) {
+    default long getGeoLong(int col) {
         throw new UnsupportedOperationException();
     }
 

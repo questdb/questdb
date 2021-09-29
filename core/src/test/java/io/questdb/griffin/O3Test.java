@@ -63,7 +63,7 @@ public class O3Test extends AbstractO3Test {
     }
 
     @After
-    public void tearDown4() throws InterruptedException {
+    public void tearDown4() {
         int count = Vect.getPerformanceCountersCount();
         if (count > 0) {
             tstData.setLength(0);
@@ -76,7 +76,7 @@ public class O3Test extends AbstractO3Test {
             }
             tstData.append(total);
 
-            Thread.sleep(10);
+            Os.sleep(10);
             System.err.flush();
             System.err.println(tstData);
             System.err.flush();
@@ -263,7 +263,7 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testColumnTopMidMergeBlankGeohash() throws Exception {
+    public void testColumnTopMidMergeBlankGeoHash() throws Exception {
         executeVanilla(O3Test::testColumnTopMidMergeBlankColumnGeohash0);
     }
 
@@ -387,7 +387,7 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testOOOFollowedByAnotherOOO() throws Exception {
+    public void testOOOFollowedByAnotherOOOParallel() throws Exception {
         executeWithPool(4, O3Test::testOooFollowedByAnotherOOO0);
     }
 

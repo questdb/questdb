@@ -88,14 +88,14 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
 
         public ClassCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
             super(metadata);
-            this.tempMem = Unsafe.malloc(Integer.BYTES);
+            this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
             this.cursor = new ClassCatalogueCursor(configuration, path, tempMem);
         }
 
         @Override
         public void close() {
             Misc.free(path);
-            Unsafe.free(tempMem, Integer.BYTES);
+            Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
 
         @Override

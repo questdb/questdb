@@ -100,7 +100,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     public void close() {
         clear();
         if (bufCapacity > 0) {
-            Unsafe.free(buf, bufCapacity);
+            Unsafe.free(buf, bufCapacity, MemoryTag.NATIVE_DEFAULT);
             bufCapacity = 0;
         }
     }
@@ -200,10 +200,10 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         final int l = tag.length() * 2;
         final long n = bufSize + l;
         if (n > bufCapacity) {
-            long ptr = Unsafe.malloc(n * 2);
+            long ptr = Unsafe.malloc(n * 2, MemoryTag.NATIVE_DEFAULT);
             Vect.memcpy(buf, ptr, bufSize);
             if (bufCapacity > 0) {
-                Unsafe.free(buf, bufCapacity);
+                Unsafe.free(buf, bufCapacity, MemoryTag.NATIVE_DEFAULT);
             }
             buf = ptr;
             bufCapacity = n * 2;

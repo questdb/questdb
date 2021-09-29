@@ -15,7 +15,7 @@
   </a>
 </p>
 
-简体中文 | [English](https://github.com/questdb/questdb)
+简体中文 | [English](https://github.com/questdb/questdb) | [العربية](README.ar-dz.md)
 
 # QuestDB
 

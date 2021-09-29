@@ -99,7 +99,7 @@ public class LogFactoryTest {
                     logger.xinfo().$("test ").$(' ').$(i).$();
                 }
 
-                Thread.sleep(100);
+                Os.sleep(100);
                 Assert.assertTrue(x.length() > 0);
                 TestUtils.assertEquals(x, y);
             } finally {
@@ -170,7 +170,7 @@ public class LogFactoryTest {
                     logger.xerror().$("test ").$(i).$();
                 }
 
-                Thread.sleep(100);
+                Os.sleep(100);
 
                 Assert.assertEquals(0, x.length());
                 Assert.assertEquals(9890, y.length());
@@ -179,7 +179,7 @@ public class LogFactoryTest {
                     logger.xinfo().$("test ").$(i).$();
                 }
 
-                Thread.sleep(100);
+                Os.sleep(100);
 
                 Assert.assertEquals(9890, x.length());
                 Assert.assertEquals(9890, y.length());
@@ -218,7 +218,7 @@ public class LogFactoryTest {
             logger1.xinfo().$("this is for network").$();
 
             // let async writer catch up in a busy environment
-            Thread.sleep(100);
+            Os.sleep(100);
 
             Assert.assertEquals("this is for network" + Misc.EOL, TestUtils.readStringFromFile(a));
             Assert.assertEquals("this is for std" + Misc.EOL, TestUtils.readStringFromFile(b));
@@ -239,6 +239,7 @@ public class LogFactoryTest {
         }
     }
 
+    // todo: this test flaps
     @Test
     public void testRollingFileWriterByDay() throws Exception {
         testRollOnDate("mylog-${date:yyyy-MM-dd}.log", 24 * 60000, "day", "mylog-2015-05");
@@ -366,7 +367,7 @@ public class LogFactoryTest {
                     logger.xinfo().$("test ").$(' ').$(i).$();
                 }
 
-                Thread.sleep(100);
+                Os.sleep(100);
             } finally {
                 factory.haltThread();
             }
@@ -416,7 +417,7 @@ public class LogFactoryTest {
                     logger.xinfo().$("test ").$(' ').$(i).$();
                 }
 
-                Thread.sleep(1000);
+                Os.sleep(1000);
             } finally {
                 factory.haltThread();
             }

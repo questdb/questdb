@@ -28,10 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -112,7 +109,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
                 Assert.assertEquals(N, count);
 
-                mem.smallFile(configuration.getFilesFacade(), path);
+                mem.smallFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
 
                 // keep txn file parameters
                 long offset = configuration.getFilesFacade().length(mem.getFd());
@@ -134,7 +131,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
                 // restore txn file to its former glory
 
-                mem.smallFile(configuration.getFilesFacade(), path);
+                mem.smallFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
                 mem.jumpTo(TableUtils.TX_OFFSET_TXN);
                 mem.putLong(txn);
                 mem.jumpTo(offset);
@@ -171,23 +168,6 @@ public class TableReadFailTest extends AbstractCairoTest {
                 Assert.assertEquals(2 * N, count);
             }
         });
-    }
-
-    @Test
-    public void testTodoPresentConstructor() throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
-
-            @Override
-            public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.TODO_FILE_NAME)) {
-                    return -1;
-                }
-                return super.openRO(name);
-            }
-
-        };
-
-        assertConstructorFail(ff);
     }
 
     @Test

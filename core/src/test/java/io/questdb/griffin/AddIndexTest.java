@@ -63,6 +63,8 @@ public class AddIndexTest extends AbstractGriffinTest {
         });
     }
 
+
+
     @Test
     public void testBeforeAndAfterIndex() throws Exception {
         final String expected = "sym\tprice\tts\n" +
@@ -99,6 +101,70 @@ public class AddIndexTest extends AbstractGriffinTest {
                 expected,
                 true
 
+        );
+    }
+
+    @Test
+    public void testAlterTableAlterColumnSyntaxError1() throws Exception {
+        assertFailure(
+                "alter table trades alter columnz",
+                "create table trades as (\n" +
+                        "    select \n" +
+                        "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360) ts \n" +
+                        "    from long_sequence(30)\n" +
+                        ") timestamp(ts) partition by DAY",
+                25,
+                "'column' or 'partition' expected"
+        );
+    }
+
+    @Test
+    public void testAlterTableDropColumnSyntaxError1() throws Exception {
+        assertFailure(
+                "alter table trades drop bucket",
+                "create table trades as (\n" +
+                        "    select \n" +
+                        "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360) ts \n" +
+                        "    from long_sequence(30)\n" +
+                        ") timestamp(ts) partition by DAY",
+                24,
+                "'column' or 'partition' expected"
+        );
+    }
+
+    @Test
+    public void testAlterTableAttachPartitionSyntaxError1() throws Exception {
+        assertFailure(
+                "alter table trades attach bucket",
+                "create table trades as (\n" +
+                        "    select \n" +
+                        "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360) ts \n" +
+                        "    from long_sequence(30)\n" +
+                        ") timestamp(ts) partition by DAY",
+                26,
+                "'partition' expected"
+        );
+    }
+
+    @Test
+    public void testAlterTableRenameColumnSyntaxError1() throws Exception {
+        assertFailure(
+                "alter table trades rename bucket",
+                "create table trades as (\n" +
+                        "    select \n" +
+                        "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360) ts \n" +
+                        "    from long_sequence(30)\n" +
+                        ") timestamp(ts) partition by DAY",
+                26,
+                "'column' expected"
         );
     }
 }

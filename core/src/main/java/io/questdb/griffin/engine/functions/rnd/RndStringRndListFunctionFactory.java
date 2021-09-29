@@ -33,10 +33,7 @@ import io.questdb.cairo.vm.api.MemoryAR;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.std.IntList;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 
 public class RndStringRndListFunctionFactory implements FunctionFactory {
     @Override
@@ -48,8 +45,8 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
 
         // todo: limit pages
-        MemoryAR strMem = Vm.getARInstance(1024 * 1024, Integer.MAX_VALUE);
-        MemoryAR idxMem = Vm.getARInstance(1024 * 1024, Integer.MAX_VALUE);
+        MemoryAR strMem = Vm.getARInstance(1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+        MemoryAR idxMem = Vm.getARInstance(1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
 
         final int lo = args.getQuick(1).getInt(null);
         final int hi = args.getQuick(2).getInt(null);

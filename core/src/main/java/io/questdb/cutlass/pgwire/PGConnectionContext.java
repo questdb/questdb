@@ -157,6 +157,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private NamedStatementWrapper wrapper;
     private AssociativeCache<TypesAndSelect> typesAndSelectCache;
     private WeakAutoClosableObjectPool<TypesAndSelect> typesAndSelectPool;
+    private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     // this is a reference to types either from the context or named statement, where it is provided
     private IntList activeBindVariableTypes;
     private boolean sendParameterDescription;
@@ -172,9 +173,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.nf = configuration.getNetworkFacade();
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
-        this.recvBuffer = Unsafe.malloc(this.recvBufferSize);
+        this.recvBuffer = Unsafe.malloc(this.recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
         this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
-        this.sendBuffer = Unsafe.malloc(this.sendBufferSize);
+        this.sendBuffer = Unsafe.malloc(this.sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
         this.sendBufferPtr = sendBuffer;
         this.sendBufferLimit = sendBuffer + sendBufferSize;
         this.characterStore = new CharacterStore(
@@ -200,6 +201,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.namedStatementMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
         this.pendingWriters = new CharSequenceObjHashMap<>(configuration.getPendingWritersCacheSize());
         this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
+        this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
     }
 
     public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
@@ -276,6 +278,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         namedPortalMap.clear();
         bindVariableService.clear();
         bindVariableTypes.clear();
+        binarySequenceParamsPool.clear();
         resumeProcessor = null;
         completed = true;
         clearCursorAndFactory();
@@ -293,8 +296,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         clear();
         this.fd = -1;
         sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
-        Unsafe.free(sendBuffer, sendBufferSize);
-        Unsafe.free(recvBuffer, recvBufferSize);
+        Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
+        Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
         Misc.free(typesAndSelectCache);
         Misc.free(path);
         Misc.free(utf8Sink);
@@ -379,9 +382,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 }
             } while (keepReceiving && operation == IOOperation.READ);
         } catch (SqlException e) {
-            reportError(e.getPosition(), e.getFlyweightMessage());
+            reportError(e.getPosition(), e.getFlyweightMessage(), 0);
         } catch (CairoException e) {
-            reportError(-1, e.getFlyweightMessage());
+            reportError(-1, e.getFlyweightMessage(), e.getErrno());
         }
     }
 
@@ -398,6 +401,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             throw SqlException.$(0, "bad value for BOOLEAN parameter [index=").put(index).put(", valueLen=").put(valueLen).put(']');
         }
         bindVariableService.setBoolean(index, valueLen == 4);
+    }
+
+    public void setBinBindVariable(int index, long address, int valueLen) throws SqlException {
+        bindVariableService.setBin(index, this.binarySequenceParamsPool.next().of(address, valueLen));
     }
 
     public void setCharBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
@@ -693,9 +700,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final long offset = responseAsciiSink.skip();
         responseAsciiSink.putNetworkShort((short) columnCount);
         for (int i = 0; i < columnCount; i++) {
-            final int type = activeSelectColumnTypes.getQuick(i);
+            final int type = activeSelectColumnTypes.getQuick(2 * i);
             final short columnBinaryFlag = getColumnBinaryFlag(type);
             final int typeTag = ColumnType.tagOf(type);
+
             final int tagWithFlag = toColumnBinaryType(columnBinaryFlag, typeTag);
             switch (tagWithFlag) {
                 case BINARY_TYPE_INT:
@@ -771,12 +779,58 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 case BINARY_TYPE_LONG256:
                     appendLong256Column(record, i);
                     break;
+                case ColumnType.GEOBYTE:
+                    putGeoHashStringByteValue(record, i, activeSelectColumnTypes.getQuick(2 * i + 1));
+                    break;
+                case ColumnType.GEOSHORT:
+                    putGeoHashStringShortValue(record, i, activeSelectColumnTypes.getQuick(2 * i + 1));
+                    break;
+                case ColumnType.GEOINT:
+                    putGeoHashStringIntValue(record, i, activeSelectColumnTypes.getQuick(2 * i + 1));
+                    break;
+                case ColumnType.GEOLONG:
+                    putGeoHashStringLongValue(record, i, activeSelectColumnTypes.getQuick(2 * i + 1));
+                    break;
                 default:
                     assert false;
             }
         }
         responseAsciiSink.putLen(offset);
         rowCount += 1;
+    }
+
+    private void putGeoHashStringByteValue(Record rec, int col, int bitFlags) {
+        byte l = rec.getGeoByte(col);
+        putGeoHashStringValue(l, bitFlags);
+    }
+
+    private void putGeoHashStringShortValue(Record rec, int col, int bitFlags) {
+        short l = rec.getGeoShort(col);
+        putGeoHashStringValue(l, bitFlags);
+    }
+
+    private void putGeoHashStringIntValue(Record rec, int col, int bitFlags) {
+        int l = rec.getGeoInt(col);
+        putGeoHashStringValue(l, bitFlags);
+    }
+
+    private void putGeoHashStringLongValue(Record rec, int col, int bitFlags) {
+        long l = rec.getGeoLong(col);
+        putGeoHashStringValue(l, bitFlags);
+    }
+
+    private void putGeoHashStringValue(long value, int bitFlags) {
+        if (value == GeoHashes.NULL) {
+            responseAsciiSink.setNullValue();
+        } else {
+            final long a = responseAsciiSink.skip();
+            if (bitFlags < 0) {
+                GeoHashes.appendCharsUnsafe(value, -bitFlags, responseAsciiSink);
+            } else {
+                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, responseAsciiSink);
+            }
+            responseAsciiSink.putLenEx(a);
+        }
     }
 
     private void appendShortColumn(Record record, int columnIndex) {
@@ -918,6 +972,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     case X_B_PG_BOOL:
                         setBooleanBindVariable(j, valueLen);
                         break;
+                    case X_B_PG_BYTEA:
+                        setBinBindVariable(j, lo, valueLen);
+                        break;
                     default:
                         setStrBindVariable(j, lo, valueLen);
                         break;
@@ -938,9 +995,22 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void buildSelectColumnTypes() {
         final RecordMetadata m = typesAndSelect.getFactory().getMetadata();
         final int columnCount = m.getColumnCount();
-        activeSelectColumnTypes.setPos(columnCount);
+        activeSelectColumnTypes.setPos(2 * columnCount);
+
         for (int i = 0; i < columnCount; i++) {
-            activeSelectColumnTypes.setQuick(i, m.getColumnType(i));
+            int columnType = m.getColumnType(i);
+            int flags = 0;
+            if (ColumnType.isGeoHash(columnType)) {
+                final int bits = ColumnType.getGeoHashBits(columnType);
+                if (bits > 0 && bits % 5 == 0) {
+                    // It's 5 bit per char. If it's integer number of chars value to be serialized as chars
+                    flags = -bits / 5;
+                } else {
+                    flags = bits;
+                }
+            }
+            activeSelectColumnTypes.setQuick(2 * i, columnType);
+            activeSelectColumnTypes.setQuick(2 * i + 1, flags);
         }
     }
 
@@ -1447,7 +1517,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         prepareDescribePortalResponse();
     }
 
-    private void prepareError(int position, CharSequence message) {
+    private void prepareError(int position, CharSequence message, long errno) {
         responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
         long addr = responseAsciiSink.skip();
         responseAsciiSink.put('C');
@@ -1461,7 +1531,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
         responseAsciiSink.put((char) 0);
         responseAsciiSink.putLen(addr);
-        LOG.error().$("error [pos=").$(position).$(", msg=`").$(message).$("`]").$();
+        LOG.error()
+                .$("error [pos=").$(position)
+                .$(", msg=`").$(message).$('`')
+                .$(", errno=`").$(errno)
+                .I$();
     }
 
     private void prepareForNewQuery() {
@@ -1544,10 +1618,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         ResponseAsciiSink sink = responseAsciiSink;
         sink.put(MESSAGE_TYPE_ROW_DESCRIPTION);
         final long addr = sink.skip();
-        final int n = activeSelectColumnTypes.size();
+        final int n = activeSelectColumnTypes.size() / 2;
         sink.putNetworkShort((short) n);
         for (int i = 0; i < n; i++) {
-            final int typeFlag = activeSelectColumnTypes.getQuick(i);
+            final int typeFlag = activeSelectColumnTypes.getQuick(2 * i);
             final int columnType = toColumnType(ColumnType.isNull(typeFlag) ? ColumnType.STRING : typeFlag);
             sink.encodeUtf8Z(metadata.getColumnName(i));
             sink.putIntDirect(0); //tableOid ?
@@ -1648,13 +1722,15 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                         for (int i = 0; i < columnCount; i++) {
                             lo += Short.BYTES;
                             final short code = getShortUnsafe(lo);
-                            activeSelectColumnTypes.setQuick(i, toColumnBinaryType(code, m.getColumnType(i)));
+                            activeSelectColumnTypes.setQuick(2 * i, toColumnBinaryType(code, m.getColumnType(i)));
+                            activeSelectColumnTypes.setQuick(2 * i + 1, 0);
                         }
                     } else if (columnFormatCodeCount == 1) {
                         lo += Short.BYTES;
                         final short code = getShortUnsafe(lo);
                         for (int i = 0; i < columnCount; i++) {
-                            activeSelectColumnTypes.setQuick(i, toColumnBinaryType(code, m.getColumnType(i)));
+                            activeSelectColumnTypes.setQuick(2 * i, toColumnBinaryType(code, m.getColumnType(i)));
+                            activeSelectColumnTypes.setQuick(2 * i + 1, 0);
                         }
                     } else {
                         LOG.error()
@@ -2001,8 +2077,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         return n;
     }
 
-    private void reportError(int position, CharSequence flyweightMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        prepareError(position, flyweightMessage);
+    private void reportError(int position, CharSequence flyweightMessage, long errno)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        prepareError(position, flyweightMessage, errno);
         sendReadyForNewQuery();
         clearRecvBuffer();
     }
@@ -2062,7 +2139,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             responseAsciiSink.putLen(addr);
         } else {
             final SqlException e = SqlException.$(0, "table '").put(textLoader.getTableName()).put("' does not exist");
-            prepareError(e.getPosition(), e.getFlyweightMessage());
+            prepareError(e.getPosition(), e.getFlyweightMessage(), 0);
             prepareReadyForQuery();
         }
         sendAndReset();

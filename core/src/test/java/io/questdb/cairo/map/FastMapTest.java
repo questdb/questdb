@@ -51,7 +51,7 @@ public class FastMapTest extends AbstractCairoTest {
         keyTypes.add(ColumnType.STRING);
         keyTypes.add(ColumnType.BOOLEAN);
         keyTypes.add(ColumnType.DATE);
-        keyTypes.add(ColumnType.geohashWithPrecision(3));
+        keyTypes.add(ColumnType.getGeoHashTypeWithBits(3));
 
         valueTypes.add(ColumnType.BYTE);
         valueTypes.add(ColumnType.SHORT);
@@ -61,7 +61,7 @@ public class FastMapTest extends AbstractCairoTest {
         valueTypes.add(ColumnType.DOUBLE);
         valueTypes.add(ColumnType.BOOLEAN);
         valueTypes.add(ColumnType.DATE);
-        valueTypes.add(ColumnType.geohashWithPrecision(20));
+        valueTypes.add(ColumnType.getGeoHashTypeWithBits(20));
 
         try (FastMap map = new FastMap(64, keyTypes, valueTypes, 64, 0.8, 24)) {
             final int N = 100000;
@@ -484,20 +484,18 @@ public class FastMapTest extends AbstractCairoTest {
             final int N = 5000;
             final Rnd rnd = new Rnd();
             int precisionBits = 10;
-            int geohashType = ColumnType.geohashWithPrecision(precisionBits);
+            int geohashType = ColumnType.getGeoHashTypeWithBits(precisionBits);
 
             BytecodeAssembler asm = new BytecodeAssembler();
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-                model
-                        .col("a", ColumnType.LONG)
-                        .col("b", geohashType);
+                model.col("a", ColumnType.LONG).col("b", geohashType);
                 CairoTestUtils.create(model);
             }
 
             try (TableWriter writer = new TableWriter(configuration, "x")) {
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row row = writer.newRow();
-                    long rndGeohash = GeoHashes.fromCoordinates(rnd.nextDouble() * 180 - 90, rnd.nextDouble() * 360 - 180, precisionBits);
+                    long rndGeohash = GeoHashes.fromCoordinatesDeg(rnd.nextDouble() * 180 - 90, rnd.nextDouble() * 360 - 180, precisionBits);
                     row.putLong(0, i);
                     row.putGeoHash(1, rndGeohash);
                     row.append();
@@ -632,10 +630,10 @@ public class FastMapTest extends AbstractCairoTest {
                                 .add(ColumnType.DATE)
                                 .add(ColumnType.TIMESTAMP)
                                 .add(ColumnType.BOOLEAN)
-                                .add(ColumnType.geohashWithPrecision(5))
-                                .add(ColumnType.geohashWithPrecision(10))
-                                .add(ColumnType.geohashWithPrecision(20))
-                                .add(ColumnType.geohashWithPrecision(40))
+                                .add(ColumnType.getGeoHashTypeWithBits(5))
+                                .add(ColumnType.getGeoHashTypeWithBits(10))
+                                .add(ColumnType.getGeoHashTypeWithBits(20))
+                                .add(ColumnType.getGeoHashTypeWithBits(40))
                         ,
                         N,
                         0.9f,
@@ -667,10 +665,10 @@ public class FastMapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd2.nextLong(), value.getDate(6));
                         Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
                         Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
-                        Assert.assertEquals((byte)Math.abs(rnd2.nextByte()), value.getGeoHashByte(9));
-                        Assert.assertEquals((short)Math.abs(rnd2.nextShort()), value.getGeoHashShort(10));
-                        Assert.assertEquals(Math.abs(rnd2.nextInt()), value.getGeoHashInt(11));
-                        Assert.assertEquals(Math.abs(rnd2.nextLong()), value.getGeoHashLong(12));
+                        Assert.assertEquals((byte)Math.abs(rnd2.nextByte()), value.getGeoByte(9));
+                        Assert.assertEquals((short)Math.abs(rnd2.nextShort()), value.getGeoShort(10));
+                        Assert.assertEquals(Math.abs(rnd2.nextInt()), value.getGeoInt(11));
+                        Assert.assertEquals(Math.abs(rnd2.nextLong()), value.getGeoLong(12));
                     }
                 }
             }

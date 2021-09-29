@@ -27,8 +27,7 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.cairo.SymbolMapWriter.TransientSymbolCountChangeHandler;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.ReplMemoryLogCAImpl;
 import io.questdb.cairo.vm.Vm;
@@ -130,8 +129,8 @@ public class TableWriter implements Closeable {
     private final TxWriter txFile;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final LongList o3PartitionRemoveCandidates = new LongList();
-    private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<O3MutableAtomicInteger>(O3MutableAtomicInteger::new, 64);
-    private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<O3Basket>(O3Basket::new, 64);
+    private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<>(O3MutableAtomicInteger::new, 64);
+    private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<>(O3Basket::new, 64);
     private final TxnScoreboard txnScoreboard;
     private final StringSink o3Sink = new StringSink();
     private final NativeLPSZ o3NativeLPSZ = new NativeLPSZ();
@@ -162,7 +161,7 @@ public class TableWriter implements Closeable {
     private long masterRef = 0;
     private long o3MasterRef = -1;
     private boolean removeDirOnCancelRow = true;
-    private long tempMem16b = Unsafe.malloc(16);
+    private long tempMem16b = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
     private int metaSwapIndex;
     private int metaPrevIndex;
     private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFromTodoWriteFailure;
@@ -444,6 +443,9 @@ public class TableWriter implements Closeable {
 
         // add column objects
         configureColumn(type, isIndexed);
+        if (isIndexed) {
+            populateDenseIndexerList();
+        }
 
         // increment column count
         columnCount++;
@@ -1159,7 +1161,7 @@ public class TableWriter implements Closeable {
 
                 int plen = path.length();
                 for (int j = 0; j < columnCount; j++) {
-                    final long top = TableUtils.readColumnTop(ff, path, metadata.getColumnName(j), plen, tempMem16b);
+                    final long top = TableUtils.readColumnTop(ff, path, metadata.getColumnName(j), plen, tempMem16b, true);
                     if (top > 0) {
                         model.addColumnTop(ts, j, top);
                     }
@@ -1447,8 +1449,9 @@ public class TableWriter implements Closeable {
         for (int i = 0; i < columnCount; i++) {
             getPrimaryColumn(i).truncate();
             MemoryMA mem = getSecondaryColumn(i);
-            if (mem != null) {
+            if (mem != null && mem.isOpen()) {
                 mem.truncate();
+                mem.putLong(0);
             }
         }
 
@@ -1477,34 +1480,6 @@ public class TableWriter implements Closeable {
         }
 
         LOG.info().$("truncated [name=").$(tableName).$(']').$();
-    }
-
-    public void updateMetadataVersion() {
-
-        checkDistressed();
-
-        commit();
-        // create new _meta.swp
-        copyMetadataAndUpdateVersion();
-
-        // close _meta so we can rename it
-        metaMem.close();
-
-        // rename _meta to _meta.prev
-        this.metaPrevIndex = rename(fileOperationRetryCount);
-
-        // rename _meta.swp to -_meta
-        restoreMetaFrom(META_SWAP_FILE_NAME, metaSwapIndex);
-
-        try {
-            // open _meta file
-            openMetaFile(ff, path, rootLen, metaMem);
-        } catch (CairoException err) {
-            throwDistressException(err);
-        }
-
-        txFile.bumpStructureVersion(this.denseSymbolMapWriters);
-        metadata.setTableVersion();
     }
 
     public void updateSymbols(int columnIndex, SymbolMapReader symReader) {
@@ -1580,39 +1555,21 @@ public class TableWriter implements Closeable {
             long buf,
             boolean ensureFileSize
     ) {
-        long offset;
-        long len;
         long mem1Size;
         if (actualPosition > 0) {
             // subtract column top
             switch (ColumnType.tagOf(type)) {
                 case ColumnType.BINARY:
-                    assert mem2 != null;
-                    readOffsetBytes(ff, mem2, actualPosition, buf);
-                    offset = Unsafe.getUnsafe().getLong(buf);
-                    readBytes(ff, mem1, buf, Long.BYTES, offset, "Cannot read length, fd=");
-                    len = Unsafe.getUnsafe().getLong(buf);
-                    mem1Size = len == -1 ? offset + Long.BYTES : offset + len + Long.BYTES;
-                    if (ensureFileSize) {
-                        mem1.allocate(mem1Size);
-                        mem2.allocate(actualPosition * Long.BYTES);
-                    }
-                    mem1.jumpTo(mem1Size);
-                    mem2.jumpTo(actualPosition * Long.BYTES);
-                    break;
                 case ColumnType.STRING:
                     assert mem2 != null;
                     readOffsetBytes(ff, mem2, actualPosition, buf);
-                    offset = Unsafe.getUnsafe().getLong(buf);
-                    readBytes(ff, mem1, buf, Integer.BYTES, offset, "Cannot read length, fd=");
-                    len = Unsafe.getUnsafe().getInt(buf);
-                    mem1Size = len == -1 ? offset + Integer.BYTES : offset + len * Character.BYTES + Integer.BYTES;
+                    mem1Size = Unsafe.getUnsafe().getLong(buf);
                     if (ensureFileSize) {
                         mem1.allocate(mem1Size);
-                        mem2.allocate(actualPosition * Long.BYTES);
+                        mem2.allocate(actualPosition * Long.BYTES + Long.BYTES);
                     }
                     mem1.jumpTo(mem1Size);
-                    mem2.jumpTo(actualPosition * Long.BYTES);
+                    mem2.jumpTo(actualPosition * Long.BYTES + Long.BYTES);
                     break;
                 default:
                     mem1Size = actualPosition << ColumnType.pow2SizeOf(type);
@@ -1626,6 +1583,7 @@ public class TableWriter implements Closeable {
             mem1.jumpTo(0);
             if (mem2 != null) {
                 mem2.jumpTo(0);
+                mem2.putLong(0);
             }
         }
     }
@@ -1651,17 +1609,13 @@ public class TableWriter implements Closeable {
     }
 
     private static void readOffsetBytes(FilesFacade ff, MemoryM mem, long position, long buf) {
-        readBytes(ff, mem, buf, 8, (position - 1) * 8, "could not read offset, fd=");
-    }
-
-    private static void readBytes(FilesFacade ff, MemoryM mem, long buf, int byteCount, long offset, CharSequence errorMsg) {
-        if (ff.read(mem.getFd(), buf, byteCount, offset) != byteCount) {
-            throw CairoException.instance(ff.errno()).put(errorMsg).put(mem.getFd()).put(", offset=").put(offset);
+        if (ff.read(mem.getFd(), buf, 8, position * 8) != 8) {
+            throw CairoException.instance(ff.errno()).put("could not read offset, fd=").put(mem.getFd()).put(", offset=").put((position - 1) * 8);
         }
     }
 
     private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryA mem1, MemoryA mem2) {
-        switch (ColumnType.storageTag(type)) {
+        switch (ColumnType.tagOf(type)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
                 nullers.add(() -> mem1.putByte((byte) 0));
@@ -1717,7 +1671,7 @@ public class TableWriter implements Closeable {
     private static void openMetaFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem) {
         path.concat(META_FILE_NAME).$();
         try {
-            metaMem.smallFile(ff, path);
+            metaMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
         } finally {
             path.trimTo(rootLen);
         }
@@ -1746,7 +1700,10 @@ public class TableWriter implements Closeable {
                     case ColumnType.LONG256:
                         // Consider Symbols as fixed, check data file size
                     case ColumnType.SYMBOL:
-                    case ColumnType.GEOHASH:
+                    case ColumnType.GEOBYTE:
+                    case ColumnType.GEOSHORT:
+                    case ColumnType.GEOINT:
+                    case ColumnType.GEOLONG:
                         attachPartitionCheckFilesMatchFixedColumn(ff, path, columnType, partitionSize);
                         break;
                     case ColumnType.STRING:
@@ -1768,8 +1725,9 @@ public class TableWriter implements Closeable {
             int typeSize = 4;
             long fileSize = ff.length(path);
             if (fileSize < partitionSize * typeSize) {
-                throw CairoException.instance(0).put("Column file row count does not match timestamp file row count. " +
-                                "Partition files inconsistent [file=")
+                throw CairoException.instance(0)
+                        .put("Column file row count does not match timestamp file row count. ")
+                                .put("Partition files inconsistent [file=")
                         .put(path)
                         .put(",expectedSize=")
                         .put(partitionSize * typeSize)
@@ -1793,8 +1751,9 @@ public class TableWriter implements Closeable {
         if (ff.exists(path)) {
             long fileSize = ff.length(path);
             if (fileSize < partitionSize << ColumnType.pow2SizeOf(columnType)) {
-                throw CairoException.instance(0).put("Column file row count does not match timestamp file row count. " +
-                                "Partition files inconsistent [file=")
+                throw CairoException.instance(0)
+                        .put("Column file row count does not match timestamp file row count. ")
+                                .put("Partition files inconsistent [file=")
                         .put(path)
                         .put(",expectedSize=")
                         .put(partitionSize << ColumnType.pow2SizeOf(columnType))
@@ -2009,9 +1968,9 @@ public class TableWriter implements Closeable {
     private void configureColumn(int type, boolean indexFlag) {
         final MemoryMAR primary = Vm.getMARInstance();
         final MemoryMAR secondary;
-        final MemoryCARW oooPrimary = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE);
+        final MemoryCARW oooPrimary = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         final MemoryCARW oooSecondary;
-        final MemoryCARW oooPrimary2 = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE);
+        final MemoryCARW oooPrimary2 = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         final MemoryCARW oooSecondary2;
 
 
@@ -2022,8 +1981,8 @@ public class TableWriter implements Closeable {
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 secondary = Vm.getMARInstance();
-                oooSecondary = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE);
-                oooSecondary2 = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE);
+                oooSecondary = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
+                oooSecondary2 = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
                 logSecondary = Vm.getMARInstance();
                 break;
             default:
@@ -2046,7 +2005,6 @@ public class TableWriter implements Closeable {
 
         if (indexFlag) {
             indexers.extendAndSet((columns.size() - 1) / 2, new SymbolColumnIndexer());
-            populateDenseIndexerList();
         }
         rowValueIsNotNull.add(0);
     }
@@ -2075,9 +2033,8 @@ public class TableWriter implements Closeable {
         final int timestampIndex = metadata.getTimestampIndex();
         if (timestampIndex != -1) {
             o3TimestampMem = o3Columns.getQuick(getPrimaryColumnIndex(timestampIndex));
-            o3TimestampMemCpy = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE);
+            o3TimestampMemCpy = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         }
-        populateDenseIndexerList();
     }
 
     private void configureTimestampSetter() {
@@ -2237,7 +2194,7 @@ public class TableWriter implements Closeable {
 
             // reuse memory column object to create index and close it at the end
             try {
-                ddlMem.smallFile(ff, path);
+                ddlMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
                 BitmapIndexWriter.initKeyMemory(ddlMem, indexValueBlockCapacity);
             } catch (CairoException e) {
                 // looks like we could not create key file properly
@@ -2277,7 +2234,6 @@ public class TableWriter implements Closeable {
     private void doClose(boolean truncate) {
         consumeO3PartitionRemoveTasks();
         boolean tx = inTransaction();
-        freeColumns(truncate & !distressed);
         freeSymbolMapWriters();
         freeIndexers();
         Misc.free(txFile);
@@ -2287,6 +2243,7 @@ public class TableWriter implements Closeable {
         Misc.free(indexMem);
         Misc.free(other);
         Misc.free(todoMem);
+        freeColumns(truncate & !distressed);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {
@@ -2374,7 +2331,7 @@ public class TableWriter implements Closeable {
 
     private void freeTempMem() {
         if (tempMem16b != 0) {
-            Unsafe.free(tempMem16b, 16);
+            Unsafe.free(tempMem16b, 16, MemoryTag.NATIVE_DEFAULT);
             tempMem16b = 0;
         }
     }
@@ -2497,11 +2454,11 @@ public class TableWriter implements Closeable {
                             createIndexFiles(columnName, indexValueBlockSize, plen, true);
 
                             final long partitionSize = txFile.getPartitionSizeByPartitionTimestamp(timestamp);
-                            final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b);
+                            final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b, true);
 
                             if (partitionSize > columnTop) {
                                 TableUtils.dFile(path.trimTo(plen), columnName);
-                                roMem.partialFile(ff, path, (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT));
+                                roMem.partialFile(ff, path, (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT), MemoryTag.MMAP_TABLE_WRITER);
                                 indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
                                 indexer.index(roMem, columnTop, partitionSize);
                             }
@@ -2522,7 +2479,7 @@ public class TableWriter implements Closeable {
 
         createIndexFiles(columnName, indexValueBlockSize, plen, true);
 
-        final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b);
+        final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b, true);
 
         // set indexer up to continue functioning as normal
         indexer.configureFollowerAndWriter(configuration, path.trimTo(plen), columnName, getPrimaryColumn(columnIndex), columnTop);
@@ -2819,7 +2776,8 @@ public class TableWriter implements Closeable {
                         final long srcOooLo = srcOoo;
                         final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
                         final long srcOooHi;
-                        final long srcOooTimestampCeil = timestampCeilMethod.ceil(o3Timestamp);
+                        // keep ceil inclusive in the interval
+                        final long srcOooTimestampCeil = timestampCeilMethod.ceil(o3Timestamp) - 1;
                         if (srcOooTimestampCeil < o3TimestampMax) {
                             srcOooHi = Vect.boundedBinarySearchIndexT(
                                     sortedTimestampsAddr,
@@ -2836,22 +2794,22 @@ public class TableWriter implements Closeable {
                         final boolean last = partitionTimestamp == lastPartitionTimestamp;
                         srcOoo = srcOooHi + 1;
 
-                        final long srcDataSize;
+                        final long srcDataMax;
                         final long srcNameTxn;
                         final int partitionIndex = txFile.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
                         if (partitionIndex > -1) {
                             if (last) {
-                                srcDataSize = txFile.transientRowCount;
+                                srcDataMax = txFile.transientRowCount;
                             } else {
-                                srcDataSize = getPartitionSizeByIndex(partitionIndex);
+                                srcDataMax = getPartitionSizeByIndex(partitionIndex);
                             }
                             srcNameTxn = getPartitionNameTxnByIndex(partitionIndex);
                         } else {
-                            srcDataSize = -1;
+                            srcDataMax = -1;
                             srcNameTxn = -1;
                         }
 
-                        final boolean append = last && (srcDataSize < 0 || o3Timestamp >= maxTimestamp);
+                        final boolean append = last && (srcDataMax < 0 || o3Timestamp >= maxTimestamp);
                         LOG.debug().
                                 $("o3 partition task [table=").$(tableName)
                                 .$(", srcOooLo=").$(srcOooLo)
@@ -2862,7 +2820,7 @@ public class TableWriter implements Closeable {
                                 .$(", o3TimestampMax=").$ts(o3TimestampMax)
                                 .$(", partitionTimestamp=").$ts(partitionTimestamp)
                                 .$(", partitionIndex=").$(partitionIndex)
-                                .$(", srcDataSize=").$(srcDataSize)
+                                .$(", srcDataMax=").$(srcDataMax)
                                 .$(", maxTimestamp=").$ts(maxTimestamp)
                                 .$(", last=").$(last)
                                 .$(", append=").$(append)
@@ -2896,23 +2854,17 @@ public class TableWriter implements Closeable {
                                 final MemoryMAR mem2 = columns.getQuick(colOffset + 1);
                                 final long srcDataTop = getColumnTop(i);
                                 final long srcOooFixAddr;
-                                final long srcOooFixSize;
                                 final long srcOooVarAddr;
-                                final long srcOooVarSize;
                                 final MemoryMAR dstFixMem;
                                 final MemoryMAR dstVarMem;
                                 if (!ColumnType.isVariableLength(columnType)) {
                                     srcOooFixAddr = oooMem1.addressOf(0);
-                                    srcOooFixSize = oooMem1.getAppendOffset();
                                     srcOooVarAddr = 0;
-                                    srcOooVarSize = 0;
                                     dstFixMem = mem1;
                                     dstVarMem = null;
                                 } else {
                                     srcOooFixAddr = oooMem2.addressOf(0);
-                                    srcOooFixSize = oooMem2.getAppendOffset();
                                     srcOooVarAddr = oooMem1.addressOf(0);
-                                    srcOooVarSize = oooMem1.getAppendOffset();
                                     dstFixMem = mem2;
                                     dstVarMem = mem1;
                                 }
@@ -2924,9 +2876,7 @@ public class TableWriter implements Closeable {
                                         columnCounter,
                                         notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
                                         srcOooFixAddr,
-                                        srcOooFixSize,
                                         srcOooVarAddr,
-                                        srcOooVarSize,
                                         srcOooLo,
                                         srcOooHi,
                                         srcOooMax,
@@ -2934,13 +2884,12 @@ public class TableWriter implements Closeable {
                                         o3TimestampMax,
                                         partitionTimestamp,
                                         srcDataTop,
-                                        Math.max(0, srcDataSize),
+                                        Math.max(0, srcDataMax),
                                         isIndexed,
                                         dstFixMem,
                                         dstVarMem,
                                         this,
-                                        indexWriter,
-                                        tempMem16b
+                                        indexWriter
                                 );
                             }
                         } else {
@@ -2959,7 +2908,7 @@ public class TableWriter implements Closeable {
                                     srcOooHi,
                                     partitionTimestamp,
                                     last,
-                                    srcDataSize,
+                                    srcDataMax,
                                     srcNameTxn,
                                     o3Basket
                             );
@@ -3022,7 +2971,18 @@ public class TableWriter implements Closeable {
         if (!columns.getQuick(0).isOpen() || partitionTimestampHi < txFile.getMaxTimestamp()) {
             openPartition(txFile.getMaxTimestamp());
         }
-        setAppendPosition(txFile.getTransientRowCount(), true);
+
+        // Data is written out successfully, however, we can still fail to set append position, for
+        // example when we ran out of address space and new page cannot be mapped. The "allocate" calls here
+        // ensure we can trigger this situation in tests. We should perhaps align our data such that setAppendPosition()
+        // will attempt to mmap new page and fail.. Then we can remove the 'true' parameter
+        try {
+            setAppendPosition(txFile.getTransientRowCount(), true);
+        } catch (Throwable e) {
+            LOG.error().$("data is committed but writer failed to update its state `").$(e).$('`').$();
+            distressed = true;
+            throw e;
+        }
         return false;
     }
 
@@ -3037,7 +2997,7 @@ public class TableWriter implements Closeable {
             long srcOooHi,
             long partitionTimestamp,
             boolean last,
-            long srcDataSize,
+            long srcDataMax,
             long srcNameTxn,
             O3Basket o3Basket
     ) {
@@ -3056,7 +3016,7 @@ public class TableWriter implements Closeable {
                     oooTimestampMax,
                     partitionTimestamp,
                     maxTimestamp,
-                    srcDataSize,
+                    srcDataMax,
                     srcNameTxn,
                     last,
                     getTxn(),
@@ -3079,7 +3039,7 @@ public class TableWriter implements Closeable {
                     oooTimestampMax,
                     partitionTimestamp,
                     maxTimestamp,
-                    srcDataSize,
+                    srcDataMax,
                     srcNameTxn,
                     last,
                     getTxn(),
@@ -3243,14 +3203,17 @@ public class TableWriter implements Closeable {
                 // Var size column
                 sourceOffset = o3IndexMem.getLong(o3RowCount * 8);
                 size = o3DataMem.getAppendOffset() - sourceOffset;
+                // move count + 1 rows, to make sure index column remains n+1
                 O3Utils.shiftCopyFixedSizeColumnData(
                         sourceOffset,
                         o3IndexMem.addressOf(o3RowCount * 8),
                         0,
-                        o3LagRowCount,
+                        o3LagRowCount + 1,
                         o3IndexMem.addressOf(0)
                 );
-                o3IndexMem.jumpTo(o3LagRowCount * 8);
+                // adjust append position of the index column to
+                // maintain n+1 number of entries
+                o3IndexMem.jumpTo(o3LagRowCount * 8 + 8);
             }
 
             o3DataMem.jumpTo(size);
@@ -3268,15 +3231,16 @@ public class TableWriter implements Closeable {
     private long o3MoveUncommitted(final int timestampIndex) {
         final long committedRowCount = txFile.getCommittedFixedRowCount() + txFile.getCommittedTransientRowCount();
         final long rowsAdded = txFile.getRowCount() - committedRowCount;
-        final long committedTransientRowCount = txFile.getTransientRowCount() - Math.min(txFile.getTransientRowCount(), rowsAdded);
-        if (Math.min(txFile.getTransientRowCount(), rowsAdded) > 0) {
+        long transientRowsAdded = Math.min(txFile.getTransientRowCount(), rowsAdded);
+        final long committedTransientRowCount = txFile.getTransientRowCount() - transientRowsAdded;
+        if (transientRowsAdded > 0) {
             LOG.debug()
                     .$("o3 move uncommitted [table=").$(tableName)
-                    .$(", transientRowsAdded=").$(Math.min(txFile.getTransientRowCount(), rowsAdded))
+                    .$(", transientRowsAdded=").$(transientRowsAdded)
                     .I$();
             return o3ScheduleMoveUncommitted0(
                     timestampIndex,
-                    Math.min(txFile.getTransientRowCount(), rowsAdded),
+                    transientRowsAdded,
                     committedTransientRowCount
             );
         }
@@ -3305,29 +3269,56 @@ public class TableWriter implements Closeable {
                 srcFixOffset = committedTransientRowCount << shl;
             } else {
                 // Var size
+                int indexShl = ColumnType.pow2SizeOf(ColumnType.LONG);
                 final MemoryMAR srcFixMem = getSecondaryColumn(colIndex);
-                long srcVarOffset = srcFixMem.getLong(committedTransientRowCount * Long.BYTES);
-                // ensure memory is available
-                long dstAppendOffset = o3IndexMem.getAppendOffset();
-                o3IndexMem.jumpTo(o3IndexMem.getAppendOffset() + transientRowsAdded * Long.BYTES);
+                long sourceOffset = committedTransientRowCount << indexShl;
 
+                // the size includes trailing LONG
+                long sourceLen = (transientRowsAdded + 1) << indexShl;
+                long dstAppendOffset = o3IndexMem.getAppendOffset();
+
+                // ensure memory is available
+                o3IndexMem.jumpTo(dstAppendOffset + (transientRowsAdded << indexShl));
+                long srcAddress;
+                boolean isMapped = srcFixMem.isMapped(sourceOffset, sourceLen);
+
+                if (isMapped) {
+                    srcAddress = srcFixMem.addressOf(sourceOffset);
+                } else {
+                    srcAddress = mapRO(ff, srcFixMem.getFd(), sourceLen, sourceOffset, MemoryTag.MMAP_TABLE_WRITER);
+                }
+
+                long srcVarOffset = Unsafe.getUnsafe().getLong(srcAddress);
                 O3Utils.shiftCopyFixedSizeColumnData(
                         srcVarOffset - dstVarOffset,
-                        srcFixMem.addressOf(committedTransientRowCount * Long.BYTES),
+                        srcAddress + Long.BYTES,
                         0,
-                        transientRowsAdded,
+                        transientRowsAdded - 1,
+                        // copy uncommitted index over the trailing LONG
                         o3IndexMem.addressOf(dstAppendOffset)
                 );
+
+                if (!isMapped) {
+                    // If memory mapping was mapped specially for this move, close it
+                    ff.munmap(srcAddress, sourceLen, MemoryTag.MMAP_TABLE_WRITER);
+                }
+
                 long sourceEndOffset = srcDataMem.getAppendOffset();
                 extendedSize = sourceEndOffset - srcVarOffset;
                 srcFixOffset = srcVarOffset;
-                srcFixMem.jumpTo(committedTransientRowCount * Long.BYTES);
+                srcFixMem.jumpTo(sourceOffset + Long.BYTES);
             }
 
             o3DataMem.jumpTo(dstVarOffset + extendedSize);
             long appendAddress = o3DataMem.addressOf(dstVarOffset);
-            long sourceAddress = srcDataMem.addressOf(srcFixOffset);
-            Vect.memcpy(sourceAddress, appendAddress, extendedSize);
+            if (srcDataMem.isMapped(srcFixOffset, extendedSize)) {
+                long sourceAddress = srcDataMem.addressOf(srcFixOffset);
+                Vect.memcpy(sourceAddress, appendAddress, extendedSize);
+            } else {
+                long sourceAddress = mapRO(ff, srcDataMem.getFd(), extendedSize, srcFixOffset, MemoryTag.MMAP_TABLE_WRITER);
+                Vect.memcpy(sourceAddress, appendAddress, extendedSize);
+                ff.munmap(sourceAddress, extendedSize, MemoryTag.MMAP_TABLE_WRITER);
+            }
             srcDataMem.jumpTo(srcFixOffset);
         } else {
             // Timestamp column
@@ -3335,10 +3326,25 @@ public class TableWriter implements Closeable {
             int shl = ColumnType.pow2SizeOf(ColumnType.TIMESTAMP);
             MemoryMAR srcDataMem = getPrimaryColumn(colIndex);
             long srcFixOffset = committedTransientRowCount << shl;
+            long srcFixLen = transientRowsAdded << shl;
+            boolean isMapped = srcDataMem.isMapped(srcFixOffset, srcFixLen);
+            long address;
+
+            if (isMapped) {
+                address = srcDataMem.addressOf(srcFixOffset);
+            } else {
+                address = mapRO(ff, srcDataMem.getFd(), srcFixLen, srcFixOffset, MemoryTag.MMAP_TABLE_WRITER);
+            }
+
             for (long n = 0; n < transientRowsAdded; n++) {
-                long ts = srcDataMem.getLong(srcFixOffset + (n << shl));
+                long ts = Unsafe.getUnsafe().getLong(address + (n << shl));
                 o3TimestampMem.putLong128(ts, o3RowCount + n);
             }
+
+            if (!isMapped) {
+                ff.munmap(address, srcFixLen, MemoryTag.MMAP_TABLE_WRITER);
+            }
+
             srcDataMem.jumpTo(srcFixOffset);
         }
     }
@@ -3360,6 +3366,7 @@ public class TableWriter implements Closeable {
             MemoryARW mem2 = o3Columns.getQuick(getSecondaryColumnIndex(i));
             if (mem2 != null) {
                 mem2.jumpTo(0);
+                mem2.putLong(0);
             }
         }
         activeColumns = o3Columns;
@@ -3485,8 +3492,8 @@ public class TableWriter implements Closeable {
                     other.slash$();
                     int errno;
                     if ((errno = ff.rmdir(other)) == 0) {
-                        LOG.info().$(
-                                        "purged [path=").$(other)
+                        LOG.info()
+                                        .$("purged [path=").$(other)
                                 .$(", readerTxn=").$(readerTxn)
                                 .$(", readerTxnCount=").$(readerTxnCount)
                                 .$(']').$();
@@ -3548,34 +3555,7 @@ public class TableWriter implements Closeable {
     }
 
     private long o3ScheduleMoveUncommitted0(int timestampIndex, long transientRowsAdded, long committedTransientRowCount) {
-        long transientRowsAddedNew = o3CalculatedMoveUncommittedSize(transientRowsAdded, committedTransientRowCount);
-        long delta = transientRowsAdded - transientRowsAddedNew;
-        assert delta >= 0;
-
-        if (delta > 0) {
-            // Not all uncommitted rows can be moved to O3 staging memory
-            // because column files are not fully mapped to memory
-            // reduce number of rows to move
-            transientRowsAdded -= delta;
-            committedTransientRowCount += delta;
-        }
-
         if (transientRowsAdded > 0) {
-
-            long maxCommittedTimestamp = 0;
-            if (delta > 0) {
-                // If there are rows to move, and we cannot move all uncommitted rows to o3 memory
-                // we have to set maxCommittedTimestamp in tx file
-                MemoryMAR timestampColumn = getPrimaryColumn(timestampIndex);
-                if (!timestampColumn.isMapped((committedTransientRowCount - 1) << 3, Long.BYTES)) {
-                    // Need to leave one more record in column files
-                    // to correctly get max timestamp
-                    transientRowsAdded--;
-                    committedTransientRowCount++;
-                }
-                maxCommittedTimestamp = timestampColumn.getLong((committedTransientRowCount - 1) << 3);
-            }
-
             final Sequence pubSeq = this.messageBus.getO3CallbackPubSeq();
             final RingQueue<O3CallbackTask> queue = this.messageBus.getO3CallbackQueue();
             o3PendingCallbackTasks.clear();
@@ -3623,14 +3603,8 @@ public class TableWriter implements Closeable {
             }
 
             o3DoneLatch.await(queuedCount);
-            if (delta == 0) {
-                txFile.resetToLastPartition(committedTransientRowCount);
-            } else {
-                // If transientRowsAdded is decreased because uncommitted area is not mapped
-                // maxCommittedTimestamp the last value of the segment left in files
-                txFile.resetToLastPartition(committedTransientRowCount, maxCommittedTimestamp);
-            }
         }
+        txFile.resetToLastPartition(committedTransientRowCount);
         return transientRowsAdded;
     }
 
@@ -3649,8 +3623,18 @@ public class TableWriter implements Closeable {
                 size = o3RowCount << ColumnType.pow2SizeOf(columnType);
             } else {
                 // Var size column
-                size = o3IndexMem.getLong(o3RowCount * 8);
-                o3IndexMem.jumpTo(o3RowCount * 8);
+                if (o3RowCount > 0) {
+                    // Usually we would find var col size of row count as (index[count] - index[count-1])
+                    // but the record index[count] may not exist yet
+                    // so the data size has to be calculated as (index[count-1] + len(data[count-1]) + 4)
+                    // where len(data[count-1]) can be read as the int from var col data at offset index[count-1]
+                    long prevOffset = o3IndexMem.getLong((o3RowCount - 1) * 8);
+                    size = prevOffset + 2L * o3DataMem.getInt(prevOffset) + 4L;
+                    o3IndexMem.jumpTo((o3RowCount + 1) * 8);
+                } else {
+                    size = 0;
+                    o3IndexMem.jumpTo(0);
+                }
             }
 
             o3DataMem.jumpTo(size);
@@ -3822,13 +3806,19 @@ public class TableWriter implements Closeable {
         final long srcDataAddr = dataMem.addressOf(0);
         final long srcDataSize = dataMem.size();
         final long srcIndxAddr = indexMem.addressOf(0);
+        // exclude the trailing offset from shuffling
         final long srcIndxSize = indexMem.size();
         final long tgtDataAddr = dataMem2.resize(dataSize);
         final long tgtDataSize = dataMem2.size();
         final long tgtIndxAddr = indexMem2.resize(valueCount * Long.BYTES);
         final long tgtIndxSize = indexMem2.size();
+
+        assert srcDataAddr != 0;
+        assert srcIndxAddr != 0;
+        assert tgtDataAddr != 0;
+        assert tgtIndxAddr != 0;
+
         // add max offset so that we do not have conditionals inside loop
-        indexMem.putLong(valueCount * Long.BYTES, dataSize);
         final long offset = Vect.sortVarColumn(
                 mergedTimestampsAddr,
                 valueCount,
@@ -3843,6 +3833,7 @@ public class TableWriter implements Closeable {
         indexMem2.replacePage(srcIndxAddr, srcIndxSize);
         dataMem.jumpTo(offset);
         indexMem.jumpTo(valueCount * Long.BYTES);
+        indexMem.putLong(dataSize);
     }
 
     private void o3TimestampSetter(long timestamp) {
@@ -3854,9 +3845,9 @@ public class TableWriter implements Closeable {
         MemoryMAR mem2 = getSecondaryColumn(i);
 
         try {
-            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
+            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
             if (mem2 != null) {
-                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
+                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
             }
         } finally {
             path.trimTo(plen);
@@ -3865,6 +3856,7 @@ public class TableWriter implements Closeable {
 
     private void openFirstPartition(long timestamp) {
         openPartition(repairDataGaps(timestamp));
+        populateDenseIndexerList();
         setAppendPosition(txFile.getTransientRowCount(), true);
         if (performRecovery) {
             performRecovery();
@@ -3897,6 +3889,12 @@ public class TableWriter implements Closeable {
                 indexers.getQuick(columnIndex).configureFollowerAndWriter(configuration, path.trimTo(plen), name, getPrimaryColumn(columnIndex), txFile.getTransientRowCount());
             }
 
+            // configure append position for variable length columns
+            MemoryMA mem2 = getSecondaryColumn(columnCount - 1);
+            if (mem2 != null) {
+                mem2.putLong(0);
+            }
+
         } finally {
             path.trimTo(rootLen);
         }
@@ -3914,26 +3912,26 @@ public class TableWriter implements Closeable {
 
             for (int i = 0; i < columnCount; i++) {
                 final CharSequence name = metadata.getColumnName(i);
-                final boolean indexed = metadata.isColumnIndexed(i);
+                final ColumnIndexer indexer = metadata.isColumnIndexed(i) ? indexers.getQuick(i) : null;
                 final long columnTop;
 
                 // prepare index writer if column requires indexing
-                if (indexed) {
+                if (indexer != null) {
                     // we have to create files before columns are open
                     // because we are reusing MAMemoryImpl object from columns list
                     createIndexFiles(name, metadata.getIndexValueBlockCapacity(i), plen, txFile.getTransientRowCount() < 1);
+                    indexer.closeSlider();
                 }
 
                 openColumnFiles(name, i, plen);
-                columnTop = readColumnTop(ff, path, name, plen, tempMem16b);
+                columnTop = readColumnTop(ff, path, name, plen, tempMem16b, true);
                 columnTops.extendAndSet(i, columnTop);
 
-                if (indexed) {
-                    ColumnIndexer indexer = indexers.getQuick(i);
-                    assert indexer != null;
+                if (indexer != null) {
                     indexer.configureFollowerAndWriter(configuration, path, name, getPrimaryColumn(i), columnTop);
                 }
             }
+            populateDenseIndexerList();
             LOG.info().$("switched partition [path='").$(path).I$();
         } catch (Throwable e) {
             distressed = true;
@@ -3952,7 +3950,7 @@ public class TableWriter implements Closeable {
                     throw CairoException.instance(0).put("corrupt ").put(path);
                 }
 
-                todoMem.smallFile(ff, path);
+                todoMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
                 this.todoTxn = todoMem.getLong(0);
                 // check if _todo_ file is consistent, if not, we just ignore its contents and reset hash
                 if (todoMem.getLong(24) != todoTxn) {
@@ -4556,10 +4554,10 @@ public class TableWriter implements Closeable {
                     final int primaryIndex = getPrimaryColumnIndex(i);
                     final int secondaryIndex = getSecondaryColumnIndex(i);
                     final MemoryMA logMem1 = logColumns.getQuick(primaryIndex);
-                    logMem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
+                    logMem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE, MemoryTag.MMAP_TABLE_WRITER);
                     final MemoryMA logMem2 = logColumns.getQuick(secondaryIndex);
                     if (logMem2 != null) {
-                        logMem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE);
+                        logMem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE, MemoryTag.MMAP_TABLE_WRITER);
                     }
                 }
                 // todo: this memory must propagate jump
@@ -4625,14 +4623,14 @@ public class TableWriter implements Closeable {
 
                 logCol1Offset = logCol1.getAppendOffset();
                 logCol1.jumpTo(srcOooVarSize);
-                dstVarAddr = TableUtils.mapRW(ff, logCol1.getFd(), srcOooVarSize);
+                dstVarAddr = TableUtils.mapRW(ff, logCol1.getFd(), srcOooVarSize, MemoryTag.NATIVE_O3);
 
                 logCol2Offset = logCol2.getAppendOffset();
                 logCol2.jumpTo(srcOooFixSize);
                 try {
-                    dstFixAddr = TableUtils.mapRW(ff, logCol2.getFd(), srcOooFixSize);
+                    dstFixAddr = TableUtils.mapRW(ff, logCol2.getFd(), srcOooFixSize, MemoryTag.NATIVE_O3);
                 } catch (Throwable e) {
-                    ff.munmap(dstVarAddr, srcOooVarSize);
+                    ff.munmap(dstVarAddr, srcOooVarSize, MemoryTag.NATIVE_O3);
                     // in case of exception we also need to restore append position of
                     logCol1.jumpTo(logCol1Offset);
                     logCol2.jumpTo(logCol2Offset);
@@ -4646,7 +4644,7 @@ public class TableWriter implements Closeable {
 
                 logCol1Offset = logCol1.getAppendOffset();
                 logCol1.jumpTo(srcOooFixSize);
-                dstFixAddr = TableUtils.mapRW(ff, logCol1.getFd(), srcOooFixSize);
+                dstFixAddr = TableUtils.mapRW(ff, logCol1.getFd(), srcOooFixSize, MemoryTag.NATIVE_O3);
                 dstVarAddr = 0;
                 logCol2Offset = 0;
             }
@@ -4655,9 +4653,7 @@ public class TableWriter implements Closeable {
                 O3CopyJob.copyO3(
                         columnType,
                         srcOooFixAddr,
-                        srcOooFixSize,
                         srcOooVarAddr,
-                        srcOooVarSize,
                         0,
                         o3LagRowCount,
                         dstFixAddr,
@@ -4666,9 +4662,9 @@ public class TableWriter implements Closeable {
                         0
                 );
             } catch (Throwable e) {
-                ff.munmap(dstFixAddr, srcOooFixSize);
+                ff.munmap(dstFixAddr, srcOooFixSize, MemoryTag.NATIVE_O3);
                 if (dstVarAddr != 0) {
-                    ff.munmap(dstVarAddr, srcOooVarSize);
+                    ff.munmap(dstVarAddr, srcOooVarSize, MemoryTag.NATIVE_O3);
                 }
 
                 logCol1.jumpTo(logCol1Offset);
@@ -4781,9 +4777,18 @@ public class TableWriter implements Closeable {
             return;
         }
 
-        if (hasO3()) {
-            masterRef--;
-            setO3AppendPosition(getO3RowCount());
+        if (o3MasterRef > -1) {
+            if (hasO3()) {
+                // O3 mode and there are some rows.
+                masterRef--;
+                setO3AppendPosition(getO3RowCount());
+            } else {
+                // Cancelling first row in o3, reverting back to non-o3
+                setO3AppendPosition(0);
+                masterRef--;
+                o3MasterRef = -1;
+                rowActon = ROW_ACTION_SWITCH_PARTITION;
+            }
             return;
         }
 
@@ -4830,10 +4835,11 @@ public class TableWriter implements Closeable {
                 txFile.cancelRow();
                 // we only have one partition, jump to start on every column
                 for (int i = 0; i < columnCount; i++) {
-                    getPrimaryColumn(i).jumpTo(0);
+                    getPrimaryColumn(i).jumpTo(0L);
                     MemoryMA mem = getSecondaryColumn(i);
                     if (mem != null) {
-                        mem.jumpTo(0);
+                        mem.jumpTo(0L);
+                        mem.putLong(0L);
                     }
                 }
             }
@@ -5085,7 +5091,7 @@ public class TableWriter implements Closeable {
             try {
                 denseIndexers.getQuick(i).refreshSourceAndIndex(lo, hi);
             } catch (CairoException e) {
-                // this is pretty severe, we hit some sort of a limit
+                // this is pretty severe, we hit some sort of limit
                 LOG.error().$("index error {").$((Sinkable) e).$('}').$();
                 throwDistressException(e);
             }
@@ -5115,9 +5121,9 @@ public class TableWriter implements Closeable {
                 if (metaSwapIndex > 0) {
                     path.put('.').put(metaSwapIndex);
                 }
-                metaMem.smallFile(ff, path.$());
+                metaMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
                 validationMap.clear();
-                validate(ff, metaMem, validationMap);
+                validate(ff, metaMem, validationMap, ColumnType.VERSION);
             } finally {
                 metaMem.close();
                 path.trimTo(rootLen);
@@ -5223,6 +5229,8 @@ public class TableWriter implements Closeable {
 
         void putGeoHash(int columnIndex, long value);
 
+        void putGeoHashDeg(int index, double lat, double lon);
+
         void putInt(int columnIndex, int value);
 
         void putLong(int columnIndex, long value);
@@ -5252,6 +5260,8 @@ public class TableWriter implements Closeable {
         void putTimestamp(int columnIndex, long value);
 
         void putTimestamp(int columnIndex, CharSequence value);
+
+        void putGeoStr(int columnIndex, CharSequence value);
     }
 
     private class RowImpl implements Row {
@@ -5313,27 +5323,6 @@ public class TableWriter implements Closeable {
         }
 
         @Override
-        public void putGeoHash(int columnIndex, long value) {
-            int type = metadata.getColumnType(columnIndex);
-            final MemoryA primaryColumn = getPrimaryColumn(columnIndex);
-            switch (ColumnType.sizeOf(type)) {
-                case 1:
-                    primaryColumn.putByte((byte) value);
-                    break;
-                case 2:
-                    primaryColumn.putShort((short) value);
-                    break;
-                case 4:
-                    primaryColumn.putInt((int) value);
-                    break;
-                default:
-                    primaryColumn.putLong(value);
-                    break;
-            }
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
         public void putInt(int columnIndex, int value) {
             getPrimaryColumn(columnIndex).putInt(value);
             setRowValueNotNull(columnIndex);
@@ -5373,6 +5362,64 @@ public class TableWriter implements Closeable {
         public void putShort(int columnIndex, short value) {
             getPrimaryColumn(columnIndex).putShort(value);
             setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putGeoHash(int index, long value) {
+            int type = metadata.getColumnType(index);
+            putGeoHash0(index, value, type);
+        }
+
+        @Override
+        public void putGeoHashDeg(int index, double lat, double lon) {
+            int type = metadata.getColumnType(index);
+            putGeoHash0(index, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type);
+        }
+
+        @Override
+        public void putGeoStr(int index, CharSequence hash) {
+            long val;
+            final int type = metadata.getColumnType(index);
+            if (hash != null) {
+                final int hashLen = hash.length();
+                final int typeBits = ColumnType.getGeoHashBits(type);
+                final int charsRequired = (typeBits - 1) / 5 + 1;
+                if (hashLen < charsRequired) {
+                    val = GeoHashes.NULL;
+                } else {
+                    try {
+                        val = ColumnType.truncateGeoHashBits(
+                                GeoHashes.fromString(hash, 0, charsRequired),
+                                charsRequired * 5,
+                                typeBits
+                        );
+                    } catch (NumericException e) {
+                        val = GeoHashes.NULL;
+                    }
+                }
+            } else {
+                val = GeoHashes.NULL;
+            }
+            putGeoHash0(index, val, type);
+        }
+
+        private void putGeoHash0(int index, long value, int type) {
+            final MemoryA primaryColumn = getPrimaryColumn(index);
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.GEOBYTE:
+                    primaryColumn.putByte((byte) value);
+                    break;
+                case ColumnType.GEOSHORT:
+                    primaryColumn.putShort((short) value);
+                    break;
+                case ColumnType.GEOINT:
+                    primaryColumn.putInt((int) value);
+                    break;
+                default:
+                    primaryColumn.putLong(value);
+                    break;
+            }
+            setRowValueNotNull(index);
         }
 
         @Override
@@ -5483,6 +5530,51 @@ public class TableWriter implements Closeable {
         }
 
         @Override
+        public void putGeoStr(int columnIndex, CharSequence hash) {
+            long val;
+            final int type = metadata.getColumnType(columnIndex);
+            if (hash != null) {
+                final int hashLen = hash.length();
+                final int typeBits = ColumnType.getGeoHashBits(type);
+                final int charsRequired = (typeBits - 1) / 5 + 1;
+                if (hashLen < charsRequired) {
+                    val = GeoHashes.NULL;
+                } else {
+                    try {
+                        val = ColumnType.truncateGeoHashBits(
+                                GeoHashes.fromString(hash, 0, charsRequired),
+                                charsRequired * 5,
+                                typeBits
+                        );
+                    } catch (NumericException e) {
+                        val = GeoHashes.NULL;
+                    }
+                }
+            } else {
+                val = GeoHashes.NULL;
+            }
+            putGeoHash0(columnIndex, val, type);
+        }
+
+        private void putGeoHash0(int columnIndex, long value, int type) {
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.GEOBYTE:
+                    putByte(columnIndex, (byte) value);
+                    break;
+                case ColumnType.GEOSHORT:
+                    putShort(columnIndex, (short) value);
+                    break;
+                case ColumnType.GEOINT:
+                    putInt(columnIndex, (int) value);
+                    break;
+                default:
+                    putLong(columnIndex, value);
+                    break;
+            }
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
         public void putChar(int columnIndex, char value) {
             final int p = getPrimaryColumnIndex(columnIndex);
             activeColumns.getQuick(p).putChar(value);
@@ -5513,23 +5605,14 @@ public class TableWriter implements Closeable {
 
         @Override
         public void putGeoHash(int columnIndex, long value) {
+            // TODO: support geohash repl
+            throw CairoException.instance(0).put("not implemented");
+        }
+
+        @Override
+        public void putGeoHashDeg(int columnIndex, double lat, double lon) {
             int type = metadata.getColumnType(columnIndex);
-            final MemoryA primaryColumn = getPrimaryColumn(columnIndex);
-            switch (ColumnType.sizeOf(type)) {
-                case 1:
-                    primaryColumn.putByte((byte) value);
-                    break;
-                case 2:
-                    primaryColumn.putShort((short) value);
-                    break;
-                case 4:
-                    primaryColumn.putInt((int) value);
-                    break;
-                default:
-                    primaryColumn.putLong(value);
-                    break;
-            }
-            setRowValueNotNull(columnIndex);
+            putGeoHash(columnIndex, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)));
         }
 
         @Override
@@ -5680,6 +5763,7 @@ public class TableWriter implements Closeable {
             activeColumns.getQuick(s).putLong(activeColumns.getQuick(p).putBin(address, len));
         }
     }
+
 
     private class WriterTransientSymbolCountChangeHandler implements TransientSymbolCountChangeHandler {
         private int symColIndex;

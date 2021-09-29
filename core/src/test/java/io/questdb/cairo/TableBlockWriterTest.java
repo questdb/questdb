@@ -41,6 +41,7 @@ import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TestUtils.LeakProneCode;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -325,6 +326,34 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCouldNotAddColumnPartitioned() throws Exception {
+        FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public boolean rename(LPSZ from, LPSZ to) {
+                if (Chars.endsWith(from, "_meta.swp") && Chars.endsWith(to, "_meta")) {
+                    return false;
+                }
+                return super.rename(from, to);
+            }
+        };
+        runTest(ff, "testAddColumnPartitioned", () -> {
+            compiler.compile(
+                    "CREATE TABLE source AS (" +
+                            "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(200)" +
+                            ") TIMESTAMP (ts) PARTITION BY DAY;",
+                    sqlExecutionContext
+            );
+            try {
+                compiler.compile("ALTER TABLE source ADD COLUMN str STRING", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(12, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not add column");
+            }
+        });
+    }
+
+    @Test
     public void testLargePartition() throws Exception {
         // Ensure partition data is more than the amount of data mapped into memory by the writer (see FilesFacade#FilesFacade)
         runTest("testPartitioned", () -> {
@@ -555,7 +584,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         LOG.info().$(nThreads).$(" worker threads started").$();
 
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);
-                TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName, "testing")) {
+             TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName, "testing")) {
             final int columnCount = writer.getMetadata().getColumnCount();
 
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -568,7 +597,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         }
 
         try (TableReplicationRecordCursorFactory factory = createReplicatingRecordCursorFactory(sourceTableName, maxRowsPerFrame);
-                TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName, "testing")) {
+             TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName, "testing")) {
             final int columnCount = factory.getMetadata().getColumnCount();
             int nFrames = 0;
             int timestampColumnIndex = factory.getMetadata().getTimestampIndex();

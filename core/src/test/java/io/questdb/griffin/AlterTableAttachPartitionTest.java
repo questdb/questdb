@@ -421,9 +421,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             private long tsdFd;
 
             @Override
-            public long mmap(long fd, long len, long offset, int flags) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (tsdFd != fd) {
-                    return super.mmap(fd, len, offset, flags);
+                    return super.mmap(fd, len, offset, flags, memoryTag);
                 }
                 tsdFd = 0;
                 return -1;

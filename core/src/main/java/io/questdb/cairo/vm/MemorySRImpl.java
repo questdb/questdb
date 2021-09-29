@@ -67,8 +67,9 @@ public class MemorySRImpl extends MemoryPARWImpl {
         return fd;
     }
 
-    public void of(MemoryMA parent) {
+    public void of(MemoryMA parent, int memoryTag) {
         close();
+        this.memoryTag = memoryTag;
         this.ff = parent.getFilesFacade();
         this.fd = parent.getFd();
         this.parent = parent;
@@ -107,7 +108,7 @@ public class MemorySRImpl extends MemoryPARWImpl {
 
         if (sz > 0) {
             try {
-                long address = TableUtils.mapRO(ff, fd, getExtendSegmentSize(), offset);
+                long address = TableUtils.mapRO(ff, fd, getExtendSegmentSize(), offset, memoryTag);
                 this.pageIndex = page;
                 this.pageAddress = address;
                 return address;
@@ -122,7 +123,7 @@ public class MemorySRImpl extends MemoryPARWImpl {
 
     private void releaseCurrentPage() {
         if (pageAddress != 0) {
-            ff.munmap(pageAddress, getExtendSegmentSize());
+            ff.munmap(pageAddress, getExtendSegmentSize(), memoryTag);
         }
     }
 

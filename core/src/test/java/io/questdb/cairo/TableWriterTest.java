@@ -38,6 +38,7 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
@@ -54,6 +55,28 @@ public class TableWriterTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(TableWriterTest.class);
 
     @Test
+    public void testSelectPartitionDirFmt() {
+        Assert.assertNull(TableWriter.selectPartitionDirFmt(PartitionBy.NONE));
+        sink.clear();
+        DateFormat fmt = TableWriter.selectPartitionDirFmt(PartitionBy.DAY);
+        Assert.assertNotNull(fmt);
+        fmt.format(0, DateFormatUtils.enLocale, "Z", sink);
+        Assert.assertEquals("1970-01-01", sink.toString());
+
+        sink.clear();
+        fmt = TableWriter.selectPartitionDirFmt(PartitionBy.MONTH);
+        Assert.assertNotNull(fmt);
+        fmt.format(0, DateFormatUtils.enLocale, "Z", sink);
+        Assert.assertEquals("1970-01", sink.toString());
+
+        sink.clear();
+        fmt = TableWriter.selectPartitionDirFmt(PartitionBy.YEAR);
+        Assert.assertNotNull(fmt);
+        fmt.format(0, DateFormatUtils.enLocale, "Z", sink);
+        Assert.assertEquals("1970", sink.toString());
+    }
+
+    @Test
     public void tesFrequentCommit() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 100000;
@@ -64,7 +87,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 Rnd rnd = new Rnd();
                 for (int i = 0; i < N; i++) {
-                    ts = populateRow(writer, ts, rnd, 60L * 60000L * 1000L);
+                    ts = populateRow(writer, rnd, ts, 60L * 60000L * 1000L);
                     writer.commit();
                 }
             }
@@ -205,14 +228,14 @@ public class TableWriterTest extends AbstractCairoTest {
             Assert.assertEquals(count, writer.size());
             writer.addColumn("abc", ColumnType.STRING);
             // add more data including updating new column
-            ts = populateTable2(rnd, writer, ts, count, interval);
+            ts = populateTable2(writer, rnd, count, ts, interval);
             Assert.assertEquals(2 * count, writer.size());
             writer.rollback();
         }
 
         // append more
         try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-            populateTable2(rnd, writer, ts, count, interval);
+            populateTable2(writer, rnd, count, ts, interval);
             writer.commit();
             Assert.assertEquals(2 * count, writer.size());
         }
@@ -490,9 +513,9 @@ public class TableWriterTest extends AbstractCairoTest {
                     return ff;
                 }
             }, PRODUCT)) {
-                Assert.assertEquals(12, writer.columns.size());
+                Assert.assertEquals(20, writer.columns.size());
                 writer.addColumn("abc", ColumnType.STRING);
-                Assert.assertEquals(14, writer.columns.size());
+                Assert.assertEquals(22, writer.columns.size());
                 Assert.assertTrue(ff.deleteAttempted);
             }
         });
@@ -937,7 +960,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (MemoryARW vmem = Vm.getARWInstance(FF.getPageSize(), Integer.MAX_VALUE)) {
+            try (MemoryARW vmem = Vm.getARWInstance(FF.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
                 try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
                     long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
                     int i = 0;
@@ -1024,10 +1047,10 @@ public class TableWriterTest extends AbstractCairoTest {
             r.putInt(0, rnd.nextInt());
             r.cancel();
 
-            Assert.assertEquals(0L, writer.columns.getQuick(13).getAppendOffset());
+            Assert.assertEquals(Long.BYTES, writer.columns.getQuick(21).getAppendOffset());
 
             // add more data including updating new column
-            ts = populateTable2(rnd, writer, ts, N, interval);
+            ts = populateTable2(writer, rnd, N, ts, interval);
             Assert.assertEquals(2 * N, writer.size());
 
             writer.rollback();
@@ -1035,7 +1058,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
         // append more
         try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-            populateTable2(rnd, writer, ts, N, interval);
+            populateTable2(writer, rnd, N, ts, interval);
             writer.commit();
             Assert.assertEquals(2 * N, writer.size());
         }
@@ -1094,7 +1117,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (MemoryARW vmem = Vm.getARWInstance(ff.getPageSize(), Integer.MAX_VALUE)) {
+            try (MemoryARW vmem = Vm.getARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
                 try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
@@ -1165,7 +1188,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (MemoryARW vmem = Vm.getARWInstance(ff.getPageSize(), Integer.MAX_VALUE)) {
+            try (MemoryARW vmem = Vm.getARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
                 try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
@@ -1270,12 +1293,12 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd = -1;
 
             @Override
-            public long mmap(long fd, long len, long offset, int flags) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == this.fd) {
                     this.fd = -1;
                     return -1;
                 }
-                return super.mmap(fd, len, offset, flags);
+                return super.mmap(fd, len, offset, flags, memoryTag);
             }
 
             @Override
@@ -1354,11 +1377,11 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd;
 
             @Override
-            public long mmap(long fd, long len, long offset, int flags) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == this.fd) {
                     return -1;
                 }
-                return super.mmap(fd, len, offset, flags);
+                return super.mmap(fd, len, offset, flags, memoryTag);
             }
 
             @Override
@@ -1381,7 +1404,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, "productName.d")) {
+                if (Chars.endsWith(name, "productName.i")) {
                     return fd = super.openRW(name);
                 }
                 return super.openRW(name);
@@ -1669,6 +1692,75 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGeoHashAsStringVanilla() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoStr("g9", 10, 489));
+    }
+
+    @Test
+    public void testGeoHashAsStringLongerThanType() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoStr("g912j", 15, 15649));
+    }
+
+    @Test
+    public void testGeoHashAsStringLongerThanTypeUneven() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoStr("g912j", 11, 978));
+    }
+
+    @Test
+    public void testGeoHashAsStringShorterThanType() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoStr("g912j", 44, GeoHashes.NULL));
+    }
+
+    @Test
+    public void testGeoHashAsStringInvalid() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoStr("ooo", 15, GeoHashes.NULL));
+    }
+
+    @Test
+    public void testGeoHashAsStringNull() throws Exception {
+        TestUtils.assertMemoryLeak(() -> assertGeoStr(null, 15, GeoHashes.NULL));
+    }
+
+    private void assertGeoStr(String hash, int tableBits, long expected) {
+        final String tableName = "geo1";
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
+            model.col("g", ColumnType.getGeoHashTypeWithBits(tableBits));
+            CairoTestUtils.createTable(model);
+        }
+
+        try (TableWriter writer = new TableWriter(configuration, tableName)) {
+            TableWriter.Row r = writer.newRow();
+            r.putGeoStr(0, hash);
+            r.append();
+            writer.commit();
+        }
+
+        try (TableReader r = new TableReader(configuration, tableName)) {
+            final RecordCursor cursor = r.getCursor();
+            final Record record = cursor.getRecord();
+            final int type = r.getMetadata().getColumnType(0);
+            Assert.assertTrue(cursor.hasNext());
+            final long actual;
+
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.GEOBYTE:
+                    actual = record.getGeoByte(0);
+                    break;
+                case ColumnType.GEOSHORT:
+                    actual = record.getGeoShort(0);
+                    break;
+                case ColumnType.GEOINT:
+                    actual = record.getGeoInt(0);
+                    break;
+                default:
+                    actual = record.getGeoLong(0);
+                    break;
+            }
+            Assert.assertEquals(expected, actual);
+        }
+    }
+
+    @Test
     public void testGetColumnIndex() {
         CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
         try (TableWriter writer = new TableWriter(configuration, "all")) {
@@ -1689,7 +1781,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     MemoryCMARW mem = Vm.getCMARWInstance();
                     Path path = new Path().of(root).concat("all").concat(TableUtils.TODO_FILE_NAME).$()
             ) {
-                mem.smallFile(FilesFacadeImpl.INSTANCE, path);
+                mem.smallFile(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT);
                 mem.putLong(32, 1);
                 mem.putLong(40, 9990001L);
                 mem.jumpTo(48);
@@ -2491,13 +2583,8 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSetAppendPositionFailureBin1() throws Exception {
-        testSetAppendPositionFailure("bin.d");
-    }
-
-    @Test
     public void testSetAppendPositionFailureBin2() throws Exception {
-        testSetAppendPositionFailure("bin.i");
+        testSetAppendPositionFailure();
     }
 
     @Test
@@ -2573,7 +2660,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 Rnd rnd = new Rnd();
                 for (int i = 0; i < 100; i++) {
-                    ts = populateRow(w, ts, rnd, 60L * 60000L * 1000L);
+                    ts = populateRow(w, rnd, ts, 60L * 60000L * 1000L);
                 }
                 w.commit();
 
@@ -2635,9 +2722,9 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             class X extends CountingFilesFacade {
                 @Override
-                public long mmap(long fd, long len, long offset, int flags) {
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                     if (--count > 0) {
-                        return super.mmap(fd, len, offset, flags);
+                        return super.mmap(fd, len, offset, flags, memoryTag);
                     }
                     return -1;
                 }
@@ -2671,6 +2758,21 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testUnCachedSymbol() {
         testSymbolCacheFlag(false);
+    }
+
+    private static long populateRow(TableWriter writer, Rnd rnd, long ts, long increment) {
+        TableWriter.Row r = writer.newRow(ts += increment);
+        r.putInt(0, rnd.nextPositiveInt());  // productId
+        r.putStr(1, rnd.nextString(7)); // productName
+        r.putSym(2, rnd.nextString(4)); // supplier
+        r.putSym(3, rnd.nextString(11)); // category
+        r.putDouble(4, rnd.nextDouble()); // price
+        r.putByte(5, rnd.nextGeoHashByte(5)); // locationByte
+        r.putShort(6, rnd.nextGeoHashShort(15)); // locationShort
+        r.putInt(7, rnd.nextGeoHashInt(30)); // locationInt
+        r.putLong(8, rnd.nextGeoHashLong(60)); // locationLong
+        r.append();
+        return ts;
     }
 
     private long append10KNoSupplier(long ts, Rnd rnd, TableWriter writer) {
@@ -2764,7 +2866,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private void appendAndAssert10K(long ts, Rnd rnd) {
         try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-            Assert.assertEquals(12, writer.columns.size());
+            Assert.assertEquals(20, writer.columns.size());
             populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
             writer.commit(CommitMode.SYNC);
             Assert.assertEquals(30000, writer.size());
@@ -2783,6 +2885,10 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("supplier", ColumnType.SYMBOL).symbolCapacity(N)
                 .col("category", ColumnType.SYMBOL).symbolCapacity(N).indexed(true, 256)
                 .col("price", ColumnType.DOUBLE)
+                .col("locationByte", ColumnType.getGeoHashTypeWithBits(5))
+                .col("locationShort", ColumnType.getGeoHashTypeWithBits(15))
+                .col("locationInt", ColumnType.getGeoHashTypeWithBits(30))
+                .col("locationLong", ColumnType.getGeoHashTypeWithBits(60))
                 .timestamp()) {
             CairoTestUtils.create(model);
         }
@@ -2813,7 +2919,7 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.addColumn("abc", ColumnType.STRING);
 
             // add more data including updating new column
-            ts = populateTable2(rnd, writer, ts, n, interval);
+            ts = populateTable2(writer, rnd, n, ts, interval);
 
             writer.commit();
 
@@ -2822,7 +2928,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
         // append more
         try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-            populateTable2(rnd, writer, ts, n, interval);
+            populateTable2(writer, rnd, n, ts, interval);
             Assert.assertEquals(3 * n, writer.size());
             writer.commit();
             Assert.assertEquals(3 * n, writer.size());
@@ -2831,19 +2937,8 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private long populateProducts(TableWriter writer, Rnd rnd, long ts, int count, long increment) {
         for (int i = 0; i < count; i++) {
-            ts = populateRow(writer, ts, rnd, increment);
+            ts = populateRow(writer, rnd, ts, increment);
         }
-        return ts;
-    }
-
-    private long populateRow(TableWriter writer, long ts, Rnd rnd, long increment) {
-        TableWriter.Row r = writer.newRow(ts += increment);
-        r.putInt(0, rnd.nextPositiveInt());
-        r.putStr(1, rnd.nextString(7));
-        r.putSym(2, rnd.nextString(4));
-        r.putSym(3, rnd.nextString(11));
-        r.putDouble(4, rnd.nextDouble());
-        r.append();
         return ts;
     }
 
@@ -2877,16 +2972,9 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
-    private long populateTable2(Rnd rnd, TableWriter writer, long ts, int n, long interval) {
+    private long populateTable2(TableWriter writer, Rnd rnd, int n, long ts, long interval) {
         for (int i = 0; i < n; i++) {
-            TableWriter.Row r = writer.newRow(ts += interval);
-            r.putInt(0, rnd.nextPositiveInt());
-            r.putStr(1, rnd.nextString(7));
-            r.putSym(2, rnd.nextString(4));
-            r.putSym(3, rnd.nextString(11));
-            r.putDouble(4, rnd.nextDouble());
-            r.putStr(6, rnd.nextString(5));
-            r.append();
+            ts = populateRow(writer, rnd, ts, interval);
         }
         return ts;
     }
@@ -3001,14 +3089,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
                 for (int i = 0; i < N; i++) {
-                    TableWriter.Row r = writer.newRow(ts += 60L * 60000 * 1000L);
-                    r.putInt(0, rnd.nextPositiveInt());
-                    r.putStr(1, rnd.nextString(7));
-                    r.putSym(2, rnd.nextString(4));
-                    r.putSym(3, rnd.nextString(11));
-                    r.putDouble(4, rnd.nextDouble());
-                    r.putStr(6, rnd.nextString(10));
-                    r.append();
+                    ts = populateRow(writer, rnd, ts, 60L * 60000 * 1000L);
                 }
                 writer.commit();
                 Assert.assertEquals(N * 2, writer.size());
@@ -3031,7 +3112,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
                 Assert.assertEquals(20000, writer.size());
 
-                Assert.assertEquals(12, writer.columns.size());
+                Assert.assertEquals(20, writer.columns.size());
 
                 try {
                     writer.addColumn("abc", ColumnType.STRING);
@@ -3061,7 +3142,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
             };
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-                Assert.assertEquals(12, writer.columns.size());
+                Assert.assertEquals(20, writer.columns.size());
                 ts = populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
                 writer.commit();
                 try {
@@ -3125,7 +3206,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private long testAppendNulls(Rnd rnd, long ts) {
         final int blobLen = 64 * 1024;
-        long blob = Unsafe.malloc(blobLen);
+        long blob = Unsafe.malloc(blobLen, MemoryTag.NATIVE_DEFAULT);
         try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
@@ -3179,7 +3260,7 @@ public class TableWriterTest extends AbstractCairoTest {
             Assert.assertFalse(writer.inTransaction());
             Assert.assertEquals(size + 10000, writer.size());
         } finally {
-            Unsafe.free(blob, blobLen);
+            Unsafe.free(blob, blobLen, MemoryTag.NATIVE_DEFAULT);
         }
         return ts;
     }
@@ -3492,7 +3573,7 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
-    private void testSetAppendPositionFailure(String failFile) throws Exception {
+    private void testSetAppendPositionFailure() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
 
@@ -3501,7 +3582,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 @Override
                 public long openRW(LPSZ name) {
-                    if (Chars.endsWith(name, failFile)) {
+                    if (Chars.endsWith(name, "bin.i")) {
                         return fd = super.openRW(name);
                     }
                     return super.openRW(name);
@@ -3658,7 +3739,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 ts = populateProducts(writer, rnd, ts, 10000, 60000 * 1000L);
                 writer.commit();
 
-                Assert.assertEquals(12, writer.columns.size());
+                Assert.assertEquals(20, writer.columns.size());
 
                 try {
                     writer.addColumn("abc", ColumnType.STRING);

@@ -252,22 +252,22 @@ final class FastMapRecord implements MapRecord {
     }
 
     @Override
-    public byte getGeoHashByte(int col) {
+    public byte getGeoByte(int col) {
         return getByte(col);
     }
 
     @Override
-    public short getGeoHashShort(int col) {
+    public short getGeoShort(int col) {
         return getShort(col);
     }
 
     @Override
-    public int getGeoHashInt(int col) {
+    public int getGeoInt(int col) {
         return getInt(col);
     }
 
     @Override
-    public long getGeoHashLong(int col) {
+    public long getGeoLong(int col) {
         return getLong(col);
     }
 
@@ -374,25 +374,5 @@ final class FastMapRecord implements MapRecord {
         this.address0 = address;
         this.address1 = address + keyDataOffset;
         this.address2 = address + keyBlockOffset;
-    }
-
-    private static class DirectBinarySequence implements BinarySequence {
-        private long address;
-        private long len;
-
-        @Override
-        public byte byteAt(long index) {
-            return Unsafe.getUnsafe().getByte(address + index);
-        }
-
-        @Override
-        public long length() {
-            return len;
-        }
-
-        public void of(long address, long len) {
-            this.address = address;
-            this.len = len;
-        }
     }
 }

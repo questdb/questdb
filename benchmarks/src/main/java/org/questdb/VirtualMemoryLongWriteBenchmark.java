@@ -26,6 +26,7 @@ package org.questdb;
 
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.MemoryPARWImpl;
+import io.questdb.std.MemoryTag;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -38,8 +39,8 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class VirtualMemoryLongWriteBenchmark {
-    private static final MemoryPARWImpl mem1 = new MemoryPARWImpl(1024 * 1024, Integer.MAX_VALUE);
-    private static final MemoryCARWImpl mem3 = new MemoryCARWImpl(1024 * 1024, Integer.MAX_VALUE);
+    private static final MemoryPARWImpl mem1 = new MemoryPARWImpl(1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+    private static final MemoryCARWImpl mem3 = new MemoryCARWImpl(1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()

@@ -28,6 +28,7 @@ import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.LongAdder;
 
 public final class Unsafe {
     public static final long INT_OFFSET;
@@ -42,6 +43,7 @@ public final class Unsafe {
     private static final long OVERRIDE;
     private static final Method implAddExports;
     //#endif
+    private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
 
     static {
         try {
@@ -64,6 +66,11 @@ public final class Unsafe {
         //#if jdk.version!=8
         makeAccessible(implAddExports);
         //#endif
+
+        for (int i = 0; i < COUNTERS.length; i++) {
+           COUNTERS[i] = new LongAdder();
+        }
+
     }
 
     //#if jdk.version!=8
@@ -126,8 +133,8 @@ public final class Unsafe {
         Unsafe.getUnsafe().putOrderedLong(array, LONG_OFFSET + ((long) index << LONG_SCALE), value);
     }
 
-    public static long calloc(long size) {
-        long ptr = malloc(size);
+    public static long calloc(long size, int memoryTag) {
+        long ptr = malloc(size, memoryTag);
         Vect.memset(ptr, size, 0);
         return ptr;
     }
@@ -145,10 +152,10 @@ public final class Unsafe {
         return Unsafe.cas(array, Unsafe.LONG_OFFSET + (((long) index) << Unsafe.LONG_SCALE), expected, value);
     }
 
-    public static void free(long ptr, long size) {
+    public static void free(long ptr, long size, int memoryTag) {
         getUnsafe().freeMemory(ptr);
         FREE_COUNT.incrementAndGet();
-        recordMemAlloc(-size);
+        recordMemAlloc(-size, memoryTag);
     }
 
     public static boolean getBool(long address) {
@@ -175,26 +182,34 @@ public final class Unsafe {
         return MEM_USED.get();
     }
 
+    public static long getMemUsedByTag(int memoryTag) {
+        assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
+        return COUNTERS[memoryTag].sum();
+    }
+
     public static sun.misc.Unsafe getUnsafe() {
         return UNSAFE;
     }
 
-    public static long malloc(long size) {
+    public static long malloc(long size, int memoryTag) {
         long ptr = getUnsafe().allocateMemory(size);
-        recordMemAlloc(size);
+        recordMemAlloc(size, memoryTag);
         MALLOC_COUNT.incrementAndGet();
         return ptr;
     }
 
-    public static long realloc(long address, long oldSize, long newSize) {
+    public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
         long ptr = getUnsafe().reallocateMemory(address, newSize);
-        recordMemAlloc(-oldSize + newSize);
+        recordMemAlloc(-oldSize + newSize, memoryTag);
         return ptr;
     }
 
-    public static void recordMemAlloc(long size) {
+    public static void recordMemAlloc(long size, int memoryTag) {
         long mem = MEM_USED.addAndGet(size);
         assert mem >= 0;
+        assert  memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
+        COUNTERS[memoryTag].add(size);
+        assert COUNTERS[memoryTag].sum() >= 0;
     }
 
     private static int msb(int value) {

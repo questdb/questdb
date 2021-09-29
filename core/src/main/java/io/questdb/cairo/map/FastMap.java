@@ -91,7 +91,7 @@ public class FastMap implements Map {
         assert loadFactor > 0 && loadFactor < 1d;
 
         this.loadFactor = loadFactor;
-        this.kStart = kPos = Unsafe.malloc(this.capacity = pageSize);
+        this.kStart = kPos = Unsafe.malloc(this.capacity = pageSize, MemoryTag.NATIVE_FAST_MAP);
         this.kLimit = kStart + pageSize;
 
         this.keyCapacity = (int) (keyCapacity / loadFactor);
@@ -118,28 +118,29 @@ public class FastMap implements Map {
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.BYTE:
                     case ColumnType.BOOLEAN:
+                    case ColumnType.GEOBYTE:
                         offset++;
                         break;
                     case ColumnType.SHORT:
                     case ColumnType.CHAR:
+                    case ColumnType.GEOSHORT:
                         offset += 2;
                         break;
                     case ColumnType.INT:
                     case ColumnType.FLOAT:
                     case ColumnType.SYMBOL:
+                    case ColumnType.GEOINT:
                         offset += 4;
                         break;
                     case ColumnType.LONG:
                     case ColumnType.DOUBLE:
                     case ColumnType.DATE:
                     case ColumnType.TIMESTAMP:
+                    case ColumnType.GEOLONG:
                         offset += 8;
                         break;
                     case ColumnType.LONG256:
                         offset += Long256.BYTES;
-                        break;
-                    case ColumnType.GEOHASH:
-                        offset += GeoHashes.sizeOf(columnType);
                         break;
                     default:
                         close();
@@ -216,7 +217,7 @@ public class FastMap implements Map {
     public final void close() {
         offsets = Misc.free(offsets);
         if (kStart != 0) {
-            Unsafe.free(kStart, capacity);
+            Unsafe.free(kStart, capacity, MemoryTag.NATIVE_FAST_MAP);
             kStart = 0;
         }
     }
@@ -323,7 +324,7 @@ public class FastMap implements Map {
             if (kCapacity < target) {
                 kCapacity = Numbers.ceilPow2(target);
             }
-            long kAddress = Unsafe.realloc(this.kStart, this.capacity, kCapacity);
+            long kAddress = Unsafe.realloc(this.kStart, this.capacity, kCapacity, MemoryTag.NATIVE_FAST_MAP);
 
             this.capacity = kCapacity;
             long d = kAddress - this.kStart;

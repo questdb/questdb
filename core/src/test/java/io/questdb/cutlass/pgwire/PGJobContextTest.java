@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -37,7 +38,9 @@ import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -2921,7 +2924,7 @@ nodejs code:
                 }
 
                 // we need to let server process disconnect and release writer
-                Thread.sleep(2000);
+                Os.sleep(2000);
 
                 try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xyz", "testing")) {
                     w.commit();
@@ -3795,6 +3798,137 @@ nodejs code:
     }
 
     @Test
+    public void testGeoHashSelectSimpleStr() throws Exception {
+        testGeoHashSelect(true, false);
+    }
+
+    @Test
+    public void testGeoHashSelectSimpleBin() throws Exception {
+        testGeoHashSelect(true, true);
+    }
+
+    @Test
+    public void testGeoHashSelectStr() throws Exception {
+        testGeoHashSelect(false, false);
+    }
+
+    @Test
+    public void testGeoHashSelectBin() throws Exception {
+        testGeoHashSelect(false, true);
+    }
+
+    private void testGeoHashSelect(boolean simple, boolean binary) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignore = createPGServer(2);
+                    final Connection connection = getConnection(simple, binary)
+            ) {
+                Statement statement = connection.createStatement();
+                ResultSet rs = statement.executeQuery(
+                        "select " +
+                                "rnd_geohash(1) hash1b, " +
+                                "rnd_geohash(2) hash2b, " +
+                                "rnd_geohash(3) hash3b, " +
+                                "rnd_geohash(5) hash1c, " +
+                                "rnd_geohash(10) hash2c, " +
+                                "rnd_geohash(20) hash4c, " +
+                                "rnd_geohash(40) hash8c " +
+                                "from long_sequence(10)");
+
+                final String expected = "hash1b[VARCHAR],hash2b[VARCHAR],hash3b[VARCHAR],hash1c[VARCHAR],hash2c[VARCHAR],hash4c[VARCHAR],hash8c[VARCHAR]\n" +
+                        "0,00,100,z,hp,wh4b,s2z2fyds\n" +
+                        "0,10,001,f,q4,uzr0,jj53eufn\n" +
+                        "1,01,111,7,q0,s2vq,y5nbb1qj\n" +
+                        "1,10,111,r,5t,g5xx,kt2bujns\n" +
+                        "1,11,010,w,u7,qjuz,gyye1jqc\n" +
+                        "1,01,101,2,cs,vqnq,9yvqyf2r\n" +
+                        "1,10,001,0,be,4bw1,v676yupj\n" +
+                        "0,11,010,q,vg,g6mm,4tyruscu\n" +
+                        "1,01,011,u,wt,jgke,pw94gc64\n" +
+                        "0,01,101,8,y0,b2vj,b8182chp\n";
+                StringSink sink = new StringSink();
+                // dump metadata
+                assertResultSet(expected, sink, rs);
+            }
+        });
+    }
+
+    @Test
+    public void testGeoHashInsertAllStr() throws Exception {
+        insertAllGeoHashTypes(false);
+    }
+
+    @Test
+    public void testGeoHashInsertAllBin() throws Exception {
+        insertAllGeoHashTypes(true);
+    }
+
+    private void insertAllGeoHashTypes(boolean binary) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table xyz (" +
+                            "a geohash(1b)," +
+                            "b geohash(2b)," +
+                            "c geohash(3b)," +
+                            "d geohash(1c)," +
+                            "e geohash(2c)," +
+                            "f geohash(4c)," +
+                            "g geohash(8c)" +
+                            ")",
+                    sqlExecutionContext
+            );
+
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, binary);
+                    final PreparedStatement insert = connection.prepareStatement(
+                            "insert into xyz values (" +
+                                    "cast(? as geohash(1b))," +
+                                    "cast(? as geohash(2b))," +
+                                    "cast(? as geohash(3b))," +
+                                    "cast(? as geohash(1c))," +
+                                    "cast(? as geohash(2c))," +
+                                    "cast(? as geohash(4c))," +
+                                    "cast(? as geohash(8c)))"
+                    )
+            ) {
+                connection.setAutoCommit(false);
+                for (int i = 0; i < 100; i++) {
+                    insert.setString(1, "0");
+                    insert.setString(2, "10");
+                    insert.setString(3, "010");
+                    insert.setString(4, "x");
+                    insert.setString(5, "xy");
+                    insert.setString(6, "xyzw");
+                    insert.setString(7, "xyzwzvxq");
+                    insert.execute();
+                    Assert.assertEquals(1, insert.getUpdateCount());
+                }
+                connection.commit();
+
+                try (RecordCursorFactory factory = compiler.compile("xyz", sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final Record record = cursor.getRecord();
+                        int count = 0;
+                        while (cursor.hasNext()) {
+                            //TODO: bits geohash lliteral
+//                            Assert.assertEquals((byte)GeoHashes.fromBitString("0"), record.getGeoHashByte(0));
+//                            Assert.assertEquals((byte)GeoHashes.fromBitString("01"), record.getGeoHashByte(1));
+//                            Assert.assertEquals((byte)GeoHashes.fromBitString("010"), record.getGeoHashByte(2));
+                            Assert.assertEquals(GeoHashes.fromString("x" ,0, 1), record.getGeoByte(3));
+                            Assert.assertEquals(GeoHashes.fromString("xy" ,0,2), record.getGeoShort(4));
+                            Assert.assertEquals(GeoHashes.fromString("xyzw" ,0, 4), record.getGeoInt(5));
+                            Assert.assertEquals(GeoHashes.fromString("xyzwzvxq" ,0, 8), record.getGeoLong(6));
+                            count++;
+                        }
+
+                        Assert.assertEquals(100, count);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSimpleAlterTable() throws Exception {
         // we are going to:
         // 1. create a table
@@ -4452,6 +4586,127 @@ nodejs code:
                 execSelectWithParam(select, 11);
                 TestUtils.assertEquals("11\n", sink);
 
+            }
+        });
+    }
+
+    @Test
+    public void testInsertBinaryBindVariable1() throws Exception {
+        testInsertBinaryBindVariable(true);
+    }
+
+    @Test
+    public void testInsertBinaryBindVariable2() throws Exception {
+        testInsertBinaryBindVariable(false);
+    }
+
+    private void testInsertBinaryBindVariable(boolean binaryProtocol) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table xyz (" +
+                            "a binary" +
+                            ")",
+                    sqlExecutionContext
+            );
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, binaryProtocol);
+                    final PreparedStatement insert = connection.prepareStatement(
+                            "insert into xyz values (?)"
+                    )
+            ) {
+                connection.setAutoCommit(false);
+                int totalCount = 10;
+                for (int i = 0; i < totalCount; i++) {
+                    insert.setBytes(1, new byte[]{1, 2, 3, 4});
+                    insert.execute();
+                }
+                connection.commit();
+
+                try (RecordCursorFactory factory = compiler.compile("xyz", sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final Record record = cursor.getRecord();
+                        int count = 0;
+                        while (cursor.hasNext()) {
+                            Assert.assertEquals(4, record.getBinLen(0));
+                            count++;
+                        }
+
+                        Assert.assertEquals(totalCount, count);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    @Ignore // TODO: support big binary parameter buffers (epic)
+    public void testInsertBinaryOver1Mb() throws Exception {
+        final int maxLength = 1024 * 1024;
+        testBinaryInsert(maxLength, false);
+    }
+
+    @Test
+    public void testInsertBinaryOver200KbNonBinaryProtocol() throws Exception {
+        final int maxLength = 200 * 1024;
+        testBinaryInsert(maxLength, false);
+    }
+
+    @Test
+    public void testInsertBinaryOver200KbBinaryProtocol() throws Exception {
+        final int maxLength = 200 * 1024;
+        testBinaryInsert(maxLength, true);
+    }
+
+    private void testBinaryInsert(int maxLength, boolean binaryProtocol) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table xyz (" +
+                            "a binary" +
+                            ")",
+                    sqlExecutionContext
+            );
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, binaryProtocol);
+                    final PreparedStatement insert = connection.prepareStatement(
+                            "insert into xyz values (?)"
+                    )
+            ) {
+                connection.setAutoCommit(false);
+                try (InputStream str = new InputStream() {
+                    int value = 0;
+                    @Override
+                    public int read() {
+                        if (maxLength == value) return  -1;
+                        return value++ % 255;
+                    }
+                }) {
+                    int totalCount = 1;
+                    for (int i = 0; i < totalCount; i++) {
+                        insert.setBinaryStream(1, str);
+                        insert.execute();
+                    }
+                    connection.commit();
+
+                    try (RecordCursorFactory factory = compiler.compile("xyz", sqlExecutionContext).getRecordCursorFactory()) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            final Record record = cursor.getRecord();
+                            int count = 0;
+                            while (cursor.hasNext()) {
+                                Assert.assertEquals(maxLength, record.getBinLen(0));
+                                BinarySequence bs = record.getBin(0);
+                                for(int i = 0; i < maxLength; i++) {
+                                    Assert.assertEquals(
+                                            i % 255,
+                                            bs.byteAt(i) & 0xff // Convert byte to unsigned int
+                                    );
+                                }
+                                count++;
+                            }
+
+                            Assert.assertEquals(totalCount, count);
+                        }
+                    }
+                }
             }
         });
     }

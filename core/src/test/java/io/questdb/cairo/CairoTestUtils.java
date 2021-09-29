@@ -39,8 +39,29 @@ public class CairoTestUtils {
         );
     }
 
+    public static void createAllTable(CairoConfiguration configuration, int partitionBy) {
+        try (TableModel model = getAllTypesModel(configuration, partitionBy)) {
+            createTableWithVersionAndId(model, ColumnType.VERSION, 1);
+        }
+    }
 
-    public static void createTableWithVersion(TableModel model, int version) {
+    public static void createAllTableWithNewTypes(CairoConfiguration configuration, int partitionBy) {
+        try (TableModel model = getAllTypesModelWithNewTypes(configuration, partitionBy)) {
+            create(model);
+        }
+    }
+
+    public static void createAllTableWithTimestamp(CairoConfiguration configuration, int partitionBy) {
+        try (TableModel model = getAllTypesModel(configuration, partitionBy).col("ts", ColumnType.TIMESTAMP).timestamp()) {
+            createTableWithVersionAndId(model, ColumnType.VERSION, 1);
+        }
+    }
+
+    public static void createTable(TableModel model) {
+        createTable(model, ColumnType.VERSION);
+    }
+
+    public static void createTable(TableModel model, int version) {
         TableUtils.createTable(
                 model.getCairoCfg(),
                 model.getMem(),
@@ -60,35 +81,6 @@ public class CairoTestUtils {
                 version,
                 tableId
         );
-    }
-
-    public static void createTable(TableModel model) {
-        TableUtils.createTable(
-                model.getCairoCfg(),
-                model.getMem(),
-                model.getPath(),
-                model,
-                ColumnType.VERSION,
-                1
-        );
-    }
-
-    public static void createAllTable(CairoConfiguration configuration, int partitionBy) {
-        try (TableModel model = getAllTypesModel(configuration, partitionBy)) {
-            createTableWithVersionAndId(model, ColumnType.VERSION, 1);
-        }
-    }
-
-    public static void createAllTableWithTimestamp(CairoConfiguration configuration, int partitionBy) {
-        try (TableModel model = getAllTypesModel(configuration, partitionBy).col("ts", ColumnType.TIMESTAMP).timestamp()) {
-            createTableWithVersionAndId(model, ColumnType.VERSION, 1);
-        }
-    }
-
-    public static void createAllTableWithNewTypes(CairoConfiguration configuration, int partitionBy) {
-        try (TableModel model = getAllTypesModelWithNewTypes(configuration, partitionBy)) {
-            create(model);
-        }
     }
 
     public static void createTestTable(int n, Rnd rnd, TestRecord.ArrayBinarySequence binarySequence) {
@@ -214,5 +206,14 @@ public class CairoTestUtils {
                 .timestamp()
                 ;
 
+    }
+
+    public static TableModel getGeoHashTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy) {
+        return new TableModel(configuration, "allgeo", partitionBy)
+                .col("hb", ColumnType.getGeoHashTypeWithBits(6))
+                .col("hs", ColumnType.getGeoHashTypeWithBits(12))
+                .col("hi", ColumnType.getGeoHashTypeWithBits(27))
+                .col("hl", ColumnType.getGeoHashTypeWithBits(44))
+                .timestamp();
     }
 }

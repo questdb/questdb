@@ -99,7 +99,7 @@ const Footer = () => {
     <Wrapper id="footer">
       <LeftContainer>
         <Text color="draculaForeground">
-          Copyright &copy; 2014-{new Date().getFullYear()} QuestDB
+          Copyright &copy; {new Date().getFullYear()} QuestDB
         </Text>
       </LeftContainer>
       <RightContainer>

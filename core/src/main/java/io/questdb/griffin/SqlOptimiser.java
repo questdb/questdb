@@ -661,11 +661,11 @@ class SqlOptimiser {
         }
     }
 
-    private void copyColumnsFromMetadata(QueryModel model, RecordMetadata m) throws SqlException {
+    private void copyColumnsFromMetadata(QueryModel model, RecordMetadata m, boolean cleanColumnNames) throws SqlException {
         // column names are not allowed to have dot
 
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
-            CharSequence columnName = createColumnAlias(m.getColumnName(i), model);
+            CharSequence columnName = createColumnAlias(m.getColumnName(i), model, cleanColumnNames);
             model.addField(queryColumnPool.next().of(columnName, expressionNodePool.next().of(LITERAL, columnName, 0, 0)));
         }
 
@@ -683,6 +683,10 @@ class SqlOptimiser {
                 throw SqlException.$(timestamp.position, "not a TIMESTAMP");
             }
         }
+    }
+
+    private CharSequence createColumnAlias(CharSequence name, QueryModel model, boolean cleanColumnNames) {
+        return SqlUtil.createColumnAlias(characterStore, name, -1, model.getAliasToColumnMap(), cleanColumnNames);
     }
 
     private CharSequence createColumnAlias(CharSequence name, QueryModel model) {
@@ -1835,7 +1839,7 @@ class SqlOptimiser {
         )) {
             model.setTableVersion(r.getVersion());
             model.setTableId(r.getMetadata().getId());
-            copyColumnsFromMetadata(model, r.getMetadata());
+            copyColumnsFromMetadata(model, r.getMetadata(), false);
         } catch (EntryLockedException e) {
             throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableLookupSequence);
         } catch (CairoException e) {
@@ -2131,7 +2135,7 @@ class SqlOptimiser {
         }
         model.setTableNameFunction(function);
         functionsInFlight.add(function);
-        copyColumnsFromMetadata(model, function.getRecordCursorFactory().getMetadata());
+        copyColumnsFromMetadata(model, function.getRecordCursorFactory().getMetadata(), true);
     }
 
     private void processEmittedJoinClauses(QueryModel model) {

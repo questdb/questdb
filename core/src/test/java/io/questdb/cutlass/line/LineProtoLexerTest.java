@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line;
 
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -280,7 +281,7 @@ public class LineProtoLexerTest {
 
     protected void assertError(CharSequence line, int state, int code, int position) throws LineProtoException {
         byte[] bytes = line.toString().getBytes(StandardCharsets.UTF_8);
-        long mem = Unsafe.malloc(bytes.length);
+        long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
             final int len = bytes.length;
             for (int i = 0; i < len; i++) {
@@ -298,7 +299,7 @@ public class LineProtoLexerTest {
                 Assert.assertEquals(position, lineAssemblingParser.errorPosition);
             }
         } finally {
-            Unsafe.free(mem, bytes.length);
+            Unsafe.free(mem, bytes.length, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -308,7 +309,7 @@ public class LineProtoLexerTest {
 
     protected void assertThat(CharSequence expected, byte[] line) throws LineProtoException {
         final int len = line.length;
-        long mem = Unsafe.malloc(line.length);
+        long mem = Unsafe.malloc(line.length, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < len; i++) {
                 Unsafe.getUnsafe().putByte(mem + i, line[i]);
@@ -345,7 +346,7 @@ public class LineProtoLexerTest {
             smallBufLexer.parseLast();
             TestUtils.assertEquals(expected, sink);
         } finally {
-            Unsafe.free(mem, len);
+            Unsafe.free(mem, len, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

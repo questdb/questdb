@@ -26,16 +26,17 @@ package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.GeoHashFunction;
+import io.questdb.griffin.engine.functions.GeoByteFunction;
+import io.questdb.griffin.engine.functions.GeoIntFunction;
+import io.questdb.griffin.engine.functions.GeoLongFunction;
+import io.questdb.griffin.engine.functions.GeoShortFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -47,63 +48,119 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(
-            int position, ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    public Function newInstance(int position,
+                                ObjList<Function> args,
+                                IntList argPositions,
+                                CairoConfiguration configuration,
+                                SqlExecutionContext sqlExecutionContext) throws SqlException {
         int bits = args.getQuick(0).getInt(null);
-        if (bits < 1 || bits > GeoHashes.MAX_BITS_LENGTH) {
+        if (bits < 1 || bits > ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
             throw SqlException.$(argPositions.getQuick(0), "precision must be in [1..60] range");
         }
-        return new RndFunction(bits);
+        final int type = ColumnType.getGeoHashTypeWithBits(bits);
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.GEOBYTE:
+                return new RndByteFunction(type);
+            case ColumnType.GEOSHORT:
+                return new RndShortFunction(type);
+            case ColumnType.GEOINT:
+                return new RndIntFunction(type);
+            default:
+                return new RndLongFunction(type);
+        }
     }
 
-    private static class RndFunction extends GeoHashFunction implements Function {
+    private static class RndByteFunction extends GeoByteFunction implements Function {
 
         private final int bits;
         private Rnd rnd;
 
-        public RndFunction(int bits) {
-            super(ColumnType.geohashWithPrecision(bits));
-            this.bits = bits;
-        }
-
-        private long getLongRnd() {
-            double x = rnd.nextDouble() * 180.0 - 90.0;
-            double y = rnd.nextDouble() * 360.0 - 180.0;
-            try {
-                return GeoHashes.fromCoordinates(x, y, this.bits);
-            } catch (NumericException e) {
-                // Should never happen
-                return GeoHashes.NULL;
-            }
+        public RndByteFunction(int type) {
+            super(type);
+            this.bits = ColumnType.getGeoHashBits(type);
         }
 
         @Override
-        public byte getGeoHashByte(Record rec) {
-            return (byte) getLongRnd();
-        }
-
-        @Override
-        public short getGeoHashShort(Record rec) {
-            return (short) getLongRnd();
-        }
-
-        @Override
-        public int getGeoHashInt(Record rec) {
-            return (int) getLongRnd();
-        }
-
-        @Override
-        public long getGeoHashLong(Record rec) {
-            return getLongRnd();
+        public byte getGeoByte(Record rec) {
+            return (byte) rnd.nextGeoHash(bits);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
+        }
+    }
+
+    private static class RndShortFunction extends GeoShortFunction implements Function {
+
+        private final int bits;
+        private Rnd rnd;
+
+        public RndShortFunction(int type) {
+            super(type);
+            this.bits = ColumnType.getGeoHashBits(type);
+        }
+
+        @Override
+        public short getGeoShort(Record rec) {
+            return (short) rnd.nextGeoHash(bits);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
+        }
+    }
+
+    private static class RndIntFunction extends GeoIntFunction implements Function {
+
+        private final int bits;
+        private Rnd rnd;
+
+        public RndIntFunction(int type) {
+            super(type);
+            this.bits = ColumnType.getGeoHashBits(type);
+        }
+
+        @Override
+        public int getGeoInt(Record rec) {
+            return (int) rnd.nextGeoHash(bits);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public short getGeoShort(Record rec) {
+            return (byte) rnd.nextGeoHash(bits);
+        }
+    }
+
+    private static class RndLongFunction extends GeoLongFunction implements Function {
+
+        private final int bits;
+        private Rnd rnd;
+
+        public RndLongFunction(int type) {
+            super(type);
+            this.bits = ColumnType.getGeoHashBits(type);
+        }
+
+        @Override
+        public long getGeoLong(Record rec) {
+            return rnd.nextGeoHash(bits);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public short getGeoShort(Record rec) {
+            return (byte) rnd.nextGeoHash(bits);
         }
     }
 }

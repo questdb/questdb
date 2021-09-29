@@ -28,15 +28,13 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.locks.LockSupport;
 
+import io.questdb.std.*;
 import org.junit.Assert;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.Chars;
-import io.questdb.std.IntList;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.ByteSequence;
 import io.questdb.test.tools.TestUtils;
 
@@ -62,14 +60,32 @@ public class SendAndReceiveRequestBuilder {
                     "\r\n";
 
     private static final Log LOG = LogFactory.getLog(SendAndReceiveRequestBuilder.class);
+    private final int maxWaitTimeoutMs = 30000;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private long pauseBetweenSendAndReceive;
     private boolean printOnly;
     private boolean expectDisconnect;
     private int requestCount = 1;
     private int compareLength = -1;
-    private final int maxWaitTimeoutMs = 30000;
     private boolean expectSendDisconnect;
+
+    public long connectAndSendRequest(String request) {
+        final long fd = nf.socketTcp(true);
+        nf.configureNoLinger(fd);
+        long sockAddr = nf.sockaddr("127.0.0.1", 9001);
+        try {
+            TestUtils.assertConnect(fd, sockAddr);
+            Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+            if (!expectDisconnect) {
+                NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
+            }
+
+            executeWithSocket(request, "", fd);
+        } finally {
+            nf.freeSockAddr(sockAddr);
+        }
+        return fd;
+    }
 
     public void execute(
             String request,
@@ -96,36 +112,6 @@ public class SendAndReceiveRequestBuilder {
         }
     }
 
-    public long connectAndSendRequest(String request) throws InterruptedException {
-        final long fd = nf.socketTcp(true);
-        nf.configureNoLinger(fd);
-        long sockAddr = nf.sockaddr("127.0.0.1", 9001);
-        try {
-            TestUtils.assertConnect(fd, sockAddr);
-            Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
-            if (!expectDisconnect) {
-                NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
-            }
-
-            executeWithSocket(request, "", fd);
-        } finally {
-            nf.freeSockAddr(sockAddr);
-        }
-        return fd;
-    }
-
-    private void executeWithSocket(String request, CharSequence response, long fd) throws InterruptedException {
-        final int len = Math.max(response.length(), request.length()) * 2;
-        long ptr = Unsafe.malloc(len);
-        try {
-            for (int j = 0; j < requestCount; j++) {
-                executeExplicit(request, fd, response, len, ptr, null);
-            }
-        } finally {
-            Unsafe.free(ptr, len);
-        }
-    }
-
     public void executeExplicit(
             String request,
             long fd,
@@ -133,14 +119,14 @@ public class SendAndReceiveRequestBuilder {
             final int len,
             long ptr,
             HttpClientStateListener listener
-    ) throws InterruptedException {
+    ) {
         long timestamp = System.currentTimeMillis();
         int sent = 0;
         int reqLen = request.length();
         Chars.asciiStrCpy(request, reqLen, ptr);
         while (sent < reqLen) {
             int n = nf.send(fd, ptr + sent, reqLen - sent);
-            if (n < 0 && expectSendDisconnect){
+            if (n < 0 && expectSendDisconnect) {
                 return;
             }
             Assert.assertTrue(n > -1);
@@ -148,7 +134,7 @@ public class SendAndReceiveRequestBuilder {
         }
 
         if (pauseBetweenSendAndReceive > 0) {
-            Thread.sleep(pauseBetweenSendAndReceive);
+            Os.sleep(pauseBetweenSendAndReceive);
         }
         // receive response
         final int expectedToReceive = expectedResponse.length();
@@ -180,7 +166,7 @@ public class SendAndReceiveRequestBuilder {
                     timeoutExpired = true;
                     break;
                 } else {
-                    Thread.sleep(10);
+                    Os.sleep(10);
                 }
             }
         }
@@ -221,7 +207,41 @@ public class SendAndReceiveRequestBuilder {
         }
     }
 
-    public void executeUntilDisconnect(String request, long fd, final int len, long ptr, HttpClientStateListener listener) throws InterruptedException {
+    public void executeMany(RequestAction action) throws InterruptedException, BrokenBarrierException {
+        final long fd = nf.socketTcp(true);
+        nf.configureNoLinger(fd);
+        try {
+            long sockAddr = nf.sockaddr("127.0.0.1", 9001);
+            Assert.assertTrue(fd > -1);
+            TestUtils.assertConnect(nf, fd, sockAddr);
+            Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+            if (!expectDisconnect) {
+                nf.configureNonBlocking(fd);
+            }
+
+            try {
+                RequestExecutor executor = new RequestExecutor() {
+                    @Override
+                    public void executeWithStandardHeaders(String request, String response) {
+                        executeWithSocket(request + RequestHeaders, ResponseHeaders + response, fd);
+                    }
+
+                    @Override
+                    public void execute(String request, String response) {
+                        executeWithSocket(request, response, fd);
+                    }
+                };
+
+                action.run(executor);
+            } finally {
+                nf.freeSockAddr(sockAddr);
+            }
+        } finally {
+            nf.close(fd);
+        }
+    }
+
+    public void executeUntilDisconnect(String request, long fd, final int len, long ptr, HttpClientStateListener listener) {
         withExpectDisconnect(true);
         long timestamp = System.currentTimeMillis();
         int sent = 0;
@@ -234,7 +254,7 @@ public class SendAndReceiveRequestBuilder {
         }
 
         if (pauseBetweenSendAndReceive > 0) {
-            Thread.sleep(pauseBetweenSendAndReceive);
+            Os.sleep(pauseBetweenSendAndReceive);
         }
 
         boolean timeoutExpired = false;
@@ -289,40 +309,6 @@ public class SendAndReceiveRequestBuilder {
         execute(request + RequestHeaders, ResponseHeaders + response);
     }
 
-    public void executeMany(RequestAction action) throws InterruptedException, BrokenBarrierException {
-        final long fd = nf.socketTcp(true);
-        nf.configureNoLinger(fd);
-        try {
-            long sockAddr = nf.sockaddr("127.0.0.1", 9001);
-            Assert.assertTrue(fd > -1);
-            TestUtils.assertConnect(nf, fd, sockAddr);
-            Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
-            if (!expectDisconnect) {
-                nf.configureNonBlocking(fd);
-            }
-
-            try {
-                RequestExecutor executor = new RequestExecutor() {
-                    @Override
-                    public void executeWithStandardHeaders(String request, String response) throws InterruptedException {
-                        executeWithSocket(request + RequestHeaders, ResponseHeaders + response, fd);
-                    }
-
-                    @Override
-                    public void execute(String request, String response) throws InterruptedException {
-                        executeWithSocket(request, response, fd);
-                    }
-                };
-
-                action.run(executor);
-            } finally {
-                nf.freeSockAddr(sockAddr);
-            }
-        } finally {
-            nf.close(fd);
-        }
-    }
-
     public SendAndReceiveRequestBuilder withCompareLength(int compareLength) {
         this.compareLength = compareLength;
         return this;
@@ -358,6 +344,18 @@ public class SendAndReceiveRequestBuilder {
         return this;
     }
 
+    private void executeWithSocket(String request, CharSequence response, long fd) {
+        final int len = Math.max(response.length(), request.length()) * 2;
+        long ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int j = 0; j < requestCount; j++) {
+                executeExplicit(request, fd, response, len, ptr, null);
+            }
+        } finally {
+            Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
 
     @FunctionalInterface
     public interface RequestAction {
@@ -365,12 +363,12 @@ public class SendAndReceiveRequestBuilder {
     }
 
     public interface RequestExecutor {
-        void executeWithStandardHeaders(
+        void execute(
                 String request,
                 String response
         ) throws InterruptedException;
 
-        void execute(
+        void executeWithStandardHeaders(
                 String request,
                 String response
         ) throws InterruptedException;

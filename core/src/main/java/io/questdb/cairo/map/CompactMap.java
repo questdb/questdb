@@ -129,21 +129,21 @@ public class CompactMap implements Map {
     private final long entryKeyOffset;
     private final int valueColumnCount;
     private final CompactMapRecord record;
+    private final int nResizes;
+    private final int maxResizes;
     private long currentEntryOffset;
     private long currentEntrySize = 0;
     private long keyCapacity;
     private long mask;
     private long size;
-    private final int nResizes;
-    private final int maxResizes;
 
     public CompactMap(int pageSize, @Transient ColumnTypes keyTypes, @Transient ColumnTypes valueTypes, long keyCapacity, double loadFactor, int maxResizes, int maxPages) {
         this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes, maxPages);
     }
 
     CompactMap(int pageSize, @Transient ColumnTypes keyTypes, @Transient ColumnTypes valueTypes, long keyCapacity, double loadFactor, HashFunction hashFunction, int maxResizes, int maxPages) {
-        this.entries = Vm.getARWInstance(pageSize, maxPages);
-        this.entrySlots = Vm.getARWInstance(pageSize, maxPages);
+        this.entries = Vm.getARWInstance(pageSize, maxPages, MemoryTag.NATIVE_COMPACT_MAP);
+        this.entrySlots = Vm.getARWInstance(pageSize, maxPages, MemoryTag.NATIVE_COMPACT_MAP);
         try {
             this.loadFactor = loadFactor;
             this.columnOffsets = new long[keyTypes.getColumnCount() + valueTypes.getColumnCount()];
@@ -236,6 +236,7 @@ public class CompactMap implements Map {
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.BOOLEAN:
                 case ColumnType.BYTE:
+                case ColumnType.GEOBYTE:
                     sz = 1;
                     break;
                 case ColumnType.DOUBLE:
@@ -244,21 +245,21 @@ public class CompactMap implements Map {
                 case ColumnType.TIMESTAMP:
                 case ColumnType.STRING:
                 case ColumnType.BINARY:
+                case ColumnType.GEOLONG:
                     sz = 8;
                     break;
                 case ColumnType.FLOAT:
                 case ColumnType.INT:
+                case ColumnType.GEOINT:
                     sz = 4;
                     break;
                 case ColumnType.SHORT:
                 case ColumnType.CHAR:
+                case ColumnType.GEOSHORT:
                     sz = 2;
                     break;
                 case ColumnType.LONG256:
                     sz = Long256.BYTES;
-                    break;
-                case ColumnType.GEOHASH:
-                    sz = GeoHashes.sizeOf(columnType);
                     break;
                 default:
                     throw CairoException.instance(0).put("Unsupported column type: ").put(ColumnType.nameOf(valueTypes.getColumnType(i)));
@@ -446,18 +447,8 @@ public class CompactMap implements Map {
         }
 
         @Override
-        public void skip(int bytes) {
-            entries.skip(bytes);
-        }
-
-        @Override
         public void putChar(char value) {
             entries.putChar(value);
-        }
-
-        @Override
-        public void putRecord(Record value) {
-            // noop
         }
 
         @Override
@@ -483,8 +474,18 @@ public class CompactMap implements Map {
         }
 
         @Override
+        public void putRecord(Record value) {
+            // noop
+        }
+
+        @Override
         public void putTimestamp(long value) {
             putLong(value);
+        }
+
+        @Override
+        public void skip(int bytes) {
+            entries.skip(bytes);
         }
 
         private CompactMapValue appendEntry(long offset, long slot, byte flag) {
