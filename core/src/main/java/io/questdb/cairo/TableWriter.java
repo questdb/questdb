@@ -29,7 +29,6 @@ import io.questdb.MessageBusImpl;
 import io.questdb.cairo.SymbolMapWriter.TransientSymbolCountChangeHandler;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.MemoryFCRImpl;
-import io.questdb.cairo.vm.ReplMemoryLogCAImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.SqlException;
@@ -87,7 +86,6 @@ public class TableWriter implements Closeable {
     private final Path other;
     private final LongList rowValueIsNotNull = new LongList();
     private final Row regularRow = new RowImpl();
-    private final Row transactionLogRow = new TransactionLogRowImpl();
     private final int rootLen;
     private final MemoryMR metaMem;
     private final int partitionBy;
@@ -144,7 +142,6 @@ public class TableWriter implements Closeable {
     private final MemoryFR slaveMetaMem = new MemoryFCRImpl();
     private final SCSequence commandSubSeq;
     private final LongIntHashMap replPartitionHash = new LongIntHashMap();
-    private final MemoryMATL replO3TimestampMem = new ReplMemoryLogCAImpl();
     // Latest command sequence per command source.
     // Publisher source is identified by a long value
     private final LongLongHashMap cmdSequences = new LongLongHashMap();
@@ -155,7 +152,6 @@ public class TableWriter implements Closeable {
     private MemoryARW o3TimestampMemCpy;
     private long lockFd = -1;
     private LongConsumer timestampSetter;
-    private LongConsumer replTimestampSetter;
     private int columnCount;
     private boolean avoidIndexOnCommit = false;
     private long partitionTimestampHi;
@@ -476,7 +472,7 @@ public class TableWriter implements Closeable {
 
         txFile.bumpStructureVersion(this.denseSymbolMapWriters);
 
-        metadata.addColumn(name, type, isIndexed, indexValueBlockCapacity);
+        metadata.addColumn(name, configuration.getRandom().nextLong(), type, isIndexed, indexValueBlockCapacity);
 
         LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
     }
@@ -800,14 +796,6 @@ public class TableWriter implements Closeable {
 
     public boolean isOpen() {
         return tempMem16b != 0;
-    }
-
-    public boolean isTransactionLogEnabled() {
-        return txFile.transactionLogTxn > -1;
-    }
-
-    public boolean isTransactionLogPending() {
-        return txFile.transactionLogTxn != Long.MIN_VALUE && txFile.transactionLogTxn < 0;
     }
 
     public TableBlockWriter newBlock() {
@@ -1280,10 +1268,6 @@ public class TableWriter implements Closeable {
             }
         } finally {
             TableUtils.freeTransitionIndex(pTransitionIndex);
-        }
-
-        if (model.getTableAction() != 0 || model.getPartitionCount() > 0) {
-            replTransactionLogPending();
         }
 
         return model;
@@ -2029,7 +2013,6 @@ public class TableWriter implements Closeable {
             nullSetters.setQuick(index, NOOP);
             o3NullSetters.setQuick(index, NOOP);
             timestampSetter = getPrimaryColumn(index)::putLong;
-            replTimestampSetter = value -> transactionLogRow.putLong(index, value);
         }
     }
 
@@ -2496,127 +2479,8 @@ public class TableWriter implements Closeable {
         o3InError = false;
         o3MasterRef = masterRef;
         rowActon = ROW_ACTION_O3;
-        if (txFile.transactionLogTxn < 0 && txFile.transactionLogTxn != Long.MIN_VALUE) {
-            replEnableTransactionLog0(-txFile.transactionLogTxn - 1);
-        }
         o3TimestampSetter(timestamp);
         return row;
-    }
-
-    private long o3CalculatedMoveUncommittedSize(long transientRowsAdded, long committedTransientRowCount) {
-        // We want to move as much as possible of uncommitted rows to O3 dedicated memory from column files
-        // but not all the column file data is mapped and mapping is relatively expensive.
-        // If the rows are not moved to O3 memory it will result in merge of bigger segment
-        // from O3 to column files
-        // If all the rows moved this will be sort shuffle in O3 memory and copying back to column files
-        for (int colIndex = 0; colIndex < columnCount; colIndex++) {
-            int columnType = metadata.getColumnType(colIndex);
-            MemoryMAR primaryColumn = getPrimaryColumn(colIndex);
-            MemoryMAR secondaryColumn = getSecondaryColumn(colIndex);
-            // Fixed size column
-            //
-            //   Partition can be like this
-            //
-            //          Page 1 (16Mb) unmapped                            Page 2 (16Mb) mapped
-            //   |  ================================ < === |  ================================ > ----- |
-            //   |   committedTransientRowCount     I    transientRowsAdded                   |
-            //
-            // We want to move separator I between committedTransientRowCount and transientRowsAdded
-            // to start from mapped page boundary but keeping sum of committedTransientRowCount + transientRowsAdded same
-            // so that after the change in committedTransientRowCount, transientRowsAdded the picture looks like
-            //
-            //          Page 1 (16Mb) unmapped                            Page 2 (16Mb) mapped
-            //   |  ================================ < === |  ================================ > ----- |
-            //   |     committedTransientRowCount          I     transientRowsAdded            |
-
-            int shl = ColumnType.pow2SizeOf(columnType);
-
-            if (secondaryColumn == null) {
-                long srcMappedRows = primaryColumn.offsetInPage((committedTransientRowCount + transientRowsAdded) << shl) >> shl;
-                if (srcMappedRows < transientRowsAdded) {
-                    long delta = transientRowsAdded - srcMappedRows;
-                    committedTransientRowCount += delta;
-                    transientRowsAdded -= delta;
-                }
-
-                // Assert that fixed column is mapped for row committedTransientRowCount
-                assert primaryColumn.addressOf(committedTransientRowCount << shl) > 0;
-
-            } else {
-                // Variable length record column. It has 2 files:
-                // Primary is the variable record length file
-                // Secondary is fixed file with 64bit per record
-
-                shl = 3;
-
-                // Here both files have to be mapped into memory
-                //
-                // Step 1: process fixed record file in the same way as fixed size column above
-                //
-                long fixLenMappedRows = secondaryColumn.offsetInPage(secondaryColumn.getAppendOffset()) >> shl;
-                if (fixLenMappedRows < transientRowsAdded) {
-                    committedTransientRowCount += transientRowsAdded - fixLenMappedRows;
-                    transientRowsAdded = fixLenMappedRows;
-                }
-
-                // Assert that secondary file is mapped for row committedTransientRowCount
-                assert secondaryColumn.addressOf(committedTransientRowCount << shl) > 0;
-                //
-                // Step 2: check all rows in transientRowsAdded are mapped in variable record file
-                //
-                // Fixed record file (secondary) has offset records of the variable file
-                //
-                // Primary file:
-                //
-                // |   Page 1 (unmapped )     |     Page 2 (mapped)      |
-                // | ========== I =========== | =================== > -- |
-                // | record one | record 2 | r3 | value of record 3 |
-                //
-                //  Secondary file:
-                //
-                // | Page 1 (mapped )         |
-                // | 0  | 14 | 25 | 30 | -----|
-                //
-                // here committedTransientRowCount == 0 and transientRowsAdded == 4
-
-                // varFileCommittedOffset is record with 0 offset in the example and is 0
-                long varFileCommittedOffset = secondaryColumn.getLong(committedTransientRowCount << shl);
-
-                // varFileMappedOffset is 28 in the above example (offset in bytes where Page 2 of primary file starts)
-                long varFileAppendOffset = primaryColumn.getAppendOffset();
-                long varLenMappedBytes = primaryColumn.offsetInPage(primaryColumn.getAppendOffset());
-                long varFileMappedOffset = varFileAppendOffset - varLenMappedBytes;
-
-                // Check if all variable file records we want to move are mapped
-                if (varFileCommittedOffset < varFileMappedOffset) {
-                    // We need to binary search fix file
-                    // to find the records where mapped page starts (Page 2 in the example, offset 28)
-                    long firstMappedVarColRowOffset = Vect.binarySearch64Bit(
-                            secondaryColumn.addressOf(committedTransientRowCount << shl), // this is address of memory of fix file where to start the search
-                            varFileMappedOffset, // This is the value we search for (28 in case of example)
-                            0, // start from index 0
-                            fixLenMappedRows - 1, // and search in all mapped rows (inclusive of ixLenMappedRows - 1)
-                            BinarySearch.SCAN_DOWN // doesn't matter
-                    );
-
-                    // In the example firstMappedVarColRowOffset expected to be -3 -1, e.g. no exact match found
-                    // value 28 is between index 2 and 3 in the secondary file
-                    if (firstMappedVarColRowOffset < 0) {
-                        // convert it to index 3, the first index of the value >= 28
-                        firstMappedVarColRowOffset = -firstMappedVarColRowOffset - 1;
-                    }
-
-                    // move transientRowsAdded to 1 and committedTransientRowCount to 3
-                    transientRowsAdded -= firstMappedVarColRowOffset;
-                    assert transientRowsAdded >= 0;
-                    committedTransientRowCount += firstMappedVarColRowOffset;
-
-                    // assert that secondary file is mapped for record committedTransientRowCount
-                    assert primaryColumn.addressOf(secondaryColumn.getLong(committedTransientRowCount << shl)) > 0;
-                }
-            }
-        }
-        return transientRowsAdded;
     }
 
     void o3ClockDownPartitionUpdateCount() {
@@ -4510,57 +4374,6 @@ public class TableWriter implements Closeable {
         clearTodoLog();
     }
 
-    private void replEnableTransactionLog0(long txn) {
-        LOG.info()
-                .$("enabling transaction log [table=").$(tableName)
-                .$(", txn=").$(txn)
-                .I$();
-
-        txnScoreboard.acquireTxn(txn);
-
-        try {
-            // copy txn file aside, so we know where data is for this transaction
-            path.concat(TXN_FILE_NAME).put('.').put(txn).$();
-            txFile.copyTo(path, LOG);
-            path.trimTo(rootLen);
-
-            TableUtils.transactionLogDir(path, txn);
-
-            int plen = path.length();
-
-            // create dir
-            if (ff.mkdirs(path.slash$(), configuration.getMkDirMode()) == 0) {
-                for (int i = 0; i < columnCount; i++) {
-                    final CharSequence name = metadata.getColumnName(i);
-                    final int primaryIndex = getPrimaryColumnIndex(i);
-                    final int secondaryIndex = getSecondaryColumnIndex(i);
-                    final MemoryMA logMem1 = logColumns.getQuick(primaryIndex);
-                    logMem1.of(ff, dFile(path.trimTo(plen), name), configuration.getDataAppendPageSize(), Long.MAX_VALUE, MemoryTag.MMAP_TABLE_WRITER);
-                    final MemoryMA logMem2 = logColumns.getQuick(secondaryIndex);
-                    if (logMem2 != null) {
-                        logMem2.of(ff, iFile(path.trimTo(plen), name), configuration.getDataAppendPageSize(), Long.MAX_VALUE, MemoryTag.MMAP_TABLE_WRITER);
-                    }
-                }
-                // todo: this memory must propagate jump
-                replO3TimestampMem.of(logColumns.getQuick(getPrimaryColumnIndex(metadata.getTimestampIndex())), o3TimestampMem);
-                o3TimestampMem = replO3TimestampMem;
-                timestampSetter = replTimestampSetter;
-                row = transactionLogRow;
-            } else {
-                throw CairoException.instance(ff.errno()).put("Could not create directory: ").put(path);
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
-
-        txFile.setTransactionLogTxn(txn);
-
-        LOG.info()
-                .$("enabled transaction log [table=").$(tableName)
-                .$(", txn=").$(txn)
-                .I$();
-    }
-
     @Nullable TableSyncModel replHandleSyncCmd(TableWriterTask cmd) {
         final long instance = cmd.getInstance();
         final long sequence = cmd.getSequence();
@@ -4575,86 +4388,6 @@ public class TableWriter implements Closeable {
                 cmd.getData() + txMemSize + 16,
                 Unsafe.getUnsafe().getLong(cmd.getData() + txMemSize + 8)
         );
-    }
-
-    private void replO3CopyLagToLog(long o3LagRowCount) {
-        for (int i = 0; i < columnCount; i++) {
-            final int i1 = getPrimaryColumnIndex(i);
-            final int i2 = getSecondaryColumnIndex(i);
-            final int columnType = metadata.getColumnType(i);
-            final MemoryCARW o3Col1 = o3Columns.getQuick(i1);
-            final MemoryCARW o3Col2 = o3Columns.getQuick(i2);
-            final MemoryMA logCol1 = logColumns.getQuick(i1);
-            final MemoryMA logCol2 = logColumns.getQuick(i2);
-
-            final long srcOooFixAddr;
-            final long srcOooFixSize;
-            final long srcOooVarAddr;
-            final long srcOooVarSize;
-            final long dstFixAddr;
-            final long dstVarAddr;
-            final long logCol1Offset;
-            final long logCol2Offset;
-
-            if (ColumnType.isVariableLength(columnType)) {
-                srcOooVarAddr = o3Col1.getPageAddress(0);
-                srcOooVarSize = o3Col1.getAppendOffset();
-                srcOooFixAddr = o3Col2.getPageAddress(0);
-                srcOooFixSize = o3Col2.getAppendOffset();
-
-                logCol1Offset = logCol1.getAppendOffset();
-                logCol1.jumpTo(srcOooVarSize);
-                dstVarAddr = TableUtils.mapRW(ff, logCol1.getFd(), srcOooVarSize, MemoryTag.NATIVE_O3);
-
-                logCol2Offset = logCol2.getAppendOffset();
-                logCol2.jumpTo(srcOooFixSize);
-                try {
-                    dstFixAddr = TableUtils.mapRW(ff, logCol2.getFd(), srcOooFixSize, MemoryTag.NATIVE_O3);
-                } catch (Throwable e) {
-                    ff.munmap(dstVarAddr, srcOooVarSize, MemoryTag.NATIVE_O3);
-                    // in case of exception we also need to restore append position of
-                    logCol1.jumpTo(logCol1Offset);
-                    logCol2.jumpTo(logCol2Offset);
-                    throw e;
-                }
-            } else {
-                srcOooFixAddr = o3Col1.getPageAddress(0);
-                srcOooFixSize = o3Col1.getAppendOffset();
-                srcOooVarAddr = 0;
-                srcOooVarSize = 0;
-
-                logCol1Offset = logCol1.getAppendOffset();
-                logCol1.jumpTo(srcOooFixSize);
-                dstFixAddr = TableUtils.mapRW(ff, logCol1.getFd(), srcOooFixSize, MemoryTag.NATIVE_O3);
-                dstVarAddr = 0;
-                logCol2Offset = 0;
-            }
-
-            try {
-                O3CopyJob.copyO3(
-                        columnType,
-                        srcOooFixAddr,
-                        srcOooVarAddr,
-                        0,
-                        o3LagRowCount,
-                        dstFixAddr,
-                        dstVarAddr,
-                        0,
-                        0
-                );
-            } catch (Throwable e) {
-                ff.munmap(dstFixAddr, srcOooFixSize, MemoryTag.NATIVE_O3);
-                if (dstVarAddr != 0) {
-                    ff.munmap(dstVarAddr, srcOooVarSize, MemoryTag.NATIVE_O3);
-                }
-
-                logCol1.jumpTo(logCol1Offset);
-                if (logCol2 != null) {
-                    logCol2.jumpTo(logCol2Offset);
-                }
-                throw e;
-            }
-        }
     }
 
     void replPublishSyncEvent0(TableSyncModel model, long tableId, long dst, long dstIP) {
@@ -4679,32 +4412,6 @@ public class TableWriter implements Closeable {
                     .$(", dst=").$(dst)
                     .$(", dstIP=").$ip(dstIP)
                     .I$();
-        }
-    }
-
-    private void replTransactionLogPending() {
-        if (txFile.transactionLogTxn != Long.MIN_VALUE) {
-            // transaction log is already enabled, we should add another user to
-            // prevent switching transaction log off before everyone is done with it.
-            // We do still need to ensure when same "slave" requests sync we do not end up
-            // with maintaining transaction log forever
-            txFile.transactionLogUserCount++;
-            return;
-        }
-
-        // Set transaction log to pending, we will need it when we switch to O3.
-        // If we have O3 lag we will have to enable transaction log right away and copy the lag contents
-        // into this log
-        if (hasO3()) {
-            final long o3LagRowCount = (masterRef - o3MasterRef + 1) / 2;
-            final long txn = getTxn();
-            replEnableTransactionLog0(txn);
-            replO3CopyLagToLog(o3LagRowCount);
-            txFile.transactionLogTxn = txn;
-        } else {
-            // no lag, set transaction log txn to pending (negative)
-            // we will enable transaction log when O3 kicks in
-            txFile.transactionLogTxn = -(getTxn() + 1);
         }
     }
 
@@ -5477,287 +5184,6 @@ public class TableWriter implements Closeable {
             return activeColumns.getQuick(getSecondaryColumnIndex(columnIndex));
         }
     }
-
-    private class TransactionLogRowImpl implements Row {
-        @Override
-        public void append() {
-            rowAppend(activeNullSetters);
-        }
-
-        @Override
-        public void cancel() {
-            rowCancel();
-        }
-
-        @Override
-        public void putBin(int columnIndex, long address, long len) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            final int s = p + 1;
-            putBin(address, len, p, s, activeColumns);
-            putBin(address, len, p, s, logColumns);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putBin(int columnIndex, BinarySequence sequence) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            final int s = p + 1;
-            putBin(sequence, p, s, activeColumns);
-            putBin(sequence, p, s, logColumns);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putBool(int columnIndex, boolean value) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            activeColumns.getQuick(p).putBool(value);
-            logColumns.getQuick(p).putBool(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putByte(int columnIndex, byte value) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            activeColumns.getQuick(p).putByte(value);
-            logColumns.getQuick(p).putByte(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putGeoStr(int columnIndex, CharSequence hash) {
-            long val;
-            final int type = metadata.getColumnType(columnIndex);
-            if (hash != null) {
-                final int hashLen = hash.length();
-                final int typeBits = ColumnType.getGeoHashBits(type);
-                final int charsRequired = (typeBits - 1) / 5 + 1;
-                if (hashLen < charsRequired) {
-                    val = GeoHashes.NULL;
-                } else {
-                    try {
-                        val = ColumnType.truncateGeoHashBits(
-                                GeoHashes.fromString(hash, 0, charsRequired),
-                                charsRequired * 5,
-                                typeBits
-                        );
-                    } catch (NumericException e) {
-                        val = GeoHashes.NULL;
-                    }
-                }
-            } else {
-                val = GeoHashes.NULL;
-            }
-            putGeoHash0(columnIndex, val, type);
-        }
-
-        private void putGeoHash0(int columnIndex, long value, int type) {
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.GEOBYTE:
-                    putByte(columnIndex, (byte) value);
-                    break;
-                case ColumnType.GEOSHORT:
-                    putShort(columnIndex, (short) value);
-                    break;
-                case ColumnType.GEOINT:
-                    putInt(columnIndex, (int) value);
-                    break;
-                default:
-                    putLong(columnIndex, value);
-                    break;
-            }
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putChar(int columnIndex, char value) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            activeColumns.getQuick(p).putChar(value);
-            logColumns.getQuick(p).putChar(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putDate(int columnIndex, long value) {
-            putLong(columnIndex, value);
-        }
-
-        @Override
-        public void putDouble(int columnIndex, double value) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            activeColumns.getQuick(p).putDouble(value);
-            logColumns.getQuick(p).putDouble(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putFloat(int columnIndex, float value) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            activeColumns.getQuick(p).putFloat(value);
-            logColumns.getQuick(p).putFloat(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putGeoHash(int columnIndex, long value) {
-            // TODO: support geohash repl
-            throw CairoException.instance(0).put("not implemented");
-        }
-
-        @Override
-        public void putGeoHashDeg(int columnIndex, double lat, double lon) {
-            int type = metadata.getColumnType(columnIndex);
-            putGeoHash(columnIndex, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)));
-        }
-
-        @Override
-        public void putInt(int columnIndex, int value) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            activeColumns.getQuick(p).putInt(value);
-            logColumns.getQuick(p).putInt(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong(int columnIndex, long value) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            activeColumns.getQuick(p).putLong(value);
-            logColumns.getQuick(p).putLong(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong256(int columnIndex, long l0, long l1, long l2, long l3) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            activeColumns.getQuick(p).putLong256(l0, l1, l2, l3);
-            logColumns.getQuick(p).putLong256(l0, l1, l2, l3);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong256(int columnIndex, Long256 value) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            activeColumns.getQuick(p).putLong256(
-                    value.getLong0(),
-                    value.getLong1(),
-                    value.getLong2(),
-                    value.getLong3()
-            );
-            logColumns.getQuick(p).putLong256(
-                    value.getLong0(),
-                    value.getLong1(),
-                    value.getLong2(),
-                    value.getLong3()
-            );
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong256(int columnIndex, CharSequence hexString) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            activeColumns.getQuick(p).putLong256(hexString);
-            logColumns.getQuick(p).putLong256(hexString);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong256(int columnIndex, @NotNull CharSequence hexString, int start, int end) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            activeColumns.getQuick(p).putLong256(hexString, start, end);
-            logColumns.getQuick(p).putLong256(hexString, start, end);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putShort(int columnIndex, short value) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            activeColumns.getQuick(p).putShort(value);
-            logColumns.getQuick(p).putShort(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putStr(int columnIndex, CharSequence value) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            final int s = p + 1;
-            activeColumns.getQuick(s).putLong(activeColumns.getQuick(p).putStr(value));
-            logColumns.getQuick(s).putLong(logColumns.getQuick(p).putStr(value));
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putStr(int columnIndex, char value) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            final int s = p + 1;
-            activeColumns.getQuick(s).putLong(activeColumns.getQuick(p).putStr(value));
-            logColumns.getQuick(s).putLong(logColumns.getQuick(p).putStr(value));
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putStr(int columnIndex, CharSequence value, int pos, int len) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            final int s = p + 1;
-            activeColumns.getQuick(s).putLong(activeColumns.getQuick(p).putStr(value, pos, len));
-            logColumns.getQuick(s).putLong(logColumns.getQuick(p).putStr(value, pos, len));
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putSym(int columnIndex, CharSequence value) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            final int key = symbolMapWriters.getQuick(columnIndex).put(value);
-            activeColumns.getQuick(p).putInt(key);
-            logColumns.getQuick(p).putInt(key);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putSym(int columnIndex, char value) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            final int key = symbolMapWriters.getQuick(columnIndex).put(value);
-            activeColumns.getQuick(p).putInt(key);
-            logColumns.getQuick(p).putInt(key);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putSymIndex(int columnIndex, int symIndex) {
-            final int p = getPrimaryColumnIndex(columnIndex);
-            activeColumns.getQuick(p).putInt(symIndex);
-            logColumns.getQuick(p).putInt(symIndex);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putTimestamp(int columnIndex, long value) {
-            putLong(columnIndex, value);
-        }
-
-        @Override
-        public void putTimestamp(int columnIndex, CharSequence value) {
-            // try UTC timestamp first (micro)
-            long l;
-            try {
-                l = value != null ? IntervalUtils.parseFloorPartialDate(value) : Numbers.LONG_NaN;
-            } catch (NumericException e) {
-                throw CairoException.instance(0).put("Invalid timestamp: ").put(value);
-            }
-            putTimestamp(columnIndex, l);
-        }
-
-        private MemoryA getPrimaryColumn(int columnIndex) {
-            return activeColumns.getQuick(getPrimaryColumnIndex(columnIndex));
-        }
-
-        private void putBin(BinarySequence sequence, int p, int s, ObjList<? extends MemoryA> activeColumns) {
-            activeColumns.getQuick(s).putLong(activeColumns.getQuick(p).putBin(sequence));
-        }
-
-        private void putBin(long address, long len, int p, int s, ObjList<? extends MemoryA> activeColumns) {
-            activeColumns.getQuick(s).putLong(activeColumns.getQuick(p).putBin(address, len));
-        }
-    }
-
 
     private class WriterTransientSymbolCountChangeHandler implements TransientSymbolCountChangeHandler {
         private int symColIndex;

@@ -35,12 +35,6 @@ import io.questdb.griffin.SqlExecutionContext;
 public class ShowTimeZoneFactory implements RecordCursorFactory {
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private final static StringValueRecord RECORD = new StringValueRecord("UTC"); // All times are UTC
-
-
-    static {
-        METADATA.add(new TableColumnMetadata("TimeZone", ColumnType.STRING, null));
-    }
-
     private final StringValueRecordCursor cursor = new StringValueRecordCursor(RECORD);
 
     @Override
@@ -57,5 +51,9 @@ public class ShowTimeZoneFactory implements RecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    static {
+        METADATA.add(new TableColumnMetadata("TimeZone", 1, ColumnType.STRING));
     }
 }

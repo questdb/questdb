@@ -60,6 +60,7 @@ public class TableWriterMetadata extends BaseRecordMetadata {
             columnMetadata.add(
                     new TableColumnMetadata(
                             Chars.toString(name),
+                            TableUtils.getColumnHash(metaMem, i),
                             type,
                             TableUtils.isColumnIndexed(metaMem, i),
                             TableUtils.getIndexBlockCapacity(metaMem, i),
@@ -79,12 +80,13 @@ public class TableWriterMetadata extends BaseRecordMetadata {
         return symbolMapCount;
     }
 
-    void addColumn(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity) {
+    void addColumn(CharSequence name, long hash, int type, boolean indexFlag, int indexValueBlockCapacity) {
         String str = name.toString();
         columnNameIndexMap.put(str, columnMetadata.size());
         columnMetadata.add(
                 new TableColumnMetadata(
                         str,
+                        hash,
                         type,
                         indexFlag,
                         indexValueBlockCapacity,

@@ -247,9 +247,9 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("adrelid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("adnum", ColumnType.SHORT, null));
-        metadata.add(new TableColumnMetadata("adbin", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("adrelid", 1, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("adnum", 2, ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("adbin", 3, ColumnType.STRING));
         METADATA = metadata;
     }
 }

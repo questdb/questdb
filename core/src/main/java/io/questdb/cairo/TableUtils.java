@@ -109,7 +109,6 @@ public final class TableUtils {
     // below this offset we will have INT values for symbol map size
     static final long META_OFFSET_PARTITION_BY = 4;
     public static final long META_COLUMN_DATA_SIZE = 32;
-    static final long META_COLUMN_DATA_RESERVED = 3;
     static final int META_FLAG_BIT_INDEXED = 1;
     static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
     static final String TODO_FILE_NAME = "_todo_";
@@ -887,10 +886,6 @@ public final class TableUtils {
         if (ff.write(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
             throw CairoException.instance(ff.errno()).put("Cannot write: ").put(path);
         }
-    }
-
-    static LPSZ transactionLogDir(Path path, long txn) {
-        return path.concat("log").put('.').put(txn);
     }
 
     static LPSZ topFile(Path path, CharSequence columnName) {

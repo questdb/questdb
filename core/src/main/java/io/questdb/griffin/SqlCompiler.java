@@ -1244,7 +1244,7 @@ public class SqlCompiler implements Closeable {
             String designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
             if (designatedTimestampColumnName != null) {
                 GenericRecordMetadata metadata = new GenericRecordMetadata();
-                metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP, null));
+                metadata.add(new TableColumnMetadata(designatedTimestampColumnName, 0, ColumnType.TIMESTAMP, null));
                 Function function = functionParser.parseFunction(expr, metadata, executionContext);
                 if (function != null && ColumnType.isBoolean(function.getType())) {
                     function.init(null, executionContext);
@@ -1420,10 +1420,10 @@ public class SqlCompiler implements Closeable {
     @NotNull
     private CompiledQuery compileUsingModel(SqlExecutionContext executionContext) throws SqlException {
         // This method will not populate sql cache directly;
-        // factories are assumed to be non reentrant and once
+        // factories are assumed to be non-reentrant and once
         // factory is out of this method the caller assumes
         // full ownership over it. In that however caller may
-        // chose to return factory back to this or any other
+        // choose to return factory back to this or any other
         // instance of compiler for safekeeping
 
         // lexer would have parsed first token to determine direction of execution flow
@@ -1498,7 +1498,7 @@ public class SqlCompiler implements Closeable {
             RecordToRowCopier copier,
             int cursorTimestampIndex,
             long batchSize,
-            long commmitLag
+            long commitLag
     ) {
         long deadline = batchSize;
         long rowCount = 0;
@@ -1508,7 +1508,7 @@ public class SqlCompiler implements Closeable {
             copier.copy(record, row);
             row.append();
             if (++rowCount > deadline) {
-                writer.commitWithLag(commmitLag);
+                writer.commitWithLag(commitLag);
                 deadline = rowCount + batchSize;
             }
         }

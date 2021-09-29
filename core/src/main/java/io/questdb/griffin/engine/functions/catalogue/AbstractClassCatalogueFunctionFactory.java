@@ -303,12 +303,12 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("relname", ColumnType.STRING, null));
-        metadata.add(new TableColumnMetadata("relnamespace", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("relkind", ColumnType.CHAR, null));
-        metadata.add(new TableColumnMetadata("relowner", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("oid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("relpartbound", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("relname", 1, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("relnamespace", 2, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("relkind", 3, ColumnType.CHAR));
+        metadata.add(new TableColumnMetadata("relowner", 4, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("oid", 5, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("relpartbound", 6, ColumnType.STRING));
         METADATA = metadata;
     }
 }
