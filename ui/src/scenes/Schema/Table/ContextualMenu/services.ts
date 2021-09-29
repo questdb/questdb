@@ -50,7 +50,7 @@ export const formatTableSchemaQueryResult = (
     query += ")"
 
     if (designatedName) {
-      query += ` timestamp ${designatedName}`
+      query += ` timestamp (${designatedName})`
     }
 
     return `${query};`
