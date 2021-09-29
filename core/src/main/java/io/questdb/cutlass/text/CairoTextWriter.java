@@ -51,6 +51,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final TypeManager typeManager;
     private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
+    private final StringSink tempSink = new StringSink();
     private CharSequence tableName;
     private TableWriter writer;
     private long _size;
@@ -161,7 +162,6 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     public void onFieldsNonPartitioned(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
         final TableWriter.Row w = writer.newRow();
-        StringSink tempSink = Misc.getThreadLocalBuilder();
         for (int i = 0; i < valuesLength; i++) {
             final DirectByteCharSequence dbcs = values.getQuick(i);
             if (dbcs.length() == 0) {
