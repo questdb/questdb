@@ -174,14 +174,14 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                 // todo: copy from source
                 if (ff.truncate(keyFd, 0)) {
                     kFdUnassigned = false;
-                    this.keyMem.of(ff, keyFd, null, pageSize);
+                    this.keyMem.of(ff, keyFd, null, pageSize, MemoryTag.MMAP_DEFAULT);
                     initKeyMemory(this.keyMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
                 } else {
                     throw CairoException.instance(ff.errno()).put("Could not truncate [fd=").put(keyFd).put(']');
                 }
             } else {
                 kFdUnassigned = false;
-                this.keyMem.of(ff, keyFd, null, pageSize);
+                this.keyMem.of(ff, keyFd, null, pageSize, MemoryTag.MMAP_DEFAULT);
             }
             long keyMemSize = this.keyMem.getAppendOffset();
             // check if key file header is present
@@ -212,14 +212,14 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             if (init) {
                 if (ff.truncate(valueFd, 0)) {
                     vFdUnassigned = false;
-                    this.valueMem.of(ff, valueFd, null, pageSize);
+                    this.valueMem.of(ff, valueFd, null, pageSize, MemoryTag.MMAP_DEFAULT);
                     this.valueMem.jumpTo(0);
                 } else {
                     throw CairoException.instance(ff.errno()).put("Could not truncate [fd=").put(valueFd).put(']');
                 }
             } else {
                 vFdUnassigned = false;
-                this.valueMem.of(ff, valueFd, null, pageSize);
+                this.valueMem.of(ff, valueFd, null, pageSize, MemoryTag.MMAP_DEFAULT);
             }
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
 
@@ -250,7 +250,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         final int plen = path.length();
         try {
             boolean exists = configuration.getFilesFacade().exists(BitmapIndexUtils.keyFileName(path, name));
-            this.keyMem.wholeFile(configuration.getFilesFacade(), path);
+            this.keyMem.wholeFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
             if (!exists) {
                 LOG.error().$(path).$(" not found").$();
                 throw CairoException.instance(0).put("Index does not exist: ").put(path);
@@ -282,7 +282,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                 throw CairoException.instance(0).put("Sequence mismatch on ").put(path);
             }
 
-            this.valueMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name));
+            this.valueMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), MemoryTag.MMAP_DEFAULT);
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
 
             if (this.valueMem.getAppendOffset() < this.valueMemSize) {

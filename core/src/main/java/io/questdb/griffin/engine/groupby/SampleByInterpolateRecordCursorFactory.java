@@ -170,7 +170,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         this.groupByTwoPointFunctionCount = groupByTwoPointFunctions.size();
         this.timestampIndex = timestampIndex;
         this.yDataSize = groupByFunctionCount * 16;
-        this.yData = Unsafe.malloc(yDataSize);
+        this.yData = Unsafe.malloc(yDataSize, MemoryTag.NATIVE_DEFAULT);
 
         // sink will be storing record columns to map key
         this.mapSink = RecordSinkFactory.getInstance(asm, metadata, listColumnFilter, false);
@@ -477,7 +477,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
     private void freeYData() {
         if (yData != 0) {
-            Unsafe.free(yData, yDataSize);
+            Unsafe.free(yData, yDataSize, MemoryTag.NATIVE_DEFAULT);
             yData = 0;
         }
     }

@@ -14,6 +14,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUnboundedByteSink;
 import io.questdb.std.str.Path;
@@ -115,7 +116,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 }
                 break;
             }
-            resourceAddress = Unsafe.malloc(resourceSize);
+            resourceAddress = Unsafe.malloc(resourceSize, MemoryTag.NATIVE_DEFAULT);
             resourceNLines = 0;
             for (int i = 0; i < resourceSize; i++) {
                 byte b = bytes[i];
@@ -154,7 +155,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 TestUtils.assertConnect(clientFd, ilpSockAddr);
                 readGzResource(ilpResourceName);
                 Net.send(clientFd, resourceAddress, resourceSize);
-                Unsafe.free(resourceAddress, resourceSize);
+                Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
 
                 haltLatch.await();
 
@@ -163,7 +164,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 DirectUnboundedByteSink expectedSink = new DirectUnboundedByteSink(resourceAddress);
                 expectedSink.clear(resourceSize);
                 TestUtils.assertEquals(expectedSink.toString(), sink);
-                Unsafe.free(resourceAddress, resourceSize);
+                Unsafe.free(resourceAddress, resourceSize, MemoryTag.NATIVE_DEFAULT);
             } finally {
                 engine.setPoolListener(null);
                 Net.close(clientFd);

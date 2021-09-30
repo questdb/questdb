@@ -29,10 +29,7 @@ import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -154,7 +151,7 @@ public class InputFormatConfiguration {
             // we will copy buffer twice to parse json, but luckily contents should be small
             // and we should be parsing this only once on startup
             byte[] heapBuffer = new byte[4096];
-            long memBuffer = Unsafe.malloc(heapBuffer.length);
+            long memBuffer = Unsafe.malloc(heapBuffer.length, MemoryTag.NATIVE_DEFAULT);
             try {
                 int len;
                 while ((len = stream.read(heapBuffer)) > 0) {
@@ -166,7 +163,7 @@ public class InputFormatConfiguration {
                 }
                 jsonLexer.clear();
             } finally {
-                Unsafe.free(memBuffer, heapBuffer.length);
+                Unsafe.free(memBuffer, heapBuffer.length, MemoryTag.NATIVE_DEFAULT);
             }
         } catch (IOException e) {
             throw JsonException.$(0, "could not read [resource=").put(adapterSetConfigurationFileName).put(']');

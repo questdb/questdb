@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
@@ -49,10 +50,7 @@ public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
 
     @Override
     public void close() {
-        if (dataFrameCursor != null) {
-            dataFrameCursor.close();
-            dataFrameCursor = null;
-        }
+        dataFrameCursor = Misc.free(dataFrameCursor);
     }
 
     @Override

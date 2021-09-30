@@ -244,6 +244,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     @Test
     public void testLimitsLoop() throws Exception {
+        LOG.debug().$("starting testLimitsLoop").$();
         for (int i = 0; i < 10000; i++) {
             testLimits();
         }
@@ -260,7 +261,9 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 new Thread(() -> {
                     try (final Path shmPath = new Path()) {
                         for (int j = 0; j < iterations; j++) {
+                            //noinspection EmptyTryBlock
                             try (TxnScoreboard ignored = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)) {
+                                // empty body because we need to close this
                             } catch (Exception ex) {
                                 ex.printStackTrace();
                                 errors.incrementAndGet();

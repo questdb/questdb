@@ -163,6 +163,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
     private final boolean pgEnabled;
     private final boolean telemetryEnabled;
+    private final boolean telemetryDisableCompletely;
     private final int telemetryQueueCapacity;
     private final LineTcpReceiverConfiguration lineTcpReceiverConfiguration = new PropLineTcpReceiverConfiguration();
     private final IODispatcherConfiguration lineTcpReceiverDispatcherConfiguration = new PropLineTcpReceiverIODispatcherConfiguration();
@@ -348,6 +349,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinSndBufSize;
     private final int latestByQueueCapacity;
     private final int sampleByIndexSearchPageSize;
+    private final int binaryEncodingMaxLength;
 
     public PropServerConfiguration(
             String root,
@@ -384,14 +386,14 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
             }
 
-            final long tableIndexMem = TableUtils.mapRWOrClose(ff, tableIndexFd, Files.PAGE_SIZE);
+            final long tableIndexMem = TableUtils.mapRWOrClose(ff, tableIndexFd, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
             Rnd rnd = new Rnd(getCairoConfiguration().getMicrosecondClock().getTicks(), getCairoConfiguration().getMillisecondClock().getTicks());
             if (Os.compareAndSwap(tableIndexMem + Long.BYTES, 0, rnd.nextLong()) == 0) {
                 Unsafe.getUnsafe().putLong(tableIndexMem + Long.BYTES * 2, rnd.nextLong());
             }
             this.instanceHashLo = Unsafe.getUnsafe().getLong(tableIndexMem + Long.BYTES);
             this.instanceHashHi = Unsafe.getUnsafe().getLong(tableIndexMem + Long.BYTES * 2);
-            ff.munmap(tableIndexMem, Files.PAGE_SIZE);
+            ff.munmap(tableIndexMem, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
             ff.close(tableIndexFd);
             ///
 
@@ -671,6 +673,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.txn.scoreboard.entry.count", 16384));
             this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.latestby.queue.capacity", 32));
             this.telemetryEnabled = getBoolean(properties, env, "telemetry.enabled", true);
+            this.telemetryDisableCompletely = getBoolean(properties, env, "telemetry.disable.completely", false);
             this.telemetryQueueCapacity = getInt(properties, env, "telemetry.queue.capacity", 512);
 
             parseBindTo(properties, env, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
@@ -708,7 +711,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpConnectionPoolInitialCapacity = getInt(properties, env, "line.tcp.connection.pool.capacity", 64);
                 this.lineTcpTimestampAdapter = getLineTimestampAdaptor(properties, env, "line.tcp.timestamp");
                 this.lineTcpMsgBufferSize = getIntSize(properties, env, "line.tcp.msg.buffer.size", 32768);
-                this.lineTcpMaxMeasurementSize = getIntSize(properties, env, "line.tcp.max.measurement.size", 4096);
+                this.lineTcpMaxMeasurementSize = getIntSize(properties, env, "line.tcp.max.measurement.size", 32768);
                 if (lineTcpMaxMeasurementSize > lineTcpMsgBufferSize) {
                     throw new IllegalArgumentException(
                             "line.tcp.max.measurement.size (" + this.lineTcpMaxMeasurementSize + ") cannot be more than line.tcp.msg.buffer.size (" + this.lineTcpMsgBufferSize + ")");
@@ -761,6 +764,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.metricsEnabled = getBoolean(properties, env, "metrics.enabled", false);
 
             this.buildInformation = buildInformation;
+            this.binaryEncodingMaxLength = getInt(properties, env, "binarydata.encoding.maxlength", 32768);
         }
     }
 
@@ -1959,6 +1963,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public int getLatestByQueueCapacity() {
             return latestByQueueCapacity;
         }
+
+        @Override
+        public int getBinaryEncodingMaxLength() {
+            return binaryEncodingMaxLength;
+        }
     }
 
     private class PropLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {
@@ -2641,6 +2650,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropTelemetryConfiguration implements TelemetryConfiguration {
+
+        @Override
+        public boolean getDisableCompletely() {
+            return telemetryDisableCompletely;
+        }
 
         @Override
         public boolean getEnabled() {

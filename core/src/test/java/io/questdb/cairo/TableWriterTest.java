@@ -960,7 +960,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (MemoryARW vmem = Vm.getARWInstance(FF.getPageSize(), Integer.MAX_VALUE)) {
+            try (MemoryARW vmem = Vm.getARWInstance(FF.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
                 try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
                     long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
                     int i = 0;
@@ -1047,7 +1047,7 @@ public class TableWriterTest extends AbstractCairoTest {
             r.putInt(0, rnd.nextInt());
             r.cancel();
 
-            Assert.assertEquals(0L, writer.columns.getQuick(21).getAppendOffset());
+            Assert.assertEquals(Long.BYTES, writer.columns.getQuick(21).getAppendOffset());
 
             // add more data including updating new column
             ts = populateTable2(writer, rnd, N, ts, interval);
@@ -1117,7 +1117,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (MemoryARW vmem = Vm.getARWInstance(ff.getPageSize(), Integer.MAX_VALUE)) {
+            try (MemoryARW vmem = Vm.getARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
                 try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
@@ -1188,7 +1188,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (MemoryARW vmem = Vm.getARWInstance(ff.getPageSize(), Integer.MAX_VALUE)) {
+            try (MemoryARW vmem = Vm.getARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
                 try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
@@ -1293,12 +1293,12 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd = -1;
 
             @Override
-            public long mmap(long fd, long len, long offset, int flags) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == this.fd) {
                     this.fd = -1;
                     return -1;
                 }
-                return super.mmap(fd, len, offset, flags);
+                return super.mmap(fd, len, offset, flags, memoryTag);
             }
 
             @Override
@@ -1377,11 +1377,11 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd;
 
             @Override
-            public long mmap(long fd, long len, long offset, int flags) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == this.fd) {
                     return -1;
                 }
-                return super.mmap(fd, len, offset, flags);
+                return super.mmap(fd, len, offset, flags, memoryTag);
             }
 
             @Override
@@ -1404,7 +1404,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, "productName.d")) {
+                if (Chars.endsWith(name, "productName.i")) {
                     return fd = super.openRW(name);
                 }
                 return super.openRW(name);
@@ -1781,7 +1781,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     MemoryCMARW mem = Vm.getCMARWInstance();
                     Path path = new Path().of(root).concat("all").concat(TableUtils.TODO_FILE_NAME).$()
             ) {
-                mem.smallFile(FilesFacadeImpl.INSTANCE, path);
+                mem.smallFile(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT);
                 mem.putLong(32, 1);
                 mem.putLong(40, 9990001L);
                 mem.jumpTo(48);
@@ -2583,13 +2583,8 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSetAppendPositionFailureBin1() throws Exception {
-        testSetAppendPositionFailure("bin.d");
-    }
-
-    @Test
     public void testSetAppendPositionFailureBin2() throws Exception {
-        testSetAppendPositionFailure("bin.i");
+        testSetAppendPositionFailure();
     }
 
     @Test
@@ -2727,9 +2722,9 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             class X extends CountingFilesFacade {
                 @Override
-                public long mmap(long fd, long len, long offset, int flags) {
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                     if (--count > 0) {
-                        return super.mmap(fd, len, offset, flags);
+                        return super.mmap(fd, len, offset, flags, memoryTag);
                     }
                     return -1;
                 }
@@ -3211,7 +3206,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private long testAppendNulls(Rnd rnd, long ts) {
         final int blobLen = 64 * 1024;
-        long blob = Unsafe.malloc(blobLen);
+        long blob = Unsafe.malloc(blobLen, MemoryTag.NATIVE_DEFAULT);
         try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
@@ -3265,7 +3260,7 @@ public class TableWriterTest extends AbstractCairoTest {
             Assert.assertFalse(writer.inTransaction());
             Assert.assertEquals(size + 10000, writer.size());
         } finally {
-            Unsafe.free(blob, blobLen);
+            Unsafe.free(blob, blobLen, MemoryTag.NATIVE_DEFAULT);
         }
         return ts;
     }
@@ -3578,7 +3573,7 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
-    private void testSetAppendPositionFailure(String failFile) throws Exception {
+    private void testSetAppendPositionFailure() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
 
@@ -3587,7 +3582,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 @Override
                 public long openRW(LPSZ name) {
-                    if (Chars.endsWith(name, failFile)) {
+                    if (Chars.endsWith(name, "bin.i")) {
                         return fd = super.openRW(name);
                     }
                     return super.openRW(name);

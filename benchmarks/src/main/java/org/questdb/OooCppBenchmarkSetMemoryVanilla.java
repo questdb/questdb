@@ -24,6 +24,7 @@
 
 package org.questdb;
 
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -91,6 +92,6 @@ public class OooCppBenchmarkSetMemoryVanilla {
     }
 
     public void freeBuffer() {
-        Unsafe.free(buffer, BUFFER_MAX_SIZE);
+        Unsafe.free(buffer, BUFFER_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
     }
 }

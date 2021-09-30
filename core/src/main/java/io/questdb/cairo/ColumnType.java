@@ -42,8 +42,7 @@ import io.questdb.std.str.StringSink;
  */
 public final class ColumnType {
     // column type version as written to the metadata file
-    public static final int VERSION = 420;
-    public static final int VERSION_THAT_ADDED_TABLE_ID = 417;
+    public static final int VERSION = 422;
 
     public static final short UNDEFINED = 0;
     public static final short BOOLEAN = 1;
@@ -129,6 +128,10 @@ public final class ColumnType {
 
     public static boolean isBinary(int columnType) {
         return columnType == BINARY;
+    }
+
+    public static boolean isLong256(int columnType) {
+        return columnType == LONG256;
     }
 
     public static boolean isBoolean(int columnType) {

@@ -83,16 +83,16 @@ public class SymbolMapWriter implements Closeable {
 
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
-            this.offsetMem = Vm.getWholeMARWInstance(ff, path, mapPageSize);
+            this.offsetMem = Vm.getWholeMARWInstance(ff, path, mapPageSize, MemoryTag.MMAP_DEFAULT);
             final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
             final boolean useCache = offsetMem.getBool(HEADER_CACHE_ENABLED);
-            this.offsetMem.jumpTo(keyToOffset(symbolCount));
+            this.offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
 
             // index writer is used to identify attempts to store duplicate symbol value
             this.indexWriter = new BitmapIndexWriter(configuration, path.trimTo(plen), name);
 
             // this is the place where symbol values are stored
-            this.charMem = Vm.getWholeMARWInstance(ff, charFileName(path.trimTo(plen), name), mapPageSize);
+            this.charMem = Vm.getWholeMARWInstance(ff, charFileName(path.trimTo(plen), name), mapPageSize, MemoryTag.MMAP_DEFAULT);
 
             // move append pointer for symbol values in the correct place
             jumpCharMemToSymbolCount(symbolCount);
@@ -137,7 +137,7 @@ public class SymbolMapWriter implements Closeable {
     ) {
         int plen = path.length();
         try {
-            mem.wholeFile(ff, offsetFileName(path.trimTo(plen), columnName));
+            mem.wholeFile(ff, offsetFileName(path.trimTo(plen), columnName), MemoryTag.MMAP_DEFAULT);
             mem.jumpTo(0);
             mem.putInt(symbolCapacity);
             mem.putBool(symbolCacheFlag);
@@ -148,7 +148,7 @@ public class SymbolMapWriter implements Closeable {
                 throw CairoException.instance(ff.errno()).put("Cannot create ").put(path);
             }
 
-            mem.smallFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName));
+            mem.smallFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName), MemoryTag.MMAP_DEFAULT);
             BitmapIndexWriter.initKeyMemory(mem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
         } finally {
@@ -211,7 +211,7 @@ public class SymbolMapWriter implements Closeable {
     }
 
     public int getSymbolCount() {
-        return offsetToKey(offsetMem.getAppendOffset());
+        return offsetToKey(offsetMem.getAppendOffset() - Long.BYTES);
     }
 
     public int put(char c) {
@@ -237,7 +237,7 @@ public class SymbolMapWriter implements Closeable {
 
     public void rollback(int symbolCount) {
         indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
-        offsetMem.jumpTo(keyToOffset(symbolCount));
+        offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
         jumpCharMemToSymbolCount(symbolCount);
         transientSymbolCountChangeHandler.handleTransientSymbolCountChange(symbolCount);
         if (cache != null) {
@@ -267,9 +267,7 @@ public class SymbolMapWriter implements Closeable {
 
     private void jumpCharMemToSymbolCount(int symbolCount) {
         if (symbolCount > 0) {
-            long lastSymbolOffset = this.offsetMem.getLong(keyToOffset(symbolCount - 1));
-            int l = Vm.getStorageLength(this.charMem.getStr(lastSymbolOffset));
-            this.charMem.jumpTo(lastSymbolOffset + l);
+            this.charMem.jumpTo(this.offsetMem.getLong(keyToOffset(symbolCount)));
         } else {
             this.charMem.jumpTo(0);
         }
@@ -295,7 +293,7 @@ public class SymbolMapWriter implements Closeable {
     }
 
     private int put0(CharSequence symbol, int hash) {
-        long offsetOffset = offsetMem.getAppendOffset();
+        long offsetOffset = offsetMem.getAppendOffset() - Long.BYTES;
         offsetMem.putLong(charMem.putStr(symbol));
         indexWriter.add(hash, offsetOffset);
         int symIndex = offsetToKey(offsetOffset);
@@ -304,7 +302,7 @@ public class SymbolMapWriter implements Closeable {
     }
 
     void truncate() {
-        offsetMem.jumpTo(keyToOffset(0));
+        offsetMem.jumpTo(keyToOffset(0) + Long.BYTES);
         charMem.jumpTo(0);
         indexWriter.truncate();
         if (cache != null) {

@@ -342,13 +342,14 @@ public class O3CommitLagTest extends AbstractO3Test {
         }
 
         long start = IntervalUtils.parseFloorPartialDate("2021-04-27T08:00:00");
-        for (int mils = 2; mils < 6; mils += 2) {
-            long idCount = mils * 1_000_000L;
+        long[] testCounts = new long[] { 2 * 1024 * 1024, 16 * 8 * 1024 * 5, 2_000_000 };
+        for (int c = 0; c < testCounts.length; c++) {
+            long idCount = testCounts[c];
 
             // Create big commit with has big part before OOO starts
             // which exceed default MAMemoryImpl size in one or all columns
             int iterations = 2;
-            String[] varCol = new String[]{"abc", "aldfjkasdlfkj", "as", "2021-04-27T12:00:00"};
+            String[] varCol = new String[]{"abc", "aldfjkasdlfkj", "as", "2021-04-27T12:00:00", "12345678901234578"};
 
             // Add 2 batches
             try (TableWriter o3 = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "o3", "testing");
@@ -388,9 +389,13 @@ public class O3CommitLagTest extends AbstractO3Test {
                 o3.commit();
                 ordered.commit();
             }
-
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "ordered", "o3", LOG);
-            start += idCount * iterations;
+            engine.releaseAllReaders();
+            try (TableWriter o3 = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "o3", "testing");
+                 TableWriter ordered = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "ordered", "testing")) {
+                o3.truncate();
+                ordered.truncate();
+            }
         }
     }
 

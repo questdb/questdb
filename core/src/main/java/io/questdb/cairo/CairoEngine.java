@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
+import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.WriterPool;
@@ -42,8 +43,6 @@ import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-
-import static io.questdb.cairo.ColumnType.SYMBOL;
 
 public class CairoEngine implements Closeable, WriterSource {
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
@@ -80,7 +79,7 @@ public class CairoEngine implements Closeable, WriterSource {
         this.tableIdMemSize = Files.PAGE_SIZE;
         openTableId();
         try {
-            new EngineMigration(this, configuration).migrateEngineTo(ColumnType.VERSION);
+            EngineMigration.migrateEngineTo(this, ColumnType.VERSION, false);
         } catch (Throwable e) {
             close();
             throw e;
@@ -93,7 +92,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Path path = Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
         try {
             tableIdFd = TableUtils.openFileRWOrFail(ff, path);
-            this.tableIdMem = TableUtils.mapRW(ff, tableIdFd, tableIdMemSize);
+            this.tableIdMem = TableUtils.mapRW(ff, tableIdFd, tableIdMemSize, MemoryTag.MMAP_DEFAULT);
         } catch (Throwable e) {
             close();
             throw e;
@@ -162,7 +161,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void freeTableId() {
         if (tableIdMem != 0) {
-            configuration.getFilesFacade().munmap(tableIdMem, tableIdMemSize);
+            configuration.getFilesFacade().munmap(tableIdMem, tableIdMemSize, MemoryTag.MMAP_DEFAULT);
             tableIdMem = 0;
         }
         if (tableIdFd != -1) {
@@ -312,28 +311,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public CharSequence lockWriter(CharSequence tableName, CharSequence lockReason) {
         return writerPool.lock(tableName, lockReason);
-    }
-
-    public boolean migrateNullFlag(CairoSecurityContext cairoSecurityContext, CharSequence tableName) {
-        try (
-                TableWriter writer = getWriter(cairoSecurityContext, tableName, "migrateNullFlag");
-                TableReader reader = getReader(cairoSecurityContext, tableName)
-        ) {
-            TableReaderMetadata readerMetadata = reader.getMetadata();
-            if (readerMetadata.getVersion() < 416) {
-                LOG.info().$("migrating null flag for symbols [table=").utf8(tableName).$(']').$();
-                for (int i = 0, count = reader.getColumnCount(); i < count; i++) {
-                    if (ColumnType.isSymbol(readerMetadata.getColumnType(i))) {
-                        LOG.info().$("updating null flag [column=").utf8(readerMetadata.getColumnName(i)).$(']').$();
-                        writer.getSymbolMapWriter(i).updateNullFlag(reader.hasNull(i));
-                    }
-                }
-                writer.updateMetadataVersion();
-                LOG.info().$("migrated null flag for symbols [table=").utf8(tableName).$(", tableVersion=").$(ColumnType.VERSION).$(']').$();
-                return true;
-            }
-        }
-        return false;
     }
 
     public boolean releaseAllReaders() {

@@ -1560,7 +1560,7 @@ public class SqlCompiler implements Closeable {
     private void copyTable(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
         try {
             int len = configuration.getSqlCopyBufferSize();
-            long buf = Unsafe.malloc(len);
+            long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
             try {
                 final CharSequence name = GenericLexer.assertNoDots(GenericLexer.unquote(model.getFileName().token), model.getFileName().position);
                 path.of(configuration.getInputRoot()).concat(name).$();
@@ -1592,7 +1592,7 @@ public class SqlCompiler implements Closeable {
                 }
             } finally {
                 textLoader.clear();
-                Unsafe.free(buf, len);
+                Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
             }
         } catch (TextException e) {
             // we do not expect JSON exception here
@@ -2053,14 +2053,6 @@ public class SqlCompiler implements Closeable {
                 tok = GenericLexer.unquote(tok);
             }
             tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
-
-            try {
-                //opening the writer will attempt to fix/repair the table. The writer is now opened inside migrateNullFlag()
-                engine.migrateNullFlag(executionContext.getCairoSecurityContext(), tok);
-            } catch (CairoException e) {
-                LOG.info().$("table busy [table=").$(tok).$(", e=").$((Sinkable) e).$(']').$();
-                throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' is busy");
-            }
             tok = SqlUtil.fetchNext(lexer);
 
         } while (tok != null && Chars.equals(tok, ','));
@@ -2467,7 +2459,7 @@ public class SqlCompiler implements Closeable {
 
     private class DatabaseBackupAgent implements Closeable {
         protected final Path srcPath = new Path();
-        private final CharSequenceObjHashMap<RecordToRowCopier> tableBackupRowCopieCache = new CharSequenceObjHashMap<>();
+        private final CharSequenceObjHashMap<RecordToRowCopier> tableBackupRowCopiedCache = new CharSequenceObjHashMap<>();
         private final ObjHashSet<CharSequence> tableNames = new ObjHashSet<>();
         private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
         private final Path dstPath = new Path();
@@ -2507,7 +2499,7 @@ public class SqlCompiler implements Closeable {
             cachedTmpBackupRoot = null;
             changeDirPrefixLen = 0;
             currDirPrefixLen = 0;
-            tableBackupRowCopieCache.clear();
+            tableBackupRowCopiedCache.clear();
             tableNames.clear();
         }
 
@@ -2515,7 +2507,7 @@ public class SqlCompiler implements Closeable {
         public void close() {
             assert null == currentExecutionContext;
             assert tableNames.isEmpty();
-            tableBackupRowCopieCache.clear();
+            tableBackupRowCopiedCache.clear();
             Misc.free(srcPath);
             Misc.free(dstPath);
         }
@@ -2547,11 +2539,11 @@ public class SqlCompiler implements Closeable {
                     try (TableWriter backupWriter = engine.getBackupWriter(securityContext, tableName, cachedTmpBackupRoot)) {
                         RecordMetadata writerMetadata = backupWriter.getMetadata();
                         srcPath.of(tableName).slash().put(reader.getVersion()).$();
-                        RecordToRowCopier recordToRowCopier = tableBackupRowCopieCache.get(srcPath);
+                        RecordToRowCopier recordToRowCopier = tableBackupRowCopiedCache.get(srcPath);
                         if (null == recordToRowCopier) {
                             entityColumnFilter.of(writerMetadata.getColumnCount());
                             recordToRowCopier = assembleRecordToRowCopier(asm, reader.getMetadata(), writerMetadata, entityColumnFilter);
-                            tableBackupRowCopieCache.put(srcPath.toString(), recordToRowCopier);
+                            tableBackupRowCopiedCache.put(srcPath.toString(), recordToRowCopier);
                         }
 
                         RecordCursor cursor = reader.getCursor();
@@ -2606,7 +2598,7 @@ public class SqlCompiler implements Closeable {
 
             TableReaderMetadata sourceMetaData = reader.getMetadata();
             try {
-                mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$());
+                mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
                 sourceMetaData.cloneTo(mem);
 
                 // create symbol maps
@@ -2619,7 +2611,7 @@ public class SqlCompiler implements Closeable {
                         symbolMapCount++;
                     }
                 }
-                mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$());
+                mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
                 TableUtils.resetTxn(mem, symbolMapCount, 0L, TableUtils.INITIAL_TXN, 0L);
                 srcPath.trimTo(rootLen).concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
             } finally {

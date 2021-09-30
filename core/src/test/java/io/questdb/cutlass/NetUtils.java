@@ -26,6 +26,7 @@ package io.questdb.cutlass;
 
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
@@ -43,8 +44,8 @@ public class NetUtils {
         TestUtils.assertConnect(clientFd, sockAddress);
 
         final int N = 1024 * 1024;
-        final long sendBuf = Unsafe.malloc(N);
-        final long recvBuf = Unsafe.malloc(N);
+        final long sendBuf = Unsafe.malloc(N, MemoryTag.NATIVE_DEFAULT);
+        final long recvBuf = Unsafe.malloc(N, MemoryTag.NATIVE_DEFAULT);
 
         try {
             long sendPtr = sendBuf;
@@ -137,8 +138,8 @@ public class NetUtils {
                 }
             }
         } finally {
-            Unsafe.free(sendBuf, N);
-            Unsafe.free(recvBuf, N);
+            Unsafe.free(sendBuf, N, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(recvBuf, N, MemoryTag.NATIVE_DEFAULT);
             nf.freeSockAddr(sockAddress);
             nf.close(clientFd);
         }

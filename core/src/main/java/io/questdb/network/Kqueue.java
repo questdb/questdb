@@ -27,6 +27,7 @@ package io.questdb.network;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 
 import java.io.Closeable;
@@ -50,8 +51,8 @@ public final class Kqueue implements Closeable {
         this.kqf = kqf;
         this.capacity = capacity;
         this.bufferSize = KqueueAccessor.SIZEOF_KEVENT * capacity;
-        this.changeList = this.writeAddress = Unsafe.calloc(bufferSize);
-        this.eventList = this.readAddress = Unsafe.calloc(bufferSize);
+        this.changeList = this.writeAddress = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        this.eventList = this.readAddress = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         this.kq = kqf.kqueue();
         Files.bumpFileCount(this.kq);
     }
@@ -59,8 +60,8 @@ public final class Kqueue implements Closeable {
     @Override
     public void close() {
         kqf.getNetworkFacade().close(kq, LOG);
-        Unsafe.free(this.changeList, bufferSize);
-        Unsafe.free(this.eventList, bufferSize);
+        Unsafe.free(this.changeList, bufferSize, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(this.eventList, bufferSize, MemoryTag.NATIVE_DEFAULT);
     }
 
     public long getData() {

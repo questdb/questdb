@@ -40,10 +40,12 @@ export type Timings = {
   fetch: number
 }
 
+type DatasetType = Array<boolean | string | number>
+
 type RawDqlResult = {
   columns: ColumnDefinition[]
   count: number
-  dataset: any[][]
+  dataset: DatasetType[]
   ddl: undefined
   error: undefined
   query: string
@@ -103,7 +105,7 @@ export type Options = {
 }
 
 export class Client {
-  private _host: string
+  private readonly _host: string
   private _controllers: AbortController[] = []
 
   constructor(host?: string) {
@@ -191,14 +193,17 @@ export class Client {
 
       if (error instanceof DOMException) {
         // eslint-disable-next-line prefer-promise-reject-errors
-        return Promise.reject({
+        return await Promise.reject({
           ...err,
-          error: error.code === 20 ? "Cancelled by user" : error.toString(),
+          error:
+            error.code === 20
+              ? "Cancelled by user"
+              : JSON.stringify(error).toString(),
         })
       }
 
       // eslint-disable-next-line prefer-promise-reject-errors
-      return Promise.reject({
+      return await Promise.reject({
         ...err,
         error: "An error occured, please try again",
       })
@@ -223,7 +228,7 @@ export class Client {
 
       if (data.error) {
         // eslint-disable-next-line prefer-promise-reject-errors
-        return Promise.reject({
+        return await Promise.reject({
           ...data,
           type: Type.ERROR,
         })
@@ -240,7 +245,7 @@ export class Client {
     }
 
     // eslint-disable-next-line prefer-promise-reject-errors
-    return Promise.reject({
+    return await Promise.reject({
       error: `QuestDB is not reachable [${response.status}]`,
       position: -1,
       query,

@@ -24,10 +24,7 @@
 
 package org.questdb;
 
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 
 public class OooCppBenchmarkSetMemoryShuffle {
     private static final long BUFFER_MAX_SIZE = 256 * 1024 * 1024L;
@@ -64,9 +61,9 @@ public class OooCppBenchmarkSetMemoryShuffle {
                 System.out.println("" + i + ", " + timeout1 + ", " + timeout2 + ", " + timeout3);
             }
         } finally {
-            Unsafe.free(index, BUFFER_MAX_SIZE * 2);
-            Unsafe.free(src, BUFFER_MAX_SIZE);
-            Unsafe.free(dest, BUFFER_MAX_SIZE);
+            Unsafe.free(index, BUFFER_MAX_SIZE * 2, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(src, BUFFER_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(dest, BUFFER_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

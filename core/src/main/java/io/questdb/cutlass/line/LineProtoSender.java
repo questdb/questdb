@@ -31,6 +31,7 @@ import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.AbstractCharSink;
@@ -78,8 +79,8 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
         sockaddr = nf.sockaddr(sendToIPv4Address, sendToPort);
         fd = createSocket(interfaceIPv4Address, ttl, sockaddr);
 
-        bufA = Unsafe.malloc(capacity);
-        bufB = Unsafe.malloc(capacity);
+        bufA = Unsafe.malloc(capacity, MemoryTag.NATIVE_DEFAULT);
+        bufB = Unsafe.malloc(capacity, MemoryTag.NATIVE_DEFAULT);
 
         lo = bufA;
         hi = lo + capacity;
@@ -127,8 +128,8 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
             LOG.error().$("could not close UDP socket [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
         }
         nf.freeSockAddr(sockaddr);
-        Unsafe.free(bufA, capacity);
-        Unsafe.free(bufB, capacity);
+        Unsafe.free(bufA, capacity, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(bufB, capacity, MemoryTag.NATIVE_DEFAULT);
     }
 
     public LineProtoSender field(CharSequence name, long value) {

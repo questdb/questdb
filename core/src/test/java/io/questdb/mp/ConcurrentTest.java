@@ -352,7 +352,7 @@ public class ConcurrentTest {
         consumers[0] = new BusyConsumer(size, sub1, queue, barrier, latch);
         consumers[1] = new BusyConsumer(size, sub2, queue, barrier, latch);
 
-        BusySubscriber subscriber = new BusySubscriber(queue, barrier, latch, fanOut, pubSeq);
+        BusySubscriber subscriber = new BusySubscriber(queue, barrier, latch, fanOut);
         subscriber.start();
 
         consumers[0].start();
@@ -445,15 +445,13 @@ public class ConcurrentTest {
         private final CyclicBarrier barrier;
         private final CountDownLatch latch;
         private final FanOut fanOut;
-        private final Sequence publisher;
 
-        BusySubscriber(RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch latch, FanOut fanOut, Sequence publisher) {
+        BusySubscriber(RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch latch, FanOut fanOut) {
             this.buf = new int[20];
             this.queue = queue;
             this.barrier = barrier;
             this.latch = latch;
             this.fanOut = fanOut;
-            this.publisher = publisher;
         }
 
         @Override
@@ -463,7 +461,7 @@ public class ConcurrentTest {
                 Os.sleep(10);
 
                 // subscribe
-                Sequence sequence = new SCSequence(publisher.current());
+                Sequence sequence = new SCSequence(0);
                 fanOut.and(sequence);
                 int p = 0;
                 while (p < buf.length) {

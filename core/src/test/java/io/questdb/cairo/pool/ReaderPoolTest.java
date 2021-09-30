@@ -27,8 +27,6 @@ package io.questdb.cairo.pool;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
@@ -47,8 +45,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 public class ReaderPoolTest extends AbstractCairoTest {
-    private static final Log LOG = LogFactory.getLog(ReaderPoolTest.class);
-
     @Before
     public void setUpInstance() {
         try (TableModel model = new TableModel(configuration, "u", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
@@ -291,7 +287,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                             // on each iteration thread will do between 1 and 3 things:
                             // 1. it will open a random reader
                             // 2. it will read from one of readers it has opened
-                            // 3. it will close of of readers if has opened
+                            // 3. it will close one of readers it has opened
                             for (int i = 0; i < iterations; i++) {
 
                                 if (readers.size() == 0 || (readers.size() < 40 && rnd.nextPositiveInt() % 4 == 0)) {

@@ -40,6 +40,8 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
+import java.util.Arrays;
+
 public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTest {
     private static int toTimestampRefs = 0;
     private static int toDateRefs = 0;
@@ -349,6 +351,16 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
     private void printConstant(int type, StringSink sink, Object value) {
         switch (ColumnType.tagOf(type)) {
+            case ColumnType.BINARY:
+                if (value == null) {
+                    sink.put("null");
+                } else {
+                    byte[] bytes = (byte[])value;
+                    sink.put('\'');
+                    sink.put(Arrays.toString(bytes));
+                    sink.put('\'');
+                }
+                break;
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
                 if (value == null) {

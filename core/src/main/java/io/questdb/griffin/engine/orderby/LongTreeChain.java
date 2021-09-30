@@ -30,6 +30,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.engine.AbstractRedBlackTree;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 
 public class LongTreeChain extends AbstractRedBlackTree {
@@ -38,7 +39,7 @@ public class LongTreeChain extends AbstractRedBlackTree {
 
     public LongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages) {
         super(keyPageSize, keyMaxPages);
-        this.valueChain = Vm.getARWInstance(valuePageSize, valueMaxPages);
+        this.valueChain = Vm.getARWInstance(valuePageSize, valueMaxPages, MemoryTag.NATIVE_TREE_CHAIN);
     }
 
     @Override

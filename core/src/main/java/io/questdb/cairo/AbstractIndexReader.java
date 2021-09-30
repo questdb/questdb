@@ -28,6 +28,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -97,7 +98,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         this.spinLockTimeoutUs = configuration.getSpinLockTimeoutUs();
 
         try {
-            this.keyMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name));
+            this.keyMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name), MemoryTag.MMAP_DEFAULT);
             this.clock = configuration.getMicrosecondClock();
 
             // key file should already be created at least with header
@@ -147,7 +148,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
             if (unIndexedNullCount > 0) {
                 this.keyCountIncludingNulls++;
             }
-            this.valueMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name));
+            this.valueMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), MemoryTag.MMAP_DEFAULT);
         } catch (Throwable e) {
             close();
             throw e;

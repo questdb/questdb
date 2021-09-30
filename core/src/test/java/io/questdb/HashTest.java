@@ -24,10 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.std.Hash;
-import io.questdb.std.IntHashSet;
-import io.questdb.std.Rnd;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -39,7 +36,7 @@ public class HashTest {
         IntHashSet hashes = new IntHashSet(100000);
         final int LEN = 64;
 
-        long address = Unsafe.malloc(LEN);
+        long address = Unsafe.malloc(LEN, MemoryTag.NATIVE_DEFAULT);
 
         for (int i = 0; i < 100000; i++) {
             rnd.nextChars(address, LEN / 2);
