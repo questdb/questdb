@@ -10,7 +10,7 @@ import {
 } from "types"
 
 const addNotification = (
-  payload: Partial<NotificationShape> & { title: ReactNode },
+  payload: Partial<NotificationShape> & { content: ReactNode },
 ): QueryAction => ({
   payload: {
     createdAt: new Date(),

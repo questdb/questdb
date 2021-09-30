@@ -17,7 +17,6 @@ import {
   SecondaryButton,
   useScreenSize,
 } from "components"
-import { color } from "utils"
 import { actions, selectors } from "store"
 import { LocalStorageContext } from "providers/LocalStorageProvider"
 import { TerminalBox } from "@styled-icons/remix-line/TerminalBox"
@@ -28,8 +27,8 @@ import Notification from "./Notification"
 
 const Wrapper = styled(PaneWrapper)<{ minimized: boolean }>`
   flex: ${(props) => (props.minimized ? "initial" : "1")};
-  overflow-x: auto;
-  max-height: 350px;
+  overflow: auto;
+  max-height: 35rem;
 `
 
 const Menu = styled(PaneMenu)`
@@ -37,10 +36,10 @@ const Menu = styled(PaneMenu)`
 `
 
 const Content = styled(PaneContent)<{ minimized: boolean }>`
-  display: ${(props) => (props.minimized ? "none" : "flex")};
   overflow: auto;
-  padding: 1rem;
-  height: 100%;
+  padding: ${(props) => (props.minimized ? "0" : "0 0 1rem")};
+  flex: initial;
+  height: ${(props) => (props.minimized ? "4rem" : "100%")};
 `
 
 const Header = styled(Text)`
@@ -52,15 +51,6 @@ const TerminalBoxIcon = styled(TerminalBox)`
   margin-right: 1rem;
 `
 
-const ActivityIcon = styled.span`
-  position: relative;
-  margin-left: 0.5rem;
-  top: -0.5rem;
-  color: ${color("draculaPink")};
-  font-size: 2rem;
-  line-height: 2rem;
-`
-
 const ClearAllNotifications = styled.div`
   display: flex;
   width: 100%;
@@ -68,24 +58,25 @@ const ClearAllNotifications = styled.div`
   margin-top: auto;
 `
 
+const ClearAllNotificationsButton = styled(SecondaryButton)`
+  margin-top: 1rem;
+`
+
 const Notifications = () => {
   const notifications = useSelector(selectors.query.getNotifications)
   const { isNotificationEnabled } = useContext(LocalStorageContext)
   const { sm } = useScreenSize()
   const [isMinimized, setIsMinimized] = useState(true)
-  const clearAllNotificationsRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
-  const [hasUnread, setHasUnread] = useState(false)
   const dispatch = useDispatch()
 
   const scrollToBottom = () => {
     contentRef.current?.scrollTo({
-      top: clearAllNotificationsRef.current?.offsetTop,
+      top: contentRef.current?.scrollHeight,
     })
   }
 
   const toggleMinimized = useCallback(() => {
-    setHasUnread(false)
     setIsMinimized(!isMinimized)
   }, [isMinimized])
 
@@ -95,15 +86,12 @@ const Notifications = () => {
 
   useLayoutEffect(() => {
     if (notifications.length > 0) {
-      setHasUnread(true)
       scrollToBottom()
     }
   }, [notifications])
 
   useLayoutEffect(() => {
-    if (!isMinimized) {
-      scrollToBottom()
-    }
+    scrollToBottom()
   }, [isMinimized])
 
   useEffect(() => {
@@ -121,7 +109,7 @@ const Notifications = () => {
       <Menu>
         <Header color="draculaForeground">
           <TerminalBoxIcon size="18px" />
-          Log {hasUnread && isMinimized && <ActivityIcon>&bull;</ActivityIcon>}
+          Log
         </Header>
         <SecondaryButton onClick={toggleMinimized}>
           {isMinimized ? <ArrowUpS size="18px" /> : <Subtract size="18px" />}
@@ -138,14 +126,16 @@ const Notifications = () => {
             />
           ))}
         </TransitionGroup>
-        <ClearAllNotifications ref={clearAllNotificationsRef}>
-          <SecondaryButton
-            disabled={notifications.length === 0}
-            onClick={cleanupNotifications}
-          >
-            Clear all
-          </SecondaryButton>
-        </ClearAllNotifications>
+        {!isMinimized && (
+          <ClearAllNotifications>
+            <ClearAllNotificationsButton
+              disabled={notifications.length === 0}
+              onClick={cleanupNotifications}
+            >
+              Clear all
+            </ClearAllNotificationsButton>
+          </ClearAllNotifications>
+        )}
       </Content>
     </Wrapper>
   )

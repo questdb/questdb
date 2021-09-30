@@ -10,8 +10,8 @@ export enum NotificationType {
 
 export type NotificationShape = Readonly<{
   createdAt: Date
-  title: ReactNode
-  line1?: ReactNode
+  content: ReactNode
+  sideContent?: ReactNode
   line2?: ReactNode
   type: NotificationType
 }>
