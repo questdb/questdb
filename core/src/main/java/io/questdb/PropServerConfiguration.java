@@ -200,6 +200,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3UpdPartitionSizeQueueCapacity;
     private final int o3PurgeDiscoveryQueueCapacity;
     private final int o3PurgeQueueCapacity;
+    private final int o3ColumnMemorySize;
     private final int maxUncommittedRows;
     private final long commitLag;
     private final long instanceHashLo;
@@ -661,6 +662,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3UpdPartitionSizeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.upd.partition.size.queue.capacity", 128));
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.discovery.queue.capacity", 128));
             this.o3PurgeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.queue.capacity", 128));
+            this.o3ColumnMemorySize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.o3.column.memory.size", 16 * Numbers.SIZE_1MB));
             this.maxUncommittedRows = getInt(properties, env, "cairo.max.uncommitted.rows", 500_000);
             this.commitLag = getLong(properties, env, "cairo.commit.lag", 300_000) * 1_000;
             this.o3QuickSortEnabled = getBoolean(properties, env, "cairo.o3.quicksort.enabled", false);
@@ -1967,6 +1969,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getBinaryEncodingMaxLength() {
             return binaryEncodingMaxLength;
+        }
+
+        @Override
+        public int getO3ColumnMemorySize() {
+            return o3ColumnMemorySize;
         }
     }
 

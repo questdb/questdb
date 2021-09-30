@@ -564,4 +564,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public int getBinaryEncodingMaxLength() {
         return 32768;
     }
+
+    @Override
+    public int getO3ColumnMemorySize() {
+        return 16 * Numbers.SIZE_1MB;
+    }
 }

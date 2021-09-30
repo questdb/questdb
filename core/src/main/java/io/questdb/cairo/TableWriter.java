@@ -63,7 +63,6 @@ public class TableWriter implements Closeable {
     public static final int O3_BLOCK_O3 = 1;
     public static final int O3_BLOCK_DATA = 2;
     public static final int O3_BLOCK_MERGE = 3;
-    private static final int MEM_PAGE_SIZE = 16 * Numbers.SIZE_1MB;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     private static final CharSequenceHashSet IGNORED_FILES = new CharSequenceHashSet();
     private static final Runnable NOOP = () -> {
@@ -109,6 +108,7 @@ public class TableWriter implements Closeable {
     private final Timestamps.TimestampAddMethod timestampAddMethod;
     private final int defaultCommitMode;
     private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
+    private final int o3ColumnMemorySize;
     private final ObjList<Runnable> nullSetters;
     private final ObjList<Runnable> o3NullSetters;
     private final ObjList<MemoryCARW> o3Columns;
@@ -207,7 +207,7 @@ public class TableWriter implements Closeable {
         this.o3PartitionUpdatePubSeq = new MPSequence(this.o3PartitionUpdateQueue.getCapacity());
         this.o3PartitionUpdateSubSeq = new SCSequence();
         o3PartitionUpdatePubSeq.then(o3PartitionUpdateSubSeq).then(o3PartitionUpdatePubSeq);
-
+        this.o3ColumnMemorySize = configuration.getO3ColumnMemorySize();
         this.path = new Path();
         this.path.of(root).concat(tableName);
         this.other = new Path().of(root).concat(tableName);
@@ -1737,16 +1737,16 @@ public class TableWriter implements Closeable {
     private void configureColumn(int type, boolean indexFlag) {
         final MemoryMAR primary = Vm.getMARInstance();
         final MemoryMAR secondary;
-        final MemoryCARW oooPrimary = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
+        final MemoryCARW oooPrimary = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         final MemoryCARW oooSecondary;
-        final MemoryCARW oooPrimary2 = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
+        final MemoryCARW oooPrimary2 = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         final MemoryCARW oooSecondary2;
         switch (ColumnType.tagOf(type)) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 secondary = Vm.getMARInstance();
-                oooSecondary = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
-                oooSecondary2 = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
+                oooSecondary = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
+                oooSecondary2 = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
                 break;
             default:
                 secondary = null;
@@ -1792,7 +1792,7 @@ public class TableWriter implements Closeable {
         final int timestampIndex = metadata.getTimestampIndex();
         if (timestampIndex != -1) {
             o3TimestampMem = o3Columns.getQuick(getPrimaryColumnIndex(timestampIndex));
-            o3TimestampMemCpy = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
+            o3TimestampMemCpy = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         }
     }
 

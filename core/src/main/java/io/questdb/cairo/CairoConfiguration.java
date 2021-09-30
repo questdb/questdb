@@ -255,4 +255,6 @@ public interface CairoConfiguration {
     int getLatestByQueueCapacity();
 
     int getBinaryEncodingMaxLength();
+
+    int getO3ColumnMemorySize();
 }
