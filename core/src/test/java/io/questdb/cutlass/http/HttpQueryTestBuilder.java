@@ -51,6 +51,7 @@ public class HttpQueryTestBuilder {
     private HttpServerConfigurationBuilder serverConfigBuilder;
     private HttpRequestProcessorBuilder textImportProcessor;
     private int workerCount = 1;
+    private long maxWriterWaitTimeout = 500_000;
 
     public int getWorkerCount() {
         return this.workerCount;
@@ -92,7 +93,12 @@ public class HttpQueryTestBuilder {
 
             CairoConfiguration cairoConfiguration = configuration;
             if (cairoConfiguration == null) {
-                cairoConfiguration = new DefaultCairoConfiguration(baseDir);
+                cairoConfiguration = new DefaultCairoConfiguration(baseDir) {
+                    @Override
+                    public long getWriterAsyncCommandBusyWaitTimeout() {
+                        return maxWriterWaitTimeout;
+                    }
+                };
             }
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration);
@@ -208,6 +214,11 @@ public class HttpQueryTestBuilder {
                 }
             }
         });
+    }
+
+    public HttpQueryTestBuilder withAlterTableMaxWaitTimeout(long maxWriterWaitTimeout) {
+        this.maxWriterWaitTimeout = maxWriterWaitTimeout;
+        return this;
     }
 
     public HttpQueryTestBuilder withCustomTextImportProcessor(HttpRequestProcessorBuilder textQueryProcessor) {

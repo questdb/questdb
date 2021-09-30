@@ -26,10 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
 import io.questdb.Telemetry;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoError;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.ex.RetryOperationException;
@@ -37,22 +34,16 @@ import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.FanOut;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import java.util.concurrent.locks.LockSupport;
 
 public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
@@ -67,8 +58,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final NanosecondClock nanosecondClock;
     private final HttpSqlExecutionInterruptor interruptor;
     private final Metrics metrics;
-    private final DirectCharSequence writerErrorMessage = new DirectCharSequence();
-    private final long alterWaitTimeoutMilli;
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
@@ -117,7 +106,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.nanosecondClock = engine.getConfiguration().getNanosecondClock();
         this.interruptor = new HttpSqlExecutionInterruptor(configuration.getInterruptorConfiguration());
         this.metrics = metrics;
-        this.alterWaitTimeoutMilli = configuration.getAlterTableMaxWaitTimeout() / 1_000L;
     }
 
     @Override
@@ -354,75 +342,13 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CompiledQuery cc,
             CharSequence keepAliveHeader
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, SqlException {
-        try {
-            compiler.executeAlterCommand(cc, sqlExecutionContext);
-        } catch (EntryUnavailableException ex) {
-            AlterStatement alterStatement = cc.getAlterStatement();
-            state.info().$("writer busy, will pass ALTER TABLE execution to writer owner async [table=").$(alterStatement.getTableName()).I$();
-            final FanOut writerEventFanOut = engine.getMessageBus().getTableWriterEventFanOut();
-            RingQueue<TableWriterTask> tableWriterEventQueue = engine.getMessageBus().getTableWriterEventQueue();
-            SCSequence tableWriterEventSeq = state.getWriterEventConsumeSequence();
-            try {
-                writerEventFanOut.and(tableWriterEventSeq);
-                long instance = engine.publishTableWriterCommand(alterStatement);
-                state.debug().$("published writer event [table=")
-                        .$(alterStatement.getTableName())
-                        .$(",instance=").$(instance).I$();
-
-                SqlException status = waitWriterEvent(tableWriterEventSeq, tableWriterEventQueue, instance, alterStatement.getTableNamePosition());
-                if (status == null) {
-                    state.debug().$("received DONE response writer event [table=")
-                            .$(alterStatement.getTableName())
-                            .$(",instance=").$(instance).I$();
-                } else {
-                    state.info().$("received error response for ALTER TABLE from writer [table=")
-                            .$(alterStatement.getTableName())
-                            .$(",instance=").$(instance)
-                            .$(",error=").$(status.getFlyweightMessage())
-                            .I$();
-                    throw status;
-                }
-            } finally {
-                writerEventFanOut.remove(tableWriterEventSeq);
-            }
-        }
+        AlterCommandExecution.executeAlterCommand(
+                engine,
+                cc.getAlterStatement(),
+                sqlExecutionContext,
+                state
+        );
         sendConfirmation(state, cc, keepAliveHeader);
-    }
-
-    private SqlException waitWriterEvent(
-            SCSequence tableWriterEventSeq,
-            RingQueue<TableWriterTask> tableWriterEventQueue,
-            long commandId,
-            int tableNamePosition) {
-        long start = System.currentTimeMillis();
-        while (true) {
-            long seq = tableWriterEventSeq.next();
-            if (seq < 0) {
-                // Queue is empty, check if the execution blocked for too long
-                if (System.currentTimeMillis() - start > alterWaitTimeoutMilli) {
-                    return SqlException.$(tableNamePosition, "Timeout expired on waiting for the ALTER TABLE execution result.");
-                }
-                LockSupport.parkNanos(100);
-                continue;
-            }
-
-            TableWriterTask event = tableWriterEventQueue.get(seq);
-            if (event.getInstance() != commandId || event.getType() != TableWriterTask.TSK_ALTER_TABLE) {
-                tableWriterEventSeq.done(seq);
-                LockSupport.parkNanos(100);
-                continue;
-            }
-
-            // If writer failed to execute the ALTER command it will send back string error
-            // in the event data
-            SqlException result = null;
-            int strLen = Unsafe.getUnsafe().getInt(event.getData());
-            if (strLen != 0) {
-                result = SqlException.$(tableNamePosition, writerErrorMessage.of(event.getData() + 4L, event.getData() + 4L + 2L * strLen));
-            }
-            tableWriterEventSeq.done(seq);
-            return result;
-        }
     }
 
     private void executeInsert(

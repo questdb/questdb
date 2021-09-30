@@ -81,9 +81,9 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             compiler.compile(
                     "CREATE TABLE IF NOT EXISTS " + configTableName + " (id long256, enabled boolean, version symbol, os symbol, package symbol)",
                     sqlExecutionContext);
-            tryAddColumn(compiler, sqlExecutionContext, "version symbol");
-            tryAddColumn(compiler, sqlExecutionContext, "os symbol");
-            tryAddColumn(compiler, sqlExecutionContext, "package symbol");
+            tryAddColumn(compiler, engine, sqlExecutionContext, "version symbol");
+            tryAddColumn(compiler, engine, sqlExecutionContext, "os symbol");
+            tryAddColumn(compiler, engine, sqlExecutionContext, "package symbol");
             
             if (enabled) {
                 try {
@@ -122,12 +122,12 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void tryAddColumn(SqlCompiler compiler, SqlExecutionContext executionContext, CharSequence columnDetails) {
+    private void tryAddColumn(SqlCompiler compiler, CairoEngine engine, SqlExecutionContext executionContext, CharSequence columnDetails) {
         try {
             CompiledQuery cc = compiler.compile(
                     "ALTER TABLE " + configTableName + " ADD COLUMN " + columnDetails,
                     executionContext);
-            compiler.executeAlterCommand(cc, executionContext);
+            AlterCommandExecution.executeAlterStatement(engine, cc.getAlterStatement(), executionContext);
         } catch (EntryUnavailableException e) {
             LOG.info().$("Failed to alter telemetry table, writer is busy [table=").$(configTableName).I$();
         } catch (SqlException ex) {

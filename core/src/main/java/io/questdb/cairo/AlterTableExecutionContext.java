@@ -22,27 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.cairo;
 
-import io.questdb.griffin.SqlInterruptorConfiguration;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.log.LogRecord;
+import io.questdb.mp.SCSequence;
+import io.questdb.std.str.DirectCharSequence;
 
-public interface JsonQueryProcessorConfiguration {
+public interface AlterTableExecutionContext {
+    LogRecord debug();
+    LogRecord info();
 
-    MillisecondClock getClock();
-
-    int getConnectionCheckFrequency();
-
-    FilesFacade getFilesFacade();
-
-    int getFloatScale();
-
-    int getDoubleScale();
-
-    CharSequence getKeepAliveHeader();
-
-    long getMaxQueryResponseRowLimit();
-
-    SqlInterruptorConfiguration getInterruptorConfiguration();
+    DirectCharSequence getDirectCharSequence();
+    SCSequence getWriterEventConsumeSequence();
 }

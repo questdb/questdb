@@ -144,9 +144,10 @@ public class DispatcherWriterQueueTest {
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder()
-                                .withAlterTableMaxWaitTimeout(10)
                                 .withReceiveBufferSize(50)
-                ).run((engine) -> {
+                )
+                .withAlterTableMaxWaitTimeout(10)
+                .run((engine) -> {
             setupSql(engine);
             try {
                 compiler.compile("create table x as (" +
@@ -181,9 +182,10 @@ public class DispatcherWriterQueueTest {
                 .withWorkerCount(httpWorkers)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder()
-                                .withAlterTableMaxWaitTimeout(2_000_000)
                                 .withReceiveBufferSize(50)
-                ).run((engine) -> {
+                )
+                .withAlterTableMaxWaitTimeout(2_000_000)
+                .run((engine) -> {
             setupSql(engine);
             compiler.compile("create table IF NOT EXISTS x as (" +
                     " select rnd_symbol('a', 'b', 'c') as s," +
