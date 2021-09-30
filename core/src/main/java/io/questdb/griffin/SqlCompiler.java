@@ -828,15 +828,6 @@ public class SqlCompiler implements Closeable {
         return executor.execute(executionContext);
     }
 
-    public void executeAlterCommand(@NotNull CompiledQuery compiledQuery, @NotNull SqlExecutionContext executionContext) throws SqlException {
-        AlterStatement alterStatement = compiledQuery.getAlterStatement();
-        if (alterStatement != null) {
-            try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), alterStatement.getTableName(), "Alter table statement")) {
-                alterStatement.apply(writer);
-            }
-        }
-    }
-
     public CairoEngine getEngine() {
         return engine;
     }

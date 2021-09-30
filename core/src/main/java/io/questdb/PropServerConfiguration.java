@@ -257,7 +257,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int jsonQueryFloatScale;
     private int jsonQueryDoubleScale;
     private int jsonQueryConnectionCheckFrequency;
-    private long jsonAlterTableTimeout;
     private boolean httpFrozenClock;
     private boolean readOnlySecurityContext;
     private long maxHttpQueryResponseRowLimit;
@@ -350,6 +349,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinSndBufSize;
     private final int latestByQueueCapacity;
     private final int sampleByIndexSearchPageSize;
+    private long writerAsyncCommandBusyWaitTimeout;
 
     public PropServerConfiguration(
             String root,
@@ -487,7 +487,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.utf8SinkSize = getIntSize(properties, env, "http.text.utf8.sink.size", 4096);
 
                 this.jsonQueryConnectionCheckFrequency = getInt(properties, env, "http.json.query.connection.check.frequency", 1_000_000);
-                this.jsonAlterTableTimeout = getInt(properties, env, "http.json.alter.tame.timeout", 1_000_000);
                 this.jsonQueryFloatScale = getInt(properties, env, "http.json.query.float.scale", 4);
                 this.jsonQueryDoubleScale = getInt(properties, env, "http.json.query.double.scale", 12);
                 this.readOnlySecurityContext = getBoolean(properties, env, "http.security.readonly", false);
@@ -763,6 +762,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sharedWorkerSleepThreshold = getLong(properties, env, "shared.worker.sleep.threshold", 10000);
 
             this.metricsEnabled = getBoolean(properties, env, "metrics.enabled", false);
+            this.writerAsyncCommandBusyWaitTimeout = getLong(properties, env, "cairo.writer.busy.wait.timeout", 500_000);
 
             this.buildInformation = buildInformation;
         }
@@ -1800,6 +1800,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getWriterAsyncCommandBusyWaitTimeout() {
+            return writerAsyncCommandBusyWaitTimeout;
+        }
+
+        @Override
         public boolean isParallelIndexingEnabled() {
             return parallelIndexingEnabled;
         }
@@ -2307,11 +2312,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
-        @Override
-        public long getAlterTableMaxWaitTimeout() {
-            return jsonAlterTableTimeout;
-        }
-
         @Override
         public MillisecondClock getClock() {
             return httpFrozenClock ? StationaryMillisClock.INSTANCE : MillisecondClockImpl.INSTANCE;

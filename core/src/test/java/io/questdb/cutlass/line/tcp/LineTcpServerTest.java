@@ -28,21 +28,17 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.AlterStatement;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.line.LineProtoSender;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.log.LogRecord;
+import io.questdb.mp.*;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.Net;
@@ -50,6 +46,7 @@ import io.questdb.network.NetworkError;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -70,6 +67,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
     private final static String AUTH_KEY_ID2 = "testUser2";
     private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("lwJi3TSb4G6UcHxFJmPhOTWa4BLwJOOiK76wT6Uk7pI");
     private static final long TEST_TIMEOUT_IN_MS = 120000;
+    private SqlException sqlException;
     private final WorkerPool sharedWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
         private final int[] affinity = {-1, -1};
 
@@ -657,7 +655,6 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolAddedInO3ModeFirstRow() throws Exception {
-        maxMeasurementSize = 4096;
         runInContext(() -> {
             String lineData = "plug,room=6A watts=\"1\" 2631819999000\n" +
                     "plug,label=Power,room=6B watts=\"22\" 1631817902842\n";
@@ -672,7 +669,6 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolAddedInO3ModeFirstRow2Lines() throws Exception {
-        maxMeasurementSize = 4096;
         runInContext(() -> {
             String lineData = "plug,room=6A watts=\"1\" 2631819999000\n" +
                     "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
@@ -684,6 +680,30 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "6B\t22\t1970-01-01T00:27:11.817902Z\tPower\n" +
                     "6A\t1\t1970-01-01T00:43:51.819999Z\t\n";
             assertTable(expected, "plug");
+        });
+    }
+
+    @Test
+    public void testAlterCommand() throws Exception {
+        runInContext(() -> {
+            String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819999000\n" +
+                    "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
+                    "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
+            send(lineData, "plug", true, false,
+                    "ALTER TABLE plug ALTER COLUMN label ADD INDEX");
+
+            String expected = "label\troom\twatts\ttimestamp\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n";
+            assertTable(expected, "plug");
+            try(TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "plug")) {
+                TableReaderMetadata metadata = rdr.getMetadata();
+                Assert.assertTrue("Alter makes column indexed",
+                        metadata.isColumnIndexed(
+                                metadata.getColumnIndex("label")
+                        ));
+            }
         });
     }
 
@@ -723,12 +743,31 @@ public class LineTcpServerTest extends AbstractCairoTest {
     }
 
     private void send(String lineData, String tableName, boolean wait, boolean noLinger) {
+        send(lineData, tableName, wait, noLinger, null);
+    }
+
+    private void send(String lineData, String tableName, boolean wait, boolean noLinger, String alterTableCommand) {
         SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
         if (wait) {
+            sqlException = null;
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (Chars.equals(tableName, name)) {
-                    if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                        releaseLatch.countDown();
+                    if (factoryType == PoolListener.SRC_WRITER) {
+                        switch (event) {
+                            case PoolListener.EV_RETURN:
+                                releaseLatch.countDown();
+                                break;
+                            case PoolListener.EV_GET:
+                                if (alterTableCommand != null) {
+                                    try {
+                                        executeSqlOnce(alterTableCommand);
+                                    } catch (SqlException e) {
+                                        sqlException = e;
+                                        releaseLatch.countDown();
+                                    }
+                                }
+                                break;
+                        }
                     }
                 }
             });
@@ -757,11 +796,53 @@ public class LineTcpServerTest extends AbstractCairoTest {
             }
             if (wait) {
                 releaseLatch.await();
+                if (sqlException != null) {
+                    sqlException.printStackTrace();
+                    Assert.fail(sqlException.getMessage());
+                }
             }
         } finally {
             if (wait) {
                 engine.setPoolListener(null);
             }
+        }
+    }
+
+    private void executeSqlOnce(String sql) throws SqlException {
+        try (SqlCompiler compiler = new SqlCompiler(engine);
+             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                     .with(
+                             AllowAllCairoSecurityContext.INSTANCE,
+                             new BindVariableServiceImpl(configuration),
+                             null,
+                             -1,
+                             null)) {
+            CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
+            AlterStatement alterStatement = cc.getAlterStatement();
+            AlterCommandExecution.executeAlterCommandNoWait(engine,
+                    alterStatement,
+                    sqlExecutionContext,
+                    new AlterTableExecutionContext() {
+                        @Override
+                        public LogRecord debug() {
+                            return LOG.debug();
+                        }
+
+                        @Override
+                        public LogRecord info() {
+                            return LOG.info();
+                        }
+
+                        @Override
+                        public DirectCharSequence getDirectCharSequence() {
+                            return new DirectCharSequence();
+                        }
+
+                        @Override
+                        public SCSequence getWriterEventConsumeSequence() {
+                            return new SCSequence();
+                        }
+                    });
         }
     }
 

@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.cairo.AlterTableExecutionContext;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
@@ -46,11 +47,12 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
-public class JsonQueryProcessorState implements Mutable, Closeable {
+public class JsonQueryProcessorState implements Mutable, Closeable, AlterTableExecutionContext {
     static final int QUERY_RECORD_PREFIX = 9;
     static final int QUERY_SETUP_FIRST_RECORD = 8;
     static final int QUERY_SUFFIX = 7;
@@ -68,6 +70,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final ObjList<String> columnNames = new ObjList<>();
     private final HttpConnectionContext httpConnectionContext;
     private final IntList columnSkewList = new IntList();
+    private final DirectCharSequence directCharSequence = new DirectCharSequence();
     private final NanosecondClock nanosecondClock;
     private final int floatScale;
     private final int doubleScale;
@@ -172,6 +175,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return rnd;
     }
 
+    @Override
     public SCSequence getWriterEventConsumeSequence() {
         return writerEventConsumeSequence;
     }
@@ -180,12 +184,19 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.rnd = rnd;
     }
 
+    @Override
     public LogRecord debug() {
         return LOG.debug().$('[').$(getFd()).$("] ");
     }
 
+    @Override
     public LogRecord info() {
         return LOG.info().$('[').$(getFd()).$("] ");
+    }
+
+    @Override
+    public DirectCharSequence getDirectCharSequence() {
+        return directCharSequence;
     }
 
     public void logBufferTooSmall() {

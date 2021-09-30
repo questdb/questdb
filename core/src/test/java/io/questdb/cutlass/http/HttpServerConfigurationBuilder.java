@@ -51,7 +51,6 @@ public class HttpServerConfigurationBuilder {
     private int receiveBufferSize = 1024 * 1024;
     private long multipartIdleSpinCount = -1;
     private Runnable onPeerDisconnect = HttpContextConfiguration.NONE;
-    private long alterTableMaxWaitTimeout = 1_000_000;
 
     public DefaultHttpServerConfiguration build() {
         final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
@@ -96,11 +95,6 @@ public class HttpServerConfigurationBuilder {
 
             private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
                 private final DefaultSqlInterruptorConfiguration sqlInterruptorConfiguration = new DefaultSqlInterruptorConfiguration();
-
-                @Override
-                public long getAlterTableMaxWaitTimeout() {
-                    return alterTableMaxWaitTimeout;
-                }
 
                 @Override
                 public MillisecondClock getClock() {
@@ -248,11 +242,6 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withAllowDeflateBeforeSend(boolean allowDeflateBeforeSend) {
         this.allowDeflateBeforeSend = allowDeflateBeforeSend;
-        return this;
-    }
-
-    public HttpServerConfigurationBuilder withAlterTableMaxWaitTimeout(int timeoutMicro) {
-        this.alterTableMaxWaitTimeout = timeoutMicro;
         return this;
     }
 
