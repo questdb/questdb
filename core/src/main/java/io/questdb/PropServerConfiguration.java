@@ -612,15 +612,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlInsertModelPoolCapacity = getInt(properties, env, "cairo.sql.insert.model.pool.capacity", 64);
             this.sqlCopyModelPoolCapacity = getInt(properties, env, "cairo.sql.copy.model.pool.capacity", 32);
             this.sqlCopyBufferSize = getIntSize(properties, env, "cairo.sql.copy.buffer.size", 2 * 1024 * 1024);
-            long sqlAppendPageSize = getLongSize(properties, env, "cairo.sql.append.page.size", 16 * 1024 * 1024);
+            this.sqlAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, "cairo.sql.append.page.size", 16 * 1024 * 1024));
             this.sampleByIndexSearchPageSize = getIntSize(properties, env, "cairo.sql.sampleby.page.size", 0);
-            // round the append page size to the OS page size
-            final long osPageSize = FilesFacadeImpl.INSTANCE.getPageSize();
-            if ((sqlAppendPageSize % osPageSize) == 0) {
-                this.sqlAppendPageSize = sqlAppendPageSize;
-            } else {
-                this.sqlAppendPageSize = (sqlAppendPageSize / osPageSize + 1) * osPageSize;
-            }
             this.sqlDoubleToStrCastScale = getInt(properties, env, "cairo.sql.double.cast.scale", 12);
             this.sqlFloatToStrCastScale = getInt(properties, env, "cairo.sql.float.cast.scale", 4);
             this.sqlGroupByMapCapacity = getInt(properties, env, "cairo.sql.groupby.map.capacity", 1024);
