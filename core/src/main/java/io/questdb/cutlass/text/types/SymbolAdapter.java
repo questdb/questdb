@@ -28,16 +28,17 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.DirectCharSink;
 
 public class SymbolAdapter extends AbstractTypeAdapter {
 
+    private final DirectCharSink utf8Sink;
     private final boolean indexed;
 
-    public SymbolAdapter(boolean indexed) {
+    public SymbolAdapter(DirectCharSink utf8Sink, boolean indexed) {
+        this.utf8Sink = utf8Sink;
         this.indexed = indexed;
     }
-
 
     @Override
     public int getType() {
@@ -56,9 +57,9 @@ public class SymbolAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, StringSink tempSink) throws Exception {
-        tempSink.clear();
-        TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), tempSink);
-        row.putSym(column, tempSink);
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
+        utf8Sink.clear();
+        TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), utf8Sink);
+        row.putSym(column, utf8Sink);
     }
 }

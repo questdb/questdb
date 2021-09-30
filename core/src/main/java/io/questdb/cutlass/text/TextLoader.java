@@ -37,6 +37,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -53,6 +54,7 @@ public class TextLoader implements Closeable, Mutable {
     private final Path path = new Path();
     private final int textAnalysisMaxLines;
     private final TextDelimiterScanner textDelimiterScanner;
+    private final DirectCharSink utf8Sink;
     private final TypeManager typeManager;
     private final ObjList<ParserMethod> parseMethods = new ObjList<>();
     private int state;
@@ -61,11 +63,12 @@ public class TextLoader implements Closeable, Mutable {
 
     public TextLoader(CairoEngine engine) {
         final TextConfiguration textConfiguration = engine.getConfiguration().getTextConfiguration();
+        this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         jsonLexer = new JsonLexer(
                 textConfiguration.getJsonCacheSize(),
                 textConfiguration.getJsonCacheLimit()
         );
-        this.typeManager = new TypeManager(textConfiguration);
+        this.typeManager = new TypeManager(textConfiguration, utf8Sink);
         textLexer = new TextLexer(textConfiguration, typeManager);
         textWriter = new CairoTextWriter(engine, path, typeManager);
         textMetadataParser = new TextMetadataParser(textConfiguration, typeManager);
@@ -96,6 +99,7 @@ public class TextLoader implements Closeable, Mutable {
         Misc.free(jsonLexer);
         Misc.free(path);
         Misc.free(textDelimiterScanner);
+        Misc.free(utf8Sink);
     }
 
     public void closeWriter() {

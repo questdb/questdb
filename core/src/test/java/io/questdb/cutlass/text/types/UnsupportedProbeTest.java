@@ -66,11 +66,11 @@ public class UnsupportedProbeTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testString() {
-        new StringAdapter().probe("xyz");
+        new StringAdapter(null).probe("xyz");
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testSymbol() {
-        new SymbolAdapter(false).probe("xyz");
+        new SymbolAdapter(null, false).probe("xyz");
     }
 }

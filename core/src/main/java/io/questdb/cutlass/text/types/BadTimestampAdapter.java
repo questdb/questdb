@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.StringSink;
 
 public final class BadTimestampAdapter  extends TimestampAdapter {
 
@@ -48,7 +47,7 @@ public final class BadTimestampAdapter  extends TimestampAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, StringSink tempSink) {
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
         row.putTimestamp(column, Numbers.LONG_NaN);
     }
 

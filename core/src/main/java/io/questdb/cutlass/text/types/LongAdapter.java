@@ -30,7 +30,6 @@ import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.StringSink;
 
 public final class LongAdapter extends AbstractTypeAdapter implements TimestampCompatibleAdapter {
 
@@ -67,7 +66,7 @@ public final class LongAdapter extends AbstractTypeAdapter implements TimestampC
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, StringSink tempSink) throws Exception {
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
         row.putLong(column, SqlKeywords.isNullKeyword(value) ? Numbers.LONG_NaN : getLong(value));
     }
 }

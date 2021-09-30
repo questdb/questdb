@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.StringSink;
 
 public class OtherToTimestampAdapter extends TimestampAdapter implements Mutable {
     private TimestampCompatibleAdapter compatibleAdapter;
@@ -53,7 +52,7 @@ public class OtherToTimestampAdapter extends TimestampAdapter implements Mutable
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, StringSink tempSink) throws Exception {
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
         row.putTimestamp(column, getTimestamp(value));
     }
 

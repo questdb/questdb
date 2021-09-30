@@ -29,7 +29,6 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.StringSink;
 
 public final class FloatAdapter extends AbstractTypeAdapter {
 
@@ -49,7 +48,7 @@ public final class FloatAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, StringSink tempSink) throws Exception {
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
         row.putFloat(column, SqlKeywords.isNullKeyword(value) ? Float.NaN : Numbers.parseFloat(value));
     }
 }

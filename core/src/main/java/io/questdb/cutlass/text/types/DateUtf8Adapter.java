@@ -33,11 +33,15 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
-import io.questdb.std.str.StringSink;
 
 public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
+    private final DirectCharSink utf8Sink;
     private DateLocale locale;
     private DateFormat format;
+
+    public DateUtf8Adapter(DirectCharSink utf8Sink) {
+        this.utf8Sink = utf8Sink;
+    }
 
     @Override
     public void clear() {
@@ -61,10 +65,10 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, StringSink tempSink) throws Exception {
-        tempSink.clear();
-        TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), tempSink);
-        row.putDate(column, format.parse(tempSink, locale));
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
+        utf8Sink.clear();
+        TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), utf8Sink);
+        row.putDate(column, format.parse(utf8Sink, locale));
     }
 
     public DateUtf8Adapter of(DateFormat format, DateLocale locale) {

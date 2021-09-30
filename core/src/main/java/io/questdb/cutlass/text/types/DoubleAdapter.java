@@ -30,7 +30,6 @@ import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.StringSink;
 
 public final class DoubleAdapter extends AbstractTypeAdapter {
 
@@ -58,7 +57,7 @@ public final class DoubleAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, StringSink tempSink) throws Exception {
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
         row.putDouble(column, SqlKeywords.isNullKeyword(value) ? Double.NaN : Numbers.parseDouble(value));
     }
 }

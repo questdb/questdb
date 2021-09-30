@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.StringSink;
 
 public final class BooleanAdapter extends AbstractTypeAdapter {
 
@@ -48,7 +47,7 @@ public final class BooleanAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, StringSink tempSink) {
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
         row.putBool(column, SqlKeywords.isTrueKeyword(value));
     }
 }

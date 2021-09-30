@@ -409,6 +409,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
                 if (metadata != null) {
                     final int columnCount = metadata.getColumnCount();
+
                     for (; state.columnIndex < columnCount; state.columnIndex++) {
                         socket.bookmark();
                         socket.put('|');

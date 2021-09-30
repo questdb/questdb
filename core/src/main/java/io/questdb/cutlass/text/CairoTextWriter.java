@@ -35,7 +35,6 @@ import io.questdb.log.LogRecord;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
@@ -51,7 +50,6 @@ public class CairoTextWriter implements Closeable, Mutable {
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final TypeManager typeManager;
     private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
-    private final StringSink tempSink = new StringSink();
     private CharSequence tableName;
     private TableWriter writer;
     private long _size;
@@ -227,7 +225,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     private boolean onField(long line, DirectByteCharSequence dbcs, TableWriter.Row w, int i) {
         try {
-            types.getQuick(i).write(w, i, dbcs, tempSink);
+            types.getQuick(i).write(w, i, dbcs);
         } catch (Exception ignore) {
             logError(line, i, dbcs);
             switch (atomicity) {
