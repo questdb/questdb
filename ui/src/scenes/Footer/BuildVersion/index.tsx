@@ -1,13 +1,10 @@
 import { QuestContext } from "providers"
 import React, { useCallback, useContext, useEffect, useState } from "react"
-import { useDispatch } from "react-redux"
 import styled from "styled-components"
 import * as QuestDB from "utils/questdb"
 import { ClipboardCopy } from "@styled-icons/heroicons-outline/ClipboardCopy"
-import { SecondaryButton, Text } from "components"
+import { SecondaryButton } from "components"
 import { formatVersion } from "./services"
-import { actions } from "store"
-import { NotificationType } from "types"
 
 const Wrapper = styled.div`
   display: flex;
@@ -28,7 +25,6 @@ const CopyButton = styled(SecondaryButton)`
 const BuildVersion = () => {
   const { quest } = useContext(QuestContext)
   const [buildVersion, setBuildVersion] = useState("")
-  const dispatch = useDispatch()
 
   useEffect(() => {
     void quest.queryRaw("select build", { limit: "0,1000" }).then((result) => {
@@ -41,29 +37,8 @@ const BuildVersion = () => {
   })
 
   const handleCopy = useCallback(() => {
-    void navigator.clipboard
-      .writeText(buildVersion)
-      .then(() => {
-        dispatch(
-          actions.query.addNotification({
-            title: (
-              <Text color="draculaForeground">Build version copied !</Text>
-            ),
-            type: NotificationType.SUCCESS,
-          }),
-        )
-      })
-      .catch(() => {
-        dispatch(
-          actions.query.addNotification({
-            title: (
-              <Text color="draculaForeground">Build version copy error</Text>
-            ),
-            type: NotificationType.ERROR,
-          }),
-        )
-      })
-  }, [buildVersion, dispatch])
+    void navigator.clipboard.writeText(buildVersion)
+  }, [buildVersion])
 
   return (
     <Wrapper>
