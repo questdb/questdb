@@ -481,6 +481,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSmallFileAppendPageSize() {
+        return getFilesFacade().getPageSize();
+    }
+
+    @Override
     public int getTableBlockWriterQueueCapacity() {
         return 4;
     }

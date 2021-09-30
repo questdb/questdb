@@ -143,6 +143,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean lineUdpOwnThread;
     private final int sqlCopyBufferSize;
     private final long sqlAppendPageSize;
+    private final long sqlSmallFileAppendPageSize;
     private final int sqlAnalyticColumnPoolCapacity;
     private final int sqlCreateTableModelPoolCapacity;
     private final int sqlColumnCastModelPoolCapacity;
@@ -613,6 +614,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlCopyModelPoolCapacity = getInt(properties, env, "cairo.sql.copy.model.pool.capacity", 32);
             this.sqlCopyBufferSize = getIntSize(properties, env, "cairo.sql.copy.buffer.size", 2 * 1024 * 1024);
             this.sqlAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, "cairo.sql.append.page.size", 16 * 1024 * 1024));
+            this.sqlSmallFileAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, "cairo.sql.small.append.page.size", FilesFacadeImpl.INSTANCE.getPageSize()));
             this.sampleByIndexSearchPageSize = getIntSize(properties, env, "cairo.sql.sampleby.page.size", 0);
             this.sqlDoubleToStrCastScale = getInt(properties, env, "cairo.sql.double.cast.scale", 12);
             this.sqlFloatToStrCastScale = getInt(properties, env, "cairo.sql.float.cast.scale", 4);
@@ -655,7 +657,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3UpdPartitionSizeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.upd.partition.size.queue.capacity", 128));
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.discovery.queue.capacity", 128));
             this.o3PurgeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.queue.capacity", 128));
-            this.o3ColumnMemorySize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.o3.column.memory.size", 16 * Numbers.SIZE_1MB));
+            this.o3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, "cairo.o3.column.memory.size", 16 * Numbers.SIZE_1MB));
             this.maxUncommittedRows = getInt(properties, env, "cairo.max.uncommitted.rows", 500_000);
             this.commitLag = getLong(properties, env, "cairo.commit.lag", 300_000) * 1_000;
             this.o3QuickSortEnabled = getBoolean(properties, env, "cairo.o3.quicksort.enabled", false);
@@ -1877,6 +1879,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getAppendPageSize() {
             return sqlAppendPageSize;
+        }
+
+        @Override
+        public long getSmallFileAppendPageSize() {
+            return sqlSmallFileAppendPageSize;
         }
 
         @Override

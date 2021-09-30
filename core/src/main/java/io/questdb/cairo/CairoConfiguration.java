@@ -216,6 +216,8 @@ public interface CairoConfiguration {
 
     long getAppendPageSize();
 
+    long getSmallFileAppendPageSize();
+
     int getTableBlockWriterQueueCapacity();
 
     int getColumnIndexerQueueCapacity();
