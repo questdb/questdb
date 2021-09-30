@@ -57,6 +57,8 @@ import org.junit.Test;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
@@ -165,8 +167,29 @@ public class LineTcpServerTest extends AbstractCairoTest {
             return aggressiveReadRetryCount;
         }
     };
+    private final AlterTableExecutionContext requestContext = new AlterTableExecutionContext() {
+        @Override
+        public LogRecord debug() {
+            return LOG.debug();
+        }
 
+        @Override
+        public LogRecord info() {
+            return LOG.info();
+        }
+
+        @Override
+        public DirectCharSequence getDirectCharSequence() {
+            return new DirectCharSequence();
+        }
+
+        @Override
+        public SCSequence getWriterEventConsumeSequence() {
+            return new SCSequence();
+        }
+    };
     private Path path;
+    private volatile long alterCommandId;
 
     @After
     public void cleanup() {
@@ -707,6 +730,34 @@ public class LineTcpServerTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testAlterCommandDropsColumn() throws Exception {
+        runInContext(() -> {
+            String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819999000\n" +
+                    "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
+                    "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
+
+            send(lineData, "plug", false, false,
+                    "ALTER TABLE plug DROP COLUMN label");
+
+            lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999000\n" +
+                    "plug,label=Power,room=6B watts=\"55\" 1631817902842\n" +
+                    "plug,label=Line,room=6C watts=\"666\" 1531817902842\n";
+
+            // re-send, this should re-add column label
+            send(lineData, "plug", true);
+
+            String expected = "room\twatts\ttimestamp\tlabel\n" +
+                    "6C\t666\t1970-01-01T00:25:31.817902Z\tLine\n" +
+                    "6C\t333\t1970-01-01T00:25:31.817902Z\t\n" +
+                    "6B\t55\t1970-01-01T00:27:11.817902Z\tPower\n" +
+                    "6B\t22\t1970-01-01T00:27:11.817902Z\t\n" +
+                    "6A\t4\t1970-01-01T00:43:51.819999Z\tPower\n" +
+                    "6A\t1\t1970-01-01T00:43:51.819999Z\t\n";
+            assertTable(expected, "plug");
+        });
+    }
+
     private void assertTable(CharSequence expected, CharSequence tableName) {
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
             assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
@@ -722,15 +773,19 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 sharedWorkerPool.start(LOG);
                 try {
                     r.run();
+                } catch (AssertionError err) {
+                    throw err;
                 } catch (Throwable err) {
-                    LOG.error().$("Stopping ILP worker pool because of an error").$();
+                    LOG.error().$("Stopping ILP worker pool because of an error. ").$(err).$();
                     throw err;
                 } finally {
                     sharedWorkerPool.halt();
                     Path.clearThreadLocals();
                 }
+            } catch (AssertionError err) {
+                throw err;
             } catch (Throwable err) {
-                LOG.error().$("Stopping ILP server because of an error").$();
+                LOG.error().$("Stopping ILP server because of an error. ").$(err).$();
                 throw err;
             } finally {
                 Misc.free(path);
@@ -748,7 +803,35 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
     private void send(String lineData, String tableName, boolean wait, boolean noLinger, String alterTableCommand) {
         SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
-        if (wait) {
+        boolean waitDataOrAlter = wait || alterTableCommand != null;
+        boolean alterCommandWaited = alterTableCommand != null && !wait;
+
+        CyclicBarrier startBarrier = new CyclicBarrier(2);
+        AlterCommandExecution.setUpWait(engine, requestContext);
+
+        if (alterCommandWaited) {
+            new Thread(() -> {
+                // Wait in parallel thead
+                try {
+                    startBarrier.await();
+                    sqlException = AlterCommandExecution.waitWriterEvent(
+                            engine,
+                            alterCommandId,
+                            requestContext,
+                            1000_0000,  // 1s
+                            -1
+                    );
+                } catch (BrokenBarrierException | InterruptedException e) {
+                    e.printStackTrace();
+                    releaseLatch.countDown();
+                } finally {
+                    // exit this method if alter executed
+                    releaseLatch.countDown();
+                }
+            }).start();
+        }
+
+        if (waitDataOrAlter) {
             sqlException = null;
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (Chars.equals(tableName, name)) {
@@ -760,7 +843,14 @@ public class LineTcpServerTest extends AbstractCairoTest {
                             case PoolListener.EV_GET:
                                 if (alterTableCommand != null) {
                                     try {
-                                        executeSqlOnce(alterTableCommand);
+                                        // Execute ALTER in parallel thread
+                                        alterCommandId = executeSqlOnce(alterTableCommand, false);
+                                        if (alterCommandWaited) {
+                                            startBarrier.await();
+                                        }
+                                    } catch (BrokenBarrierException | InterruptedException e) {
+                                        e.printStackTrace();
+                                        releaseLatch.countDown();
                                     } catch (SqlException e) {
                                         sqlException = e;
                                         releaseLatch.countDown();
@@ -794,7 +884,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 Net.close(fd);
                 Net.freeSockAddr(sockaddr);
             }
-            if (wait) {
+            if (waitDataOrAlter) {
                 releaseLatch.await();
                 if (sqlException != null) {
                     sqlException.printStackTrace();
@@ -802,13 +892,14 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 }
             }
         } finally {
-            if (wait) {
+            if (waitDataOrAlter) {
                 engine.setPoolListener(null);
             }
+            AlterCommandExecution.stopCommandWait(engine, requestContext);
         }
     }
 
-    private void executeSqlOnce(String sql) throws SqlException {
+    private long executeSqlOnce(String sql, boolean wait) throws SqlException {
         try (SqlCompiler compiler = new SqlCompiler(engine);
              SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                      .with(
@@ -819,30 +910,20 @@ public class LineTcpServerTest extends AbstractCairoTest {
                              null)) {
             CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
             AlterStatement alterStatement = cc.getAlterStatement();
-            AlterCommandExecution.executeAlterCommandNoWait(engine,
-                    alterStatement,
-                    sqlExecutionContext,
-                    new AlterTableExecutionContext() {
-                        @Override
-                        public LogRecord debug() {
-                            return LOG.debug();
-                        }
 
-                        @Override
-                        public LogRecord info() {
-                            return LOG.info();
-                        }
 
-                        @Override
-                        public DirectCharSequence getDirectCharSequence() {
-                            return new DirectCharSequence();
-                        }
-
-                        @Override
-                        public SCSequence getWriterEventConsumeSequence() {
-                            return new SCSequence();
-                        }
-                    });
+            if (wait) {
+                AlterCommandExecution.executeAlterCommand(engine,
+                        alterStatement,
+                        sqlExecutionContext,
+                        requestContext);
+                return  -1L;
+            } else {
+                return AlterCommandExecution.executeAlterCommandNoWait(engine,
+                        alterStatement,
+                        sqlExecutionContext,
+                        requestContext);
+            }
         }
     }
 
