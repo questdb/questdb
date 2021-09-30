@@ -1,5 +1,4 @@
-import React, { useCallback, useState } from "react"
-import { CSSTransition } from "react-transition-group"
+import React from "react"
 import styled from "styled-components"
 
 import { collapseTransition, Text, TransitionDuration } from "components"
@@ -14,7 +13,7 @@ type Props = Timings &
 
 const Wrapper = styled.div`
   display: flex;
-  flex-direction: column;
+  align-items: center;
   margin-top: 0.2rem;
   overflow: hidden;
   ${collapseTransition};
@@ -27,25 +26,16 @@ const Wrapper = styled.div`
 
 const Details = styled.div`
   display: flex;
-  margin-top: 0.5rem;
-  padding: 1rem;
   user-select: none;
   background: ${color("draculaBackground")};
 `
 
-const DetailsLink = styled(Text)`
-  &:hover {
-    cursor: pointer;
-  }
+const DetailsColumn = styled.div`
+  margin-left: 1rem;
 `
 
-const Column = styled.div`
-  display: flex;
-  flex-direction: column;
-`
-
-const ColumnLeft = styled(Column)`
-  flex: 1;
+const DetailsText = styled(Text)`
+  margin-right: 0.5rem;
 `
 
 const roundTiming = (time: number): number =>
@@ -80,60 +70,37 @@ const formatTiming = (nanos: number) => {
 }
 
 const QueryResult = ({ compiler, count, execute, fetch, rowCount }: Props) => {
-  const [expanded, setExpanded] = useState(true)
-  const handleClick = useCallback(() => {
-    setExpanded(!expanded)
-  }, [expanded])
-
   return (
     <Wrapper _height={95} duration={TransitionDuration.FAST}>
       <div>
-        <Text color="draculaForeground">
+        <Text color="gray2">
           {rowCount.toLocaleString()} row{rowCount > 1 ? "s" : ""} in&nbsp;
-          {formatTiming(fetch)}&nbsp;
+          {formatTiming(fetch)}
         </Text>
-        (
-        <DetailsLink
-          color="draculaForeground"
-          onClick={handleClick}
-          weight={800}
-        >
-          {expanded ? "hide" : "show"} details
-        </DetailsLink>
-        )
       </div>
-
-      <CSSTransition
-        classNames="collapse"
-        in={expanded}
-        timeout={TransitionDuration.FAST}
-        unmountOnExit
-      >
-        <Details>
-          <ColumnLeft>
-            <Text color="draculaForeground">
-              Execute: {addColor(formatTiming(execute))}&nbsp;
-            </Text>
-            <Text color="draculaForeground">
-              Network:&nbsp;
-              {addColor(formatTiming(fetch - execute))}
-            </Text>
-            <Text color="draculaForeground">
-              Total:&nbsp;
-              {addColor(formatTiming(fetch))}
-            </Text>
-          </ColumnLeft>
-
-          <Column>
-            <Text align="right" color="gray2" size="sm">
-              Count: {formatTiming(count)}
-            </Text>
-            <Text align="right" color="gray2" size="sm">
-              Compile: {formatTiming(compiler)}
-            </Text>
-          </Column>
-        </Details>
-      </CSSTransition>
+      <Details>
+        <DetailsColumn>
+          <DetailsText color="draculaForeground">
+            Execute: {addColor(formatTiming(execute))}
+          </DetailsText>
+          <DetailsText color="draculaForeground">
+            Network:&nbsp;
+            {addColor(formatTiming(fetch - execute))}
+          </DetailsText>
+          <DetailsText color="draculaForeground">
+            Total:&nbsp;
+            {addColor(formatTiming(fetch))}
+          </DetailsText>
+        </DetailsColumn>
+        <DetailsColumn>
+          <DetailsText align="right" color="gray2" size="sm">
+            Count: {formatTiming(count)}
+          </DetailsText>
+          <DetailsText align="right" color="gray2" size="sm">
+            Compile: {formatTiming(compiler)}
+          </DetailsText>
+        </DetailsColumn>
+      </Details>
     </Wrapper>
   )
 }

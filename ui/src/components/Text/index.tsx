@@ -44,7 +44,7 @@ export type TextProps = Readonly<{
   onClick?: () => void
   size?: FontSize
   transform?: Transform
-  type: Type
+  type?: Type
   weight?: number
 }>
 
