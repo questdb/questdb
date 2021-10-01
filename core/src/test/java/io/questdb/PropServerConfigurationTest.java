@@ -598,7 +598,7 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
             Assert.assertEquals("HTTP/1.0 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
             Assert.assertEquals(1048576, configuration.getCairoConfiguration().getDataAppendPageSize());
-            Assert.assertEquals(65536, configuration.getCairoConfiguration().getDataIndexKeyAppendPageSize());
+            Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getDataIndexKeyAppendPageSize());
             Assert.assertEquals(262144, configuration.getCairoConfiguration().getDataIndexValueAppendPageSize());
             Assert.assertEquals(131072, configuration.getCairoConfiguration().getMiscAppendPageSize());
             Assert.assertEquals(1.5, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
