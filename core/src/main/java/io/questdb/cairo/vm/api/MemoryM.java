@@ -64,8 +64,8 @@ public interface MemoryM extends Closeable {
      */
     void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag);
 
-    default void partialFile(FilesFacade ff, LPSZ name, long size, int memoryTag) {
-        of(ff, name, ff.getMapPageSize(), size, memoryTag);
+    default void partialFile(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
+        of(ff, name, extendSegmentSize, size, memoryTag);
     }
 
     default void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {

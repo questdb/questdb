@@ -64,7 +64,7 @@ public class SymbolMapWriter implements Closeable {
         final int plen = path.length();
         try {
             final FilesFacade ff = configuration.getFilesFacade();
-            final long mapPageSize = configuration.getSmallFileAppendPageSize();
+            final long mapPageSize = configuration.getMiscAppendPageSize();
 
             // this constructor does not create index. Index must exist
             // and we use "offset" file to store "header"
@@ -83,16 +83,23 @@ public class SymbolMapWriter implements Closeable {
 
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
-            this.offsetMem = Vm.getWholeMARWInstance(ff, path, mapPageSize, MemoryTag.MMAP_DEFAULT);
+            this.offsetMem = Vm.getWholeMARWInstance(ff, path, mapPageSize, MemoryTag.MMAP_INDEX_WRITER);
             final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
             final boolean useCache = offsetMem.getBool(HEADER_CACHE_ENABLED);
             this.offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
 
             // index writer is used to identify attempts to store duplicate symbol value
-            this.indexWriter = new BitmapIndexWriter(configuration, path.trimTo(plen), name);
+            // symbol table index stores int keys and long values, e.g. value = key * 2 storage size
+            this.indexWriter = new BitmapIndexWriter(
+                    configuration,
+                    path.trimTo(plen),
+                    name,
+                    configuration.getDataIndexKeyAppendPageSize(),
+                    configuration.getDataIndexKeyAppendPageSize() * 2
+            );
 
             // this is the place where symbol values are stored
-            this.charMem = Vm.getWholeMARWInstance(ff, charFileName(path.trimTo(plen), name), mapPageSize, MemoryTag.MMAP_DEFAULT);
+            this.charMem = Vm.getWholeMARWInstance(ff, charFileName(path.trimTo(plen), name), mapPageSize, MemoryTag.MMAP_INDEX_WRITER);
 
             // move append pointer for symbol values in the correct place
             jumpCharMemToSymbolCount(symbolCount);
@@ -137,7 +144,7 @@ public class SymbolMapWriter implements Closeable {
     ) {
         int plen = path.length();
         try {
-            mem.wholeFile(ff, offsetFileName(path.trimTo(plen), columnName), MemoryTag.MMAP_DEFAULT);
+            mem.wholeFile(ff, offsetFileName(path.trimTo(plen), columnName), MemoryTag.MMAP_INDEX_WRITER);
             mem.jumpTo(0);
             mem.putInt(symbolCapacity);
             mem.putBool(symbolCacheFlag);
@@ -148,7 +155,7 @@ public class SymbolMapWriter implements Closeable {
                 throw CairoException.instance(ff.errno()).put("Cannot create ").put(path);
             }
 
-            mem.smallFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName), MemoryTag.MMAP_DEFAULT);
+            mem.smallFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName), MemoryTag.MMAP_INDEX_WRITER);
             BitmapIndexWriter.initKeyMemory(mem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
         } finally {

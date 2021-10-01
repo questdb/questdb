@@ -42,11 +42,16 @@ public class LineTCPSenderMain {
         try (LineProtoSender sender = new LineTCPProtoSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
             for (int i = 0; i < count; i++) {
                 // if ((i & 0x1) == 0) {
-                    sender.metric("weather1");
+                    sender.metric("weather" + rnd.nextLong(1000));
                     // } else {
                     // sender.metric("weather2");
                     // }
-                sender.tag("location", "l ondon").tag("by", "quest").field("temp", rnd.nextPositiveLong()).field("ok", rnd.nextPositiveInt()).$(Os.currentTimeMicros() * 1000);
+                sender
+                        .tag("location", "london")
+                        .tag("by", "quest")
+                        .field("temp", rnd.nextPositiveLong())
+                        .field("ok", rnd.nextPositiveInt())
+                        .$(rnd.nextLong(5000000000000L));
             }
             sender.flush();
         }

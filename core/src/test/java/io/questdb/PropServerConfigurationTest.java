@@ -35,6 +35,7 @@ import io.questdb.network.EpollFacadeImpl;
 import io.questdb.network.IOOperation;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.SelectFacadeImpl;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -256,13 +257,19 @@ public class PropServerConfigurationTest {
 
         Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
         Assert.assertEquals("HTTP/1.1 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
-        Assert.assertEquals(16777216, configuration.getCairoConfiguration().getAppendPageSize());
+        Assert.assertEquals(16777216, configuration.getCairoConfiguration().getDataAppendPageSize());
 
         Assert.assertEquals("Unknown Version", configuration.getCairoConfiguration().getBuildInformation().getQuestDbVersion());
         Assert.assertEquals("Unknown Version", configuration.getCairoConfiguration().getBuildInformation().getJdkVersion());
         Assert.assertEquals("Unknown Version", configuration.getCairoConfiguration().getBuildInformation().getCommitHash());
 
         Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
+
+        Assert.assertEquals(16777216, configuration.getCairoConfiguration().getDataAppendPageSize());
+        Assert.assertEquals(524288, configuration.getCairoConfiguration().getDataIndexKeyAppendPageSize());
+        Assert.assertEquals(16777216, configuration.getCairoConfiguration().getDataIndexValueAppendPageSize());
+        Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getMiscAppendPageSize());
+        Assert.assertEquals(2.0, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
     }
 
     @Test
@@ -302,7 +309,7 @@ public class PropServerConfigurationTest {
 
         // long size
         properties.setProperty("cairo.sql.append.page.size", "3G");
-        env.put("QDB_CAIRO_SQL_APPEND_PAGE_SIZE", "9G");
+        env.put("QDB_CAIRO_WRITER_DATA_APPEND_PAGE_SIZE", "9G");
 
         PropServerConfiguration configuration = new PropServerConfiguration(root, properties, env, LOG, new BuildInformationHolder());
         Assert.assertEquals(1.5, configuration.getCairoConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000001);
@@ -313,7 +320,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(12288, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getSendBufferSize());
         Assert.assertEquals(900, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartIdleSpinCount());
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
-        Assert.assertEquals(9663676416L, configuration.getCairoConfiguration().getAppendPageSize());
+        Assert.assertEquals(9663676416L, configuration.getCairoConfiguration().getDataAppendPageSize());
     }
 
     @Test
@@ -590,7 +597,11 @@ public class PropServerConfigurationTest {
 
             Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
             Assert.assertEquals("HTTP/1.0 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
-            Assert.assertEquals(33554432L, configuration.getCairoConfiguration().getAppendPageSize());
+            Assert.assertEquals(1048576, configuration.getCairoConfiguration().getDataAppendPageSize());
+            Assert.assertEquals(65536, configuration.getCairoConfiguration().getDataIndexKeyAppendPageSize());
+            Assert.assertEquals(262144, configuration.getCairoConfiguration().getDataIndexValueAppendPageSize());
+            Assert.assertEquals(131072, configuration.getCairoConfiguration().getMiscAppendPageSize());
+            Assert.assertEquals(1.5, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
 
             Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
 

@@ -1096,6 +1096,9 @@ public class TableWriter implements Closeable {
     }
 
     public void transferLock(long lockFd) {
+        if (lockFd == -1) {
+            System.out.println("why?");
+        }
         assert lockFd != -1;
         this.lockFd = lockFd;
     }
@@ -2209,7 +2212,14 @@ public class TableWriter implements Closeable {
 
                             if (partitionSize > columnTop) {
                                 TableUtils.dFile(path.trimTo(plen), columnName);
-                                roMem.partialFile(ff, path, (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT), MemoryTag.MMAP_TABLE_WRITER);
+                                final long columnSize = (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT);
+                                roMem.partialFile(
+                                        ff,
+                                        path,
+                                        columnSize,
+                                        columnSize,
+                                        MemoryTag.MMAP_TABLE_WRITER
+                                );
                                 indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
                                 indexer.index(roMem, columnTop, partitionSize);
                             }
@@ -3466,9 +3476,9 @@ public class TableWriter implements Closeable {
         MemoryMAR mem2 = getSecondaryColumn(i);
 
         try {
-            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
             if (mem2 != null) {
-                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
             }
         } finally {
             path.trimTo(plen);
