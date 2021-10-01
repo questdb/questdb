@@ -1,8 +1,6 @@
 import React from "react"
 import styled from "styled-components"
-import Duration from "./Duration"
 import Toggler from "./Toggler"
-import { Text } from "components"
 import { color } from "utils"
 
 const Wrapper = styled.div`
@@ -36,14 +34,6 @@ const Notifications = () => (
       <SettingControl>
         <Toggler />
       </SettingControl>
-    </SettingGroup>
-    <SettingGroup>
-      <SettingControl>
-        <Duration />
-      </SettingControl>
-      <Text color="draculaForeground" size="lg">
-        Delay before notifications disappear
-      </Text>
     </SettingGroup>
   </Wrapper>
 )
