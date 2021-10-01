@@ -2213,13 +2213,7 @@ public class TableWriter implements Closeable {
                             if (partitionSize > columnTop) {
                                 TableUtils.dFile(path.trimTo(plen), columnName);
                                 final long columnSize = (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT);
-                                roMem.partialFile(
-                                        ff,
-                                        path,
-                                        columnSize,
-                                        columnSize,
-                                        MemoryTag.MMAP_TABLE_WRITER
-                                );
+                                roMem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_WRITER);
                                 indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
                                 indexer.index(roMem, columnTop, partitionSize);
                             }

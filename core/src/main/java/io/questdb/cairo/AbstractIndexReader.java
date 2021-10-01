@@ -150,13 +150,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
             if (unIndexedNullCount > 0) {
                 this.keyCountIncludingNulls++;
             }
-            this.valueMem.partialFile(
-                    configuration.getFilesFacade(),
-                    BitmapIndexUtils.valueFileName(path.trimTo(plen), name),
-                    valueMemSize,
-                    valueMemSize,
-                    MemoryTag.MMAP_INDEX_READER
-            );
+            this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), valueMemSize, valueMemSize, MemoryTag.MMAP_INDEX_READER);
         } catch (Throwable e) {
             close();
             throw e;

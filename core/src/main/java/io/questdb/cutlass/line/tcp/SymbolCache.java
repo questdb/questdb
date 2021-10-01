@@ -79,13 +79,7 @@ class SymbolCache implements Closeable {
         FilesFacade ff = configuration.getFilesFacade();
         transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symIndex) + Integer.BYTES;
         final int plen = path.length();
-        txMem.partialFile(
-                ff,
-                path.concat(TableUtils.TXN_FILE_NAME).$(),
-                transientSymCountOffset,
-                transientSymCountOffset,
-                MemoryTag.MMAP_INDEX_READER
-        );
+        txMem.of(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), transientSymCountOffset, transientSymCountOffset, MemoryTag.MMAP_INDEX_READER);
         int symCount = txMem.getInt(transientSymCountOffset - Integer.BYTES);
         path.trimTo(plen);
         symMapReader.of(configuration, path, name, symCount);

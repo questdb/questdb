@@ -117,13 +117,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
             final long offsetMemSize = SymbolMapWriter.keyToOffset(symbolCount);
-            this.offsetMem.partialFile(
-                    ff,
-                    path,
-                    offsetMemSize,
-                    offsetMemSize,
-                    MemoryTag.MMAP_INDEX_READER
-            );
+            this.offsetMem.of(ff, path, offsetMemSize, offsetMemSize, MemoryTag.MMAP_INDEX_READER);
             symbolCapacity = offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY);
             this.cached = offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED);
             this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
