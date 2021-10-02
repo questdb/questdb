@@ -1096,9 +1096,6 @@ public class TableWriter implements Closeable {
     }
 
     public void transferLock(long lockFd) {
-        if (lockFd == -1) {
-            System.out.println("why?");
-        }
         assert lockFd != -1;
         this.lockFd = lockFd;
     }
