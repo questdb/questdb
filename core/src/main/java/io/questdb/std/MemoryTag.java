@@ -38,7 +38,6 @@ public final class MemoryTag {
     public static final int NATIVE_LONG_LIST = 10;
     public static final int NATIVE_HTTP_CONN = 11;
     public static final int NATIVE_PGW_CONN = 12;
-
     public static final int MMAP_INDEX_READER = 13;
     public static final int MMAP_INDEX_WRITER = 14;
     public static final int MMAP_INDEX_SLIDER = 15;
@@ -69,6 +68,5 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(MMAP_INDEX_WRITER, "MMAP_INDEX_WRITER");
         tagNameMap.extendAndSet(MMAP_INDEX_SLIDER, "MMAP_INDEX_SLIDER");
         tagNameMap.extendAndSet(MMAP_BLOCK_WRITER, "MMAP_BLOCK_WRITER");
-
     }
 }
