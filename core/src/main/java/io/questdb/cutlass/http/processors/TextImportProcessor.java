@@ -40,6 +40,7 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
@@ -414,7 +415,14 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                         socket.put('|');
                         pad(socket, TO_STRING_COL1_PAD, state.columnIndex);
                         pad(socket, TO_STRING_COL2_PAD, metadata.getColumnName(state.columnIndex));
-                        pad(socket, TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + 3, ColumnType.nameOf(metadata.getColumnType(state.columnIndex)));
+                        if (!metadata.isColumnIndexed(state.columnIndex)) {
+                            pad(socket, TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + 3, ColumnType.nameOf(metadata.getColumnType(state.columnIndex)));
+                        } else {
+                            StringSink sink = Misc.getThreadLocalBuilder();
+                            sink.put("(idx/").put(metadata.getIndexValueBlockCapacity(state.columnIndex)).put(") ");
+                            sink.put(ColumnType.nameOf(metadata.getColumnType(state.columnIndex)));
+                            pad(socket, TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + 3, sink);
+                        }
                         pad(socket, TO_STRING_COL5_PAD, errors.getQuick(state.columnIndex));
                         socket.put(Misc.EOL);
                     }

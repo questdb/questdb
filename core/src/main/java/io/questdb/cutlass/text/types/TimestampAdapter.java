@@ -33,8 +33,8 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectByteCharSequence;
 
 public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
-    private DateLocale locale;
-    private DateFormat format;
+    protected DateLocale locale;
+    protected DateFormat format;
 
     @Override
     public void clear() {
