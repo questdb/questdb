@@ -39,10 +39,11 @@ public class TypeManager implements Mutable {
     private final ObjList<TypeAdapter> probes = new ObjList<>();
     private final int probeCount;
     private final StringAdapter stringAdapter;
+    private final SymbolAdapter indexedSymbolAdapter;
+    private final SymbolAdapter notIndexedSymbolAdapter;
     private final ObjectPool<DateUtf8Adapter> dateAdapterPool;
     private final ObjectPool<TimestampUtf8Adapter> timestampUtf8AdapterPool;
     private final ObjectPool<TimestampAdapter> timestampAdapterPool;
-    private final SymbolAdapter symbolAdapter;
     private final InputFormatConfiguration inputFormatConfiguration;
 
     public TypeManager(
@@ -54,7 +55,8 @@ public class TypeManager implements Mutable {
         this.timestampAdapterPool = new ObjectPool<>(TimestampAdapter::new, configuration.getTimestampAdapterPoolCapacity());
         this.inputFormatConfiguration = configuration.getInputFormatConfiguration();
         this.stringAdapter = new StringAdapter(utf8Sink);
-        this.symbolAdapter = new SymbolAdapter(utf8Sink);
+        this.indexedSymbolAdapter = new SymbolAdapter(utf8Sink, true);
+        this.notIndexedSymbolAdapter = new SymbolAdapter(utf8Sink, false);
         addDefaultProbes();
 
         final ObjList<DateFormat> dateFormats = inputFormatConfiguration.getDateFormats();
@@ -121,7 +123,7 @@ public class TypeManager implements Mutable {
             case ColumnType.STRING:
                 return stringAdapter;
             case ColumnType.SYMBOL:
-                return symbolAdapter;
+                return nextSymbolAdapter(false);
             case ColumnType.LONG256:
                 return Long256Adapter.INSTANCE;
             default:
@@ -143,6 +145,10 @@ public class TypeManager implements Mutable {
         TimestampAdapter adapter = timestampAdapterPool.next();
         adapter.of(format, locale);
         return adapter;
+    }
+
+    public TypeAdapter nextSymbolAdapter(boolean indexed) {
+        return indexed ? indexedSymbolAdapter : notIndexedSymbolAdapter;
     }
 
     private void addDefaultProbes() {

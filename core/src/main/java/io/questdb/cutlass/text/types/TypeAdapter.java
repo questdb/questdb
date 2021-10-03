@@ -30,6 +30,10 @@ import io.questdb.std.str.DirectByteCharSequence;
 public interface TypeAdapter {
     int getType();
 
+    default boolean isIndexed() {
+        return false;
+    }
+
     boolean probe(CharSequence text);
 
     void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception;
