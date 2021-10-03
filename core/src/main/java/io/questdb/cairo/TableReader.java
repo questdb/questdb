@@ -770,7 +770,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
     }
 
-    long getTransientRowCount() {
+    public long getTransientRowCount() {
         return txFile.getTransientRowCount();
     }
 

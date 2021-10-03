@@ -740,9 +740,9 @@ public class LineTcpServerTest extends AbstractCairoTest {
             send(lineData, "plug", false, false,
                     "ALTER TABLE plug DROP COLUMN label");
 
-            lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999000\n" +
-                    "plug,label=Power,room=6B watts=\"55\" 1631817902842\n" +
-                    "plug,label=Line,room=6C watts=\"666\" 1531817902842\n";
+            lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999001\n" +
+                    "plug,label=Power,room=6B watts=\"55\" 1631817902843\n" +
+                    "plug,label=Line,room=6C watts=\"666\" 1531817902843\n";
 
             // re-send, this should re-add column label
             send(lineData, "plug", true);
@@ -759,7 +759,11 @@ public class LineTcpServerTest extends AbstractCairoTest {
     }
 
     private void assertTable(CharSequence expected, CharSequence tableName) {
+//        engine.releaseAllReaders();
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+//            LOG.debug().$("reader taken from the engine").$();
+//            LOG.debug().$("txn transient row count ").$(reader.getTransientRowCount()).$();
+//            reader.reload();
             assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
         }
     }
