@@ -186,6 +186,7 @@ public class CairoLineProtoParserSupport {
         // and then it will be parsed accordingly by 'putValue'.
         int valueLen = value.length();
         if (valueLen > 0) {
+            char first = value.charAt(0);
             char last = value.charAt(valueLen - 1); // see LineProtoSender.field methods
             switch (last) {
                 case 'i':
@@ -194,7 +195,7 @@ public class CairoLineProtoParserSupport {
                     }
                     return valueLen == 1 ? ColumnType.SYMBOL : ColumnType.LONG;
                 case 't':
-                    if (valueLen > 1) {
+                    if (valueLen > 1 && ((first >= '0' && first <= '9') || first == '-')) {
                         return ColumnType.TIMESTAMP;
                     }
                     // fall through
@@ -221,7 +222,6 @@ public class CairoLineProtoParserSupport {
                     }
                     return ColumnType.STRING;
                 default:
-                    char first = value.charAt(0);
                     if (last >= '0' && last <= '9' && ((first >= '0' && first <= '9') || first == '-' || first == '.')) {
                         return ColumnType.DOUBLE;
                     }

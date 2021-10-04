@@ -346,40 +346,6 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampField() throws Exception {
-        final String expected = "tag\tatimestamp\ttimestamp\n" +
-                "123t\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:25:00.000000Z\n" +
-                "321t\t1970-01-01T00:00:02.000000Z\t1970-01-01T00:28:20.000000Z\n" +
-                "123t\t1970-01-01T00:00:03.000000Z\t1970-01-01T00:31:40.000000Z\n";
-
-        String lines = "tab,tag=123t atimestamp=1000000t 1500000000000\n" +
-                "tab,tag=321t atimestamp=2000000t 1700000000000\n" +
-                "tab,tag=123t atimestamp=3000000i 1900000000000\n" +
-                "tab,tag=321t atimestamp=t 2100000000000\n"; // <-- error here
-
-        assertThat(expected, lines, "tab");
-    }
-
-    @Test
-    public void testTimestampInNonTimestampFields() throws Exception {
-        try (TableModel model = new TableModel(configuration, "tab", PartitionBy.NONE)
-                .col("int", ColumnType.INT)
-                .col("str", ColumnType.STRING)
-                .timestamp()) {
-            CairoTestUtils.create(model);
-        }
-
-        final String expected = "int\tstr\ttimestamp\n" +
-                "1000000\tstring1\t1970-01-01T00:25:00.000000Z\n";
-
-        String lines = "tab int=1000000i,str=\"string1\" 1500000000000\n" +
-                "tab int=2000000t,str=\"string2\" 1700000000000\n" + // <-- error here
-                "tab int=3000000i,str=4000000t 1900000000000\n"; // <-- error here
-
-        assertThat(expected, lines, "tab");
-    }
-
-    @Test
     public void testBadTimestamp1() throws Exception {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
                 "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +

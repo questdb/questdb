@@ -798,7 +798,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             byte b = Unsafe.getUnsafe().getByte(bufPos);
                             bufPos += Byte.BYTES;
                             final int colType = writer.getMetadata().getColumnType(colIndex);
-                            if (ColumnType.isBoolean(colType)) {
+                            if (ColumnType.isBoolean(colType) || ColumnType.isLong(colType)) {
                                 row.putBool(colIndex, b == 1);
                             } else {
                                 throw CairoException.instance(0)

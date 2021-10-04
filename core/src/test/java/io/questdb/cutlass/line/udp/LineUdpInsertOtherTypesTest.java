@@ -35,30 +35,36 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
 
     @Test
     public void testInsertTimestampTableExists() throws Exception {
-        // no literal representation for timestamp, only longs can be inserted
         assertType(ColumnType.TIMESTAMP,
                 "value\ttimestamp\n" +
                         "1970-01-19T21:02:13.921000Z\t1970-01-01T00:00:01.000000Z\n" +
-                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:07.000000Z\n" +
-                        "\t1970-01-01T00:00:08.000000Z\n" +
-                        "\t1970-01-01T00:00:09.000000Z\n" +
-                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:10.000000Z\n" +
-                        "294247-01-10T04:00:54.775807Z\t1970-01-01T00:00:11.000000Z\n",
+                        "1970-01-19T21:02:13.921000Z\t1970-01-01T00:00:02.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:08.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:09.000000Z\n" +
+                        "\t1970-01-01T00:00:10.000000Z\n" +
+                        "\t1970-01-01T00:00:11.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:12.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:13.000000Z\n" +
+                        "294247-01-10T04:00:54.775807Z\t1970-01-01T00:00:14.000000Z\n",
                 new String[]{
                         "1630933921000i", // valid
+                        "1630933921000t", // valid
                         "1630933921000", // discarded bad type double
                         "\"1970-01-01T00:00:05.000000Z\"", // discarded bad type string
                         "1970-01-01T00:\"00:05.00\"0000Z", // discarded bad type symbol
                         "\"1970-01-01T00:00:05.000000Z", // discarded bad string value
                         "1970-01-01T00:00:05.000000Z\"", // discarded bad string value
                         "0i", // valid
+                        "0t", // valid
                         "-9223372036854775808i", // valid NaN, same as null
                         "", // valid null
                         "-0i", // valid
+                        "-0t", // valid
                         "9223372036854775807i", // valid
                         "NaN", // discarded bad type symbol
                         "null", // discarded bad type symbol
-                        "1970-01-01T00:00:05.000000Z" // discarded bad type symbol
+                        "1970-01-01T00:00:05.000000Z", // discarded bad type symbol
+                        "t", // discarded bad type boolean
                 });
     }
 
@@ -87,7 +93,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "9223372036854775807i", // valid
                         "NaN", // discarded bad type symbol
                         "null", // discarded bad type symbol
-                        "1970-01-01T00:00:05.000000Z" // discarded bad type symbol
+                        "1970-01-01T00:00:05.000000Z", // discarded bad type symbol
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -123,6 +130,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-100", // discarded bad type double
                         "null", // discarded bad type symbol
                         "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -158,6 +166,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "-100", // discarded bad type double
                         "null", // discarded bad type symbol
                         "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -194,7 +203,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "2147483647", // discarded bad type double
                         "-2147483647", // discarded bad type double
                         "NaN", // discarded bad type symbol
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -230,7 +240,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "2147483647", // discarded bad type double
                         "-2147483647", // discarded bad type double
                         "NaN", // discarded bad type symbol
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -270,7 +281,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "100", // discarded bad type double
                         "-0", // discarded bad type double
                         "NaN", // discarded bad type symbol
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -301,7 +313,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "100", // discarded bad type double
                         "-0", // discarded bad type double
                         "NaN", // discarded bad type symbol
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -330,7 +343,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "100", // discarded bad type double
                         "-0", // discarded bad type double
                         "NaN", // discarded bad type symbol
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -358,7 +372,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "100", // discarded bad type double
                         "-0", // discarded bad type double
                         "NaN", // discarded bad type symbol
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -399,7 +414,8 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "0x1234i", // actual long256
                         "0x1234", // discarded bad type double
                         "0x00", // discarded bad type double
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -418,6 +434,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "\"null\"", // discarded bad type string
                         "120i", // discarded bad type long
                         "0x1234", // discarded bad type double
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -450,6 +467,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "F", // valid
                         "", // valid null, equals false
                         "e", // valid
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -481,6 +499,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "F", // valid
                         "", // valid null, equals false
                         "e", // discarded bad type symbol
+                        "0t", // discarded bad type timestamp
                 });
     }
 
