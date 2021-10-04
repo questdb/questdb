@@ -1461,6 +1461,8 @@ public class SqlCompiler implements Closeable {
         alterQuery.clear();
     }
 
+        backupAgent.clear();
+    }
 
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext) throws SqlException {
         ExecutionModel model = parser.parse(lexer, executionContext);
