@@ -32,6 +32,8 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
+import java.util.HashSet;
+import java.util.Set;
 
 public class NewLineProtoParser implements Closeable {
     public static final long NULL_TIMESTAMP = Numbers.LONG_NaN;
@@ -68,6 +70,7 @@ public class NewLineProtoParser implements Closeable {
     private final EntityHandler entityTimestampHandler = this::expectTimestamp;
     private final EntityHandler entityValueHandler = this::expectEntityValue;
     private final EntityHandler entityNameHandler = this::expectEntityName;
+    private final Set<DirectByteCharSequence> entityNamesSet = new HashSet<>();
 
     @Override
     public void close() {
@@ -110,6 +113,7 @@ public class NewLineProtoParser implements Closeable {
 
     public ParseResult parseMeasurement(long bufHi) {
         assert bufAt != 0 && bufHi >= bufAt;
+        entityNamesSet.clear();
         while (bufAt < bufHi) {
             byte b = Unsafe.getUnsafe().getByte(bufAt);
             boolean endOfLine = false;
@@ -228,7 +232,14 @@ public class NewLineProtoParser implements Closeable {
                 currentEntity.clear();
             }
 
-            nEntities++;
+            final DirectByteCharSequence newEntityName = new DirectByteCharSequence();
+            newEntityName.of(entityLo, bufAt - nEscapedChars);
+
+            if (!entityNamesSet.contains(newEntityName)) {
+                entityNamesSet.add(newEntityName);
+                nEntities++;
+            }
+
             currentEntity.setName();
             entityHandler = entityValueHandler;
 

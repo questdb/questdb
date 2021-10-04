@@ -963,4 +963,25 @@ public class LineTcpServerTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testDubFieldValues() throws Exception {
+        String lineData =
+                "weather g=1,a=0.1,windspeed=1.0 0\n" +
+                        "weather g=2,windspeed=2.0,windspeed=3.0 60000000000\n" +
+                        "weather g=3,a=0.4,a=0.5 120000000000\n"+
+                        "weather g=4,a=0.7,windspeed=67.72 180000000000\n";
+
+        runInContext((server) -> {
+            send(server, lineData, "weather", WAIT_ILP_TABLE_RELEASE, false);
+
+            String expected =
+                    "g\ta\twindspeed\ttimestamp\n" +
+                            "1.0\t0.1\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "2.0\tNaN\t2.0\t1970-01-01T00:01:00.000000Z\n" +
+                            "3.0\t0.4\tNaN\t1970-01-01T00:02:00.000000Z\n" +
+                            "4.0\t0.7000000000000001\t67.72\t1970-01-01T00:03:00.000000Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
 }
