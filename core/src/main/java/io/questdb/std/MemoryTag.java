@@ -42,8 +42,8 @@ public final class MemoryTag {
     public static final int MMAP_INDEX_WRITER = 14;
     public static final int MMAP_INDEX_SLIDER = 15;
     public static final int MMAP_BLOCK_WRITER = 16;
-    public static final int SIZE = MMAP_BLOCK_WRITER + 1;
-
+    public static final int NATIVE_REPL = 17;
+    public static final int SIZE = NATIVE_REPL + 1;
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {

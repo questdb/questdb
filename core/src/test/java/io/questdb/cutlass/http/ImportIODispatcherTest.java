@@ -962,8 +962,7 @@ public class ImportIODispatcherTest {
     private void setupSql(CairoEngine engine) {
         compiler = new SqlCompiler(engine);
         BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-        sqlExecutionContext = new SqlExecutionContextImpl(
-                engine, 1, engine.getMessageBus())
+        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                 .with(
                         AllowAllCairoSecurityContext.INSTANCE,
                         bindVariableService,

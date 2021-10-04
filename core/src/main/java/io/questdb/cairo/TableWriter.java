@@ -4535,10 +4535,10 @@ public class TableWriter implements Closeable {
                     final int primaryIndex = getPrimaryColumnIndex(i);
                     final int secondaryIndex = getSecondaryColumnIndex(i);
                     final MemoryMA logMem1 = logColumns.getQuick(primaryIndex);
-                    logMem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE, MemoryTag.MMAP_TABLE_WRITER);
+                    logMem1.of(ff, dFile(path.trimTo(plen), name), configuration.getDataAppendPageSize(), Long.MAX_VALUE, MemoryTag.MMAP_TABLE_WRITER);
                     final MemoryMA logMem2 = logColumns.getQuick(secondaryIndex);
                     if (logMem2 != null) {
-                        logMem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), Long.MAX_VALUE, MemoryTag.MMAP_TABLE_WRITER);
+                        logMem2.of(ff, iFile(path.trimTo(plen), name), configuration.getDataAppendPageSize(), Long.MAX_VALUE, MemoryTag.MMAP_TABLE_WRITER);
                     }
                 }
                 // todo: this memory must propagate jump
