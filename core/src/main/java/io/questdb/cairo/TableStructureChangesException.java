@@ -22,29 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.cairo;
 
-import io.questdb.cairo.TableStructureChangesException;
-import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.SqlException;
-import io.questdb.tasks.TableWriterTask;
+public class TableStructureChangesException extends Exception {
+    public static final TableStructureChangesException INSTANCE = new TableStructureChangesException();
 
-public interface AlterStatement {
-    short DO_NOTHING = 1;
-    short ADD_COLUMN = 3;
-    short DROP_PARTITION = 4;
-    short ATTACH_PARTITION = 5;
-    short ADD_INDEX = 6;
-    short ADD_SYMBOL_CACHE = 7;
-    short REMOVE_SYMBOL_CACHE = 8;
-    short DROP_COLUMN = 9;
-    short RENAME_COLUMN = 10;
-    short SET_PARAM_MAX_UNCOMMITTED_ROWS = 11;
-    short SET_PARAM_COMMIT_LAG = 12;
-
-    void apply(TableWriter tableWriter, boolean acceptStructureChange) throws SqlException, TableStructureChangesException;
-    CharSequence getTableName();
-
-    int getTableNamePosition();
-    void serialize(TableWriterTask event);
+    private TableStructureChangesException() {
+    }
 }

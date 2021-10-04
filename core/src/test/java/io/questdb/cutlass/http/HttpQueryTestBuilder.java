@@ -29,6 +29,7 @@ import io.questdb.TelemetryJob;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.TableStructureChangesException;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
@@ -257,6 +258,6 @@ public class HttpQueryTestBuilder {
 
     @FunctionalInterface
     public interface HttpClientCode {
-        void run(CairoEngine engine) throws InterruptedException, SqlException;
+        void run(CairoEngine engine) throws InterruptedException, SqlException, TableStructureChangesException;
     }
 }

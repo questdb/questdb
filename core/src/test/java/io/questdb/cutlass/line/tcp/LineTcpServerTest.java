@@ -758,12 +758,35 @@ public class LineTcpServerTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testAlterCommandDropsColumn2() throws Exception {
+        runInContext(() -> {
+            String lineData = "plug,room=6A watts=\"1\" 2631819999000\n" +
+                    "plug,room=6B watts=\"22\" 1631817902842\n" +
+                    "plug,room=6C watts=\"333\" 1531817902842\n";
+
+            send(lineData, "plug", true, false);
+
+            lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999001\n" +
+                    "plug,label=Power,room=6B watts=\"55\" 1631817902843\n" +
+                    "plug,label=Line,room=6C watts=\"666\" 1531817902843\n";
+
+            // re-send, this should re-add column label
+            send(lineData, "plug", true);
+
+            String expected = "room\twatts\ttimestamp\tlabel\n" +
+                    "6C\t666\t1970-01-01T00:25:31.817902Z\tLine\n" +
+                    "6C\t333\t1970-01-01T00:25:31.817902Z\t\n" +
+                    "6B\t55\t1970-01-01T00:27:11.817902Z\tPower\n" +
+                    "6B\t22\t1970-01-01T00:27:11.817902Z\t\n" +
+                    "6A\t4\t1970-01-01T00:43:51.819999Z\tPower\n" +
+                    "6A\t1\t1970-01-01T00:43:51.819999Z\t\n";
+            assertTable(expected, "plug");
+        });
+    }
+
     private void assertTable(CharSequence expected, CharSequence tableName) {
-//        engine.releaseAllReaders();
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-//            LOG.debug().$("reader taken from the engine").$();
-//            LOG.debug().$("txn transient row count ").$(reader.getTransientRowCount()).$();
-//            reader.reload();
             assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
         }
     }

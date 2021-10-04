@@ -536,7 +536,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                         )
                 );
 
-                w1.tick();
+                w1.tick(true);
                 engine.tick();
 
                 final TableSyncModel model = client.consumeSyncModel();

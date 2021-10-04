@@ -332,7 +332,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
-    private TableUpdateDetails startNewMeasurementEvent(NetworkIOJob netIoJob, NewLineProtoParser protoParser) {
+    private TableUpdateDetails getReaderTableUpdateDetails(NetworkIOJob netIoJob, NewLineProtoParser protoParser) {
         final TableUpdateDetails tableUpdateDetails = netIoJob.getTableUpdateDetails(protoParser.getMeasurementName());
         if (null != tableUpdateDetails) {
             return tableUpdateDetails;
@@ -377,7 +377,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     boolean tryButCouldNotCommit(NetworkIOJob netIoJob, NewLineProtoParser protoParser, FloatingDirectCharSink charSink) {
         TableUpdateDetails tableUpdateDetails;
         try {
-            tableUpdateDetails = startNewMeasurementEvent(netIoJob, protoParser);
+            tableUpdateDetails = getReaderTableUpdateDetails(netIoJob, protoParser);
         } catch (EntryUnavailableException ex) {
             // Table writer is locked
             LOG.info().$("could not get table writer [tableName=").$(protoParser.getMeasurementName()).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
@@ -944,15 +944,19 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (null != writer) {
                 LOG.debug().$("maintenance commit [table=").$(writer.getTableName()).I$();
                 try {
-                    long writerMetaIdBefore = writer.getStructureVersion();
                     writer.commit();
-                    long writerMetaIdAfter = writer.getStructureVersion();
-                    if (writerMetaIdBefore != writerMetaIdAfter) {
-                        // Table structure might have changed at the commit
-                        // because of processing ASYNC alter table commands
-                        LOG.info().$("detected table structure change, reloading column indexes [table=").$(writer.getTableName()).I$();
-                        for(int i = localDetailsArray.length - 1; i > -1 ; i--) {
-                            localDetailsArray[i].clear();
+                    
+                    if (writer.isStructureChangePending()) {
+                        long writerMetaIdBefore = writer.getStructureVersion();
+                        writer.tick(true);
+                        long writerMetaIdAfter = writer.getStructureVersion();
+                        if (writerMetaIdBefore != writerMetaIdAfter) {
+                            // Table structure might have changed at the commit
+                            // because of processing ASYNC alter table commands
+                            LOG.info().$("detected table structure change, reloading column indexes [table=").$(writer.getTableName()).I$();
+                            for (int i = localDetailsArray.length - 1; i > -1; i--) {
+                                localDetailsArray[i].clear();
+                            }
                         }
                     }
                 } catch (Throwable e) {

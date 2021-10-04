@@ -484,7 +484,9 @@ public final class TestUtils {
         AlterStatement alterStatement = cc.getAlterStatement();
         if (cc.getType() == CompiledQuery.ALTER && alterStatement != null) {
             try(TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), alterStatement.getTableName(), "alter table")) {
-                alterStatement.apply(writer);
+                alterStatement.apply(writer, true);
+            } catch (TableStructureChangesException e) {
+                assert false : "should not throw when acceptStructureChange is true";
             }
         }
         return cc;

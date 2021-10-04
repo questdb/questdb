@@ -182,6 +182,7 @@ public class TableWriter implements Closeable {
     private int rowActon = ROW_ACTION_OPEN_PARTITION;
     private final AlterTableImpl alterTableStatement = new AlterTableImpl();
     private boolean isTicking;
+    private boolean tableAlterIsPending;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot());
@@ -802,6 +803,10 @@ public class TableWriter implements Closeable {
         return tempMem16b != 0;
     }
 
+    public boolean isStructureChangePending() {
+        return tableAlterIsPending;
+    }
+
     public boolean isTransactionLogEnabled() {
         return txFile.transactionLogTxn > -1;
     }
@@ -1264,25 +1269,39 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void processAlterTableEvent(TableWriterTask cmd, long cursor, Sequence sequence) {
+    private boolean processAlterTableEvent(TableWriterTask cmd, long cursor, Sequence sequence, boolean acceptStructureChange) {
         final long instance = cmd.getInstance();
         final long tableId = cmd.getTableId();
         alterTableStatement.deserialize(cmd);
+        boolean done = true;
         LOG.info()
                 .$("received ALTER TABLE cmd [tableName=").$(tableName)
                 .$(", tableId=").$(tableId)
                 .$(", src=").$(instance)
                 .I$();
-        sequence.done(cursor);
         CharSequence error = null;
         try {
-            alterTableStatement.apply(this);
+            alterTableStatement.apply(this, acceptStructureChange);
+        } catch (TableStructureChangesException ex) {
+            done = false;
+            LOG.info()
+                    .$("did not ALTER TABLE cmd, table structure change is not allowed atm [tableName=").$(tableName)
+                    .$(", tableId=").$(tableId)
+                    .$(", src=").$(instance)
+                    .I$();
         } catch (SqlException ex) {
             error = ex.getFlyweightMessage();
         } catch (Throwable ex) {
             error = ex.getMessage();
+        } finally {
+            if (done) {
+                sequence.done(cursor);
+            }
         }
-        replAlterTableEvent0(tableId, instance, error);
+        if (done) {
+            replAlterTableEvent0(tableId, instance, error);
+        }
+        return done;
     }
 
     private void replAlterTableEvent0(long tableId, long instance, CharSequence error) {
@@ -1333,7 +1352,7 @@ public class TableWriter implements Closeable {
                 configureAppendPosition();
                 o3InError = false;
                 LOG.info().$("tx rollback complete [name=").$(tableName).$(']').$();
-                processCommandQueue();
+                tick();
             } catch (Throwable e) {
                 LOG.error().$("could not perform rollback [name=").$(tableName).$(", msg=").$(e.getMessage()).$(']').$();
                 distressed = true;
@@ -1394,16 +1413,21 @@ public class TableWriter implements Closeable {
         return txFile.getRowCount() + (hasO3() ? getO3RowCount() : 0L);
     }
 
-    public void tick() {
+    public boolean tick() {
+        return tick(false);
+    }
+
+    public boolean tick(boolean acceptStructureChange) {
         // Some alter table trigger commit() which trigger tick()
         // If already inside the tick(), do not re-enter it.
-        if (isTicking) return;
+        if (isTicking) return !tableAlterIsPending;
         try {
             isTicking = true;
-            processCommandQueue();
+            processCommandQueue(acceptStructureChange);
         } finally {
             isTicking = false;
         }
+        return !tableAlterIsPending;
     }
 
     @Override
@@ -1925,8 +1949,6 @@ public class TableWriter implements Closeable {
             txFile.commit(commitMode, this.denseSymbolMapWriters);
             o3ProcessPartitionRemoveCandidates();
         }
-
-        tick();
     }
 
     void commitBlock(long firstTimestamp) {
@@ -3989,7 +4011,7 @@ public class TableWriter implements Closeable {
         indexCount = denseIndexers.size();
     }
 
-    private void processCommandQueue() {
+    private void processCommandQueue(boolean acceptStructureChange) {
         final long cursor = commandSubSeq.next();
         if (cursor > -1) {
             final TableWriterTask cmd = messageBus.getTableWriterCommandQueue().get(cursor);
@@ -3999,7 +4021,7 @@ public class TableWriter implements Closeable {
                         replPublishSyncEvent(cmd, cursor, commandSubSeq);
                         break;
                     case TableWriterTask.TSK_ALTER_TABLE:
-                        processAlterTableEvent(cmd, cursor, commandSubSeq);
+                        tableAlterIsPending = !processAlterTableEvent(cmd, cursor, commandSubSeq, acceptStructureChange);
                         break;
                     default:
                         commandSubSeq.done(cursor);

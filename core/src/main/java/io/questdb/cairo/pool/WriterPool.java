@@ -231,7 +231,7 @@ public class WriterPool extends AbstractPool {
             // pool closed but we somehow managed to lock writer
             // make sure that interceptor cleared to allow calling thread close writer normally
             LOG.info().$('\'').utf8(tableName).$("' born free").$();
-            return e.goodby();
+            return e.goodbye();
         }
         e.ownershipReason = lockReason;
         return logAndReturn(e, PoolListener.EV_GET);
@@ -440,6 +440,9 @@ public class WriterPool extends AbstractPool {
         final CharSequence name = e.writer.getTableName();
         try {
             e.writer.rollback();
+            if (e.writer.isStructureChangePending()) {
+                e.writer.tick(true);
+            }
         } catch (Throwable ex) {
             // We are here because of a systemic issues of some kind
             // one of the known issues is "disk is full" so we could not rollback properly.
@@ -486,7 +489,7 @@ public class WriterPool extends AbstractPool {
             return !WriterPool.this.returnToPool(this);
         }
 
-        public TableWriter goodby() {
+        public TableWriter goodbye() {
             TableWriter w = writer;
             if (writer != null) {
                 writer.setLifecycleManager(DefaultLifecycleManager.INSTANCE);

@@ -47,7 +47,7 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
     private final ExceptionSinkAdapter exceptionSinkAdapter = new ExceptionSinkAdapter();
 
     @Override
-    public void apply(TableWriter tableWriter) throws SqlException {
+    public void apply(TableWriter tableWriter, boolean acceptStructureChange) throws SqlException, TableStructureChangesException {
         try {
             switch (command) {
                 case DO_NOTHING:
@@ -55,6 +55,9 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
                     // it is applied at the SQL compilation time
                     break;
                 case ADD_COLUMN:
+                    if (!acceptStructureChange) {
+                        throw TableStructureChangesException.INSTANCE;
+                    }
                     applyAddColumn(tableWriter);
                     break;
                 case DROP_PARTITION:
@@ -73,9 +76,15 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
                     applySetSymbolCache(tableWriter, false);
                     break;
                 case DROP_COLUMN:
+                    if (!acceptStructureChange) {
+                        throw TableStructureChangesException.INSTANCE;
+                    }
                     applyDropColumn(tableWriter);
                     break;
                 case RENAME_COLUMN:
+                    if (!acceptStructureChange) {
+                        throw TableStructureChangesException.INSTANCE;
+                    }
                     applyRenameColumn(tableWriter);
                     break;
                 case SET_PARAM_MAX_UNCOMMITTED_ROWS:

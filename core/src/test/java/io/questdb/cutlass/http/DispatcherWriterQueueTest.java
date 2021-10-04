@@ -232,7 +232,7 @@ public class DispatcherWriterQueueTest {
             }
 
             for (int i = 0; i < 100 && finished.getCount() > 0 && errors.get() <= errorsExpected; i++) {
-                writer.tick();
+                writer.tick(true);
                 finished.await(1_000_000);
             }
             if (error != null) {

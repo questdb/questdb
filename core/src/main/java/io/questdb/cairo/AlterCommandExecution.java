@@ -81,7 +81,10 @@ public class AlterCommandExecution {
             try (TableWriter writer = engine.getWriter(
                     sqlExecutionContext.getCairoSecurityContext(),
                     alterStatement.getTableName(), "Alter table statement")) {
-                alterStatement.apply(writer);
+                alterStatement.apply(writer, true);
+            } catch (TableStructureChangesException e) {
+                // Should never happen when acceptStructureChange passed as true
+                assert false : "wtf";
             }
         }
     }
