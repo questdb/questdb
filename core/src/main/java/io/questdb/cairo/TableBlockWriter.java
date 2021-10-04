@@ -136,7 +136,7 @@ public class TableBlockWriter implements Closeable {
         long alignedMapOffset = (mapOffset / ff.getPageSize()) * ff.getPageSize();
         long addressOffsetDueToAlignment = mapOffset - alignedMapOffset;
         long alignedMapSz = mapSz + addressOffsetDueToAlignment;
-        long address = TableUtils.mapRW(ff, fd, alignedMapSz, alignedMapOffset, MemoryTag.MMAP_DEFAULT);
+        long address = TableUtils.mapRW(ff, fd, alignedMapSz, alignedMapOffset, MemoryTag.MMAP_BLOCK_WRITER);
         assert (address / ff.getPageSize()) * ff.getPageSize() == address; // address MUST be page aligned
         return address + addressOffsetDueToAlignment;
     }
@@ -144,7 +144,7 @@ public class TableBlockWriter implements Closeable {
     private static void unmapFile(FilesFacade ff, final long address, final long mapSz) {
         long alignedAddress = (address / ff.getPageSize()) * ff.getPageSize();
         long alignedMapSz = mapSz + address - alignedAddress;
-        ff.munmap(alignedAddress, alignedMapSz, MemoryTag.MMAP_DEFAULT);
+        ff.munmap(alignedAddress, alignedMapSz, MemoryTag.MMAP_BLOCK_WRITER);
     }
 
     void clear() {

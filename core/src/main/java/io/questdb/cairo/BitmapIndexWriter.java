@@ -49,15 +49,20 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seek;
 
     public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name) {
-        of(configuration, path, name);
+        of(
+                configuration,
+                path,
+                name,
+                configuration.getDataIndexKeyAppendPageSize(),
+                configuration.getDataIndexValueAppendPageSize()
+        );
+    }
+
+    public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long keyAppendPageSize, long valueAppendPageSize) {
+        of(configuration, path, name, keyAppendPageSize, valueAppendPageSize);
     }
 
     public BitmapIndexWriter() {
-    }
-
-    @Override
-    public void clear() {
-        close();
     }
 
     public static void initKeyMemory(MemoryA keyMem, int blockValueCount) {
@@ -79,7 +84,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     }
 
     /**
-     * Adds key-value pair to index. If key already exists, value is appended to end of list of existing values. Otherwise
+     * Adds key-value pair to index. If key already exists, value is appended to end of list of existing values. Otherwise,
      * new value list is associated with the key.
      * <p>
      * Index is updated atomically as far as concurrent reading is concerned. Please refer to notes on classes that
@@ -92,9 +97,9 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         assert key > -1 : "key must be positive integer: " + key;
         final long offset = BitmapIndexUtils.getKeyEntryOffset(key);
         if (key < keyCount) {
-            // when key exists we have possible outcomes with regards to values
+            // when key exists we have possible outcomes in regard to the values
             // 1. last value block has space if value cell index is not the last in block
-            // 2. value block is full and we have to allocate a new one
+            // 2. value block is full, and we have to allocate a new one
             // 3. value count is 0. This means key was created as byproduct of adding sparse key value
             // second option is supposed to be less likely because we attempt to
             // configure block capacity to accommodate as many values as possible
@@ -127,6 +132,11 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     }
 
     @Override
+    public void clear() {
+        close();
+    }
+
+    @Override
     public void close() {
         if (keyMem.isOpen() && keyCount > -1) {
             keyMem.jumpTo(keyMemSize());
@@ -137,10 +147,6 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             valueMem.jumpTo(valueMemSize);
         }
         Misc.free(valueMem);
-    }
-
-    public boolean isOpen() {
-        return keyMem.isOpen();
     }
 
     public RowCursor getCursor(int key) {
@@ -163,6 +169,10 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         keyMem.putLong(38L, maxValue);
     }
 
+    public boolean isOpen() {
+        return keyMem.isOpen();
+    }
+
     final public void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init) {
         close();
         final FilesFacade ff = configuration.getFilesFacade();
@@ -174,14 +184,14 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                 // todo: copy from source
                 if (ff.truncate(keyFd, 0)) {
                     kFdUnassigned = false;
-                    this.keyMem.of(ff, keyFd, null, pageSize, MemoryTag.MMAP_DEFAULT);
+                    this.keyMem.of(ff, keyFd, null, pageSize, MemoryTag.MMAP_INDEX_WRITER);
                     initKeyMemory(this.keyMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
                 } else {
                     throw CairoException.instance(ff.errno()).put("Could not truncate [fd=").put(keyFd).put(']');
                 }
             } else {
                 kFdUnassigned = false;
-                this.keyMem.of(ff, keyFd, null, pageSize, MemoryTag.MMAP_DEFAULT);
+                this.keyMem.of(ff, keyFd, null, pageSize, MemoryTag.MMAP_INDEX_WRITER);
             }
             long keyMemSize = this.keyMem.getAppendOffset();
             // check if key file header is present
@@ -212,14 +222,14 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             if (init) {
                 if (ff.truncate(valueFd, 0)) {
                     vFdUnassigned = false;
-                    this.valueMem.of(ff, valueFd, null, pageSize, MemoryTag.MMAP_DEFAULT);
+                    this.valueMem.of(ff, valueFd, null, pageSize, MemoryTag.MMAP_INDEX_WRITER);
                     this.valueMem.jumpTo(0);
                 } else {
                     throw CairoException.instance(ff.errno()).put("Could not truncate [fd=").put(valueFd).put(']');
                 }
             } else {
                 vFdUnassigned = false;
-                this.valueMem.of(ff, valueFd, null, pageSize, MemoryTag.MMAP_DEFAULT);
+                this.valueMem.of(ff, valueFd, null, pageSize, MemoryTag.MMAP_INDEX_WRITER);
             }
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
 
@@ -245,12 +255,13 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         }
     }
 
-    final public void of(CairoConfiguration configuration, Path path, CharSequence name) {
+    final public void of(CairoConfiguration configuration, Path path, CharSequence name, long keyAppendPageSize, long valueAppendPageSize) {
         close();
         final int plen = path.length();
+        final FilesFacade ff = configuration.getFilesFacade();
         try {
-            boolean exists = configuration.getFilesFacade().exists(BitmapIndexUtils.keyFileName(path, name));
-            this.keyMem.wholeFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
+            boolean exists = ff.exists(BitmapIndexUtils.keyFileName(path, name));
+            this.keyMem.of(ff, path, keyAppendPageSize, ff.length(path), MemoryTag.MMAP_INDEX_WRITER);
             if (!exists) {
                 LOG.error().$(path).$(" not found").$();
                 throw CairoException.instance(0).put("Index does not exist: ").put(path);
@@ -282,18 +293,26 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                 throw CairoException.instance(0).put("Sequence mismatch on ").put(path);
             }
 
-            this.valueMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), MemoryTag.MMAP_DEFAULT);
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
-
-            if (this.valueMem.getAppendOffset() < this.valueMemSize) {
-                LOG.error().$("incorrect file size [corrupt] of ").$(path).$(" [expected=").$(this.valueMemSize).$(']').$();
-                throw CairoException.instance(0).put("Incorrect file size of ").put(path);
-            }
+            this.valueMem.of(
+                    ff,
+                    BitmapIndexUtils.valueFileName(path.trimTo(plen), name),
+                    valueAppendPageSize,
+                    this.valueMemSize,
+                    MemoryTag.MMAP_INDEX_WRITER
+            );
 
             // block value count is always a power of two
             // to calculate remainder we use faster 'x & (count-1)', which is equivalent to (x % count)
             this.blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
-            assert blockValueCountMod > 0;
+            if (blockValueCountMod < 1) {
+                LOG.error()
+                        .$("corrupt file [name=").$(path)
+                        .$(", valueMemSize=").$(this.valueMemSize)
+                        .$(", blockValueCountMod=").$(this.blockValueCountMod)
+                        .I$();
+                throw CairoException.instance(0).put("corrupt file ").put(path);
+            }
             this.blockCapacity = (this.blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
         } catch (Throwable e) {
             this.close();
@@ -304,7 +323,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     }
 
     /**
-     * Rolls values back. Removes values that are strictly greater than given maximum. Empty value blocks
+     * Rolls values back. Remove values that are strictly greater than given maximum. Empty value blocks
      * will also be removed as well as blank space at end of value memory.
      *
      * @param maxValue maximum value allowed in index.
@@ -349,7 +368,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         // update block linkage before we increase count
         // this is important to index readers, which will act on value count they read
 
-        // we subtract 8 because we just written long value
+        // we subtract 8 because we have just written long value
         // update this block reference to previous block
         valueMem.putLong(valueMemSize - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED, valueBlockOffset);
 

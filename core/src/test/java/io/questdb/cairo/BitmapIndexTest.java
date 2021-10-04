@@ -784,7 +784,13 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
                     create(configuration, path.trimTo(plen), "x", N / MOD / 128);
                     try (BitmapIndexWriter writer = new BitmapIndexWriter()) {
-                        writer.of(configuration, path.trimTo(plen), "x");
+                        writer.of(
+                                configuration,
+                                path.trimTo(plen),
+                                "x",
+                                configuration.getDataIndexKeyAppendPageSize(),
+                                configuration.getDataIndexValueAppendPageSize()
+                        );
                         indexInts(rwin, writer, N);
                     }
                 }
@@ -1052,7 +1058,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - mem.getAppendOffset());
 
             }
-            assertWriterConstructorFail("Incorrect file size");
+            assertWriterConstructorFail("corrupt file");
         });
     }
 
@@ -1070,7 +1076,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             // Therefore, truncate file manually to below the expected file size
 
             final FilesFacade ff = FilesFacadeImpl.INSTANCE;
-            try (Path path  = new Path()) {
+            try (Path path = new Path()) {
                 path.of(configuration.getRoot()).concat("x").put(".k").$();
                 long fd = TableUtils.openFileRWOrFail(ff, path);
                 try {

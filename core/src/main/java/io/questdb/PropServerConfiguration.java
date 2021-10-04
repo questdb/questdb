@@ -142,7 +142,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean lineUdpUnicast;
     private final boolean lineUdpOwnThread;
     private final int sqlCopyBufferSize;
-    private final long sqlAppendPageSize;
+    private final long writerDataAppendPageSize;
+    private final long writerMiscAppendPageSize;
     private final int sqlAnalyticColumnPoolCapacity;
     private final int sqlCreateTableModelPoolCapacity;
     private final int sqlColumnCastModelPoolCapacity;
@@ -200,6 +201,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3UpdPartitionSizeQueueCapacity;
     private final int o3PurgeDiscoveryQueueCapacity;
     private final int o3PurgeQueueCapacity;
+    private final int o3ColumnMemorySize;
     private final int maxUncommittedRows;
     private final long commitLag;
     private final long instanceHashLo;
@@ -350,6 +352,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int latestByQueueCapacity;
     private final int sampleByIndexSearchPageSize;
     private final int binaryEncodingMaxLength;
+    private final long writerDataIndexKeyAppendPageSize;
+    private final long writerDataIndexValueAppendPageSize;
 
     public PropServerConfiguration(
             String root,
@@ -456,7 +460,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
                 final String publicDirectory = getString(properties, env, "http.static.public.directory", "public");
                 // translate public directory into absolute path
-                // this will generate some garbage, but this is ok - we just doing this once on startup
+                // this will generate some garbage, but this is ok - we're just doing this once on startup
                 if (new File(publicDirectory).isAbsolute()) {
                     this.publicDirectory = publicDirectory;
                 } else {
@@ -506,7 +510,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
 
             this.maxRerunWaitCapMs = getLong(properties, env, "http.busy.retry.maximum.wait.before.retry", 1000);
-            this.rerunExponentialWaitMultiplier = getDouble(properties, env, "http.busy.retry.exponential.wait.multipier", 2.0);
+            this.rerunExponentialWaitMultiplier = getDouble(properties, env, "http.busy.retry.exponential.wait.multiplier", 2.0);
             this.rerunInitialWaitQueueSize = getIntSize(properties, env, "http.busy.retry.initialWaitQueueSize", 64);
             this.rerunMaxProcessingQueueSize = getIntSize(properties, env, "http.busy.retry.maxProcessingQueueSize", 4096);
 
@@ -611,15 +615,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlInsertModelPoolCapacity = getInt(properties, env, "cairo.sql.insert.model.pool.capacity", 64);
             this.sqlCopyModelPoolCapacity = getInt(properties, env, "cairo.sql.copy.model.pool.capacity", 32);
             this.sqlCopyBufferSize = getIntSize(properties, env, "cairo.sql.copy.buffer.size", 2 * 1024 * 1024);
-            long sqlAppendPageSize = getLongSize(properties, env, "cairo.sql.append.page.size", 16 * 1024 * 1024);
+
+            this.writerDataIndexKeyAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, "cairo.writer.data.index.key.append.page.size", 512 * 1024));
+            this.writerDataIndexValueAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, "cairo.writer.data.index.value.append.page.size", 16 * 1024 * 1024));
+            this.writerDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, "cairo.writer.data.append.page.size", 16 * 1024 * 1024));
+            this.writerMiscAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, "cairo.writer.misc.append.page.size", Files.PAGE_SIZE));
+
             this.sampleByIndexSearchPageSize = getIntSize(properties, env, "cairo.sql.sampleby.page.size", 0);
-            // round the append page size to the OS page size
-            final long osPageSize = FilesFacadeImpl.INSTANCE.getPageSize();
-            if ((sqlAppendPageSize % osPageSize) == 0) {
-                this.sqlAppendPageSize = sqlAppendPageSize;
-            } else {
-                this.sqlAppendPageSize = (sqlAppendPageSize / osPageSize + 1) * osPageSize;
-            }
             this.sqlDoubleToStrCastScale = getInt(properties, env, "cairo.sql.double.cast.scale", 12);
             this.sqlFloatToStrCastScale = getInt(properties, env, "cairo.sql.float.cast.scale", 4);
             this.sqlGroupByMapCapacity = getInt(properties, env, "cairo.sql.groupby.map.capacity", 1024);
@@ -661,6 +663,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3UpdPartitionSizeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.upd.partition.size.queue.capacity", 128));
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.discovery.queue.capacity", 128));
             this.o3PurgeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.queue.capacity", 128));
+            this.o3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, "cairo.o3.column.memory.size", 16 * Numbers.SIZE_1MB));
             this.maxUncommittedRows = getInt(properties, env, "cairo.max.uncommitted.rows", 500_000);
             this.commitLag = getLong(properties, env, "cairo.commit.lag", 300_000) * 1_000;
             this.o3QuickSortEnabled = getBoolean(properties, env, "cairo.o3.quicksort.enabled", false);
@@ -1465,6 +1468,16 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropCairoConfiguration implements CairoConfiguration {
 
         @Override
+        public long getDataIndexKeyAppendPageSize() {
+            return writerDataIndexKeyAppendPageSize;
+        }
+
+        @Override
+        public long getDataIndexValueAppendPageSize() {
+            return writerDataIndexValueAppendPageSize;
+        }
+
+        @Override
         public int getBindVariablePoolSize() {
             return sqlBindVariablePoolSize;
         }
@@ -1880,8 +1893,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getAppendPageSize() {
-            return sqlAppendPageSize;
+        public long getDataAppendPageSize() {
+            return writerDataAppendPageSize;
+        }
+
+        @Override
+        public long getMiscAppendPageSize() {
+            return writerMiscAppendPageSize;
         }
 
         @Override
@@ -1967,6 +1985,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getBinaryEncodingMaxLength() {
             return binaryEncodingMaxLength;
+        }
+
+        @Override
+        public int getO3ColumnMemorySize() {
+            return o3ColumnMemorySize;
         }
     }
 

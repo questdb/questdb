@@ -102,8 +102,14 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     ) {
         this.columnTop = columnTop;
         try {
-            this.writer.of(configuration, path, name);
-            this.sliderMem.of(columnMem, MemoryTag.MMAP_DEFAULT);
+            this.writer.of(
+                    configuration,
+                    path,
+                    name,
+                    configuration.getDataIndexKeyAppendPageSize(),
+                    configuration.getDataIndexValueAppendPageSize()
+            );
+            this.sliderMem.of(columnMem, MemoryTag.MMAP_INDEX_SLIDER);
         } catch (Throwable e) {
             this.close();
             throw e;
@@ -114,7 +120,13 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     public void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnTop) {
         this.columnTop = columnTop;
         try {
-            this.writer.of(configuration, path, name);
+            this.writer.of(
+                    configuration,
+                    path,
+                    name,
+                    configuration.getDataIndexKeyAppendPageSize(),
+                    configuration.getDataIndexValueAppendPageSize()
+            );
         } catch (Throwable e) {
             this.close();
             throw e;
