@@ -314,7 +314,7 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
                 );
             } catch (CairoException e) {
                 LOG.error().$("Cannot add column '").$(tableWriter.getTableName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, "could add column [error=").put(e.getFlyweightMessage())
+                throw SqlException.$(tableNamePosition, "could not add column [error=").put(e.getFlyweightMessage())
                         .put(", errno=").put(e.getErrno())
                         .put(']');
             }

@@ -399,38 +399,6 @@ public class LineTcpServerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSymbolAddedInO3ModeFirstRow() throws Exception {
-        maxMeasurementSize = 4096;
-        runInContext((server) -> {
-            String lineData = "plug,room=6A watts=\"1\" 2631819999000\n" +
-                    "plug,label=Power,room=6B watts=\"22\" 1631817902842\n";
-            send(server, lineData, "plug", WAIT_ENGINE_TABLE_RELEASE, false);
-
-            String expected = "room\twatts\ttimestamp\tlabel\n" +
-                    "6B\t22\t1970-01-01T00:27:11.817902Z\tPower\n" +
-                    "6A\t1\t1970-01-01T00:43:51.819999Z\t\n";
-            assertTable(expected, "plug");
-        });
-    }
-
-    @Test
-    public void testSymbolAddedInO3ModeFirstRow2Lines() throws Exception {
-        maxMeasurementSize = 4096;
-        runInContext((server) -> {
-            String lineData = "plug,room=6A watts=\"1\" 2631819999000\n" +
-                    "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
-                    "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
-            send(server, lineData, "plug", WAIT_ENGINE_TABLE_RELEASE, false);
-
-            String expected = "room\twatts\ttimestamp\tlabel\n" +
-                    "6C\t333\t1970-01-01T00:25:31.817902Z\tLine\n" +
-                    "6B\t22\t1970-01-01T00:27:11.817902Z\tPower\n" +
-                    "6A\t1\t1970-01-01T00:43:51.819999Z\t\n";
-            assertTable(expected, "plug");
-        });
-    }
-
-    @Test
     public void testTableTableIdChangedOnRecreate() throws Exception {
         try (SqlCompiler compiler = new SqlCompiler(engine);
              SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
@@ -719,32 +687,11 @@ public class LineTcpServerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSymbolAddedInO3Mode() throws Exception {
-        maxMeasurementSize = 4096;
-        runInContext(() -> {
-            String lineData = "plug,room=6A watts=\"469\" 1631817902842\n" +
-                    "plug,room=6A watts=\"3195\" 1631817296977\n" +
-                    "plug,room=6A watts=\"3188\" 1631817599910\n" +
-                    "plug,room=6A watts=\"3180\" 1631817902842\n" +
-                    "plug,label=Power,room=6A watts=\"475\" 1631817478737\n";
-            send(lineData, "plug", true, false);
-
-            String expected = "room\twatts\ttimestamp\tlabel\n" +
-                    "6A\t3195\t1970-01-01T00:27:11.817296Z\t\n" +
-                    "6A\t475\t1970-01-01T00:27:11.817478Z\tPower\n" +
-                    "6A\t3188\t1970-01-01T00:27:11.817599Z\t\n" +
-                    "6A\t3180\t1970-01-01T00:27:11.817902Z\t\n" +
-                    "6A\t469\t1970-01-01T00:27:11.817902Z\t\n";
-            assertTable(expected, "plug");
-        });
-    }
-
-    @Test
     public void testSymbolAddedInO3ModeFirstRow() throws Exception {
-        runInContext(() -> {
+        runInContext((server) -> {
             String lineData = "plug,room=6A watts=\"1\" 2631819999000\n" +
                     "plug,label=Power,room=6B watts=\"22\" 1631817902842\n";
-            send(lineData, "plug", true, false);
+            send(server, lineData, "plug", WAIT_ALTER_TABLE_RELEASE, false);
 
             String expected = "room\twatts\ttimestamp\tlabel\n" +
                     "6B\t22\t1970-01-01T00:27:11.817902Z\tPower\n" +
@@ -755,11 +702,11 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolAddedInO3ModeFirstRow2Lines() throws Exception {
-        runInContext(() -> {
+        runInContext((server) -> {
             String lineData = "plug,room=6A watts=\"1\" 2631819999000\n" +
                     "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
                     "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
-            send(lineData, "plug", true, false);
+            send(server, lineData, "plug", WAIT_ALTER_TABLE_RELEASE, false);
 
             String expected = "room\twatts\ttimestamp\tlabel\n" +
                     "6C\t333\t1970-01-01T00:25:31.817902Z\tLine\n" +
@@ -771,11 +718,11 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
     @Test
     public void testAlterCommand() throws Exception {
-        runInContext(() -> {
+        runInContext((server) -> {
             String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819999000\n" +
                     "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
                     "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
-            send(lineData, "plug", true, false,
+            send(server, lineData, "plug", WAIT_ALTER_TABLE_RELEASE, false,
                     "ALTER TABLE plug ALTER COLUMN label ADD INDEX");
 
             String expected = "label\troom\twatts\ttimestamp\n" +
@@ -795,12 +742,12 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
     @Test
     public void testAlterCommandDropsColumn() throws Exception {
-        runInContext(() -> {
+        runInContext((server) -> {
             String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819999000\n" +
                     "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
                     "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
 
-            send(lineData, "plug", false, false,
+            send(server, lineData, "plug", WAIT_ALTER_TABLE_RELEASE, false,
                     "ALTER TABLE plug DROP COLUMN label");
 
             lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999001\n" +
@@ -808,7 +755,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "plug,label=Line,room=6C watts=\"666\" 1531817902843\n";
 
             // re-send, this should re-add column label
-            send(lineData, "plug", true);
+            send(server, lineData, "plug", WAIT_ENGINE_TABLE_RELEASE);
 
             String expected = "room\twatts\ttimestamp\tlabel\n" +
                     "6C\t666\t1970-01-01T00:25:31.817902Z\tLine\n" +
@@ -823,19 +770,19 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
     @Test
     public void testAlterCommandDropsColumn2() throws Exception {
-        runInContext(() -> {
+        runInContext((server) -> {
             String lineData = "plug,room=6A watts=\"1\" 2631819999000\n" +
                     "plug,room=6B watts=\"22\" 1631817902842\n" +
                     "plug,room=6C watts=\"333\" 1531817902842\n";
 
-            send(lineData, "plug", true, false);
+            send(server, lineData, "plug", WAIT_ALTER_TABLE_RELEASE, false);
 
             lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999001\n" +
                     "plug,label=Power,room=6B watts=\"55\" 1631817902843\n" +
                     "plug,label=Line,room=6C watts=\"666\" 1531817902843\n";
 
             // re-send, this should re-add column label
-            send(lineData, "plug", true);
+            send(server,lineData, "plug", WAIT_ENGINE_TABLE_RELEASE);
 
             String expected = "room\twatts\ttimestamp\tlabel\n" +
                     "6C\t666\t1970-01-01T00:25:31.817902Z\tLine\n" +
@@ -888,26 +835,25 @@ public class LineTcpServerTest extends AbstractCairoTest {
         });
     }
 
-    private void send(LineTcpServer server, String lineData, String tableName, int wait) {
-        send(server, lineData, tableName, wait, true);
-    }
-
     public static final int WAIT_NO_WAIT = 0;
     public static final int WAIT_ENGINE_TABLE_RELEASE = 1;
     public static final int WAIT_ILP_TABLE_RELEASE = 2;
     public static final int WAIT_ALTER_TABLE_RELEASE = 3;
 
+    private void send(LineTcpServer server, String lineData, String tableName, int wait) {
+        send(server, lineData, tableName, wait, true);
+    }
+
     private void send(LineTcpServer server, String lineData, String tableName, int wait, boolean noLinger) {
-        send(lineData, tableName, wait, noLinger, null);
+        send(server, lineData, tableName, wait, noLinger, null);
     }
 
     private void send(LineTcpServer server, String lineData, String tableName, int wait, boolean noLinger, String alterTableCommand) {
         SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
-        boolean alterCommandWaited = alterTableCommand != null && wait != WAIT_NO_WAIT;
         CyclicBarrier startBarrier = new CyclicBarrier(2);
         AlterCommandExecution.setUpWait(engine, requestContext);
 
-        if (alterCommandWaited) {
+        if (alterTableCommand != null && wait != WAIT_NO_WAIT) {
             new Thread(() -> {
                 // Wait in parallel thead
                 try {
@@ -929,7 +875,6 @@ public class LineTcpServerTest extends AbstractCairoTest {
             }).start();
         }
 
-
         switch (wait) {
             case WAIT_ENGINE_TABLE_RELEASE:
             case WAIT_ALTER_TABLE_RELEASE:
@@ -946,9 +891,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                                         try {
                                             // Execute ALTER in parallel thread
                                             alterCommandId = executeSqlOnce(alterTableCommand, false);
-                                            if (alterCommandWaited) {
-                                                startBarrier.await();
-                                            }
+                                            startBarrier.await();
                                         } catch (BrokenBarrierException | InterruptedException e) {
                                             e.printStackTrace();
                                             releaseLatch.countDown();
@@ -1014,7 +957,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
         }
     }
 
-    private long executeSqlOnce(String sql, boolean wait) throws SqlException {case WAIT_ENGINE_TABLE_RELEASE:
+    private long executeSqlOnce(String sql, boolean wait) throws SqlException {
         try (SqlCompiler compiler = new SqlCompiler(engine);
              SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                      .with(
@@ -1032,16 +975,12 @@ public class LineTcpServerTest extends AbstractCairoTest {
                         alterStatement,
                         sqlExecutionContext,
                         requestContext);
-                return  -1L;
+                return -1L;
             } else {
                 return AlterCommandExecution.executeAlterCommandNoWait(engine,
                         alterStatement,
                         sqlExecutionContext,
                         requestContext);
-                    break;
-                case WAIT_ILP_TABLE_RELEASE:
-                    server.setSchedulerListener(null);
-                    break;
             }
         }
     }

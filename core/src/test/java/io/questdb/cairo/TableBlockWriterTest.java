@@ -41,7 +41,6 @@ import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TestUtils.LeakProneCode;
 import org.junit.Assert;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -344,7 +343,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
             try {
-                compiler.compile("ALTER TABLE source ADD COLUMN str STRING", sqlExecutionContext);
+                compile("ALTER TABLE source ADD COLUMN str STRING", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
