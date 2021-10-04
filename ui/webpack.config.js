@@ -7,10 +7,13 @@ const MiniCssExtractPlugin = require("mini-css-extract-plugin")
 const Webpack = require("webpack")
 const AnalyzerPlugin = require("webpack-bundle-analyzer").BundleAnalyzerPlugin
 
+require('dotenv').config()
+
 const PORT = 9999
 const BACKEND_PORT = 9000
 const isProdBuild = process.env.NODE_ENV === "production"
 const runBundleAnalyzer = process.env.ANALYZE
+const ASSET_PATH = process.env.ASSET_PATH || '/';
 
 if (!process.env.NODE_ENV) {
   process.env.NODE_ENV = "development"
@@ -82,6 +85,7 @@ module.exports = {
   entry: "./src/index",
   output: {
     filename: "qdb.js",
+    publicPath: ASSET_PATH,
   },
   resolve: {
     extensions: [".ts", ".tsx", ".js"],

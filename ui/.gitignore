@@ -4,3 +4,6 @@ node
 dist
 .tmp
 .sass-cache
+
+.env
+.env.example
