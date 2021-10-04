@@ -38,33 +38,35 @@ public final class MemoryTag {
     public static final int NATIVE_LONG_LIST = 10;
     public static final int NATIVE_HTTP_CONN = 11;
     public static final int NATIVE_PGW_CONN = 12;
-    public static final int NATIVE_REPL = 13;
-    public static final int SIZE = NATIVE_REPL + 1;
+    public static final int MMAP_INDEX_READER = 13;
+    public static final int MMAP_INDEX_WRITER = 14;
+    public static final int MMAP_INDEX_SLIDER = 15;
+    public static final int MMAP_BLOCK_WRITER = 16;
+    public static final int SIZE = MMAP_BLOCK_WRITER + 1;
 
-    private static final IntObjHashMap<String> tagNameMap = new IntObjHashMap<>();
+    private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
-        final int index = tagNameMap.keyIndex(tag);
-        if (index > -1) {
-            return "Unknown";
-        }
-        return tagNameMap.valueAtQuick(index);
+        return tagNameMap.getQuick(tag);
     }
 
     static {
-        tagNameMap.put(MMAP_DEFAULT, "MMAP_DEFAULT");
-        tagNameMap.put(NATIVE_DEFAULT, "NATIVE_DEFAULT");
-        tagNameMap.put(MMAP_O3, "MMAP_O3");
-        tagNameMap.put(NATIVE_O3, "NATIVE_O3");
-        tagNameMap.put(NATIVE_RECORD_CHAIN, "NATIVE_RECORD_CHAIN");
-        tagNameMap.put(MMAP_TABLE_WRITER, "MMAP_TABLE_WRITER");
-        tagNameMap.put(NATIVE_TREE_CHAIN, "NATIVE_TREE_CHAIN");
-        tagNameMap.put(MMAP_TABLE_READER, "MMAP_TABLE_READER");
-        tagNameMap.put(NATIVE_COMPACT_MAP, "NATIVE_COMPACT_MAP");
-        tagNameMap.put(NATIVE_FAST_MAP, "NATIVE_FAST_MAP");
-        tagNameMap.put(NATIVE_LONG_LIST, "NATIVE_LONG_LIST");
-        tagNameMap.put(NATIVE_HTTP_CONN, "NATIVE_HTTP_CONN");
-        tagNameMap.put(NATIVE_PGW_CONN, "NATIVE_PGW_CONN");
-        tagNameMap.put(NATIVE_REPL, "NATIVE_REPL");
+        tagNameMap.extendAndSet(MMAP_DEFAULT, "MMAP_DEFAULT");
+        tagNameMap.extendAndSet(NATIVE_DEFAULT, "NATIVE_DEFAULT");
+        tagNameMap.extendAndSet(MMAP_O3, "MMAP_O3");
+        tagNameMap.extendAndSet(NATIVE_O3, "NATIVE_O3");
+        tagNameMap.extendAndSet(NATIVE_RECORD_CHAIN, "NATIVE_RECORD_CHAIN");
+        tagNameMap.extendAndSet(MMAP_TABLE_WRITER, "MMAP_TABLE_WRITER");
+        tagNameMap.extendAndSet(NATIVE_TREE_CHAIN, "NATIVE_TREE_CHAIN");
+        tagNameMap.extendAndSet(MMAP_TABLE_READER, "MMAP_TABLE_READER");
+        tagNameMap.extendAndSet(NATIVE_COMPACT_MAP, "NATIVE_COMPACT_MAP");
+        tagNameMap.extendAndSet(NATIVE_FAST_MAP, "NATIVE_FAST_MAP");
+        tagNameMap.extendAndSet(NATIVE_LONG_LIST, "NATIVE_LONG_LIST");
+        tagNameMap.extendAndSet(NATIVE_HTTP_CONN, "NATIVE_HTTP_CONN");
+        tagNameMap.extendAndSet(NATIVE_PGW_CONN, "NATIVE_PGW_CONN");
+        tagNameMap.extendAndSet(MMAP_INDEX_READER, "MMAP_INDEX_READER");
+        tagNameMap.extendAndSet(MMAP_INDEX_WRITER, "MMAP_INDEX_WRITER");
+        tagNameMap.extendAndSet(MMAP_INDEX_SLIDER, "MMAP_INDEX_SLIDER");
+        tagNameMap.extendAndSet(MMAP_BLOCK_WRITER, "MMAP_BLOCK_WRITER");
     }
 }

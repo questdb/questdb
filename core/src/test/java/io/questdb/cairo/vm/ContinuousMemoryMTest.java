@@ -565,7 +565,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
 
     @Test
     public void testPageCountAPI() throws Exception {
-        withMem(0, (rwMem, roMem) -> {
+        withMem(FilesFacadeImpl.INSTANCE.getMapPageSize(), 0, (rwMem, roMem) -> {
 
             Assert.assertEquals(0, roMem.getPageCount());
             // read-write memory will always have one page unless it is closed
@@ -591,12 +591,13 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
     @Test
     public void testPageCountIsZeroAfterClose() throws Exception {
         assertMemoryLeak(() -> {
+            final FilesFacade ff = FilesFacadeImpl.INSTANCE;
             try (final Path path = Path.getThreadLocal(root).concat("t.d").$()) {
                 rnd.reset();
                 MemoryMARW rwMem = Vm.getMARWInstance(
-                        FilesFacadeImpl.INSTANCE,
+                        ff,
                         path,
-                        0,
+                        ff.getMapPageSize(),
                         0,
                         MemoryTag.MMAP_DEFAULT);
                 rwMem.close();
@@ -914,6 +915,10 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
     }
 
     private void withMem(long sz, MemTestCode code) throws Exception {
+        withMem(sz, sz, code);
+    }
+
+    private void withMem(long appendSz, long sz, MemTestCode code) throws Exception {
         assertMemoryLeak(() -> {
             final Path path = Path.getThreadLocal(root).concat("t.d").$();
             rnd.reset();
@@ -921,7 +926,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
                     MemoryCMARW rwMem = Vm.getCMARWInstance(
                             FilesFacadeImpl.INSTANCE,
                             path,
-                            sz,
+                            appendSz,
                             -1,
                             MemoryTag.MMAP_DEFAULT
                     );

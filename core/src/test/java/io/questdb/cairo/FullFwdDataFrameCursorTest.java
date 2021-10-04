@@ -1104,11 +1104,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 private int mapCount = 0;
 
                 @Override
-                public long getMapPageSize() {
-                    return 65535;
-                }
-
-                @Override
                 public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                     // mess with the target FD
                     if (fd == this.fd) {
@@ -1145,6 +1140,16 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
+                }
+
+                @Override
+                public long getDataIndexKeyAppendPageSize() {
+                    return 65535;
+                }
+
+                @Override
+                public long getDataIndexValueAppendPageSize() {
+                    return 65535;
                 }
             };
 
@@ -1447,11 +1452,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 private int mapCount = 0;
 
                 @Override
-                public long getMapPageSize() {
-                    return 65535;
-                }
-
-                @Override
                 public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                     // mess with the target FD
                     if (fd == this.fd) {
@@ -1494,6 +1494,16 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 @Override
                 public int getParallelIndexThreshold() {
                     return 1;
+                }
+
+                @Override
+                public long getDataIndexKeyAppendPageSize() {
+                    return 65535;
+                }
+
+                @Override
+                public long getDataIndexValueAppendPageSize() {
+                    return 65535;
                 }
             };
 

@@ -39,6 +39,7 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 public class CairoTextWriter implements Closeable, Mutable {
+    public static final int NO_INDEX = -1;
     private static final Log LOG = LogFactory.getLog(CairoTextWriter.class);
     private static final String WRITER_LOCK_REASON = "textWriter";
     private final CairoConfiguration configuration;
@@ -58,7 +59,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private int partitionBy;
     private long commitLag = -1;
     private int maxUncommittedRows = -1;
-    private int timestampIndex = -1;
+    private int timestampIndex = NO_INDEX;
     private CharSequence importedTimestampColumnName;
     private CharSequence designatedTimestampColumnName;
     private int designatedTimestampIndex;
@@ -88,7 +89,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         _size = 0;
         warnings = TextLoadWarning.NONE;
         designatedTimestampColumnName = null;
-        designatedTimestampIndex = -1;
+        designatedTimestampIndex = NO_INDEX;
         importedTimestampColumnName = null;
     }
 
@@ -360,7 +361,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
         _size = writer.size();
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);
-        if (timestampIndex != -1 && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
+        if (timestampIndex != NO_INDEX && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
             timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
         } else {
             timestampAdapter = null;
@@ -388,12 +389,12 @@ public class CairoTextWriter implements Closeable, Mutable {
 
         @Override
         public int getIndexBlockCapacity(int columnIndex) {
-            return 0;
+            return configuration.getIndexValueBlockSize();
         }
 
         @Override
         public boolean isIndexed(int columnIndex) {
-            return false;
+            return types.getQuick(columnIndex).isIndexed();
         }
 
         @Override
@@ -441,21 +442,21 @@ public class CairoTextWriter implements Closeable, Mutable {
             this.types = types;
 
             if (importedTimestampColumnName == null && designatedTimestampColumnName == null) {
-                timestampIndex = -1;
+                timestampIndex = NO_INDEX;
             } else if (importedTimestampColumnName != null) {
                 timestampIndex = names.indexOf(importedTimestampColumnName);
-                if (timestampIndex == -1) {
+                if (timestampIndex == NO_INDEX) {
                     throw TextException.$("invalid timestamp column '").put(importedTimestampColumnName).put('\'');
                 }
             } else {
                 timestampIndex = names.indexOf(designatedTimestampColumnName);
-                if (timestampIndex == -1) {
+                if (timestampIndex == NO_INDEX) {
                     // columns in the imported file may not have headers, then use writer timestamp index
                     timestampIndex = designatedTimestampIndex;
                 }
             }
 
-            if (timestampIndex > -1) {
+            if (timestampIndex != NO_INDEX) {
                 final TypeAdapter timestampAdapter = types.getQuick(timestampIndex);
                 final int typeTag = ColumnType.tagOf(timestampAdapter.getType());
                 if ((typeTag != ColumnType.LONG && typeTag != ColumnType.TIMESTAMP) || timestampAdapter == BadTimestampAdapter.INSTANCE) {

@@ -30,7 +30,6 @@ import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.NanosecondClock;
 import io.questdb.std.NanosecondClockImpl;
-import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -38,13 +37,11 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface CairoConfiguration {
 
-    ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
-
     boolean enableTestFactories();
 
     int getAnalyticColumnPoolCapacity();
 
-    long getAppendPageSize();
+    long getDataAppendPageSize();
 
     DateFormat getBackupDirTimestampFormat();
 
@@ -54,6 +51,8 @@ public interface CairoConfiguration {
     CharSequence getBackupRoot();
 
     CharSequence getBackupTempDirName();
+
+    int getBinaryEncodingMaxLength();
 
     int getBindVariablePoolSize();
 
@@ -73,15 +72,23 @@ public interface CairoConfiguration {
 
     int getCommitMode();
 
+    CharSequence getConfRoot(); // same as root/../conf
+
     int getCopyPoolCapacity();
 
     int getCreateAsSelectRetryCount();
 
     int getCreateTableModelPoolCapacity();
 
+    long getDataIndexKeyAppendPageSize();
+
+    long getDataIndexValueAppendPageSize();
+
     long getDatabaseIdHi();
 
     long getDatabaseIdLo();
+
+    CharSequence getDbDirectory(); // env['cairo.root'], defaults to db
 
     DateLocale getDefaultDateLocale();
 
@@ -136,6 +143,8 @@ public interface CairoConfiguration {
 
     int getO3CallbackQueueCapacity();
 
+    int getO3ColumnMemorySize();
+
     int getO3CopyQueueCapacity();
 
     int getO3OpenColumnQueueCapacity();
@@ -150,28 +159,15 @@ public interface CairoConfiguration {
 
     int getParallelIndexThreshold();
 
-    default Rnd getRandom() {
-        Rnd rnd = RANDOM.get();
-        if (rnd == null) {
-            RANDOM.set(rnd = new Rnd(
-                    getMillisecondClock().getTicks(),
-                    getMicrosecondClock().getTicks())
-            );
-        }
-        return rnd;
-    }
-
     int getReaderPoolMaxSegments();
 
     int getRenameTableModelPoolCapacity();
 
-    CharSequence getRoot();
-
-    CharSequence getDbDirectory(); // env['cairo.root'], defaults to db
-
-    CharSequence getConfRoot(); // same as root/../conf
+    CharSequence getRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
 
     int getSampleByIndexSearchPageSize();
+
+    long getMiscAppendPageSize();
 
     long getSpinLockTimeoutUs();
 
@@ -218,7 +214,7 @@ public interface CairoConfiguration {
     int getSqlJoinMetadataMaxResizes();
 
     /**
-     * This holds table metadata, which is usually quite small. 16K page should be adequate.
+     * These holds table metadata, which is usually quite small. 16K page should be adequate.
      *
      * @return memory page size
      */

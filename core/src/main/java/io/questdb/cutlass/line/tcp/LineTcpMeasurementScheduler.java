@@ -83,6 +83,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private Sequence pubSeq;
     private int nLoadCheckCycles = 0;
     private int nRebalances = 0;
+    private LineTcpServer.SchedulerListener listener;
 
     LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
@@ -332,6 +333,10 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
+    void setListener(LineTcpServer.SchedulerListener listener) {
+        this.listener = listener;
+    }
+
     private TableUpdateDetails startNewMeasurementEvent(NetworkIOJob netIoJob, NewLineProtoParser protoParser) {
         final TableUpdateDetails tableUpdateDetails = netIoJob.getTableUpdateDetails(protoParser.getMeasurementName());
         if (null != tableUpdateDetails) {
@@ -464,126 +469,145 @@ class LineTcpMeasurementScheduler implements Closeable {
                 timestamp = timestampAdapter.getMicros(timestamp);
             }
             long bufPos = bufLo;
+            long bufMax = bufLo + bufSize;
             Unsafe.getUnsafe().putLong(bufPos, timestamp);
             bufPos += Long.BYTES;
             int nEntities = protoParser.getnEntities();
             Unsafe.getUnsafe().putInt(bufPos, nEntities);
             bufPos += Integer.BYTES;
             for (int nEntity = 0; nEntity < nEntities; nEntity++) {
-                assert bufPos < (bufLo + bufSize + 6);
-                ProtoEntity entity = protoParser.getEntity(nEntity);
-                int colIndex = localDetails.getColumnIndex(entity.getName());
-                if (colIndex < 0) {
-                    int colNameLen = entity.getName().length();
-                    Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
-                    bufPos += Integer.BYTES;
-                    Vect.memcpy(entity.getName().getLo(), bufPos, colNameLen);
-                    bufPos += colNameLen;
-                } else {
-                    Unsafe.getUnsafe().putInt(bufPos, colIndex);
-                    bufPos += Integer.BYTES;
-                }
-                switch (entity.getType()) {
-                    case NewLineProtoParser.ENTITY_TYPE_TAG: {
-                        long tmpBufPos = bufPos;
-                        int l = entity.getValue().length();
-                        bufPos += Integer.BYTES + Byte.BYTES;
-                        long hi = bufPos + 2L * l;
-                        floatingCharSink.of(bufPos, hi);
-                        if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
-                            throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
-                        }
-
-                        int symIndex = tableUpdateDetails.getSymbolIndex(localDetails, colIndex, floatingCharSink);
-                        if (symIndex != SymbolTable.VALUE_NOT_FOUND) {
-                            bufPos = tmpBufPos;
-                            Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_CACHED_TAG);
-                            bufPos += Byte.BYTES;
-                            Unsafe.getUnsafe().putInt(bufPos, symIndex);
-                            bufPos += Integer.BYTES;
+                if (bufPos + Long.BYTES < bufMax) {
+                    ProtoEntity entity = protoParser.getEntity(nEntity);
+                    int colIndex = localDetails.getColumnIndex(entity.getName());
+                    if (colIndex < 0) {
+                        int colNameLen = entity.getName().length();
+                        Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
+                        bufPos += Integer.BYTES;
+                        if (bufPos + colNameLen < bufMax) {
+                            Vect.memcpy(entity.getName().getLo(), bufPos, colNameLen);
                         } else {
-                            Unsafe.getUnsafe().putByte(tmpBufPos, entity.getType());
-                            tmpBufPos += Byte.BYTES;
-                            Unsafe.getUnsafe().putInt(tmpBufPos, l);
-                            bufPos = hi;
+                            throw CairoException.instance(0).put("queue buffer overflow");
                         }
-                        break;
+                        bufPos += colNameLen;
+                    } else {
+                        Unsafe.getUnsafe().putInt(bufPos, colIndex);
+                        bufPos += Integer.BYTES;
                     }
-                    case NewLineProtoParser.ENTITY_TYPE_INTEGER: {
-                        Unsafe.getUnsafe().putByte(bufPos, entity.getType());
-                        bufPos += Byte.BYTES;
-                        Unsafe.getUnsafe().putLong(bufPos, entity.getIntegerValue());
-                        bufPos += Long.BYTES;
-                        break;
-                    }
-                    case NewLineProtoParser.ENTITY_TYPE_FLOAT: {
-                        Unsafe.getUnsafe().putByte(bufPos, entity.getType());
-                        bufPos += Byte.BYTES;
-                        Unsafe.getUnsafe().putDouble(bufPos, entity.getFloatValue());
-                        bufPos += Double.BYTES;
-                        break;
-                    }
-                    case NewLineProtoParser.ENTITY_TYPE_STRING:
-                    case NewLineProtoParser.ENTITY_TYPE_LONG256: {
-                        final int colTypeMeta = localDetails.getColumnTypeMeta(colIndex);
-                        if (colTypeMeta == 0) { // not a geohash
+                    switch (entity.getType()) {
+                        case NewLineProtoParser.ENTITY_TYPE_TAG: {
+                            long tmpBufPos = bufPos;
+                            int l = entity.getValue().length();
+                            bufPos += Integer.BYTES + Byte.BYTES;
+                            long hi = bufPos + 2L * l;
+                            if (hi < bufMax) {
+                                floatingCharSink.of(bufPos, hi);
+                                if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
+                                    throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
+                                }
+
+                                int symIndex = tableUpdateDetails.getSymbolIndex(localDetails, colIndex, floatingCharSink);
+                                if (symIndex != SymbolTable.VALUE_NOT_FOUND) {
+                                    bufPos = tmpBufPos;
+                                    Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_CACHED_TAG);
+                                    bufPos += Byte.BYTES;
+                                    Unsafe.getUnsafe().putInt(bufPos, symIndex);
+                                    bufPos += Integer.BYTES;
+                                } else {
+                                    Unsafe.getUnsafe().putByte(tmpBufPos, entity.getType());
+                                    tmpBufPos += Byte.BYTES;
+                                    Unsafe.getUnsafe().putInt(tmpBufPos, l);
+                                    bufPos = hi;
+                                }
+                            } else {
+                                throw CairoException.instance(0).put("queue buffer overflow");
+                            }
+                            break;
+                        }
+                        case NewLineProtoParser.ENTITY_TYPE_INTEGER:
                             Unsafe.getUnsafe().putByte(bufPos, entity.getType());
                             bufPos += Byte.BYTES;
-                            int l = entity.getValue().length();
-                            Unsafe.getUnsafe().putInt(bufPos, l);
-                            bufPos += Integer.BYTES;
-                            long hi = bufPos + 2L * l;
-                            floatingCharSink.of(bufPos, hi);
-                            if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
-                                throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
+                            Unsafe.getUnsafe().putLong(bufPos, entity.getIntegerValue());
+                            bufPos += Long.BYTES;
+                            break;
+                        case NewLineProtoParser.ENTITY_TYPE_FLOAT:
+                            Unsafe.getUnsafe().putByte(bufPos, entity.getType());
+                            bufPos += Byte.BYTES;
+                            Unsafe.getUnsafe().putDouble(bufPos, entity.getFloatValue());
+                            bufPos += Double.BYTES;
+                            break;
+                        case NewLineProtoParser.ENTITY_TYPE_STRING:
+                        case NewLineProtoParser.ENTITY_TYPE_SYMBOL:
+                        case NewLineProtoParser.ENTITY_TYPE_LONG256: {
+                            final int colTypeMeta = localDetails.getColumnTypeMeta(colIndex);
+                            if (colTypeMeta == 0) { // not a geohash
+                                Unsafe.getUnsafe().putByte(bufPos, entity.getType());
+                                bufPos += Byte.BYTES;
+                                int l = entity.getValue().length();
+                                Unsafe.getUnsafe().putInt(bufPos, l);
+                                bufPos += Integer.BYTES;
+                                long hi = bufPos + 2L * l; // unquote
+                                floatingCharSink.of(bufPos, hi);
+                                if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
+                                    throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
+                                }
+                                bufPos = hi;
+                            } else {
+                                long geohash;
+                                try {
+                                    geohash = GeoHashes.fromStringTruncatingNl(
+                                            entity.getValue().getLo(),
+                                            entity.getValue().getHi(),
+                                            Numbers.decodeLowShort(colTypeMeta));
+                                } catch (NumericException e) {
+                                    geohash = GeoHashes.NULL;
+                                }
+                                switch (Numbers.decodeHighShort(colTypeMeta)) {
+                                    default:
+                                        Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOLONG);
+                                        bufPos += Byte.BYTES;
+                                        Unsafe.getUnsafe().putLong(bufPos, geohash);
+                                        bufPos += Long.BYTES;
+                                        break;
+                                    case ColumnType.GEOINT:
+                                        Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOINT);
+                                        bufPos += Byte.BYTES;
+                                        Unsafe.getUnsafe().putInt(bufPos, (int) geohash);
+                                        bufPos += Integer.BYTES;
+                                        break;
+                                    case ColumnType.GEOSHORT:
+                                        Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOSHORT);
+                                        bufPos += Byte.BYTES;
+                                        Unsafe.getUnsafe().putShort(bufPos, (short) geohash);
+                                        bufPos += Short.BYTES;
+                                        break;
+                                    case ColumnType.GEOBYTE:
+                                        Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOBYTE);
+                                        bufPos += Byte.BYTES;
+                                        Unsafe.getUnsafe().putByte(bufPos, (byte) geohash);
+                                        bufPos += Byte.BYTES;
+                                        break;
+                                }
                             }
-                            bufPos = hi;
-                        } else {
-                            long geohash;
-                            try {
-                                geohash = GeoHashes.fromStringTruncatingNl(
-                                        entity.getValue().getLo(),
-                                        entity.getValue().getHi(),
-                                        Numbers.decodeLowShort(colTypeMeta));
-                            } catch (NumericException e) {
-                                geohash = GeoHashes.NULL;
-                            }
-                            switch (Numbers.decodeHighShort(colTypeMeta)) {
-                                default:
-                                    Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOLONG);
-                                    bufPos += Byte.BYTES;
-                                    Unsafe.getUnsafe().putLong(bufPos, geohash);
-                                    bufPos += Long.BYTES;
-                                    break;
-                                case ColumnType.GEOINT:
-                                    Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOINT);
-                                    bufPos += Byte.BYTES;
-                                    Unsafe.getUnsafe().putInt(bufPos, (int) geohash);
-                                    bufPos += Integer.BYTES;
-                                    break;
-                                case ColumnType.GEOSHORT:
-                                    Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOSHORT);
-                                    bufPos += Byte.BYTES;
-                                    Unsafe.getUnsafe().putShort(bufPos, (short) geohash);
-                                    bufPos += Short.BYTES;
-                                    break;
-                                case ColumnType.GEOBYTE:
-                                    Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_GEOBYTE);
-                                    bufPos += Byte.BYTES;
-                                    Unsafe.getUnsafe().putByte(bufPos, (byte) geohash);
-                                    bufPos += Byte.BYTES;
-                                    break;
-                            }
+                            break;
                         }
-                        break;
+                        case NewLineProtoParser.ENTITY_TYPE_BOOLEAN: {
+                            Unsafe.getUnsafe().putByte(bufPos, entity.getType());
+                            bufPos += Byte.BYTES;
+                            Unsafe.getUnsafe().putByte(bufPos, (byte) (entity.getBooleanValue() ? 1 : 0));
+                            bufPos += Byte.BYTES;
+                            break;
+                        }
+                        case NewLineProtoParser.ENTITY_TYPE_NULL: {
+                            Unsafe.getUnsafe().putByte(bufPos, entity.getType());
+                            bufPos += Byte.BYTES;
+                            break;
+                        }
+                        default:
+                            // unsupported types are ignored
+                            break;
                     }
-                    case NewLineProtoParser.ENTITY_TYPE_BOOLEAN: {
-                        Unsafe.getUnsafe().putByte(bufPos, entity.getType());
-                        bufPos += Byte.BYTES;
-                        Unsafe.getUnsafe().putByte(bufPos, (byte) (entity.getBooleanValue() ? 1 : 0));
-                        bufPos += Byte.BYTES;
-                        break;
-                    }
+                } else {
+                    throw CairoException.instance(0).put("queue buffer overflow");
                 }
             }
             threadId = tableUpdateDetails.writerThreadId;
@@ -688,7 +712,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                                     break;
 
                                 case ColumnType.INT:
-                                    if (v < Integer.MIN_VALUE || v > Integer.MAX_VALUE) {
+                                    if (v == Numbers.LONG_NaN) {
+                                        v = Numbers.INT_NaN;
+                                    } else if (v < Integer.MIN_VALUE || v > Integer.MAX_VALUE) {
                                         throw CairoException.instance(0)
                                                 .put("line protocol integer is out of int bounds [columnIndex=").put(colIndex)
                                                 .put(", v=").put(v)
@@ -698,7 +724,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                                     break;
 
                                 case ColumnType.SHORT:
-                                    if (v < Short.MIN_VALUE || v > Short.MAX_VALUE) {
+                                    if (v == Numbers.LONG_NaN) {
+                                        v = (short) 0;
+                                    } else if (v < Short.MIN_VALUE || v > Short.MAX_VALUE) {
                                         throw CairoException.instance(0)
                                                 .put("line protocol integer is out of short bounds [columnIndex=").put(colIndex)
                                                 .put(", v=").put(v)
@@ -708,7 +736,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                                     break;
 
                                 case ColumnType.BYTE:
-                                    if (v < Byte.MIN_VALUE || v > Byte.MAX_VALUE) {
+                                    if (v == Numbers.LONG_NaN) {
+                                        v = (byte) 0;
+                                    } else if (v < Byte.MIN_VALUE || v > Byte.MAX_VALUE) {
                                         throw CairoException.instance(0)
                                                 .put("line protocol integer is out of byte bounds [columnIndex=").put(colIndex)
                                                 .put(", v=").put(v)
@@ -772,9 +802,29 @@ class LineTcpMeasurementScheduler implements Closeable {
                             final int colType = writer.getMetadata().getColumnType(colIndex);
                             if (ColumnType.isString(colType)) {
                                 row.putStr(colIndex, job.floatingCharSink);
+                            } else if (ColumnType.isChar(colType)) {
+                                row.putChar(colIndex, job.floatingCharSink.charAt(0));
                             } else {
                                 throw CairoException.instance(0)
                                         .put("cast error for line protocol string [columnIndex=").put(colIndex)
+                                        .put(", columnType=").put(ColumnType.nameOf(colType))
+                                        .put(']');
+                            }
+                            break;
+                        }
+
+                        case NewLineProtoParser.ENTITY_TYPE_SYMBOL: {
+                            int len = Unsafe.getUnsafe().getInt(bufPos);
+                            bufPos += Integer.BYTES;
+                            long hi = bufPos + 2L * len;
+                            job.floatingCharSink.asCharSequence(bufPos, hi);
+                            bufPos = hi;
+                            final int colType = writer.getMetadata().getColumnType(colIndex);
+                            if (ColumnType.isSymbol(colType)) {
+                                row.putSym(colIndex, job.floatingCharSink);
+                            } else {
+                                throw CairoException.instance(0)
+                                        .put("cast error for line protocol symbol [columnIndex=").put(colIndex)
                                         .put(", columnType=").put(ColumnType.nameOf(colType))
                                         .put(']');
                             }
@@ -786,8 +836,16 @@ class LineTcpMeasurementScheduler implements Closeable {
                             bufPos += Integer.BYTES;
                             long hi = bufPos + 2L * len;
                             job.floatingCharSink.asCharSequence(bufPos, hi);
-                            row.putLong256(colIndex, job.floatingCharSink);
                             bufPos = hi;
+                            final int colType = writer.getMetadata().getColumnType(colIndex);
+                            if (ColumnType.isLong256(colType)) {
+                                row.putLong256(colIndex, job.floatingCharSink);
+                            } else {
+                                throw CairoException.instance(0)
+                                        .put("cast error for line protocol long256 [columnIndex=").put(colIndex)
+                                        .put(", columnType=").put(ColumnType.nameOf(colType))
+                                        .put(']');
+                            }
                             break;
                         }
 
@@ -816,6 +874,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                             byte geohash = Unsafe.getUnsafe().getByte(bufPos);
                             bufPos += Byte.BYTES;
                             row.putByte(colIndex, geohash);
+                            break;
+                        }
+
+                        case NewLineProtoParser.ENTITY_TYPE_NULL: {
+                            // ignored, default nulls is used
                             break;
                         }
 
@@ -1021,10 +1084,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                 return getColumnIndex0(colName);
             }
 
-            int getColumnTypeMeta(int colIndex) {
-                return geohashBitsSizeByColIdx.getQuick(colIndex + 1); // first val accounts for new cols, index -1
-            }
-
             private int getColumnIndex0(CharSequence colName) {
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                     TableReaderMetadata metadata = reader.getMetadata();
@@ -1055,6 +1114,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                     }
                     return colIndex;
                 }
+            }
+
+            int getColumnTypeMeta(int colIndex) {
+                return geohashBitsSizeByColIdx.getQuick(colIndex + 1); // first val accounts for new cols, index -1
             }
 
             int getSymbolIndex(int colIndex, CharSequence symValue) {
@@ -1334,6 +1397,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                                 tableUpdateDetailsByTableName.remove(tableName);
                                 idleTableUpdateDetailsByTableName.put(tableName, tableUpdateDetails);
                                 pubSeq.done(seq);
+                                if (listener != null) {
+                                    // table going idle
+                                    listener.onEvent(tableName, 1);
+                                }
                                 LOG.info().$("active table going idle [tableName=").$(tableName).I$();
                             }
                             return true;
@@ -1475,10 +1542,12 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     static {
+        // if not set it defaults to ColumnType.UNDEFINED
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_TAG] = ColumnType.SYMBOL;
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_FLOAT] = ColumnType.DOUBLE;
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_INTEGER] = ColumnType.LONG;
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_STRING] = ColumnType.STRING;
+        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_SYMBOL] = ColumnType.SYMBOL;
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_BOOLEAN] = ColumnType.BOOLEAN;
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_LONG256] = ColumnType.LONG256;
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOBYTE] = ColumnType.getGeoHashTypeWithBits(8);

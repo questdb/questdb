@@ -792,7 +792,7 @@ public class RetryIODispatcherTest {
 
                     writer.close();
                     Assert.assertTrue("Table rename did not complete within timeout after writer is released",
-                            countDownLatch.await(500, TimeUnit.MILLISECONDS));
+                            countDownLatch.await(5, TimeUnit.SECONDS));
                 });
     }
 

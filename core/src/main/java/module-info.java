@@ -568,6 +568,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,
             // geohash functions
             io.questdb.griffin.engine.functions.geohash.GeoHashFromCoordinatesFunctionFactory,
+            // bin functions
+            io.questdb.griffin.engine.functions.bin.Base64FunctionFactory,
             // bit operations
             BitwiseAndLongFunctionFactory,
             BitwiseOrLongFunctionFactory,

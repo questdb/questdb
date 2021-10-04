@@ -113,6 +113,7 @@ public class TableWriter implements Closeable {
     private final Timestamps.TimestampAddMethod timestampAddMethod;
     private final int defaultCommitMode;
     private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
+    private final int o3ColumnMemorySize;
     private final ObjList<Runnable> nullSetters;
     private final ObjList<Runnable> o3NullSetters;
     private final ObjList<MemoryCARW> o3Columns;
@@ -238,6 +239,7 @@ public class TableWriter implements Closeable {
             // dandling sequence
             commandSubSeq = new SCSequence();
         }
+        this.o3ColumnMemorySize = configuration.getO3ColumnMemorySize();
         this.path = new Path();
         this.path.of(root).concat(tableName);
         this.other = new Path().of(root).concat(tableName);
@@ -1949,9 +1951,9 @@ public class TableWriter implements Closeable {
     private void configureColumn(int type, boolean indexFlag) {
         final MemoryMAR primary = Vm.getMARInstance();
         final MemoryMAR secondary;
-        final MemoryCARW oooPrimary = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
+        final MemoryCARW oooPrimary = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         final MemoryCARW oooSecondary;
-        final MemoryCARW oooPrimary2 = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
+        final MemoryCARW oooPrimary2 = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         final MemoryCARW oooSecondary2;
 
 
@@ -1962,8 +1964,8 @@ public class TableWriter implements Closeable {
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 secondary = Vm.getMARInstance();
-                oooSecondary = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
-                oooSecondary2 = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
+                oooSecondary = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
+                oooSecondary2 = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
                 logSecondary = Vm.getMARInstance();
                 break;
             default:
@@ -2014,7 +2016,7 @@ public class TableWriter implements Closeable {
         final int timestampIndex = metadata.getTimestampIndex();
         if (timestampIndex != -1) {
             o3TimestampMem = o3Columns.getQuick(getPrimaryColumnIndex(timestampIndex));
-            o3TimestampMemCpy = Vm.getCARWInstance(MEM_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
+            o3TimestampMemCpy = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         }
     }
 
@@ -2439,7 +2441,8 @@ public class TableWriter implements Closeable {
 
                             if (partitionSize > columnTop) {
                                 TableUtils.dFile(path.trimTo(plen), columnName);
-                                roMem.partialFile(ff, path, (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT), MemoryTag.MMAP_TABLE_WRITER);
+                                final long columnSize = (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT);
+                                roMem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_WRITER);
                                 indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
                                 indexer.index(roMem, columnTop, partitionSize);
                             }
@@ -3826,9 +3829,9 @@ public class TableWriter implements Closeable {
         MemoryMAR mem2 = getSecondaryColumn(i);
 
         try {
-            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
             if (mem2 != null) {
-                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
             }
         } finally {
             path.trimTo(plen);

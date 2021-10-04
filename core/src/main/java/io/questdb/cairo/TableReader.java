@@ -819,7 +819,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             long columnSize
     ) {
         if (mem != null && mem != NullColumn.INSTANCE) {
-            mem.partialFile(ff, path, columnSize, MemoryTag.MMAP_TABLE_READER);
+            mem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_READER);
         } else {
             mem = Vm.getMRInstance(ff, path, columnSize, MemoryTag.MMAP_TABLE_READER);
             columns.setQuick(primaryIndex, mem);

@@ -33,14 +33,21 @@ import io.questdb.std.str.DirectCharSink;
 public class SymbolAdapter extends AbstractTypeAdapter {
 
     private final DirectCharSink utf8Sink;
+    private final boolean indexed;
 
-    public SymbolAdapter(DirectCharSink utf8Sink) {
+    public SymbolAdapter(DirectCharSink utf8Sink, boolean indexed) {
         this.utf8Sink = utf8Sink;
+        this.indexed = indexed;
     }
 
     @Override
     public int getType() {
         return ColumnType.SYMBOL;
+    }
+
+    @Override
+    public boolean isIndexed() {
+        return indexed;
     }
 
     @Override
