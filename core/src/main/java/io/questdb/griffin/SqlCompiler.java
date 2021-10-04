@@ -1459,8 +1459,6 @@ public class SqlCompiler implements Closeable {
         parser.clear();
         backupAgent.clear();
         alterQuery.clear();
-    }
-
         backupAgent.clear();
     }
 

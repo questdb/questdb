@@ -196,11 +196,6 @@ public class LineTcpServerTest extends AbstractCairoTest {
         maxMeasurementSize = 50;
     }
 
-    @After
-    public void cleanup() {
-        maxMeasurementSize = 50;
-    }
-
     @Test
     public void testFieldsReducedNonPartitioned() throws Exception {
         try (TableModel m = new TableModel(configuration, "weather", PartitionBy.NONE)) {
