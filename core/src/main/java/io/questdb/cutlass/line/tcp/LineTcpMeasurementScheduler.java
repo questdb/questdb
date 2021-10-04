@@ -1485,6 +1485,11 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         @Override
+        public long getColumnHash(int columnIndex) {
+            return cairoConfiguration.getRandom().nextLong();
+        }
+
+        @Override
         public int getIndexBlockCapacity(int columnIndex) {
             return 0;
         }

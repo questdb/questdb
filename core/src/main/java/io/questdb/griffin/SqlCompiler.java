@@ -2425,6 +2425,11 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
+        public long getColumnHash(int columnIndex) {
+            return metadata.getColumnHash(columnIndex);
+        }
+
+        @Override
         public CharSequence getTableName() {
             return model.getTableName();
         }

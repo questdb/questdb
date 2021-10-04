@@ -1237,7 +1237,7 @@ public class TableWriter implements Closeable {
             final long pIndexBase = pTransitionIndex + 8;
 
             int addedColumnMetadataIndex = -1;
-            for (int i = 0; i < metadata.getColumnCount(); i++) {
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
 
                 final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L) - 1;
 
@@ -1255,7 +1255,7 @@ public class TableWriter implements Closeable {
                 if (copyFrom > -1) {
                     int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4) - 1;
                     if (copyTo == -1) {
-                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_REMOVE, i, copyTo);
+                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_REMOVE, i, -1);
                         model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_MOVE, copyFrom, i);
                     } else {
                         model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_MOVE, copyFrom, copyTo + 1);
@@ -1263,6 +1263,9 @@ public class TableWriter implements Closeable {
                 } else {
                     // new column
                     model.addColumnMetadata(metadata.getColumnQuick(i));
+                    if (copyFrom == -2) {
+                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_REMOVE, i, -1);
+                    }
                     model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, ++addedColumnMetadataIndex, i);
                 }
             }

@@ -2234,7 +2234,7 @@ public class SqlCodeGenerator implements Mutable {
                     virtualMetadata.add(
                             new TableColumnMetadata(
                                     Chars.toString(column.getAlias()),
-                                    0,
+                                    configuration.getRandom().nextLong(),
                                     function.getType(),
                                     false,
                                     0,
@@ -2246,7 +2246,7 @@ public class SqlCodeGenerator implements Mutable {
                     virtualMetadata.add(
                             new TableColumnMetadata(
                                     Chars.toString(column.getAlias()),
-                                    0,
+                                    configuration.getRandom().nextLong(),
                                     function.getType(),
                                     function.getMetadata()
                             )

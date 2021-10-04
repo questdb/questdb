@@ -75,6 +75,7 @@ public final class TableUtils {
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long TX_OFFSET_MIN_TIMESTAMP = 24;
     public static final long TX_OFFSET_MAX_TIMESTAMP = 32;
+    public static final long META_COLUMN_DATA_SIZE = 32;
     static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
@@ -108,7 +109,6 @@ public final class TableUtils {
     // INT - symbol map count, this is a variable part of transaction file
     // below this offset we will have INT values for symbol map size
     static final long META_OFFSET_PARTITION_BY = 4;
-    public static final long META_COLUMN_DATA_SIZE = 32;
     static final int META_FLAG_BIT_INDEXED = 1;
     static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
     static final String TODO_FILE_NAME = "_todo_";
@@ -173,8 +173,6 @@ public final class TableUtils {
             mem.putLong(structure.getCommitLag());
             mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
-            final Rnd rnd = configuration.getRandom();
-
             for (int i = 0; i < count; i++) {
                 mem.putInt(structure.getColumnType(i));
                 long flags = 0;
@@ -188,7 +186,7 @@ public final class TableUtils {
 
                 mem.putLong(flags);
                 mem.putInt(structure.getIndexBlockCapacity(i));
-                mem.putLong(rnd.nextLong());
+                mem.putLong(structure.getColumnHash(i));
                 // reserved
                 mem.skip(8);
             }
@@ -230,10 +228,6 @@ public final class TableUtils {
         }
     }
 
-    public static LPSZ dFile(Path path, CharSequence columnName) {
-        return path.concat(columnName).put(FILE_SUFFIX_D).$();
-    }
-
     public static long createTransitionIndex(
             MemoryR masterMeta,
             MemoryR slaveMeta,
@@ -267,19 +261,24 @@ public final class TableUtils {
             offset += Vm.getStorageLength(name);
             int oldPosition = slaveColumnNameIndexMap.get(name);
             // write primary (immutable) index
+            boolean hashMatch = true;
             if (
                     oldPosition > -1
                             && getColumnType(masterMeta, i) == getColumnType(slaveMeta, oldPosition)
                             && isColumnIndexed(masterMeta, i) == isColumnIndexed(slaveMeta, oldPosition)
-//                            && getColumnHash(masterMeta, i) == getColumnHash(slaveMeta, oldPosition)
+                            && (hashMatch = (getColumnHash(masterMeta, i) == getColumnHash(slaveMeta, oldPosition)))
             ) {
                 Unsafe.getUnsafe().putInt(index + i * 8L, oldPosition + 1);
                 Unsafe.getUnsafe().putInt(index + oldPosition * 8L + 4, i + 1);
             } else {
-                Unsafe.getUnsafe().putLong(index + i * 8L, 0);
+                Unsafe.getUnsafe().putLong(index + i * 8L, hashMatch ? 0 : -1);
             }
         }
         return pTransitionIndex;
+    }
+
+    public static LPSZ dFile(Path path, CharSequence columnName) {
+        return path.concat(columnName).put(FILE_SUFFIX_D).$();
     }
 
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {
@@ -369,14 +368,14 @@ public final class TableUtils {
         return getPartitionTableIndexOffset(symbolWriterCount, attachedPartitionsSize);
     }
 
-    public static LPSZ iFile(Path path, CharSequence columnName) {
-        return path.concat(columnName).put(FILE_SUFFIX_I).$();
-    }
-
     public static long getTxMemorySize(long txMem) {
         final int symbolsCount = Unsafe.getUnsafe().getInt(txMem + TX_OFFSET_MAP_WRITER_COUNT);
         final int partitionCount = Unsafe.getUnsafe().getInt(txMem + getPartitionTableSizeOffset(symbolsCount)) / 8;
         return getPartitionTableIndexOffset(symbolsCount, partitionCount);
+    }
+
+    public static LPSZ iFile(Path path, CharSequence columnName) {
+        return path.concat(columnName).put(FILE_SUFFIX_I).$();
     }
 
     public static boolean isValidColumnName(CharSequence seq) {

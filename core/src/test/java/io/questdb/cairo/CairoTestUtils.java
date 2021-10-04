@@ -31,7 +31,7 @@ public class CairoTestUtils {
 
     public static void create(TableModel model) {
         TableUtils.createTable(
-                model.getCairoCfg(),
+                model.getConfiguration(),
                 model.getMem(),
                 model.getPath(),
                 model,
@@ -63,7 +63,7 @@ public class CairoTestUtils {
 
     public static void createTable(TableModel model, int version) {
         TableUtils.createTable(
-                model.getCairoCfg(),
+                model.getConfiguration(),
                 model.getMem(),
                 model.getPath(),
                 model,
@@ -74,7 +74,7 @@ public class CairoTestUtils {
 
     public static void createTableWithVersionAndId(TableModel model, int version, int tableId) {
         TableUtils.createTable(
-                model.getCairoCfg(),
+                model.getConfiguration(),
                 model.getMem(),
                 model.getPath(),
                 model,
