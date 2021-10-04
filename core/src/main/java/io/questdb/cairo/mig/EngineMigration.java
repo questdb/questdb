@@ -45,7 +45,6 @@ public class EngineMigration {
     public static final int VERSION_VAR_COLUMN_CHANGED = 421;
     public static final int VERSION_VAR_COLUMN_CHANGED_MIGRATION_FIX = 422;
     public static final int VERSION_THAT_ADDED_TABLE_ID = 417;
-    public static final int VERSION_COLUMN_RPL_HASH_CHANGED = 424;
 
     // All offsets hardcoded here in case TableUtils offset calculation changes
     // in future code version
@@ -250,8 +249,8 @@ public class EngineMigration {
         setByVersion(VERSION_THAT_ADDED_TABLE_ID, MigrationActions::assignTableId, 1);
         setByVersion(VERSION_TX_STRUCT_UPDATE_1, MigrationActions::rebuildTransactionFile, 0);
         setByVersion(VERSION_TBL_META_COMMIT_LAG, MigrationActions::addTblMetaCommitLag, 0);
-        setByVersion(VERSION_COLUMN_TYPE_ENCODING_CHANGED, MigrationActions::updateColumnTypeIds, 1);
-        setByVersion(VERSION_VAR_COLUMN_CHANGED, MigrationActions::bumpVarColumnIndex, 1);
-        setByVersion(VERSION_VAR_COLUMN_CHANGED_MIGRATION_FIX, MigrationActions::bumpVarColumnIndexFix, 1);
+        setByVersion(VERSION_COLUMN_TYPE_ENCODING_CHANGED, MigrationActions::mig605, 1);
+        setByVersion(VERSION_VAR_COLUMN_CHANGED, MigrationActions::mig606, 1);
+        setByVersion(VERSION_VAR_COLUMN_CHANGED_MIGRATION_FIX, MigrationActions::mig607, 1);
     }
 }

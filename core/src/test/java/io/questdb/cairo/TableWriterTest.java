@@ -2651,7 +2651,7 @@ public class TableWriterTest extends AbstractCairoTest {
             create(FF, PartitionBy.DAY, 10000);
             CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                 @Override
-                public long getAppendPageSize() {
+                public long getDataAppendPageSize() {
                     return getFilesFacade().getPageSize();
                 }
             };
@@ -2667,7 +2667,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 for (int i = 0, n = w.columns.size(); i < n; i++) {
                     MemoryMAR m = w.columns.getQuick(i);
                     if (m != null) {
-                        Assert.assertEquals(configuration.getAppendPageSize(), m.getExtendSegmentSize());
+                        Assert.assertEquals(configuration.getDataAppendPageSize(), m.getExtendSegmentSize());
                     }
                 }
             }

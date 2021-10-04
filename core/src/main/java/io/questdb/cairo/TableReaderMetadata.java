@@ -72,6 +72,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
                 columnMetadata.add(
                         new TableColumnMetadata(
                                 Chars.toString(name),
+                                TableUtils.getColumnHash(metaMem, i),
                                 TableUtils.getColumnType(metaMem, i),
                                 TableUtils.isColumnIndexed(metaMem, i),
                                 TableUtils.getIndexBlockCapacity(metaMem, i),
@@ -194,10 +195,8 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
         transitionMeta.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
         try (MemoryMR metaMem = transitionMeta) {
-
             tmpValidationMap.clear();
             TableUtils.validate(ff, metaMem, tmpValidationMap, ColumnType.VERSION);
-
             return TableUtils.createTransitionIndex(metaMem, this.metaMem, this.columnCount, this.columnNameIndexMap);
         }
     }
@@ -241,6 +240,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         assert name != null;
         return new TableColumnMetadata(
                 Chars.toString(name),
+                TableUtils.getColumnHash(metaMem, index),
                 TableUtils.getColumnType(metaMem, index),
                 TableUtils.isColumnIndexed(metaMem, index),
                 TableUtils.getIndexBlockCapacity(metaMem, index),

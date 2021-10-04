@@ -48,6 +48,7 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
             for (int i = 0, n = from.getColumnCount(); i < n; i++) {
                 to.add(new TableColumnMetadata(
                         from.getColumnName(i),
+                        from.getColumnHash(i),
                         from.getColumnType(i),
                         from.isColumnIndexed(i),
                         from.getIndexValueBlockCapacity(i),

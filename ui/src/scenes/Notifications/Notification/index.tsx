@@ -1,179 +1,27 @@
-import { format } from "date-fns/fp"
-import React, { useCallback, useContext, useState } from "react"
-import { useDispatch } from "react-redux"
+import React from "react"
 import { CSSTransition } from "react-transition-group"
-import { Close } from "@styled-icons/remix-line/Close"
-import { Pushpin } from "@styled-icons/remix-line/Pushpin"
-import { Pushpin2 } from "@styled-icons/remix-line/Pushpin2"
-import styled, { css, keyframes } from "styled-components"
+import { TransitionDuration } from "components"
+import { NotificationShape, NotificationType } from "types"
+import { SuccessNotification } from "./SuccessNotification"
+import { ErrorNotification } from "./ErrorNotification"
+import { InfoNotification } from "./InfoNotification"
 
-import { bezierTransition, Text, Toast, TransitionDuration } from "components"
-import { actions } from "store"
-import { LocalStorageContext } from "providers/LocalStorageProvider"
-import { Color, NotificationShape, NotificationType } from "types"
-import { color } from "utils"
-
-type Props = NotificationShape
-
-type AnimationPlay = "paused" | "running"
-
-const Wrapper = styled(Toast)<{ pinned: boolean }>`
-  margin-top: 1rem;
-  padding-right: 3rem;
-  border-right: none;
-  box-shadow: ${color("black")} 0 0 4px;
-  ${({ pinned }) => (pinned ? "" : "border-bottom: none;")};
-
-  overflow: hidden;
-  ${bezierTransition};
-
-  &:hover {
-    background: ${color("draculaSelection")};
-  }
-`
-
-const Title = styled(Text)<{ hasLine1: boolean }>`
-  display: flex;
-  margin-bottom: ${({ hasLine1 }) => (hasLine1 ? "0.4rem" : "0")};
-`
-
-const baseIconStyles = css`
-  position: absolute;
-  top: 0.1rem;
-  right: 0.7rem;
-  color: ${color("gray2")};
-
-  &:hover {
-    color: ${color("white")};
-    cursor: pointer;
-  }
-`
-
-const CloseIcon = styled(Close)`
-  ${baseIconStyles};
-`
-
-const disappear = keyframes`
-  from {
-    left: 0;
-  }
-
-  to {
-    left: 100%
-  }
-`
-
-const Out = styled.div<{
-  animationPlay: AnimationPlay
-  animationDelay: number
-}>`
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 2px;
-
-  :before {
-    content: " ";
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    height: 2px;
-    background: ${color("draculaSelection")};
-  }
-
-  :after {
-    content: " ";
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    height: 2px;
-    background: ${color("gray2")};
-    animation: ${disappear} ${({ animationDelay }) => animationDelay}s linear 0s
-      1 normal forwards;
-    animation-play-state: ${({ animationPlay }) => animationPlay};
-  }
-`
-
-const Pin = styled(Pushpin2)`
-  ${baseIconStyles};
-  top: 1.8rem;
-  right: 0.8rem;
-`
-
-const Unpin = styled(Pushpin)`
-  ${baseIconStyles};
-  top: 1.8rem;
-  right: 0.8rem;
-`
-
-const getBorderColor = (type: NotificationType): Color => {
-  if (type === NotificationType.SUCCESS) {
-    return "draculaGreen"
-  }
-
-  if (type === NotificationType.ERROR) {
-    return "draculaRed"
-  }
-
-  return "draculaCyan"
-}
-
-const Notification = ({ createdAt, line1, title, type, ...rest }: Props) => {
-  const { notificationDelay } = useContext(LocalStorageContext)
-  const [pinned, setPinned] = useState(false)
-  const [animationPlay, setAnimationPlay] = useState<AnimationPlay>("running")
-  const dispatch = useDispatch()
-  const handleCloseClick = useCallback(() => {
-    dispatch(actions.query.removeNotification(createdAt))
-  }, [createdAt, dispatch])
-  const handlePinClick = useCallback(() => {
-    setPinned(!pinned)
-  }, [pinned])
-  const handleMouseEnter = useCallback(() => {
-    setAnimationPlay("paused")
-  }, [])
-  const handleMouseLeave = useCallback(() => {
-    setAnimationPlay("running")
-  }, [])
-
+const Notification = (props: NotificationShape) => {
+  const { type, ...rest } = props
   return (
     <CSSTransition
-      classNames="slide"
+      classNames="fade-reg"
       timeout={TransitionDuration.REG}
       unmountOnExit
       {...rest}
     >
-      <Wrapper
-        borderColor={getBorderColor(type)}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-        pinned={pinned}
-      >
-        <Title color="gray2" hasLine1={!!line1}>
-          [{format("HH:mm:ss", createdAt)}]&nbsp;{title}
-        </Title>
-
-        {line1}
-
-        {!pinned && (
-          <Out
-            animationDelay={notificationDelay}
-            animationPlay={animationPlay}
-            onAnimationEnd={handleCloseClick}
-          />
-        )}
-
-        <CloseIcon onClick={handleCloseClick} size="18px" />
-
-        {pinned ? (
-          <Unpin onClick={handlePinClick} size="16px" />
-        ) : (
-          <Pin onClick={handlePinClick} size="16px" />
-        )}
-      </Wrapper>
+      {type === NotificationType.SUCCESS ? (
+        <SuccessNotification {...props} />
+      ) : type === NotificationType.ERROR ? (
+        <ErrorNotification {...props} />
+      ) : (
+        <InfoNotification {...props} />
+      )}
     </CSSTransition>
   )
 }

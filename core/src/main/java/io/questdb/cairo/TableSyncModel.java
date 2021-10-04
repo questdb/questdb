@@ -150,6 +150,7 @@ public class TableSyncModel implements Mutable, Sinkable {
             addedColumnMetadata.add(
                     new TableColumnMetadata(
                             Chars.toString(nameSink),
+                            0, // todo: deserialize hash
                             type,
                             indexed,
                             valueBlockCapacity,

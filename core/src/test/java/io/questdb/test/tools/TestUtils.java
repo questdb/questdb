@@ -52,8 +52,6 @@ public final class TestUtils {
 
     private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
 
-    private static final long[] memoryUsageByTag = new long[MemoryTag.SIZE];
-
     private TestUtils() {
     }
 
@@ -378,6 +376,7 @@ public final class TestUtils {
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
         Path.clearThreadLocals();
         long mem = Unsafe.getMemUsed();
+        long[] memoryUsageByTag = new long[MemoryTag.SIZE];
         for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
             memoryUsageByTag[i] = Unsafe.getMemUsedByTag(i);
         }
@@ -496,7 +495,7 @@ public final class TestUtils {
         try (InputStream stream = TestUtils.class.getResourceAsStream("/site/conf/mime.types")) {
             Assert.assertNotNull(stream);
             final File target = new File(targetDir, "conf/mime.types");
-            target.getParentFile().mkdirs();
+            Assert.assertTrue(target.getParentFile().mkdirs());
             try (FileOutputStream fos = new FileOutputStream(target)) {
                 byte[] buffer = new byte[1024 * 1204];
                 int len;

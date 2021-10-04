@@ -59,6 +59,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getDataIndexKeyAppendPageSize() {
+        return Files.PAGE_SIZE;
+    }
+
+    @Override
+    public long getDataIndexValueAppendPageSize() {
+        return Files.ceilPageSize(1024*1024);
+    }
+
+    @Override
     public int getBindVariablePoolSize() {
         return 8;
     }
@@ -481,8 +491,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getAppendPageSize() {
+    public long getDataAppendPageSize() {
         return getFilesFacade().getMapPageSize();
+    }
+
+    @Override
+    public long getMiscAppendPageSize() {
+        return getFilesFacade().getPageSize();
     }
 
     @Override
@@ -563,5 +578,15 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getLatestByQueueCapacity() {
         return 32;
+    }
+
+    @Override
+    public int getBinaryEncodingMaxLength() {
+        return 32768;
+    }
+
+    @Override
+    public int getO3ColumnMemorySize() {
+        return 16 * Numbers.SIZE_1MB;
     }
 }

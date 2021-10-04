@@ -145,12 +145,13 @@ public class LineProtoLexerTest {
 
     @Test
     public void testNoFieldValue2() {
-        assertError("measurement,tag=x f= 10000", LineProtoParser.EVT_FIELD_VALUE, LineProtoParser.ERROR_EMPTY, 20);
+        assertError("measurement,tag=x f= 10000", 0, 0, 0);
+        assertThat("measurement,tag=x f= 10000\n", "measurement,tag=x f= 10000\n");
     }
 
     @Test
     public void testNoFieldValue3() {
-        assertError("measurement,tag=x f=, 10000", LineProtoParser.EVT_FIELD_VALUE, LineProtoParser.ERROR_EMPTY, 20);
+        assertError("measurement,tag=x f=, 10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 21);
     }
 
     @Test
@@ -241,10 +242,12 @@ public class LineProtoLexerTest {
     @Test
     public void testSkipLine() {
         assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
+                        "measurement,tag=value3,tag2=value2 field=,field2=\"ok\"\n" +
                         "measurement,tag=value3,tag2=value2 field=-- error --\n" +
                         "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n",
                 "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
                         "measurement,tag=value3,tag2=value2 field=,field2=\"ok\"\n" +
+                        "measurement,tag=value3,tag2=value2 field= field2=\"not ok\"\n" +
                         "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n");
     }
 
@@ -303,7 +306,7 @@ public class LineProtoLexerTest {
         }
     }
 
-    private void assertThat(CharSequence expected, CharSequence line) throws LineProtoException {
+    protected void assertThat(CharSequence expected, CharSequence line) throws LineProtoException {
         assertThat(expected, line.toString().getBytes(StandardCharsets.UTF_8));
     }
 
@@ -402,7 +405,7 @@ public class LineProtoLexerTest {
 
         @Override
         public void onLineEnd(CharSequenceCache cache) {
-           sink.put('\n');
+            sink.put('\n');
 
             // assert that cached token match
             for (Map.Entry<Long, String> e : tokens.entrySet()) {

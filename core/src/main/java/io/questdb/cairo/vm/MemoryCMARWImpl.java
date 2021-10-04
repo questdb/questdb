@@ -211,7 +211,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
         this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
-        this.minMappedMemorySize = ff.getMapPageSize();
+        this.minMappedMemorySize = extendSegmentSize;
         openFile(ff, name);
         map(ff, name, size, memoryTag);
     }

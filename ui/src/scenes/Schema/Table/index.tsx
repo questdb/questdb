@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-import React, { useCallback, useEffect, useState } from "react"
+import React, { useCallback, useEffect, useState, useRef } from "react"
 import { CSSTransition } from "react-transition-group"
 import { from, combineLatest, of } from "rxjs"
 import { delay, startWith } from "rxjs/operators"
@@ -33,9 +33,11 @@ import {
   spinAnimation,
   TransitionDuration,
 } from "components"
+import { ContextMenuTrigger } from "components/ContextMenu"
 import { color } from "utils"
 import * as QuestDB from "utils/questdb"
 import Row from "../Row"
+import ContextualMenu from "./ContextualMenu"
 
 type Props = QuestDB.Table &
   Readonly<{
@@ -47,6 +49,7 @@ type Props = QuestDB.Table &
   }>
 
 const Wrapper = styled.div`
+  position: relative;
   display: flex;
   margin-top: 0.5rem;
   align-items: stretch;
@@ -90,6 +93,7 @@ const Loader = styled(Loader4)`
 `
 
 const Table = ({ description, expanded, onChange, refresh, table }: Props) => {
+  const ref = useRef<HTMLDivElement>(null)
   const [quest] = useState(new QuestDB.Client())
   const [loading, setLoading] = useState(false)
   const [columns, setColumns] = useState<QuestDB.Column[]>()
@@ -110,21 +114,28 @@ const Table = ({ description, expanded, onChange, refresh, table }: Props) => {
     }
   }, [expanded, refresh, quest, table])
 
-  const handleClick = useCallback(() => {
-    onChange(expanded ? "" : table)
-  }, [expanded, onChange, table])
+  const handleClick = useCallback(
+    (e) => {
+      onChange(expanded ? "" : table)
+    },
+    [expanded, onChange, table],
+  )
 
   return (
-    <Wrapper _height={columns ? columns.length * 30 : 0}>
-      <Title
-        description={description}
-        expanded={expanded}
-        kind="table"
-        name={table}
-        onClick={handleClick}
-        suffix={loading && <Loader size="18px" />}
-        tooltip={!!description}
-      />
+    <Wrapper _height={columns ? columns.length * 30 : 0} ref={ref}>
+      <ContextMenuTrigger id={table}>
+        <Title
+          description={description}
+          expanded={expanded}
+          kind="table"
+          name={table}
+          onClick={handleClick}
+          suffix={loading && <Loader size="18px" />}
+          tooltip={!!description}
+        />
+      </ContextMenuTrigger>
+
+      <ContextualMenu name={table} />
 
       <CSSTransition
         classNames="collapse"

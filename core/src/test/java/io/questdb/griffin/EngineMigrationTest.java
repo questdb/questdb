@@ -25,13 +25,17 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -42,6 +46,7 @@ import java.net.URL;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
+@Ignore
 public class EngineMigrationTest extends AbstractGriffinTest {
 
     public static void replaceDbContent(String path) throws IOException {
@@ -103,7 +108,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGenerateTables() throws SqlException {
+    public void testGenerateTables() throws SqlException, NumericException {
         generateMigrationTables();
         engine.releaseAllWriters();
         assertData(true);
@@ -266,6 +271,215 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "78\tG\t-17940\t80875\t-51648\t0.6760\t0.11832421260528181\t1975-05-31T11:59:53.684Z\t1969-12-31T23:59:58.301229Z\t\tc\ttrue\tc\t0x865d10d8ed10c87e834c69559a9466d6c203e9ee6688fb00a82be0da997d3319\t00000000 5b e4 24 6e 3b 78\t1970-10-28T23:10:00.000000Z\n" +
                         "66\tD\t-5300\t814924\t23886\t0.7993\t0.6834975299862411\t\t1969-12-31T23:59:55.960730Z\tRUCW\t\ttrue\t\t0xe6e8724e0d55db8bc5c2baab99008d37d61065128bd9ac80cdc779c297ba2d9b\t00000000 7d bf aa 4e c7 70 67 76\t1970-11-21T01:50:00.000000Z\n" +
                         "116\tW\t1209\tNaN\t-54703\t0.3827\t0.8336512245695875\t1973-04-20T21:58:44.387Z\t1969-12-31T23:59:57.953146Z\tWQLO\t\ttrue\taaa\t0x63d3edab19deae0e8de4fd1623e40b3592c091ab093e983862af3f4b563813ce\t00000000 21 13\t1970-11-21T02:43:20.000000Z\n"
+        );
+
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "o3_0",
+                sink,
+                "a\tb\tt\n" +
+                        "\t\t2014-09-10T01:00:00.000000Z\n" +
+                        "\t\t2014-09-10T01:00:00.000000Z\n" +
+                        "\t\t2014-09-10T01:00:00.100000Z\n" +
+                        "\t\t2014-09-10T01:00:00.200000Z\n" +
+                        "\t\t2014-09-10T01:00:00.300000Z\n" +
+                        "\t\t2014-09-10T01:00:00.400000Z\n" +
+                        "\t\t2014-09-10T01:00:00.500000Z\n" +
+                        "\t\t2014-09-10T01:00:00.600000Z\n" +
+                        "\t\t2014-09-10T01:00:00.700000Z\n" +
+                        "\t\t2014-09-10T01:00:00.800000Z\n" +
+                        "\t\t2014-09-10T01:00:00.900000Z\n" +
+                        "\t\t2014-09-10T01:00:01.000000Z\n" +
+                        "\t\t2014-09-10T01:00:01.100000Z\n" +
+                        "\t\t2014-09-10T01:00:01.200000Z\n" +
+                        "\t\t2014-09-10T01:00:01.300000Z\n" +
+                        "\t\t2014-09-10T01:00:01.400000Z\n" +
+                        "\t\t2014-09-10T01:00:01.500000Z\n" +
+                        "\t\t2014-09-10T01:00:01.600000Z\n" +
+                        "\t\t2014-09-10T01:00:01.700000Z\n" +
+                        "\t\t2014-09-10T01:00:01.800000Z\n" +
+                        "\t\t2014-09-10T01:00:01.900000Z\n" +
+                        "\t\t2014-09-10T01:00:02.000000Z\n" +
+                        "\t\t2014-09-10T01:00:02.100000Z\n" +
+                        "\t\t2014-09-10T01:00:02.200000Z\n" +
+                        "\t\t2014-09-10T01:00:02.300000Z\n" +
+                        "\t\t2014-09-10T01:00:02.400000Z\n" +
+                        "\t\t2014-09-10T01:00:02.500000Z\n" +
+                        "\t\t2014-09-10T01:00:02.600000Z\n" +
+                        "\t\t2014-09-10T01:00:02.700000Z\n" +
+                        "\t\t2014-09-10T01:00:02.800000Z\n" +
+                        "\t\t2014-09-10T01:00:02.900000Z\n" +
+                        "\t\t2014-09-10T01:00:03.000000Z\n" +
+                        "\t\t2014-09-10T01:00:03.100000Z\n" +
+                        "\t\t2014-09-10T01:00:03.200000Z\n" +
+                        "\t\t2014-09-10T01:00:03.300000Z\n" +
+                        "\t\t2014-09-10T01:00:03.400000Z\n" +
+                        "\t\t2014-09-10T01:00:03.500000Z\n" +
+                        "\t\t2014-09-10T01:00:03.600000Z\n" +
+                        "\t\t2014-09-10T01:00:03.700000Z\n" +
+                        "\t\t2014-09-10T01:00:03.800000Z\n" +
+                        "\t\t2014-09-10T01:00:03.900000Z\n" +
+                        "\t\t2014-09-10T01:00:04.000000Z\n" +
+                        "\t\t2014-09-10T01:00:04.100000Z\n" +
+                        "\t\t2014-09-10T01:00:04.200000Z\n" +
+                        "\t\t2014-09-10T01:00:04.300000Z\n" +
+                        "\t\t2014-09-10T01:00:04.400000Z\n" +
+                        "\t\t2014-09-10T01:00:04.500000Z\n" +
+                        "\t\t2014-09-10T01:00:04.600000Z\n" +
+                        "\t\t2014-09-10T01:00:04.700000Z\n" +
+                        "\t\t2014-09-10T01:00:04.800000Z\n" +
+                        "\t\t2014-09-10T01:00:04.900000Z\n" +
+                        "\t\t2014-09-10T01:00:05.000000Z\n" +
+                        "\t\t2014-09-10T01:00:05.100000Z\n" +
+                        "\t\t2014-09-10T01:00:05.200000Z\n" +
+                        "\t\t2014-09-10T01:00:05.300000Z\n" +
+                        "\t\t2014-09-10T01:00:05.400000Z\n" +
+                        "\t\t2014-09-10T01:00:05.500000Z\n" +
+                        "\t\t2014-09-10T01:00:05.600000Z\n" +
+                        "\t\t2014-09-10T01:00:05.700000Z\n" +
+                        "\t\t2014-09-10T01:00:05.800000Z\n" +
+                        "\t\t2014-09-10T01:00:05.900000Z\n" +
+                        "\t\t2014-09-10T01:00:06.000000Z\n" +
+                        "\t\t2014-09-10T01:00:06.100000Z\n" +
+                        "\t\t2014-09-10T01:00:06.200000Z\n" +
+                        "\t\t2014-09-10T01:00:06.300000Z\n" +
+                        "\t\t2014-09-10T01:00:06.400000Z\n" +
+                        "\t\t2014-09-10T01:00:06.500000Z\n" +
+                        "\t\t2014-09-10T01:00:06.600000Z\n" +
+                        "\t\t2014-09-10T01:00:06.700000Z\n" +
+                        "\t\t2014-09-10T01:00:06.800000Z\n" +
+                        "\t\t2014-09-10T01:00:06.900000Z\n" +
+                        "\t\t2014-09-10T01:00:07.000000Z\n" +
+                        "\t\t2014-09-10T01:00:07.100000Z\n" +
+                        "\t\t2014-09-10T01:00:07.200000Z\n" +
+                        "\t\t2014-09-10T01:00:07.300000Z\n" +
+                        "\t\t2014-09-10T01:00:07.400000Z\n" +
+                        "\t\t2014-09-10T01:00:07.500000Z\n" +
+                        "\t\t2014-09-10T01:00:07.600000Z\n" +
+                        "\t\t2014-09-10T01:00:07.700000Z\n" +
+                        "\t\t2014-09-10T01:00:07.800000Z\n" +
+                        "\t\t2014-09-10T01:00:07.900000Z\n" +
+                        "\t\t2014-09-10T01:00:08.000000Z\n" +
+                        "\t\t2014-09-10T01:00:08.100000Z\n" +
+                        "\t\t2014-09-10T01:00:08.200000Z\n" +
+                        "\t\t2014-09-10T01:00:08.300000Z\n" +
+                        "\t\t2014-09-10T01:00:08.400000Z\n" +
+                        "\t\t2014-09-10T01:00:08.500000Z\n" +
+                        "\t\t2014-09-10T01:00:08.600000Z\n" +
+                        "\t\t2014-09-10T01:00:08.700000Z\n" +
+                        "\t\t2014-09-10T01:00:08.800000Z\n" +
+                        "\t\t2014-09-10T01:00:08.900000Z\n" +
+                        "\t\t2014-09-10T01:00:09.000000Z\n" +
+                        "\t\t2014-09-10T01:00:09.100000Z\n" +
+                        "\t\t2014-09-10T01:00:09.200000Z\n" +
+                        "\t\t2014-09-10T01:00:09.300000Z\n" +
+                        "\t\t2014-09-10T01:00:09.400000Z\n" +
+                        "\t\t2014-09-10T01:00:09.500000Z\n" +
+                        "\t\t2014-09-10T01:00:09.600000Z\n" +
+                        "\t\t2014-09-10T01:00:09.700000Z\n" +
+                        "\t\t2014-09-10T01:00:09.800000Z\n" +
+                        "\t\t2014-09-10T01:00:09.900000Z\n" +
+                        "\t\t2014-09-11T01:00:00.000000Z\n" +
+                        "\t\t2014-09-11T01:00:00.100000Z\n" +
+                        "\t\t2014-09-11T01:00:00.200000Z\n" +
+                        "\t\t2014-09-11T01:00:00.300000Z\n" +
+                        "\t\t2014-09-11T01:00:00.400000Z\n" +
+                        "\t\t2014-09-11T01:00:00.500000Z\n" +
+                        "\t\t2014-09-11T01:00:00.600000Z\n" +
+                        "\t\t2014-09-11T01:00:00.700000Z\n" +
+                        "\t\t2014-09-11T01:00:00.800000Z\n" +
+                        "\t\t2014-09-11T01:00:00.900000Z\n" +
+                        "\t\t2014-09-11T01:00:01.000000Z\n" +
+                        "\t\t2014-09-11T01:00:01.100000Z\n" +
+                        "\t\t2014-09-11T01:00:01.200000Z\n" +
+                        "\t\t2014-09-11T01:00:01.300000Z\n" +
+                        "\t\t2014-09-11T01:00:01.400000Z\n" +
+                        "\t\t2014-09-11T01:00:01.500000Z\n" +
+                        "\t\t2014-09-11T01:00:01.600000Z\n" +
+                        "\t\t2014-09-11T01:00:01.700000Z\n" +
+                        "\t\t2014-09-11T01:00:01.800000Z\n" +
+                        "\t\t2014-09-11T01:00:01.900000Z\n" +
+                        "\t\t2014-09-11T01:00:02.000000Z\n" +
+                        "\t\t2014-09-11T01:00:02.100000Z\n" +
+                        "\t\t2014-09-11T01:00:02.200000Z\n" +
+                        "\t\t2014-09-11T01:00:02.300000Z\n" +
+                        "\t\t2014-09-11T01:00:02.400000Z\n" +
+                        "\t\t2014-09-11T01:00:02.500000Z\n" +
+                        "\t\t2014-09-11T01:00:02.600000Z\n" +
+                        "\t\t2014-09-11T01:00:02.700000Z\n" +
+                        "\t\t2014-09-11T01:00:02.800000Z\n" +
+                        "\t\t2014-09-11T01:00:02.900000Z\n" +
+                        "\t\t2014-09-11T01:00:03.000000Z\n" +
+                        "\t\t2014-09-11T01:00:03.100000Z\n" +
+                        "\t\t2014-09-11T01:00:03.200000Z\n" +
+                        "\t\t2014-09-11T01:00:03.300000Z\n" +
+                        "\t\t2014-09-11T01:00:03.400000Z\n" +
+                        "\t\t2014-09-11T01:00:03.500000Z\n" +
+                        "\t\t2014-09-11T01:00:03.600000Z\n" +
+                        "\t\t2014-09-11T01:00:03.700000Z\n" +
+                        "\t\t2014-09-11T01:00:03.800000Z\n" +
+                        "\t\t2014-09-11T01:00:03.900000Z\n" +
+                        "\t\t2014-09-11T01:00:04.000000Z\n" +
+                        "\t\t2014-09-11T01:00:04.100000Z\n" +
+                        "\t\t2014-09-11T01:00:04.200000Z\n" +
+                        "\t\t2014-09-11T01:00:04.300000Z\n" +
+                        "\t\t2014-09-11T01:00:04.400000Z\n" +
+                        "\t\t2014-09-11T01:00:04.500000Z\n" +
+                        "\t\t2014-09-11T01:00:04.600000Z\n" +
+                        "\t\t2014-09-11T01:00:04.700000Z\n" +
+                        "\t\t2014-09-11T01:00:04.800000Z\n" +
+                        "\t\t2014-09-11T01:00:04.900000Z\n" +
+                        "\t\t2014-09-11T01:00:05.000000Z\n" +
+                        "\t\t2014-09-11T01:00:05.100000Z\n" +
+                        "\t\t2014-09-11T01:00:05.200000Z\n" +
+                        "\t\t2014-09-11T01:00:05.300000Z\n" +
+                        "\t\t2014-09-11T01:00:05.400000Z\n" +
+                        "\t\t2014-09-11T01:00:05.500000Z\n" +
+                        "\t\t2014-09-11T01:00:05.600000Z\n" +
+                        "\t\t2014-09-11T01:00:05.700000Z\n" +
+                        "\t\t2014-09-11T01:00:05.800000Z\n" +
+                        "\t\t2014-09-11T01:00:05.900000Z\n" +
+                        "\t\t2014-09-11T01:00:06.000000Z\n" +
+                        "\t\t2014-09-11T01:00:06.100000Z\n" +
+                        "\t\t2014-09-11T01:00:06.200000Z\n" +
+                        "\t\t2014-09-11T01:00:06.300000Z\n" +
+                        "\t\t2014-09-11T01:00:06.400000Z\n" +
+                        "\t\t2014-09-11T01:00:06.500000Z\n" +
+                        "\t\t2014-09-11T01:00:06.600000Z\n" +
+                        "\t\t2014-09-11T01:00:06.700000Z\n" +
+                        "\t\t2014-09-11T01:00:06.800000Z\n" +
+                        "\t\t2014-09-11T01:00:06.900000Z\n" +
+                        "\t\t2014-09-11T01:00:07.000000Z\n" +
+                        "\t\t2014-09-11T01:00:07.100000Z\n" +
+                        "\t\t2014-09-11T01:00:07.200000Z\n" +
+                        "\t\t2014-09-11T01:00:07.300000Z\n" +
+                        "\t\t2014-09-11T01:00:07.400000Z\n" +
+                        "\t\t2014-09-11T01:00:07.500000Z\n" +
+                        "\t\t2014-09-11T01:00:07.600000Z\n" +
+                        "\t\t2014-09-11T01:00:07.700000Z\n" +
+                        "\t\t2014-09-11T01:00:07.800000Z\n" +
+                        "\t\t2014-09-11T01:00:07.900000Z\n" +
+                        "\t\t2014-09-11T01:00:08.000000Z\n" +
+                        "\t\t2014-09-11T01:00:08.100000Z\n" +
+                        "\t\t2014-09-11T01:00:08.200000Z\n" +
+                        "\t\t2014-09-11T01:00:08.300000Z\n" +
+                        "\t\t2014-09-11T01:00:08.400000Z\n" +
+                        "\t\t2014-09-11T01:00:08.500000Z\n" +
+                        "\t\t2014-09-11T01:00:08.600000Z\n" +
+                        "\t\t2014-09-11T01:00:08.700000Z\n" +
+                        "\t\t2014-09-11T01:00:08.800000Z\n" +
+                        "\t\t2014-09-11T01:00:08.900000Z\n" +
+                        "\t\t2014-09-11T01:00:09.000000Z\n" +
+                        "\t\t2014-09-11T01:00:09.100000Z\n" +
+                        "\t\t2014-09-11T01:00:09.200000Z\n" +
+                        "\t\t2014-09-11T01:00:09.300000Z\n" +
+                        "\t\t2014-09-11T01:00:09.400000Z\n" +
+                        "\t\t2014-09-11T01:00:09.500000Z\n" +
+                        "\t\t2014-09-11T01:00:09.600000Z\n" +
+                        "\t\t2014-09-11T01:00:09.700000Z\n" +
+                        "\t\t2014-09-11T01:00:09.800000Z\n" +
+                        "\t\t2014-09-11T01:00:09.900000Z\n"
         );
     }
 
@@ -685,6 +899,25 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 " rnd_bin(2,10, 2) o";
     }
 
+    @NotNull
+    private String appendCommonColumns() {
+        return " rnd_byte() a," +
+                " rnd_char() b," +
+                " rnd_short() c," +
+                " rnd_int(-77888, 999001, 2) d," + // ensure we have nulls
+                " rnd_long(-100000, 100000, 2) e," + // ensure we have nulls
+                " rnd_float(2) f," + // ensure we have nulls
+                " rnd_double(2) g," + // ensure we have nulls
+                " rnd_date(199999999, 399999999999, 2) h," + // ensure we have nulls
+                " cast(rnd_long(-7999999, 800000, 10) as timestamp)  i," + // ensure we have nulls
+                " rnd_str(4,5,2) j," +
+                " rnd_symbol('newsymbol1','newsymbol12', null) k," +
+                " rnd_boolean() l," +
+                " rnd_symbol('newsymbol1','newsymbol12', null) m," +
+                " rnd_long256() n," +
+                " rnd_bin(2,10, 2) o";
+    }
+
     private void doMigration(String dataZip, boolean freeTableId, boolean withO3) throws IOException, SqlException {
         if (freeTableId) {
             engine.freeTableId();
@@ -692,9 +925,46 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         replaceDbContent(dataZip);
         EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, true);
         assertData(withO3);
+
+        appendData();
+        assertAppendedData();
     }
 
-    private void generateMigrationTables() throws SqlException {
+    private void assertAppendedData() throws SqlException {
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        assertSql("select * FROM t_year LIMIT -10",
+                "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tts\n" +
+                        "109\tP\t-12455\t263934\t49960\t0.6793\t0.09831693674866282\t1977-08-08T19:44:03.856Z\t1969-12-31T23:59:55.049605Z\tHQBJP\tc\tfalse\taaa\t0xbe15104d1d36d615cac36ab298393e52b06836c8abd67a44787ce11d6fc88eab\t00000000 37 58 2c 0d b0 d0 9c 57 02 75\t2096-10-02T07:10:00.000000Z\n" +
+                        "73\tB\t-1271\t-47644\t4999\t0.8584\t0.12392055368261845\t1975-06-03T19:26:19.012Z\t1969-12-31T23:59:55.604499Z\t\tc\ttrue\taaa\t0x4f669e76b0311ac3438ec9cc282caa7043a05a3edd41f45aa59f873d1c729128\t00000000 34 01 0e 4d 2b 00 fa 34\t2103-02-04T02:43:20.000000Z\n" +
+                        "83\tL\t-32289\t127321\t40837\t0.1335\t0.515824820198022\t\t1969-12-31T23:59:53.582959Z\tKFMO\taaa\tfalse\t\t0x8131875cd498c4b888762e985137f4e843b8167edcd59cf345c105202f875495\t\t2109-06-06T22:16:40.000000Z\n" +
+                        "51\tS\t-28311\tNaN\t-72973\t0.5957\t0.20897460269739654\t1973-03-28T21:58:08.545Z\t1969-12-31T23:59:54.332988Z\t\tc\tfalse\taaa\t0x50113ffcc219fb1a9bc4f6389de1764097e7bcd897ae8a54aa2883a41581608f\t00000000 83 94 b5\t2115-10-08T17:50:00.000000Z\n" +
+                        "49\tN\t-11147\t392567\t-9830\t0.5248\t0.1095692511246914\t\t1969-12-31T23:59:56.849475Z\tIFBE\tc\tfalse\taaa\t0x36055358bd232c9d775e2e80754e5fcda2353931c7033ad5c38c294e9227895a\t\t2122-02-08T13:23:20.000000Z\n" +
+                        "57\tI\t-22903\t874980\t-28069\tNaN\t0.016793228004843286\t1975-09-29T05:10:33.275Z\t1969-12-31T23:59:55.690794Z\tBZSM\t\ttrue\tc\t0xa2c84382c65eb07087cf6cb291b2c3e7a9ffe8560d2cec518dea50b88b87fe43\t00000000 b9 c4 18 2b aa 3d\t2128-06-11T08:56:40.000000Z\n" +
+                        "127\tW\t-16809\t288758\t-22272\t0.0535\t0.5855510665931698\t\t1969-12-31T23:59:52.689490Z\t\taaa\tfalse\tc\t0x918ae2d78481070577c7d4c3a758a5ea3dd771714ac964ab4b350afc9b599b28\t\t2134-10-13T04:30:00.000000Z\n" +
+                        "20\tM\t-7043\t251501\t-85499\t0.9403\t0.9135840078861264\t1977-05-12T19:20:06.113Z\t1969-12-31T23:59:54.045277Z\tHOXL\tbbbbbb\tfalse\tbbbbbb\t0xc3b0de059fff72dbd7b99af08ac0d1cddb2990725a3338e377155edb531cb644\t\t2141-02-13T00:03:20.000000Z\n" +
+                        "26\tG\t-24830\t-56840\t-32956\t0.8282\t0.017280895313585898\t1982-07-16T03:52:53.454Z\t1969-12-31T23:59:54.115165Z\tJEJH\taaa\tfalse\tbbbbbb\t0x16f70de9c6af11071d35d9faec5d18fd1cf3bbbc825b72a92ecb8ff0286bf649\t00000000 c2 62 f8 53 7d 05 65\t2147-06-16T19:36:40.000000Z\n" +
+                        "127\tY\t19592\t224361\t37963\t0.6930\t0.006817672510656014\t1975-11-29T09:47:45.706Z\t1969-12-31T23:59:56.186242Z\t\t\ttrue\taaa\t0x88926dd483caaf4031096402997f21c833b142e887fa119e380dc9b54493ff70\t00000000 23 c3 9d 75 26 f2 0d b5 7a 3f\t2153-10-17T15:10:00.000000Z\n");
+    }
+
+    private void appendData() throws SqlException {
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+
+        // Insert some data
+        compiler.compile("insert into t_year select " +
+                appendCommonColumns() +
+                ", timestamp_sequence('2021-01-01', 200000000L) ts" +
+                " from long_sequence(5)", sqlExecutionContext);
+
+        // Insert same data to have O3 append tested
+        compiler.compile("insert into t_year select " +
+                appendCommonColumns() +
+                ", timestamp_sequence('2020-01-01', 200000000L) ts" +
+                " from long_sequence(5)", sqlExecutionContext);
+    }
+
+    private void generateMigrationTables() throws SqlException, NumericException {
         compiler.compile(
                 "create table t_none_nts as (" +
                         "select" +
@@ -797,5 +1067,40 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         " from long_sequence(15)",
                 sqlExecutionContext
         );
+
+        compiler.compile("create table o3_0(a string, b binary, t timestamp) timestamp(t) partition by DAY", sqlExecutionContext);
+
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "o3_0", "test")) {
+            TableWriter.Row r;
+
+            // insert day 1
+            long t = TimestampFormatUtils.parseTimestamp("2014-09-10T01:00:00.000000Z");
+            for (int i = 0; i < 100; i++) {
+                r = w.newRow(t);
+                r.putStr(0, null);
+                r.putBin(1, null);
+                r.append();
+                t += 100000L;
+            }
+
+            // day 2
+            t = TimestampFormatUtils.parseTimestamp("2014-09-11T01:00:00.000000Z");
+            for (int i = 0; i < 100; i++) {
+                r = w.newRow(t);
+                r.putStr(0, null);
+                r.putBin(1, null);
+                r.append();
+                t += 100000L;
+            }
+
+            // O3
+            t = TimestampFormatUtils.parseTimestamp("2014-09-10T01:00:00.000000Z");
+            r = w.newRow(t);
+            r.putStr(0, null);
+            r.putBin(1, null);
+            r.append();
+
+            w.commit();
+        }
     }
 }

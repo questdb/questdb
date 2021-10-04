@@ -29,8 +29,6 @@ import io.questdb.cairo.TableSyncModel;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -45,8 +43,6 @@ import org.junit.Test;
 import java.io.Closeable;
 
 public class ReplModelReconTest extends AbstractGriffinTest {
-
-    private static final Log LOG = LogFactory.getLog(ReplModelReconTest.class);
 
     @Test
     public void testColumnNameCaseSensitivity() throws Exception {
@@ -109,7 +105,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             ) {
                 sink.clear();
                 sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-                Assert.assertTrue(w1.isTransactionLogPending());
             }
 
             TestUtils.assertEquals(
@@ -178,7 +173,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             ) {
                 sink.clear();
                 sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-                Assert.assertTrue(w1.isTransactionLogPending());
             }
 
             TestUtils.assertEquals(
@@ -247,7 +241,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             ) {
                 sink.clear();
                 sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-                Assert.assertTrue(w1.isTransactionLogPending());
             }
 
             TestUtils.assertEquals(
@@ -387,17 +380,8 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             // if we copy new chunk, which was outside of transaction log and transaction log itself into 'y'
             // we would expect to end up with the same 'x' and 'y'
 
-            compiler.compile("insert into y select * from chunk1", sqlExecutionContext);
-            compiler.compile("insert into y select * from transaction_log('x')", sqlExecutionContext);
-
-            // tables should be the same
-            TestUtils.assertSqlCursors(
-                    compiler,
-                    sqlExecutionContext,
-                    "x",
-                    "y",
-                    LOG
-            );
+            // todo: here we should assert that "x" content has been delivered to slave table
+            //     we do not yet have this facility
         });
     }
 
@@ -437,7 +421,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             ) {
                 sink.clear();
                 sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-                Assert.assertTrue(w1.isTransactionLogPending());
             }
 
             TestUtils.assertEquals(
@@ -485,7 +468,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             ) {
                 sink.clear();
                 sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-                Assert.assertTrue(w1.isTransactionLogPending());
             }
 
             TestUtils.assertEquals(
@@ -505,7 +487,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             ) {
                 sink.clear();
                 sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-                Assert.assertTrue(w1.isTransactionLogPending());
             }
 
             TestUtils.assertEquals(
@@ -544,7 +525,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                 Assert.assertNotNull(model);
                 sink.clear();
                 sink.put(model);
-                Assert.assertTrue(w1.isTransactionLogPending());
             }
 
             TestUtils.assertEquals(
@@ -632,7 +612,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             ) {
                 sink.clear();
                 sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-                Assert.assertTrue(w1.isTransactionLogPending());
             }
 
             TestUtils.assertEquals(
@@ -679,7 +658,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             ) {
                 sink.clear();
                 sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-                Assert.assertFalse(w1.isTransactionLogPending());
             }
 
             TestUtils.assertEquals(
@@ -736,7 +714,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             ) {
                 sink.clear();
                 sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-                Assert.assertTrue(w1.isTransactionLogPending());
             }
 
             TestUtils.assertEquals(
@@ -784,7 +761,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             ) {
                 sink.clear();
                 sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-                Assert.assertTrue(w1.isTransactionLogPending());
             }
 
             TestUtils.assertEquals(
@@ -855,7 +831,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             ) {
                 sink.clear();
                 sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-                Assert.assertTrue(w1.isTransactionLogPending());
             }
 
             TestUtils.assertEquals(
@@ -903,7 +878,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             ) {
                 sink.clear();
                 sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-                Assert.assertTrue(w1.isTransactionLogPending());
             }
 
             TestUtils.assertEquals(

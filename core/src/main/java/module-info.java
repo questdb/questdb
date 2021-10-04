@@ -553,7 +553,6 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory,
             io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory,
             io.questdb.griffin.engine.functions.table.TouchTableFunctionFactory,
-            io.questdb.griffin.engine.functions.table.TableTransactionLogFunctionFactory,
 
             // first
             io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory,
@@ -568,6 +567,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,
             // geohash functions
             io.questdb.griffin.engine.functions.geohash.GeoHashFromCoordinatesFunctionFactory,
+            // bin functions
+            io.questdb.griffin.engine.functions.bin.Base64FunctionFactory,
             // bit operations
             BitwiseAndLongFunctionFactory,
             BitwiseOrLongFunctionFactory,

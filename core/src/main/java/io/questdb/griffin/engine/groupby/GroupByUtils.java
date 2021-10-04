@@ -203,6 +203,7 @@ public class GroupByUtils {
                     groupByMetadata.add(
                             new TableColumnMetadata(
                                     Chars.toString(column.getAlias()),
+                                    metadata.getColumnHash(index),
                                     type,
                                     metadata.isColumnIndexed(index),
                                     metadata.getIndexValueBlockCapacity(index),
@@ -225,6 +226,7 @@ public class GroupByUtils {
                 groupByMetadata.add(
                         new TableColumnMetadata(
                                 Chars.toString(column.getName()),
+                                0,
                                 type,
                                 false,
                                 0,
@@ -297,7 +299,7 @@ public class GroupByUtils {
                         } else {
 
                             // the table alias could be referencing join model
-                            // we need to descend down to first NONE model and see if that can resolve columns we are
+                            // we need to descend to first NONE model and see if that can resolve columns we are
                             // looking for
 
                             if (chooseModel != null && chooseModel.getColumnNameToAliasMap().keyIndex(key.token) < 0) {

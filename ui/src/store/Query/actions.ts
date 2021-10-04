@@ -10,7 +10,7 @@ import {
 } from "types"
 
 const addNotification = (
-  payload: Partial<NotificationShape> & { title: ReactNode },
+  payload: Partial<NotificationShape> & { content: ReactNode },
 ): QueryAction => ({
   payload: {
     createdAt: new Date(),
@@ -42,12 +42,6 @@ const toggleRunning = (): QueryAction => ({
   type: QueryAT.TOGGLE_RUNNING,
 })
 
-const changeMaxNotficationHeight = (maxNotifications:number): QueryAction => ({
-  payload: maxNotifications,
-  type: QueryAT.CHANGE_MAX_NOTIFICATION_HEIGHTS
-})
-
-
 export default {
   addNotification,
   cleanupNotifications,
@@ -55,5 +49,4 @@ export default {
   setResult,
   stopRunning,
   toggleRunning,
-  changeMaxNotficationHeight
 }

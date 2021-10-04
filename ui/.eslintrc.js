@@ -63,6 +63,7 @@ module.exports = {
     "@typescript-eslint/explicit-module-boundary-types": "off",
     "@typescript-eslint/no-unused-vars": "warn",
     "@typescript-eslint/strict-boolean-expressions": "off",
+    "@typescript-eslint/restrict-template-expressions": "off",
     "quote-props": ["error", "as-needed"],
     "object-shorthand": ["error", "always"],
     "no-unused-vars": "off",

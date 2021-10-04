@@ -1,8 +1,7 @@
 import { QuestContext } from "providers"
-import React, { useContext, useEffect, useState } from "react"
+import React, { useCallback, useContext, useEffect, useState } from "react"
 import styled from "styled-components"
 import * as QuestDB from "utils/questdb"
-import { CopyToClipboard } from "react-copy-to-clipboard"
 import { ClipboardCopy } from "@styled-icons/heroicons-outline/ClipboardCopy"
 import { SecondaryButton } from "components"
 import { formatVersion } from "./services"
@@ -31,22 +30,22 @@ const BuildVersion = () => {
     void quest.queryRaw("select build", { limit: "0,1000" }).then((result) => {
       if (result.type === QuestDB.Type.DQL) {
         if (result.count === 1) {
-          setBuildVersion(result.dataset[0][0])
+          setBuildVersion(formatVersion(result.dataset[0][0]))
         }
       }
     })
   })
 
-  const version = formatVersion(buildVersion)
+  const handleCopy = useCallback(() => {
+    void navigator.clipboard.writeText(buildVersion)
+  }, [buildVersion])
 
   return (
     <Wrapper>
-      <CopyToClipboard text={buildVersion}>
-        <CopyButton title="Copy Build Version">
-          <span>{version}</span>
-          <ClipboardCopy size="18px" />
-        </CopyButton>
-      </CopyToClipboard>
+      <CopyButton onClick={handleCopy} title="Copy Build Version">
+        <span>{buildVersion}</span>
+        <ClipboardCopy size="18px" />
+      </CopyButton>
     </Wrapper>
   )
 }

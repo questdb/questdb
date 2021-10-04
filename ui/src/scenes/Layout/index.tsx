@@ -41,6 +41,13 @@ import Sidebar from "../Sidebar"
 import { LocalStorageProvider } from "providers/LocalStorageProvider"
 import { QuestProvider } from "providers"
 
+const Console = styled.div`
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  max-height: 100%;
+`
+
 const Top = styled.div`
   position: relative;
   overflow: hidden;
@@ -49,7 +56,6 @@ const Top = styled.div`
 const Layout = () => {
   const consoleNode = document.getElementById("console")
   const settingsNode = document.getElementById("settings")
-  const notificationsNode = document.getElementById("notifications")
   const sideMenuNode = document.getElementById("sideMenu")
   const modalNode = document.getElementById("modal")
   const { sm } = useScreenSize()
@@ -71,30 +77,31 @@ const Layout = () => {
         <Footer />
         {consoleNode &&
           createPortal(
-            <Splitter
-              direction="vertical"
-              fallback={350}
-              max={300}
-              min={200}
-              onChange={handleResultSplitterChange}
-            >
-              <Top>
-                <Splitter
-                  direction="horizontal"
-                  fallback={350}
-                  max={300}
-                  min={200}
-                >
-                  {!sm && <Schema />}
-                  <Editor />
-                </Splitter>
-              </Top>
-              <Result />
-            </Splitter>,
+            <Console>
+              <Splitter
+                direction="vertical"
+                fallback={350}
+                max={300}
+                min={200}
+                onChange={handleResultSplitterChange}
+              >
+                <Top>
+                  <Splitter
+                    direction="horizontal"
+                    fallback={350}
+                    max={300}
+                    min={200}
+                  >
+                    {!sm && <Schema />}
+                    <Editor />
+                  </Splitter>
+                </Top>
+                <Result />
+              </Splitter>
+              <Notifications />
+            </Console>,
             consoleNode,
           )}
-        {notificationsNode &&
-          createPortal(<Notifications />, notificationsNode)}
         {sideMenuNode && createPortal(<SideMenu />, sideMenuNode)}
         {modalNode && createPortal(<Modal />, modalNode)}
         {settingsNode && createPortal(<Settings />, settingsNode)}

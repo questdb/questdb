@@ -138,7 +138,7 @@ const Ace = () => {
             if (result.type === QuestDB.Type.DDL) {
               dispatch(
                 actions.query.addNotification({
-                  title: (
+                  content: (
                     <Text color="draculaForeground" ellipsis>
                       {result.query}
                     </Text>
@@ -150,10 +150,10 @@ const Ace = () => {
             if (result.type === QuestDB.Type.DQL) {
               dispatch(
                 actions.query.addNotification({
-                  line1: (
+                  content: (
                     <QueryResult {...result.timings} rowCount={result.count} />
                   ),
-                  title: (
+                  sideContent: (
                     <Text color="draculaForeground" ellipsis>
                       {result.query}
                     </Text>
@@ -168,8 +168,8 @@ const Ace = () => {
             dispatch(actions.query.stopRunning())
             dispatch(
               actions.query.addNotification({
-                line1: <Text color="draculaForeground">{error.error}</Text>,
-                title: (
+                content: <Text color="draculaRed">{error.error}</Text>,
+                sideContent: (
                   <Text color="draculaForeground" ellipsis>
                     {request.query}
                   </Text>
@@ -191,7 +191,6 @@ const Ace = () => {
               position.row - 1,
               position.column + token.value.length - 1,
             )
-
             editor.session.addMarker(range, "syntax-error", "text", true)
             editor.gotoLine(position.row, position.column - 1, true)
             editor.focus()
@@ -216,10 +215,6 @@ const Ace = () => {
     }
     const ro = new ResizeObserver(() => {
       editor.resize()
-      const height = editor?.renderer?.container?.clientHeight
-      if (height) {
-        dispatch(actions.query.changeMaxNotficationHeight(height))
-      }
     })
 
     if (wrapper.current) {
