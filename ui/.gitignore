@@ -6,4 +6,3 @@ dist
 .sass-cache
 
 .env
-.env.example
