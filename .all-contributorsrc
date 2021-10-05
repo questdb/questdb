@@ -643,6 +643,17 @@
         "bug",
         "projectManagement"
       ]
+    },
+    {
+      "login": "giovannibonetti",
+      "name": "Giovanni Kock Bonetti",
+      "avatar_url": "https://avatars.githubusercontent.com/u/3451581?v=4",
+      "profile": "https://www.linkedin.com/in/giovanni-k-bonetti-2809345/",
+      "contributions": [
+        "userTesting",
+        "bug",
+        "projectManagement"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
