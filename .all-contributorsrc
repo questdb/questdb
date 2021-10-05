@@ -582,6 +582,16 @@
       "contributions": [
         "bug"
       ]
+    },
+    {
+      "login": "zanek",
+      "name": "zanek",
+      "avatar_url": "https://avatars.githubusercontent.com/u/333102?v=4",
+      "profile": "https://github.com/zanek",
+      "contributions": [
+        "ideas",
+        "projectManagement"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
