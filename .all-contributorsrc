@@ -697,6 +697,17 @@
         "infra",
         "doc"
       ]
+    },
+    {
+      "login": "pswu11",
+      "name": "pswu11",
+      "avatar_url": "https://avatars.githubusercontent.com/u/48913707?v=4",
+      "profile": "https://github.com/pswu11",
+      "contributions": [
+        "content",
+        "ideas",
+        "design"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
