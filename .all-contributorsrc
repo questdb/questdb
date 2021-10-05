@@ -720,6 +720,17 @@
         "ideas",
         "design"
       ]
+    },
+    {
+      "login": "eugenels",
+      "name": "Eugene Lysiuchenko",
+      "avatar_url": "https://avatars.githubusercontent.com/u/79919431?v=4",
+      "profile": "https://github.com/eugenels",
+      "contributions": [
+        "code",
+        "ideas",
+        "maintenance"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
