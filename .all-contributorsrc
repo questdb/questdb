@@ -632,6 +632,17 @@
         "ideas",
         "projectManagement"
       ]
+    },
+    {
+      "login": "ericsun2",
+      "name": "Eric Sun",
+      "avatar_url": "https://avatars.githubusercontent.com/u/8866410?v=4",
+      "profile": "https://github.com/ericsun2",
+      "contributions": [
+        "ideas",
+        "bug",
+        "projectManagement"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
