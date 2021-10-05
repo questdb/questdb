@@ -612,6 +612,16 @@
         "bug",
         "projectManagement"
       ]
+    },
+    {
+      "login": "null-dev",
+      "name": "Andy Bao",
+      "avatar_url": "https://avatars.githubusercontent.com/u/9571936?v=4",
+      "profile": "http://nulldev.xyz/",
+      "contributions": [
+        "bug",
+        "projectManagement"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
