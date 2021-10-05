@@ -675,6 +675,17 @@
         "code",
         "userTesting"
       ]
+    },
+    {
+      "login": "rstreics",
+      "name": "rstreics",
+      "avatar_url": "https://avatars.githubusercontent.com/u/50323347?v=4",
+      "profile": "https://github.com/rstreics",
+      "contributions": [
+        "code",
+        "infra",
+        "doc"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
