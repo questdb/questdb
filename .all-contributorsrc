@@ -708,6 +708,17 @@
         "ideas",
         "design"
       ]
+    },
+    {
+      "login": "insmac",
+      "name": "Maciej Bodek",
+      "avatar_url": "https://avatars.githubusercontent.com/u/1871646?v=4",
+      "profile": "https://github.com/insmac",
+      "contributions": [
+        "code",
+        "ideas",
+        "design"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
