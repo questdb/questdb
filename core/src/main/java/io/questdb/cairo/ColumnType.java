@@ -162,6 +162,10 @@ public final class ColumnType {
         return columnType == ColumnType.INT;
     }
 
+    public static boolean isLong(int columnType) {
+        return columnType == ColumnType.LONG;
+    }
+
     public static boolean isNull(int columnType) {
         return columnType == NULL;
     }

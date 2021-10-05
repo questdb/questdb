@@ -603,6 +603,13 @@ class LineTcpMeasurementScheduler implements Closeable {
                             bufPos += Byte.BYTES;
                             break;
                         }
+                        case NewLineProtoParser.ENTITY_TYPE_TIMESTAMP: {
+                            Unsafe.getUnsafe().putByte(bufPos, entity.getType());
+                            bufPos += Byte.BYTES;
+                            Unsafe.getUnsafe().putLong(bufPos, entity.getTimestampValue());
+                            bufPos += Long.BYTES;
+                            break;
+                        }
                         default:
                             // unsupported types are ignored
                             break;
@@ -790,7 +797,15 @@ class LineTcpMeasurementScheduler implements Closeable {
                         case NewLineProtoParser.ENTITY_TYPE_BOOLEAN: {
                             byte b = Unsafe.getUnsafe().getByte(bufPos);
                             bufPos += Byte.BYTES;
-                            row.putBool(colIndex, b == 1);
+                            final int colType = writer.getMetadata().getColumnType(colIndex);
+                            if (ColumnType.isBoolean(colType) || ColumnType.isLong(colType)) {
+                                row.putBool(colIndex, b == 1);
+                            } else {
+                                throw CairoException.instance(0)
+                                        .put("cast error for line protocol boolean [columnIndex=").put(colIndex)
+                                        .put(", columnType=").put(ColumnType.nameOf(colType))
+                                        .put(']');
+                            }
                             break;
                         }
 
@@ -875,6 +890,21 @@ class LineTcpMeasurementScheduler implements Closeable {
                             byte geohash = Unsafe.getUnsafe().getByte(bufPos);
                             bufPos += Byte.BYTES;
                             row.putByte(colIndex, geohash);
+                            break;
+                        }
+
+                        case NewLineProtoParser.ENTITY_TYPE_TIMESTAMP: {
+                            long ts = Unsafe.getUnsafe().getLong(bufPos);
+                            bufPos += Long.BYTES;
+                            final int colType = writer.getMetadata().getColumnType(colIndex);
+                            if (ColumnType.isTimestamp(colType)) {
+                                row.putTimestamp(colIndex, ts);
+                            } else {
+                                throw CairoException.instance(0)
+                                        .put("cast error for line protocol timestamp [columnIndex=").put(colIndex)
+                                        .put(", columnType=").put(ColumnType.nameOf(colType))
+                                        .put(']');
+                            }
                             break;
                         }
 
@@ -1555,5 +1585,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOSHORT] = ColumnType.getGeoHashTypeWithBits(16);
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOINT] = ColumnType.getGeoHashTypeWithBits(32);
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_GEOLONG] = ColumnType.getGeoHashTypeWithBits(60);
+        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_TIMESTAMP] = ColumnType.TIMESTAMP;
     }
 }
