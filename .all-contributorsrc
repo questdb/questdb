@@ -654,6 +654,16 @@
         "bug",
         "projectManagement"
       ]
+    },
+    {
+      "login": "wavded",
+      "name": "Marc Harter",
+      "avatar_url": "https://avatars.githubusercontent.com/u/26638?v=4",
+      "profile": "https://wavded.com",
+      "contributions": [
+        "userTesting",
+        "bug"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
