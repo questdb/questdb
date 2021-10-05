@@ -622,6 +622,16 @@
         "bug",
         "projectManagement"
       ]
+    },
+    {
+      "login": "ultd",
+      "name": "Ahmad",
+      "avatar_url": "https://avatars.githubusercontent.com/u/12675427?v=4",
+      "profile": "http://ultd.io",
+      "contributions": [
+        "ideas",
+        "projectManagement"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
