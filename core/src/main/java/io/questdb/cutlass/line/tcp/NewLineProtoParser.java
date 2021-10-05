@@ -25,10 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.griffin.SqlKeywords;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
@@ -70,7 +67,9 @@ public class NewLineProtoParser implements Closeable {
     private final EntityHandler entityTimestampHandler = this::expectTimestamp;
     private final EntityHandler entityValueHandler = this::expectEntityValue;
     private final EntityHandler entityNameHandler = this::expectEntityName;
-    private final Set<DirectByteCharSequence> entityNamesSet = new HashSet<>();
+    private final ObjHashSet<DirectByteCharSequence> entityNamesSet = new ObjHashSet<>();
+    private final ObjList<DirectByteCharSequence> entityNamesList = new ObjList<>();
+    private int nEntityNames;
 
     @Override
     public void close() {
@@ -113,7 +112,6 @@ public class NewLineProtoParser implements Closeable {
 
     public ParseResult parseMeasurement(long bufHi) {
         assert bufAt != 0 && bufHi >= bufAt;
-        entityNamesSet.clear();
         while (bufAt < bufHi) {
             byte b = Unsafe.getUnsafe().getByte(bufAt);
             boolean endOfLine = false;
@@ -207,9 +205,11 @@ public class NewLineProtoParser implements Closeable {
         errorCode = null;
         tagsComplete = false;
         nEntities = 0;
+        nEntityNames = 0;
         currentEntity = null;
         entityHandler = entityTableHandler;
         timestamp = NULL_TIMESTAMP;
+        entityNamesSet.clear();
     }
 
     private boolean expectEndOfLine(byte endOfEntityByte, long bufHi) {
@@ -232,7 +232,16 @@ public class NewLineProtoParser implements Closeable {
                 currentEntity.clear();
             }
 
-            final DirectByteCharSequence newEntityName = new DirectByteCharSequence();
+            DirectByteCharSequence newEntityName;
+            if (entityNamesList.size() <= nEntityNames) {
+                newEntityName = new DirectByteCharSequence();
+                entityNamesList.add(newEntityName);
+                nEntityNames++;
+            } else {
+                newEntityName = entityNamesList.get(nEntityNames);
+                newEntityName.clear();
+            }
+
             newEntityName.of(entityLo, bufAt - nEscapedChars);
 
             if (!entityNamesSet.contains(newEntityName)) {
