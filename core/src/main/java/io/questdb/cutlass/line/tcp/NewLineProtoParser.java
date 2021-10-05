@@ -236,11 +236,11 @@ public class NewLineProtoParser implements Closeable {
             if (entityNamesList.size() <= nEntityNames) {
                 newEntityName = new DirectByteCharSequence();
                 entityNamesList.add(newEntityName);
-                nEntityNames++;
             } else {
                 newEntityName = entityNamesList.get(nEntityNames);
                 newEntityName.clear();
             }
+            nEntityNames++;
 
             newEntityName.of(entityLo, bufAt - nEscapedChars);
 
