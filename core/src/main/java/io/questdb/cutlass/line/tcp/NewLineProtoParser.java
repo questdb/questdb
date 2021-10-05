@@ -111,7 +111,7 @@ public class NewLineProtoParser implements Closeable {
 
     public ParseResult parseMeasurement(long bufHi) {
         assert bufAt != 0 && bufHi >= bufAt;
-        // If lat exit was inside quotes, pick up from same place
+        // If last exit was inside quotes, pick up from the same place
         if (errorCode == ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW) {
             if (!prepareQuotedEntity(entityLo, bufHi)) {
                 return ParseResult.BUFFER_UNDERFLOW;
