@@ -139,7 +139,11 @@ const Ace = () => {
               dispatch(
                 actions.query.addNotification({
                   content: (
-                    <Text color="draculaForeground" ellipsis>
+                    <Text
+                      color="draculaForeground"
+                      ellipsis
+                      title={result.query}
+                    >
                       {result.query}
                     </Text>
                   ),
@@ -154,7 +158,11 @@ const Ace = () => {
                     <QueryResult {...result.timings} rowCount={result.count} />
                   ),
                   sideContent: (
-                    <Text color="draculaForeground" ellipsis>
+                    <Text
+                      color="draculaForeground"
+                      ellipsis
+                      title={result.query}
+                    >
                       {result.query}
                     </Text>
                   ),
@@ -170,7 +178,11 @@ const Ace = () => {
               actions.query.addNotification({
                 content: <Text color="draculaRed">{error.error}</Text>,
                 sideContent: (
-                  <Text color="draculaForeground" ellipsis>
+                  <Text
+                    color="draculaForeground"
+                    ellipsis
+                    title={request.query}
+                  >
                     {request.query}
                   </Text>
                 ),
