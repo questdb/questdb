@@ -592,6 +592,16 @@
         "ideas",
         "projectManagement"
       ]
+    },
+    {
+      "login": "Geekaylee",
+      "name": "Geekaylee",
+      "avatar_url": "https://avatars.githubusercontent.com/u/12583377?v=4",
+      "profile": "https://github.com/Geekaylee",
+      "contributions": [
+        "userTesting",
+        "ideas"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
