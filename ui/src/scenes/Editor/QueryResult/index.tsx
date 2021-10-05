@@ -26,7 +26,6 @@ const Wrapper = styled.div`
 
 const Details = styled.div`
   display: flex;
-  user-select: none;
   background: ${color("draculaBackground")};
 `
 

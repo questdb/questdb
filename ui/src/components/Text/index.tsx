@@ -43,6 +43,7 @@ export type TextProps = Readonly<{
   htmlFor?: string
   onClick?: () => void
   size?: FontSize
+  title?: string
   transform?: Transform
   type?: Type
   weight?: number
