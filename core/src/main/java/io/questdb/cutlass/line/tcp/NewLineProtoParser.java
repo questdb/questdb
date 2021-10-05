@@ -111,6 +111,13 @@ public class NewLineProtoParser implements Closeable {
 
     public ParseResult parseMeasurement(long bufHi) {
         assert bufAt != 0 && bufHi >= bufAt;
+        // If lat exit was inside quotes, pick up from same place
+        if (errorCode == ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW) {
+            if (!prepareQuotedEntity(entityLo, bufHi)) {
+                return ParseResult.BUFFER_UNDERFLOW;
+            }
+            errorCode = ErrorCode.NONE;
+        }
         while (bufAt < bufHi) {
             byte b = Unsafe.getUnsafe().getByte(bufAt);
             boolean endOfLine = false;
@@ -207,6 +214,7 @@ public class NewLineProtoParser implements Closeable {
         currentEntity = null;
         entityHandler = entityTableHandler;
         timestamp = NULL_TIMESTAMP;
+        errorCode = ErrorCode.NONE;
     }
 
     private boolean expectEndOfLine(byte endOfEntityByte, long bufHi) {
@@ -238,6 +246,7 @@ public class NewLineProtoParser implements Closeable {
                     long candidateQuoteIdx = bufAt + 1;
                     byte b = Unsafe.getUnsafe().getByte(candidateQuoteIdx);
                     if (b == (byte) '"') {
+                        bufAt += 2; // go to first byte of the string, past the '"'
                         return prepareQuotedEntity(candidateQuoteIdx, bufHi);
                     }
                 }
@@ -275,7 +284,6 @@ public class NewLineProtoParser implements Closeable {
         // the next completeEntity call, moving butAt to the next '"'
         entityLo = openQuoteIdx; // from the quote
         boolean scape = false;
-        bufAt += 2; // go to first byte of the string, past the '"'
         while (bufAt < bufHi) { // consume until the next quote, '\n', or eof
             switch (Unsafe.getUnsafe().getByte(bufAt)) {
                 case (byte) '\\':
@@ -373,7 +381,8 @@ public class NewLineProtoParser implements Closeable {
         INVALID_FIELD_SEPARATOR,
         INVALID_TIMESTAMP,
         INVALID_FIELD_VALUE,
-        INVALID_FIELD_VALUE_STR_UNDERFLOW
+        INVALID_FIELD_VALUE_STR_UNDERFLOW,
+        NONE
     }
 
     private interface EntityHandler {
