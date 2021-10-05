@@ -35,30 +35,36 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
 
     @Test
     public void testInsertTimestampTableExists() throws Exception {
-        // no literal representation for timestamp, only longs can be inserted
         assertType(ColumnType.TIMESTAMP,
                 "value\ttimestamp\n" +
                         "1970-01-19T21:02:13.921000Z\t1970-01-01T00:00:01.000000Z\n" +
-                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:07.000000Z\n" +
-                        "\t1970-01-01T00:00:08.000000Z\n" +
-                        "\t1970-01-01T00:00:09.000000Z\n" +
-                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:10.000000Z\n" +
-                        "294247-01-10T04:00:54.775807Z\t1970-01-01T00:00:11.000000Z\n",
+                        "1970-01-19T21:02:13.921000Z\t1970-01-01T00:00:02.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:08.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:09.000000Z\n" +
+                        "\t1970-01-01T00:00:10.000000Z\n" +
+                        "\t1970-01-01T00:00:11.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:12.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:13.000000Z\n" +
+                        "294247-01-10T04:00:54.775807Z\t1970-01-01T00:00:14.000000Z\n",
                 new CharSequence[]{
                         "1630933921000i", // valid
+                        "1630933921000t", // valid
                         "1630933921000", // discarded bad type double
                         "\"1970-01-01T00:00:05.000000Z\"", // discarded bad type string
                         "1970-01-01T00:\"00:05.00\"0000Z", // discarded bad type symbol
                         "\"1970-01-01T00:00:05.000000Z", // discarded bad string value
                         "1970-01-01T00:00:05.000000Z\"", // discarded bad string value
                         "0i", // valid
+                        "0t", // valid
                         "-9223372036854775808i", // valid NaN, same as null
                         "", // valid null
                         "-0i", // valid
+                        "-0t", // valid
                         "9223372036854775807i", // valid
                         "NaN", // discarded bad type symbol
                         "null", // discarded bad type symbol
-                        "1970-01-01T00:00:05.000000Z" // discarded bad type symbol
+                        "1970-01-01T00:00:05.000000Z", // discarded bad type symbol
+                        "t", // discarded bad type boolean
                 });
     }
 
@@ -87,7 +93,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "9223372036854775807i", // valid
                         "NaN", // discarded bad type symbol
                         "null", // discarded bad type symbol
-                        "1970-01-01T00:00:05.000000Z" // discarded bad type symbol
+                        "1970-01-01T00:00:05.000000Z", // discarded bad type symbol
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -125,6 +132,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "-100", // discarded bad type double
                         "null", // discarded bad type symbol
                         "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -162,6 +170,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "-100", // discarded bad type double
                         "null", // discarded bad type symbol
                         "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -197,7 +206,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "2147483647", // discarded bad type double
                         "-2147483647", // discarded bad type double
                         "NaN", // discarded bad type symbol
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -233,7 +243,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "2147483647", // discarded bad type double
                         "-2147483647", // discarded bad type double
                         "NaN", // discarded bad type symbol
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -268,7 +279,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "100", // discarded bad type double
                         "-0", // discarded bad type double
                         "NaN", // discarded bad type symbol
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -299,7 +311,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "100", // discarded bad type double
                         "-0", // discarded bad type double
                         "NaN", // discarded bad type symbol
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -328,7 +341,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "100", // discarded bad type double
                         "-0", // discarded bad type double
                         "NaN", // discarded bad type symbol
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -356,7 +370,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "100", // discarded bad type double
                         "-0", // discarded bad type double
                         "NaN", // discarded bad type symbol
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -378,6 +393,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "null", // discarded bad type symbol
                         "\"N\"", // valid
                         "0", // discarded bad type double
+                        "0t", // discarded bad type timestamp
                         "1970-01-01T00:00:05.000000Z" // discarded bad type symbol
                 });
     }
@@ -397,7 +413,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "0x1234i", // actual long256
                         "0x1234", // discarded bad type double
                         "0x00", // discarded bad type double
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -416,6 +433,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "\"null\"", // discarded bad type string
                         "120i", // discarded bad type long
                         "0x1234", // discarded bad type double
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -448,6 +466,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "F", // valid
                         "", // valid null, equals false
                         "e", // valid
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -479,6 +498,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "F", // valid
                         "", // valid null, equals false
                         "e", // discarded bad type symbol
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -640,7 +660,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "123", // valid
                         "-123", // valid
                         "NaN", // valid null
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -683,7 +704,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "123", // valid
                         "-123", // valid
                         "NaN", // valid null
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -725,7 +747,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "NaN", // valid null
                         "", // valid null
                         "NaN", // valid null
-                        "1.6x" // discarded bad type symbol
+                        "1.6x", // discarded bad type symbol
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -764,7 +787,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "-123", // valid
                         "NaN", // valid null
                         "", // valid null
-                        "1.6x" // discarded bad type symbol
+                        "1.6x", // discarded bad type symbol
+                        "0t", // discarded bad type timestamp
                 });
     }
 
