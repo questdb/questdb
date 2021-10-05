@@ -674,7 +674,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWrterCommitFails() throws Exception {
+    public void testWriterCommitFails() throws Exception {
         try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
             m.timestamp("ReceiveTime")
                     .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)

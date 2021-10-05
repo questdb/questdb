@@ -48,7 +48,8 @@ public class NewLineProtoParser implements Closeable {
     public static final byte ENTITY_TYPE_GEOSHORT = 10;
     public static final byte ENTITY_TYPE_GEOINT = 11;
     public static final byte ENTITY_TYPE_GEOLONG = 12;
-    public static final int N_ENTITY_TYPES = ENTITY_TYPE_GEOLONG + 1;
+    public static final byte ENTITY_TYPE_TIMESTAMP = 13;
+    public static final int N_ENTITY_TYPES = ENTITY_TYPE_TIMESTAMP + 1;
     static final byte ENTITY_TYPE_NONE = (byte) 0xff; // visible for testing
     private final DirectByteCharSequence measurementName = new DirectByteCharSequence();
     private final DirectByteCharSequence charSeq = new DirectByteCharSequence();
@@ -386,6 +387,7 @@ public class NewLineProtoParser implements Closeable {
         private long integerValue;
         private boolean booleanValue;
         private double floatValue;
+        private long timestampValue;
 
         public boolean getBooleanValue() {
             return booleanValue;
@@ -397,6 +399,10 @@ public class NewLineProtoParser implements Closeable {
 
         public long getIntegerValue() {
             return integerValue;
+        }
+
+        public long getTimestampValue() {
+            return timestampValue;
         }
 
         public DirectByteCharSequence getName() {
@@ -441,18 +447,30 @@ public class NewLineProtoParser implements Closeable {
                     }
                     type = ENTITY_TYPE_SYMBOL;
                     return true;
-                case 'e':
-                case 'E':
-                    // tru(e)
-                    // fals(e)
                 case 't':
+                    if (valueLen > 1) {
+                        try {
+                            charSeq.of(value.getLo(), value.getHi() - 1);
+                            timestampValue = Numbers.parseLong(charSeq);
+                            value.decHi(); // remove 't'
+                            type = ENTITY_TYPE_TIMESTAMP;
+                        } catch (NumericException notANumber) {
+                            type = ENTITY_TYPE_SYMBOL;
+                        }
+                        return true;
+                    }
+                    // fall through
                 case 'T':
                 case 'f':
                 case 'F':
-                    // f
-                    // F
+                case 'e':
+                case 'E':
                     // t
                     // T
+                    // f
+                    // F
+                    // tru(e)
+                    // fals(e)
                     if (valueLen == 1) {
                         if (last != 'e') {
                             booleanValue = (last | 32) == 't';
