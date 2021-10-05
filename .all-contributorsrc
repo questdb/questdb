@@ -664,6 +664,17 @@
         "userTesting",
         "bug"
       ]
+    },
+    {
+      "login": "puzpuzpuz",
+      "name": "Andrey Pechkurov",
+      "avatar_url": "https://avatars.githubusercontent.com/u/37772591?v=4",
+      "profile": "https://medium.com/@apechkurov",
+      "contributions": [
+        "doc",
+        "code",
+        "userTesting"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
