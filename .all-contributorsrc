@@ -686,6 +686,17 @@
         "infra",
         "doc"
       ]
+    },
+    {
+      "login": "mariusgheorghies",
+      "name": "Marius",
+      "avatar_url": "https://avatars.githubusercontent.com/u/84250061?v=4",
+      "profile": "https://github.com/mariusgheorghies",
+      "contributions": [
+        "code",
+        "infra",
+        "doc"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
