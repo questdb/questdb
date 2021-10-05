@@ -36,7 +36,7 @@ const Menu = styled(PaneMenu)`
 `
 
 const Content = styled(PaneContent)<{ minimized: boolean }>`
-  overflow: auto;
+  overflow: ${(props) => (props.minimized ? "hidden" : "auto")};
   padding: ${(props) => (props.minimized ? "0" : "0 0 1rem")};
   flex: initial;
   height: ${(props) => (props.minimized ? "4rem" : "100%")};
