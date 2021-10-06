@@ -4303,7 +4303,10 @@ public class TableWriter implements Closeable {
         final Sequence indexPubSequence = this.messageBus.getIndexerPubSequence();
         final RingQueue<ColumnIndexerTask> indexerQueue = this.messageBus.getIndexerQueue();
 
-        LOG.info().$("parallel indexing [indexCount=").$(indexCount).$(']').$();
+        LOG.info().$("parallel indexing [table=").$(tableName)
+                .$(", indexCount=").$(indexCount)
+                .$(", rowCount=").$(hi - lo)
+                .I$();
         int serialIndexCount = 0;
 
         // we are going to index last column in this thread while other columns are on the queue
@@ -4378,7 +4381,10 @@ public class TableWriter implements Closeable {
     }
 
     private void updateIndexesSerially(long lo, long hi) {
-        LOG.info().$("serial indexing [indexCount=").$(indexCount).$(']').$();
+        LOG.info().$("serial indexing [table=").$(tableName)
+                .$(", indexCount=").$(indexCount)
+                .$(", rowCount=").$(hi - lo)
+                .I$();
         for (int i = 0, n = denseIndexers.size(); i < n; i++) {
             try {
                 denseIndexers.getQuick(i).refreshSourceAndIndex(lo, hi);
@@ -4388,7 +4394,7 @@ public class TableWriter implements Closeable {
                 throwDistressException(e);
             }
         }
-        LOG.info().$("serial indexing done [indexCount=").$(indexCount).$(']').$();
+        LOG.info().$("serial indexing done [table=").$(tableName).I$();
     }
 
     private void updateIndexesSlow() {

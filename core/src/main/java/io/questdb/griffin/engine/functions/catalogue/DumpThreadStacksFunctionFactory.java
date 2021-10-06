@@ -34,17 +34,19 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.std.IntList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
 
-public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadInfo;
+import java.lang.management.ThreadMXBean;
 
-    private static final Log LOG = LogFactory.getLog("dump-memory-usage");
+public class DumpThreadStacksFunctionFactory implements FunctionFactory {
+
+    private static final Log LOG = LogFactory.getLog("dump-thread-stacks");
 
     @Override
     public String getSignature() {
-        return "dump_memory_usage()";
+        return "dump_thread_stacks()";
     }
 
     @Override
@@ -54,20 +56,29 @@ public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
                                 CairoConfiguration configuration,
                                 SqlExecutionContext sqlExecutionContext
     ) {
-        return new DumpMemoryUsageFunction();
+        return new DumpThreadStacksFunction();
     }
 
-    private static class DumpMemoryUsageFunction extends BooleanFunction {
+    private static class DumpThreadStacksFunction extends BooleanFunction {
         @Override
         public boolean getBool(Record rec) {
-            final LogRecord record = LOG.advisory();
-
-            record.$("\n\tTOTAL: ").$(Unsafe.getMemUsed());
-            for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
-                record.$('\n').$('\t').$(MemoryTag.nameOf(i)).$(": ").$(Unsafe.getMemUsedByTag(i));
+            final ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
+            final ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(threadMXBean.getAllThreadIds(), 20);
+            // Each thread stack on its own LOG message to avoid overrunning log buffer
+            // Generally overrun will truncate the log message. We are likely to overrun considering how
+            // many threads we could be running
+            for (ThreadInfo threadInfo : threadInfos) {
+                final LogRecord record = LOG.advisory();
+                final Thread.State state = threadInfo.getThreadState();
+                record.$('\n');
+                record.$('\'').$(threadInfo.getThreadName()).$("': ").$(state);
+                final StackTraceElement[] stackTraceElements = threadInfo.getStackTrace();
+                for (final StackTraceElement stackTraceElement : stackTraceElements) {
+                    record.$("\n\t\tat ").$(stackTraceElement);
+                }
+                record.$("\n\n");
+                record.$();
             }
-            record.$('\n');
-            record.$();
             return true;
         }
     }
