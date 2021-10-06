@@ -26,7 +26,6 @@ package io.questdb.cliutil;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -45,7 +44,6 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.TableUtils.getPartitionTableIndexOffset;
 
 public class TxSerializer
 {
@@ -187,6 +185,7 @@ public class TxSerializer
         System.out.println("usage: " + TxSerializer.class.getName() + " -s <json_path> <txn_path> | -d <json_path>");
     }
 
+    @SuppressWarnings("ReadWriteStringCanBeUsed")
     private void serializeFile(String jsonFile, String target) throws IOException {
         String json = new String(Files.readAllBytes(Paths.get(jsonFile)), StandardCharsets.UTF_8);
         serializeJson(json, target);

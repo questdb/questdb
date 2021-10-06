@@ -51,7 +51,7 @@ public class TxSerializerTest {
 
     @BeforeClass
     public static void setUpStatic() {
-        seCairoStatic();
+        setCairoStatic();
         compiler = new SqlCompiler(engine);
         BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(configuration);
         sqlExecutionContext = new SqlExecutionContextImpl(
@@ -65,7 +65,7 @@ public class TxSerializerTest {
         bindVariableService.clear();
     }
 
-    public static void seCairoStatic() {
+    public static void setCairoStatic() {
         // it is necessary to initialise logger before tests start
         // logger doesn't relinquish memory until JVM stops
         // which causes memory leak detector to fail should logger be
@@ -185,18 +185,14 @@ public class TxSerializerTest {
             // Insert same records
             compiler.compile("insert into xxx select * from xxx",
                     sqlExecutionContext);
-            assertFirstColumnValueLong("select count() from xxx", 20);
-            assertFirstColumnValueLong("select count_distinct(sym1) from xxx", symCount);
-            assertFirstColumnValueLong("select count_distinct(sym2) from xxx", symCount2);
-            assertFirstColumnValueLong("select x from xxx limit 1", 1);
         } else {
             compiler.compile("insert into xxx select sym1, sym2, x, dateadd('y', 1, ts) from xxx",
                     sqlExecutionContext);
-            assertFirstColumnValueLong("select count() from xxx", 20);
-            assertFirstColumnValueLong("select count_distinct(sym1) from xxx", symCount);
-            assertFirstColumnValueLong("select count_distinct(sym2) from xxx", symCount2);
-            assertFirstColumnValueLong("select x from xxx limit 1", 1);
         }
+        assertFirstColumnValueLong("select count() from xxx", 20);
+        assertFirstColumnValueLong("select count_distinct(sym1) from xxx", symCount);
+        assertFirstColumnValueLong("select count_distinct(sym2) from xxx", symCount2);
+        assertFirstColumnValueLong("select x from xxx limit 1", 1);
     }
 
     private void assertFirstColumnValueLong(String sql, long expected) throws SqlException {
