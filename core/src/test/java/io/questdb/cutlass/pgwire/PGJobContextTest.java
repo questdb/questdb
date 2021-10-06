@@ -395,47 +395,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testBlobOverLimit2() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (
-                    final Connection connection = getConnection(false, true)
-            ) {
-                Statement statement = connection.createStatement();
-                ResultSet rs = statement.executeQuery(
-                        "SELECT\n" +
-                                "    id,\n" +
-                                "    delivery_start_utc_symbol as y_utc_h,\n" +
-                                "    case\n" +
-                                "            --when (seller='sf' AND sell_area='10YHU-MAVIR----U') then -1.0*volume_mw\n" +
-                                "            --when (buyer='sf' AND buy_area='10YHU-MAVIR----U') then 1.0*volume_mw\n" +
-                                "            when seller='sf' then -1.0*volume_mw\n" +
-                                "            when buyer='sf' then 1.0*volume_mw\n" +
-                                "            else 0.0\n" +
-                                "        end\n" +
-                                "        as y_sf_position_mw_h\n" +
-                                "FROM (\n" +
-                                "    SELECT\n" +
-                                "        id,\n" +
-                                "        delivery_start_utc_symbol,\n" +
-                                "        seller,\n" +
-                                "        buyer,\n" +
-                                "        volume_mw\n" +
-                                "    FROM trades\n" +
-                                "    WHERE\n" +
-                                "        country = 'hu'\n" +
-                                "        AND delivery_start_utc >= '2021-09-24T18:00:44.699976+00:00'\n" +
-                                "        AND timestamp >= '2021-09-23T09:00:00.699976+00:00'\n" +
-                                "        AND product = 'hours_1'\n" +
-                                "        AND (seller = 'sf' OR buyer = 'sf'))");
-
-                assertResultSet("", sink, rs);
-            } catch (PSQLException e) {
-                TestUtils.assertContains(e.getServerErrorMessage().getMessage(), "blob is too large");
-            }
-        });
-    }
-
-    @Test
     public void testBrokenUtf8QueryInParseMessage() throws Exception {
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
