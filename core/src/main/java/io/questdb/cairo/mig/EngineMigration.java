@@ -130,12 +130,12 @@ public class EngineMigration {
             for (int i = 1; ff.exists(toTemp.$()); i++) {
                 // if backup file already exists
                 // add .<num> at the end until file name is unique
-                LOG.info().$("back up file exists, [path=").$(toTemp).I$();
+                LOG.info().$("backup dest exists [to=").$(toTemp).I$();
                 toTemp.trimTo(copyPathLen);
                 toTemp.concat(backupName).put(".v").put(version).put(".").put(i);
             }
 
-            LOG.info().$("back up coping file [from=").$(src).$(",to=").$(toTemp).I$();
+            LOG.info().$("backing up [file=").$(src).$(",to=").$(toTemp).I$();
             if (ff.copy(src.$(), toTemp.$()) < 0) {
                 throw CairoException.instance(ff.errno()).put("Cannot backup transaction file [to=").put(toTemp).put(']');
             }
