@@ -60,7 +60,7 @@ public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
     private static class DumpMemoryUsageFunction extends BooleanFunction {
         @Override
         public boolean getBool(Record rec) {
-            final LogRecord record = LOG.info();
+            final LogRecord record = LOG.advisory();
 
             record.$("\n\tTOTAL: ").$(Unsafe.getMemUsed());
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
