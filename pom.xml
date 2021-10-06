@@ -47,5 +47,6 @@
     <modules>
         <module>core</module>
         <module>benchmarks</module>
+        <module>utils</module>
     </modules>
 </project>
