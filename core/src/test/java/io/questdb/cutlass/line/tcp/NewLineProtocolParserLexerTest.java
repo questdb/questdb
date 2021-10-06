@@ -26,6 +26,8 @@ package io.questdb.cutlass.line.tcp;
 
 import java.nio.charset.StandardCharsets;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.cutlass.line.LineProtoLexerTest;
 import org.junit.Assert;
@@ -39,9 +41,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Test;
 
 public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
-
+    private final static Log LOG = LogFactory.getLog(NewLineProtocolParserLexerTest.class);
     private final NewLineProtoParser protoParser = new NewLineProtoParser();
     private ErrorCode lastErrorCode;
     private boolean onErrorLine;
@@ -77,6 +80,44 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
                         "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n");
     }
 
+    @Test
+    public void testWithQuotedStringsWithSpaces() {
+        assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"longstring\",fld3=\"short string\" 100000\n",
+                "measurement,tag=value,tag2=value field=10000i,field2=\"longstring\",fld3=\"short string\" 100000\n");
+    }
+
+    @Test
+    public void testWithQuotedStringsWithEscapedQuotes() {
+        assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str\" escaped\\ end\" 100000\n",
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str\\\" escaped\\\\ end\" 100000\n");
+
+        assertThat("measurement field2=\"double escaped \\ \" and quoted\" 100000\n",
+                "measurement field2=\"double escaped \\\\ \\\" and quoted\" 100000\n");
+
+        assertThat("measurement field2=\"double escaped \\\" and quoted2\" 100000\n",
+                "measurement field2=\"double escaped \\\\\\\" and quoted2\" 100000\n");
+
+        assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\" 100000\n",
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\" 100000\n");
+
+        assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\",field3=34 100000\n",
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\",field3=34 100000\n");
+    }
+
+    @Test
+    public void testWithEscapedTagValues() {
+        assertThat("measurement,tag=value with space,tag2=value field=10000i,field2=\"str=special,end\" 100000\n",
+                "measurement,tag=value\\ with\\ space,tag2=value field=10000i,field2=\"str=special,end\" 100000\n");
+
+        assertThat("measurement,tag=value\\with\\slash,tag2=value field=10000i,field2=\"str=special,end\\ \" 100000\n",
+                "measurement,tag=value\\\\with\\\\slash,tag2=value field=10000i,field2=\"str=special,end\\\\ \" 100000\n");
+    }
+
+    public void testWithEscapedKeys() {
+        assertThat("measurement,t ag=value with space,tag2=value field=10000i,field 2=\"str=special,end\" 100000\n",
+                "measurement,t\\ ag=value\\ with\\ space,tag2=value field=10000i,field\\ 2=\"str=special,end\" 100000\n");
+    }
+
     @Override
     public void testNoFieldValue2() {
         assertThat("measurement,tag=x f= 10000\n", "measurement,tag=x f= 10000\n");
@@ -87,50 +128,40 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
         assertThat("measurement,tag=x f= 10000\n", "measurement,tag=x f=, 10000\n");
     }
 
-
     @Override
     public void testDanglingCommaOnTag() {
         assertThat("measurement,tag=value field=x 10000\n", "measurement,tag=value, field=x 10000\n");
     }
 
-    @Override
-    protected void assertThat(CharSequence expected, byte[] line) throws LineProtoException {
+    protected void assertThat(CharSequence expected, String lineStr) throws LineProtoException {
+        assertThat(expected, lineStr, 1);
+    }
+
+    protected void assertThat(CharSequence expected, String lineStr, int start) throws LineProtoException {
+        byte[] line = lineStr.getBytes(StandardCharsets.UTF_8);
         final int len = line.length;
         final boolean endWithEOL = line[len - 1] == '\n' || line[len - 1] == '\r';
         long mem = Unsafe.malloc(line.length + 1, MemoryTag.NATIVE_DEFAULT);
         try {
-            if (len < 10) {
-                for (int i = 1; i < len; i++) {
-                    for (int j = 0; j < len; j++) {
-                        Unsafe.getUnsafe().putByte(mem + j, line[j]);
-                    }
-                    Unsafe.getUnsafe().putByte(mem + len, (byte) '\n');
-                    sink.clear();
-                    resetParser(mem);
-                    boolean complete = parseMeasurement(mem + i);
-                    Assert.assertFalse(complete);
-                    complete = parseMeasurement(mem + len);
-                    Assert.assertTrue(complete);
-                    TestUtils.assertEquals(expected, sink);
+            for (int i = start; i < len - 10; i++) {
+                for (int j = 0; j < len; j++) {
+                    Unsafe.getUnsafe().putByte(mem + j, line[j]);
                 }
-            } else {
-                for (int i = 1; i < len - 10; i++) {
-                    for (int j = 0; j < len; j++) {
-                        Unsafe.getUnsafe().putByte(mem + j, line[j]);
-                    }
-                    Unsafe.getUnsafe().putByte(mem + len, (byte) '\n');
-                    sink.clear();
-                    resetParser(mem);
-                    parseMeasurement(mem + i);
-                    parseMeasurement(mem + i + 10);
-                    boolean complete;
-                    if (!endWithEOL) {
-                        complete = parseMeasurement(mem + len + 1);
-                    } else {
-                        complete = parseMeasurement(mem + len);
-                    }
-                    Assert.assertTrue(complete);
-                    TestUtils.assertEquals(expected, sink);
+                Unsafe.getUnsafe().putByte(mem + len, (byte) '\n');
+                sink.clear();
+                resetParser(mem);
+                parseMeasurement(mem + i);
+                boolean complete;
+                if (!endWithEOL) {
+                    complete = parseMeasurement(mem + len + 1);
+                } else {
+                    complete = parseMeasurement(mem + len);
+                }
+                Assert.assertTrue(complete);
+                if (!Chars.equals(expected, sink)) {
+                    System.out.println(lineStr.substring(0, i));
+                    System.out.println(lineStr.substring(i));
+                    TestUtils.assertEquals("parse split " + i, expected, sink);
                 }
             }
 

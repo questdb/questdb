@@ -69,6 +69,8 @@ public class NewLineProtoParser implements Closeable {
     private final EntityHandler entityTimestampHandler = this::expectTimestamp;
     private final EntityHandler entityValueHandler = this::expectEntityValue;
     private final EntityHandler entityNameHandler = this::expectEntityName;
+    private int nQuoteCharacters;
+    private boolean scape;
 
     @Override
     public void close() {
@@ -112,12 +114,16 @@ public class NewLineProtoParser implements Closeable {
     public ParseResult parseMeasurement(long bufHi) {
         assert bufAt != 0 && bufHi >= bufAt;
         // If last exit was inside quotes, pick up from the same place
-        if (errorCode == ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW) {
+        if (nQuoteCharacters == 1 && tagsComplete && entityHandler == entityValueHandler)  {
             if (!prepareQuotedEntity(entityLo, bufHi)) {
                 return ParseResult.BUFFER_UNDERFLOW;
             }
             errorCode = ErrorCode.NONE;
+            nQuoteCharacters = 0;
+            bufAt += 1;
+            errorCode = ErrorCode.NONE;
         }
+
         while (bufAt < bufHi) {
             byte b = Unsafe.getUnsafe().getByte(bufAt);
             boolean endOfLine = false;
@@ -165,6 +171,21 @@ public class NewLineProtoParser implements Closeable {
                     nEscapedChars++;
                     bufAt++;
                     b = Unsafe.getUnsafe().getByte(bufAt);
+                    appendByte = true;
+                    break;
+
+                case (byte)'"':
+                    if (++nQuoteCharacters == 1 && tagsComplete && entityHandler == entityValueHandler) {
+                        bufAt += 1;
+                        if (!prepareQuotedEntity(bufAt - 1, bufHi)) {
+                            return ParseResult.BUFFER_UNDERFLOW;
+                        }
+                        appendByte = false;
+                        errorCode = ErrorCode.NONE;
+                        nQuoteCharacters = 0;
+                        bufAt += 1;
+                        break;
+                    }
 
                 default:
                     appendByte = true;
@@ -215,6 +236,8 @@ public class NewLineProtoParser implements Closeable {
         entityHandler = entityTableHandler;
         timestamp = NULL_TIMESTAMP;
         errorCode = ErrorCode.NONE;
+        nQuoteCharacters = 0;
+        scape = false;
     }
 
     private boolean expectEndOfLine(byte endOfEntityByte, long bufHi) {
@@ -240,12 +263,12 @@ public class NewLineProtoParser implements Closeable {
             nEntities++;
             currentEntity.setName();
             entityHandler = entityValueHandler;
-
             if (tagsComplete) {
                 if (bufAt + 3 < bufHi) { // peek oncoming value's 1st byte, only caring for valid strings (2 quotes plus a follow up byte)
                     long candidateQuoteIdx = bufAt + 1;
                     byte b = Unsafe.getUnsafe().getByte(candidateQuoteIdx);
                     if (b == (byte) '"') {
+                        nQuoteCharacters++;
                         bufAt += 2; // go to first byte of the string, past the '"'
                         return prepareQuotedEntity(candidateQuoteIdx, bufHi);
                     }
@@ -283,15 +306,25 @@ public class NewLineProtoParser implements Closeable {
         // the start of a string value. Get it ready for immediate consumption by
         // the next completeEntity call, moving butAt to the next '"'
         entityLo = openQuoteIdx; // from the quote
-        boolean scape = false;
+        boolean copyByte;
         while (bufAt < bufHi) { // consume until the next quote, '\n', or eof
-            switch (Unsafe.getUnsafe().getByte(bufAt)) {
+            byte b = Unsafe.getUnsafe().getByte(bufAt);
+            copyByte = true;
+            switch (b) {
                 case (byte) '\\':
+                    if (!scape) {
+                        nEscapedChars++;
+                        copyByte = false;
+                    }
                     scape = !scape;
                     break;
                 case (byte) '"':
                     if (!scape) {
                         isQuotedFieldValue = true;
+                        nQuoteCharacters--;
+                        if (nEscapedChars > 0) {
+                            Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
+                        }
                         return true;
                     }
                     scape = false;
@@ -306,6 +339,9 @@ public class NewLineProtoParser implements Closeable {
                 default:
                     scape = false;
                     break;
+            }
+            if (copyByte && nEscapedChars > 0) {
+                Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
             }
             bufAt++;
         }
