@@ -67,7 +67,6 @@ public class TableWriter implements Closeable {
     private static final int ROW_ACTION_NO_TIMESTAMP = 2;
     private static final int ROW_ACTION_O3 = 3;
     private static final int ROW_ACTION_SWITCH_PARTITION = 4;
-    private static final int MEM_PAGE_SIZE = 16 * Numbers.SIZE_1MB;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     private static final CharSequenceHashSet IGNORED_FILES = new CharSequenceHashSet();
     private static final Runnable NOOP = () -> {

@@ -27,12 +27,9 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.text.SimpleDateFormat;
@@ -46,11 +43,6 @@ import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 public class TimestampQueryTest extends AbstractGriffinTest {
-
-    @Before
-    public void setUp3() {
-        SharedRandom.RANDOM.set(new Rnd());
-    }
 
     @Test
     public void testEqualityTimestampFormatYearAndMonthNegativeTest() throws Exception {

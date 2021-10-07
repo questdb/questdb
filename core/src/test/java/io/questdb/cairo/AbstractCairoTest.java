@@ -28,10 +28,12 @@ import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
@@ -146,6 +148,7 @@ public class AbstractCairoTest {
 
     @Before
     public void setUp() {
+        SharedRandom.RANDOM.set(new Rnd());
         LOG.info().$("Starting test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         TestUtils.createTestPath(root);
         engine.openTableId();

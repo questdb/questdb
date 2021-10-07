@@ -31,18 +31,11 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.math.NegIntFunctionFactory;
-import io.questdb.std.Rnd;
-import org.junit.Before;
 import org.junit.Test;
 
 public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     private static final CairoEngine engine = new CairoEngine(configuration);
     private static final SqlCompiler compiler = new SqlCompiler(engine);
-
-    @Before
-    public void setup() {
-        SharedRandom.RANDOM.set(new Rnd());
-    }
 
     @Test
     public void testBadMinimum() {
