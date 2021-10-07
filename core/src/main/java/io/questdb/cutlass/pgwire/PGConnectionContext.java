@@ -1451,7 +1451,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         if (Chars.utf8Decode(lo, hi, e)) {
             queryText = characterStore.toImmutable();
 
-            LOG.info().$("parse [q=").utf8(queryText).$(']').$();
+            LOG.info().$("parse [fd=").$(fd).$(", q=").utf8(queryText).I$();
             compileQuery(compiler);
             return;
         }

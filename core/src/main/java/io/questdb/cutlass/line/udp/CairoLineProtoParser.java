@@ -385,6 +385,9 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                     case ColumnType.LONG256:
                         valid = columnTypeTag == ColumnType.LONG256;
                         break;
+                    case ColumnType.TIMESTAMP:
+                        valid = columnTypeTag == ColumnType.TIMESTAMP;
+                        break;
                     default:
                         valid = false;
                 }

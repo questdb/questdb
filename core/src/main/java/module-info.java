@@ -29,6 +29,7 @@ open module io.questdb {
     requires transitive jdk.unsupported;
     requires static org.jetbrains.annotations;
     requires static java.sql;
+    requires static java.management;
 
     uses io.questdb.griffin.FunctionFactory;
 
@@ -542,6 +543,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetKeywordsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.TableMetadataCursorFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory,
 //                  concat()
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
             // replace()

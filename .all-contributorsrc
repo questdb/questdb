@@ -437,7 +437,8 @@
       "profile": "https://www.linkedin.com/in/marregui",
       "contributions": [
         "code",
-        "ideas"
+        "ideas",
+        "design"
       ]
     },
     {
@@ -572,6 +573,163 @@
       "profile": "https://github.com/houarizegai",
       "contributions": [
         "doc"
+      ]
+    },
+    {
+      "login": "jjsaunier",
+      "name": "Johann Saunier",
+      "avatar_url": "https://avatars.githubusercontent.com/u/1763341?v=4",
+      "profile": "http://scrapfly.io",
+      "contributions": [
+        "bug"
+      ]
+    },
+    {
+      "login": "zanek",
+      "name": "zanek",
+      "avatar_url": "https://avatars.githubusercontent.com/u/333102?v=4",
+      "profile": "https://github.com/zanek",
+      "contributions": [
+        "ideas",
+        "projectManagement"
+      ]
+    },
+    {
+      "login": "Geekaylee",
+      "name": "Geekaylee",
+      "avatar_url": "https://avatars.githubusercontent.com/u/12583377?v=4",
+      "profile": "https://github.com/Geekaylee",
+      "contributions": [
+        "userTesting",
+        "ideas"
+      ]
+    },
+    {
+      "login": "lg31415",
+      "name": "Weifeng Ge",
+      "avatar_url": "https://avatars.githubusercontent.com/u/3609384?v=4",
+      "profile": "https://github.com/lg31415",
+      "contributions": [
+        "bug",
+        "projectManagement"
+      ]
+    },
+    {
+      "login": "null-dev",
+      "name": "Andy Bao",
+      "avatar_url": "https://avatars.githubusercontent.com/u/9571936?v=4",
+      "profile": "http://nulldev.xyz/",
+      "contributions": [
+        "bug",
+        "projectManagement"
+      ]
+    },
+    {
+      "login": "ultd",
+      "name": "Ahmad",
+      "avatar_url": "https://avatars.githubusercontent.com/u/12675427?v=4",
+      "profile": "http://ultd.io",
+      "contributions": [
+        "ideas",
+        "projectManagement"
+      ]
+    },
+    {
+      "login": "ericsun2",
+      "name": "Eric Sun",
+      "avatar_url": "https://avatars.githubusercontent.com/u/8866410?v=4",
+      "profile": "https://github.com/ericsun2",
+      "contributions": [
+        "ideas",
+        "bug",
+        "projectManagement"
+      ]
+    },
+    {
+      "login": "giovannibonetti",
+      "name": "Giovanni Kock Bonetti",
+      "avatar_url": "https://avatars.githubusercontent.com/u/3451581?v=4",
+      "profile": "https://www.linkedin.com/in/giovanni-k-bonetti-2809345/",
+      "contributions": [
+        "userTesting",
+        "bug",
+        "projectManagement"
+      ]
+    },
+    {
+      "login": "wavded",
+      "name": "Marc Harter",
+      "avatar_url": "https://avatars.githubusercontent.com/u/26638?v=4",
+      "profile": "https://wavded.com",
+      "contributions": [
+        "userTesting",
+        "bug"
+      ]
+    },
+    {
+      "login": "puzpuzpuz",
+      "name": "Andrey Pechkurov",
+      "avatar_url": "https://avatars.githubusercontent.com/u/37772591?v=4",
+      "profile": "https://medium.com/@apechkurov",
+      "contributions": [
+        "doc",
+        "code",
+        "userTesting"
+      ]
+    },
+    {
+      "login": "rstreics",
+      "name": "rstreics",
+      "avatar_url": "https://avatars.githubusercontent.com/u/50323347?v=4",
+      "profile": "https://github.com/rstreics",
+      "contributions": [
+        "code",
+        "infra",
+        "doc"
+      ]
+    },
+    {
+      "login": "mariusgheorghies",
+      "name": "Marius",
+      "avatar_url": "https://avatars.githubusercontent.com/u/84250061?v=4",
+      "profile": "https://github.com/mariusgheorghies",
+      "contributions": [
+        "code",
+        "infra",
+        "doc"
+      ]
+    },
+    {
+      "login": "pswu11",
+      "name": "pswu11",
+      "avatar_url": "https://avatars.githubusercontent.com/u/48913707?v=4",
+      "profile": "https://github.com/pswu11",
+      "contributions": [
+        "content",
+        "ideas",
+        "design"
+      ]
+    },
+    {
+      "login": "insmac",
+      "name": "Maciej Bodek",
+      "avatar_url": "https://avatars.githubusercontent.com/u/1871646?v=4",
+      "profile": "https://github.com/insmac",
+      "contributions": [
+        "code",
+        "ideas",
+        "design"
+      ]
+    },
+    {
+      "login": "eugenels",
+      "name": "Eugene Lysiuchenko",
+      "avatar_url": "https://avatars.githubusercontent.com/u/79919431?v=4",
+      "profile": "https://github.com/eugenels",
+      "contributions": [
+        "code",
+        "ideas",
+        "maintenance"
       ]
     }
   ],
