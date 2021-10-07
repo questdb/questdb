@@ -262,8 +262,8 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
 
         // This will copy ILP data from fullBuffer to parseBuffer so that the data ends at the end of the buffer
         long parseHi = parseBuffer + buffersLen;
-        Vect.memmove(parseHi - parseLen, parseHi - parseLen, prevParseLen);
-        Vect.memcpy(fullBuffer, parseHi - parseLen + prevParseLen, shl);
+        Vect.memmove(parseHi - parseLen, parseHi - prevParseLen, prevParseLen);
+        Vect.memcpy(fullBuffer + prevParseLen, parseHi - shl, shl);
 
         // bufHi always the same, data alwasy ends at the end of the buffer
         // the only difference from iteration to iteration is where the data starts, which is set in shl
