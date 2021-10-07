@@ -292,14 +292,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return tableName;
     }
 
-    public long getTransactionLogRowCount() {
-        return txFile.transactionLogRowCount;
-    }
-
-    public long getTransactionLogTxn() {
-        return txFile.transactionLogTxn;
-    }
-
     public long getVersion() {
         return this.txFile.getStructureVersion();
     }

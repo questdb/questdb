@@ -106,6 +106,13 @@ class MigrationActions {
         updateVarColumnSize(migrationContext, 421);
     }
 
+    public static void mig608(MigrationContext migrationContext) {
+        // todo: we added column hash to metadata; extend column entries on the existing table columns and
+        //    generate hash
+
+        // todo: we also extended reserved area in _txn file; add this extension without writing anything there
+    }
+
     private static void updateVarColumnSize(MigrationContext migrationContext, int metadataVersionToExpect) {
         final FilesFacade ff = migrationContext.getFf();
         Path path = migrationContext.getTablePath();

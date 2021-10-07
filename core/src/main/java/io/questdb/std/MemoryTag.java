@@ -68,5 +68,6 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(MMAP_INDEX_WRITER, "MMAP_INDEX_WRITER");
         tagNameMap.extendAndSet(MMAP_INDEX_SLIDER, "MMAP_INDEX_SLIDER");
         tagNameMap.extendAndSet(MMAP_BLOCK_WRITER, "MMAP_BLOCK_WRITER");
+        tagNameMap.extendAndSet(NATIVE_REPL, "NATIVE_REPL");
     }
 }

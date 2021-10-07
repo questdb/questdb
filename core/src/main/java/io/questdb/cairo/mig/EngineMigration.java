@@ -252,5 +252,6 @@ public class EngineMigration {
         setByVersion(VERSION_COLUMN_TYPE_ENCODING_CHANGED, MigrationActions::mig605, 1);
         setByVersion(VERSION_VAR_COLUMN_CHANGED, MigrationActions::mig606, 1);
         setByVersion(VERSION_VAR_COLUMN_CHANGED_MIGRATION_FIX, MigrationActions::mig607, 1);
+        setByVersion(423, MigrationActions::mig608, 1);
     }
 }

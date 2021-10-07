@@ -49,9 +49,6 @@ public class TxReader implements Closeable {
     protected long structureVersion;
     protected long fixedRowCount;
     protected long transientRowCount;
-    protected long transactionLogTxn;
-    protected long transactionLogRowCount;
-    protected long transactionLogUserCount;
     protected int partitionBy;
     protected long partitionTableVersion;
     protected int attachedPartitionsSize = 0;
@@ -212,9 +209,6 @@ public class TxReader implements Closeable {
         this.symbolsCount = roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
         final long prevPartitionTableVersion = this.partitionTableVersion;
         this.partitionTableVersion = roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
-        this.transactionLogTxn = roTxMem.getLong(TX_OFFSET_TRANSACTION_LOG_TXN);
-        this.transactionLogRowCount = roTxMem.getLong(TX_OFFSET_TRANSACTION_LOG_ROW_COUNT);
-        this.transactionLogUserCount = roTxMem.getLong(TX_OFFSET_TRANSACTION_LOG_USER_COUNT);
         if (prevSymbolCount != symbolsCount) {
             roTxMem.growToFileSize();
         }
@@ -302,6 +296,5 @@ public class TxReader implements Closeable {
     void readRowCounts() {
         this.transientRowCount = roTxMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
         this.fixedRowCount = roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
-        this.transactionLogRowCount = roTxMem.getLong(TX_OFFSET_TRANSACTION_LOG_ROW_COUNT);
     }
 }
