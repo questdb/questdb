@@ -386,6 +386,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                                 "rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
                                 "rnd_bin(1024,2048,2) " +
                                 "from long_sequence(50)");
+
                 Assert.fail();
             } catch (PSQLException e) {
                 TestUtils.assertContains(e.getServerErrorMessage().getMessage(), "blob is too large");
