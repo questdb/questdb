@@ -777,9 +777,9 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
             send(server, lineData, "plug", WAIT_ALTER_TABLE_RELEASE, false);
 
-            lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999001\n" +
-                    "plug,label=Power,room=6B watts=\"55\" 1631817902843\n" +
-                    "plug,label=Line,room=6C watts=\"666\" 1531817902843\n";
+            lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999000\n" +
+                    "plug,label=Power,room=6B watts=\"55\" 1631817902842\n" +
+                    "plug,label=Line,room=6C watts=\"666\" 1531817902842\n";
 
             // re-send, this should re-add column label
             send(server,lineData, "plug", WAIT_ENGINE_TABLE_RELEASE);

@@ -805,14 +805,6 @@ public class TableWriter implements Closeable {
         return tableAlterIsPending;
     }
 
-    public boolean isTransactionLogEnabled() {
-        return txFile.transactionLogTxn > -1;
-    }
-
-    public boolean isTransactionLogPending() {
-        return txFile.transactionLogTxn != Long.MIN_VALUE && txFile.transactionLogTxn < 0;
-    }
-
     public TableBlockWriter newBlock() {
         bumpMasterRef();
         txFile.newBlock();

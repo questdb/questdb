@@ -979,6 +979,9 @@ class LineTcpMeasurementScheduler implements Closeable {
         void handleRowAppended() {
             if (writer.checkMaxAndCommitLag(commitMode)) {
                 lastCommitMillis = milliClock.getTicks();
+                if (writer.isStructureChangePending()) {
+
+                }
             }
         }
 
