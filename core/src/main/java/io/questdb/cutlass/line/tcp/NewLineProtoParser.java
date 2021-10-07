@@ -116,7 +116,10 @@ public class NewLineProtoParser implements Closeable {
         // If last exit was inside quotes, pick up from the same place
         if (nQuoteCharacters == 1 && tagsComplete && entityHandler == entityValueHandler)  {
             if (!prepareQuotedEntity(entityLo, bufHi)) {
-                return ParseResult.BUFFER_UNDERFLOW;
+                if (errorCode == ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW) {
+                    return ParseResult.BUFFER_UNDERFLOW;
+                }
+                return ParseResult.ERROR;
             }
             nQuoteCharacters = 0;
             bufAt++;
@@ -177,7 +180,10 @@ public class NewLineProtoParser implements Closeable {
                     if (++nQuoteCharacters == 1 && tagsComplete && entityHandler == entityValueHandler) {
                         bufAt += 1;
                         if (!prepareQuotedEntity(bufAt - 1, bufHi)) {
-                            return ParseResult.BUFFER_UNDERFLOW;
+                            if (errorCode == ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW) {
+                                return ParseResult.BUFFER_UNDERFLOW;
+                            }
+                            return ParseResult.ERROR;
                         }
                         appendByte = false;
                         errorCode = ErrorCode.NONE;
