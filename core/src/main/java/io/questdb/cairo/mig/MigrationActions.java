@@ -25,14 +25,14 @@
 package io.questdb.cairo.mig;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 
@@ -75,27 +75,27 @@ class MigrationActions {
         }
 
         // Metadata file should already be backed up
-        final MemoryMARW rwMem = migrationContext.getRwMemory();
-        rwMem.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_DEFAULT);
+        try (final MemoryMARW rwMem = migrationContext.getRwMemory()) {
+            rwMem.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_DEFAULT);
 
-        // column count
-        final int columnCount = rwMem.getInt(TableUtils.META_OFFSET_COUNT);
-        rwMem.putInt(TableUtils.META_OFFSET_VERSION, EngineMigration.VERSION_COLUMN_TYPE_ENCODING_CHANGED);
+            // column count
+            final int columnCount = rwMem.getInt(TableUtils.META_OFFSET_COUNT);
+            rwMem.putInt(TableUtils.META_OFFSET_VERSION, EngineMigration.VERSION_COLUMN_TYPE_ENCODING_CHANGED);
 
-        long offset = TableUtils.META_OFFSET_COLUMN_TYPES;
-        for (int i = 0; i < columnCount; i++) {
-            final byte oldTypeId = rwMem.getByte(offset);
-            final long oldFlags = rwMem.getLong(offset + 1);
-            final int blockCapacity = rwMem.getInt(offset + 1 + 8);
-            // column type id is int now
-            // we grabbed 3 reserved bytes for extra type info
-            // extra for old types is zeros
-            rwMem.putInt(offset, oldTypeId == 13 ? 18 : oldTypeId + 1); // ColumnType.VERSION_420 - ColumnType.VERSION_419 = 1 except for BINARY, old 13 new 18
-            rwMem.putLong(offset + 4, oldFlags);
-            rwMem.putInt(offset + 4 + 8, blockCapacity);
-            offset += TableUtils.META_COLUMN_DATA_SIZE;
+            long offset = TableUtils.META_OFFSET_COLUMN_TYPES;
+            for (int i = 0; i < columnCount; i++) {
+                final byte oldTypeId = rwMem.getByte(offset);
+                final long oldFlags = rwMem.getLong(offset + 1);
+                final int blockCapacity = rwMem.getInt(offset + 1 + 8);
+                // column type id is int now
+                // we grabbed 3 reserved bytes for extra type info
+                // extra for old types is zeros
+                rwMem.putInt(offset, oldTypeId == 13 ? 18 : oldTypeId + 1); // ColumnType.VERSION_420 - ColumnType.VERSION_419 = 1 except for BINARY, old 13 new 18
+                rwMem.putLong(offset + 4, oldFlags);
+                rwMem.putInt(offset + 4 + 8, blockCapacity);
+                offset += 16; // old TableUtils.META_COLUMN_DATA_SIZE;
+            }
         }
-        rwMem.close();
     }
 
     public static void mig606(MigrationContext migrationContext) {
@@ -111,6 +111,94 @@ class MigrationActions {
         //    generate hash
 
         // todo: we also extended reserved area in _txn file; add this extension without writing anything there
+
+        //  META_COLUMN_DATA_SIZE = 16 -> 32;
+        //  TX_OFFSET_MAP_WRITER_COUNT = 72 -> 128
+
+        final FilesFacade ff = migrationContext.getFf();
+        Path path = migrationContext.getTablePath();
+        int plen = path.length();
+        
+        path.concat(META_FILE_NAME).$();
+        if (!ff.exists(path)) {
+            LOG.error().$("meta file does not exist, nothing to migrate [path=").$(path).I$();
+            return;
+        }
+
+        // modify metadata 
+        try (final MemoryMARW rwMem = migrationContext.getRwMemory()) {
+            final long thatMetaColumnDataSize = 16;
+            final long thisMetaColumnDataSize = 32;
+
+            rwMem.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_DEFAULT);
+
+            // column count
+            final int columnCount = rwMem.getInt(TableUtils.META_OFFSET_COUNT);
+            rwMem.putInt(TableUtils.META_OFFSET_VERSION, EngineMigration.VERSION_COLUMN_TYPE_ENCODING_CHANGED);
+
+            long offset = TableUtils.META_OFFSET_COLUMN_TYPES;
+            // 32L here is TableUtils.META_COLUMN_DATA_SIZE at the time of writing this migration
+            long newNameOffset = offset + thisMetaColumnDataSize * columnCount;
+
+            // the intent is to resize the _meta file and move the variable length (names) segment
+            // to do that we need to work out size of the variable length segment first
+            long oldNameOffset = offset + thatMetaColumnDataSize * columnCount;
+            long o = oldNameOffset;
+            for (int i = 0; i < columnCount; i++) {
+                int len = rwMem.getStrLen(o);
+                o += Vm.getStorageLength(len);
+            }
+
+            final long nameSegmentLen = o - oldNameOffset;
+
+            // resize the file
+            rwMem.extend(newNameOffset + nameSegmentLen);
+            // move name segment
+            Vect.memmove(rwMem.addressOf(newNameOffset), rwMem.addressOf(oldNameOffset), nameSegmentLen);
+
+            // copy column information in reverse order
+            o = offset + thatMetaColumnDataSize * (columnCount - 1);
+            long o2 = offset + thisMetaColumnDataSize * (columnCount - 1);
+            final Rnd rnd = SharedRandom.getRandom(migrationContext.getConfiguration());
+            while (o > offset) {
+                rwMem.putInt(o2, rwMem.getInt(o)); // type
+                rwMem.putLong(o2 + 4, rwMem.getInt(o + 4)); // flags
+                rwMem.putInt(o2 + 12, rwMem.getInt(o + 12)); // index block capacity
+                rwMem.putLong(o2 + 20, rnd.nextLong()); // column hash
+                o -= thatMetaColumnDataSize;
+                o2 -= thisMetaColumnDataSize;
+            }
+        }
+        
+        // update _txn file
+        path.trimTo(plen).concat(TXN_FILE_NAME).$();
+        if (!ff.exists(path)) {
+            LOG.error().$("tx file does not exist, nothing to migrate [path=").$(path).I$();
+            return;
+        }
+        EngineMigration.backupFile(ff, path, migrationContext.getTablePath2(), TXN_FILE_NAME, 422);
+
+        LOG.debug().$("opening for rw [path=").$(path).I$();
+        try (MemoryMARW txMem = migrationContext.createRwMemoryOf(ff, path.$())) {
+            
+            // calculate size of the _txn file
+            final long thatTxOffsetMapWriterCount = 72;
+            final long thisTxOffsetMapWriterCount = 128;
+            final int longsPerAttachedPartition = 4;
+            
+            int symbolCount = txMem.getInt(thatTxOffsetMapWriterCount);
+            int partitionTableSize = txMem.getInt(thatTxOffsetMapWriterCount + 4 + symbolCount * 8L) * 8 * longsPerAttachedPartition;
+            
+            // resize existing file:
+            // thisTxOffsetMapWriterCount + symbolCount + symbolData + partitionTableEntryCount + partitionTableSize
+            long thatSize = thatTxOffsetMapWriterCount + 4 + symbolCount * 8L + 4L + partitionTableSize;
+            long thisSize = thisTxOffsetMapWriterCount + 4 + symbolCount * 8L + 4L + partitionTableSize;
+            txMem.extend(thisSize);
+            Vect.memmove(txMem.addressOf(thisTxOffsetMapWriterCount), txMem.addressOf(thatTxOffsetMapWriterCount), thatSize - thatTxOffsetMapWriterCount);
+
+            // zero out reserved area
+            Vect.memset(txMem.addressOf(thatTxOffsetMapWriterCount), thisTxOffsetMapWriterCount - thatTxOffsetMapWriterCount, 0);
+        }
     }
 
     private static void updateVarColumnSize(MigrationContext migrationContext, int metadataVersionToExpect) {
@@ -279,13 +367,12 @@ class MigrationActions {
         EngineMigration.backupFile(ff, path, migrationContext.getTablePath2(), TXN_FILE_NAME, EngineMigration.VERSION_TX_STRUCT_UPDATE_1 - 1);
 
         LOG.debug().$("opening for rw [path=").$(path).I$();
-        MemoryMARW txMem = migrationContext.createRwMemoryOf(ff, path.$());
-        long tempMem8b = migrationContext.getTempMemory(8);
+        try (MemoryMARW txMem = migrationContext.createRwMemoryOf(ff, path.$())) {
+            long tempMem8b = migrationContext.getTempMemory(8);
 
-        MemoryARW txFileUpdate = migrationContext.getTempVirtualMem();
-        txFileUpdate.jumpTo(0);
+            MemoryARW txFileUpdate = migrationContext.getTempVirtualMem();
+            txFileUpdate.jumpTo(0);
 
-        try {
             int symbolsCount = txMem.getInt(EngineMigration.TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT);
             for (int i = 0; i < symbolsCount; i++) {
                 long symbolCountOffset = EngineMigration.TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + (i + 1L) * Integer.BYTES;
@@ -318,8 +405,6 @@ class MigrationActions {
             }
 
             assert updateSize == 0;
-        } finally {
-            txMem.close();
         }
     }
 
