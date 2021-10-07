@@ -28,7 +28,7 @@ import java.nio.charset.StandardCharsets;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.MemoryTag;
+import io.questdb.std.*;
 import io.questdb.cutlass.line.LineProtoLexerTest;
 import org.junit.Assert;
 
@@ -36,9 +36,6 @@ import io.questdb.cutlass.line.LineProtoException;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ErrorCode;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ParseResult;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ProtoEntity;
-import io.questdb.std.Chars;
-import io.questdb.std.Numbers;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -52,85 +49,132 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
 
     @Override
     public void testNoTagValue1() {
-        assertThat("measurement,tag= field=x 10000\n", "measurement,tag= field=x 10000\n");
+        assertThat(
+                "measurement,tag= field=x 10000\n",
+                "measurement,tag= field=x 10000\n"
+        );
     }
 
     @Override
     public void testNoTagValue2() {
-        assertThat("measurement,tag= field=x 10000\n", "measurement,tag=, field=x 10000\n");
+        assertThat(
+                "measurement,tag= field=x 10000\n",
+                "measurement,tag=, field=x 10000\n"
+        );
     }
 
     @Override
     public void testNoTagValue3() {
-        assertThat("measurement,tag=\n", "measurement,tag=");
+        assertThat(
+                "measurement,tag=\n",
+                "measurement,tag="
+        );
     }
 
     @Override
     public void testNoTagValue4() {
-        assertThat("measurement,tag=\n", "measurement,tag=\n");
+        assertThat(
+                "measurement,tag=\n",
+                "measurement,tag=\n"
+        );
     }
 
     @Override
     public void testSkipLine() {
-        assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
+        assertThat(
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
                         "measurement,tag=value3,tag2=value2 field=,field2=\"ok\"\n" +
                         "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n",
                 "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
                         "measurement,tag=value3,tag2=value2 field=,field2=\"ok\"\n" +
-                        "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n");
+                        "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n"
+        );
     }
 
     @Test
     public void testWithQuotedStringsWithSpaces() {
-        assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"longstring\",fld3=\"short string\" 100000\n",
-                "measurement,tag=value,tag2=value field=10000i,field2=\"longstring\",fld3=\"short string\" 100000\n");
+        assertThat(
+                "measurement,tag=value,tag2=value field=10000i,field2=\"longstring\",fld3=\"short string\" 100000\n",
+                "measurement,tag=value,tag2=value field=10000i,field2=\"longstring\",fld3=\"short string\" 100000\n"
+        );
     }
 
     @Test
     public void testWithQuotedStringsWithEscapedQuotes() {
-        assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str\" escaped\\ end\" 100000\n",
-                "measurement,tag=value,tag2=value field=10000i,field2=\"str\\\" escaped\\\\ end\" 100000\n");
+        assertThat(
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str\" escaped\\ end\" 100000\n",
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str\\\" escaped\\\\ end\" 100000\n"
+        );
 
-        assertThat("measurement field2=\"double escaped \\ \" and quoted\" 100000\n",
-                "measurement field2=\"double escaped \\\\ \\\" and quoted\" 100000\n");
+        assertThat(
+                "measurement field2=\"double escaped \\ \" and quoted\" 100000\n",
+                "measurement field2=\"double escaped \\\\ \\\" and quoted\" 100000\n"
+        );
 
-        assertThat("measurement field2=\"double escaped \\\" and quoted2\" 100000\n",
-                "measurement field2=\"double escaped \\\\\\\" and quoted2\" 100000\n");
+        assertThat(
+                "measurement field2=\"double escaped \\\" and quoted2\" 100000\n",
+                "measurement field2=\"double escaped \\\\\\\" and quoted2\" 100000\n"
+        );
 
-        assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\" 100000\n",
-                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\" 100000\n");
+        assertThat(
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\" 100000\n",
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\" 100000\n"
+        );
 
-        assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\",field3=34 100000\n",
-                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\",field3=34 100000\n");
+        assertThat(
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\",field3=34 100000\n",
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\",field3=34 100000\n"
+        );
     }
 
     @Test
     public void testWithEscapedTagValues() {
-        assertThat("measurement,tag=value with space,tag2=value field=10000i,field2=\"str=special,end\" 100000\n",
-                "measurement,tag=value\\ with\\ space,tag2=value field=10000i,field2=\"str=special,end\" 100000\n");
+        assertThat(
+                "measurement,tag=value with space,tag2=value field=10000i,field2=\"str=special,end\" 100000\n",
+                "measurement,tag=value\\ with\\ space,tag2=value field=10000i,field2=\"str=special,end\" 100000\n"
+        );
 
-        assertThat("measurement,tag=value\\with\\slash,tag2=value field=10000i,field2=\"str=special,end\\ \" 100000\n",
-                "measurement,tag=value\\\\with\\\\slash,tag2=value field=10000i,field2=\"str=special,end\\\\ \" 100000\n");
+        assertThat(
+                "measurement,tag=value\\with\\slash,tag2=value field=10000i,field2=\"str=special,end\\ \" 100000\n",
+                "measurement,tag=value\\\\with\\\\slash,tag2=value field=10000i,field2=\"str=special,end\\\\ \" 100000\n"
+        );
     }
 
+    @Test
     public void testWithEscapedKeys() {
-        assertThat("measurement,t ag=value with space,tag2=value field=10000i,field 2=\"str=special,end\" 100000\n",
-                "measurement,t\\ ag=value\\ with\\ space,tag2=value field=10000i,field\\ 2=\"str=special,end\" 100000\n");
+        assertThat(
+                "measurement,t ag=value with space,tag2=value field=10000i,field 2=\"str=special,end\" 100000\n",
+                "measurement,t\\ ag=value\\ with\\ space,tag2=value field=10000i,field\\ 2=\"str=special,end\" 100000\n", 15
+        );
+
+//        assertThat(
+//                "measurement,t\"ag=value with space,tag2=value field=10000i,field 2=\"str=special,end\" 100000\n",
+//                "measurement,t\\\"ag=value\\ with\\ space,tag2=value field=10000i,field\\ 2=\"str=special,end\" 100000\n"
+//        );
     }
 
     @Override
     public void testNoFieldValue2() {
-        assertThat("measurement,tag=x f= 10000\n", "measurement,tag=x f= 10000\n");
+        assertThat(
+                "measurement,tag=x f= 10000\n",
+                "measurement,tag=x f= 10000\n"
+        );
     }
 
     @Override
     public void testNoFieldValue3() {
-        assertThat("measurement,tag=x f= 10000\n", "measurement,tag=x f=, 10000\n");
+        assertThat(
+                "measurement,tag=x f= 10000\n",
+                "measurement,tag=x f=, 10000\n"
+        );
     }
 
     @Override
     public void testDanglingCommaOnTag() {
-        assertThat("measurement,tag=value field=x 10000\n", "measurement,tag=value, field=x 10000\n");
+        assertThat(
+                "measurement,tag=value field=x 10000\n",
+                "measurement,tag=value, field=x 10000\n"
+        );
     }
 
     protected void assertThat(CharSequence expected, String lineStr) throws LineProtoException {
@@ -141,44 +185,40 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
         byte[] line = lineStr.getBytes(StandardCharsets.UTF_8);
         final int len = line.length;
         final boolean endWithEOL = line[len - 1] == '\n' || line[len - 1] == '\r';
-        long mem = Unsafe.malloc(line.length + 1, MemoryTag.NATIVE_DEFAULT);
+        int fullLen = endWithEOL ? line.length : line.length + 1;
+        long memFull = Unsafe.malloc(fullLen, MemoryTag.NATIVE_DEFAULT);
+        long mem = Unsafe.malloc(fullLen, MemoryTag.NATIVE_DEFAULT);
+        for (int j = 0; j < len; j++) {
+            Unsafe.getUnsafe().putByte(memFull + j, line[j]);
+        }
+        if (!endWithEOL) {
+            Unsafe.getUnsafe().putByte(memFull + len, (byte) '\n');
+        }
+
         try {
-            for (int i = start; i < len - 10; i++) {
-                for (int j = 0; j < len; j++) {
-                    Unsafe.getUnsafe().putByte(mem + j, line[j]);
-                }
-                Unsafe.getUnsafe().putByte(mem + len, (byte) '\n');
+            for (int i = start; i < len; i++) {
                 sink.clear();
-                resetParser(mem);
-                parseMeasurement(mem + i);
+                resetParser(mem + fullLen);
+                parseMeasurement(memFull, mem, fullLen, i, 0);
+//                int nextBreak = Math.abs(rnd.nextInt()) % (len - i);
+//                if (nextBreak > 0) {
+//                    parseMeasurement(mem + i + nextBreak);
+//                }
                 boolean complete;
-                if (!endWithEOL) {
-                    complete = parseMeasurement(mem + len + 1);
-                } else {
-                    complete = parseMeasurement(mem + len);
-                }
+                complete = parseMeasurement(memFull, mem, fullLen, fullLen, i);
                 Assert.assertTrue(complete);
                 if (!Chars.equals(expected, sink)) {
                     System.out.println(lineStr.substring(0, i));
+//                    if (nextBreak > 0) {
+//                        System.out.println(lineStr.substring(0, i + nextBreak));
+//                    }
                     System.out.println(lineStr.substring(i));
                     TestUtils.assertEquals("parse split " + i, expected, sink);
                 }
             }
-
-            // assert small buffer
-            for (int j = 0; j < len; j++) {
-                Unsafe.getUnsafe().putByte(mem + j, line[j]);
-            }
-            Unsafe.getUnsafe().putByte(mem + len, (byte) '\n');
-            sink.clear();
-            resetParser(mem);
-            Assert.assertEquals(endWithEOL, parseMeasurement(mem + len));
-            if (!endWithEOL) {
-                Assert.assertTrue(parseMeasurement(mem + len + 1));
-            }
-            TestUtils.assertEquals(expected, sink);
         } finally {
-            Unsafe.free(mem, len, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(mem, fullLen, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(memFull, fullLen, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -215,6 +255,20 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
         onErrorLine = false;
         startOfLineAddr = mem;
         protoParser.of(mem);
+    }
+
+    private boolean parseMeasurement(long fullBuffer, long parseBuffer, long buffersLen, long parseLen, long prevParseLen) {
+        long shl = parseLen - prevParseLen;
+
+        // This will copy ILP data from fullBuffer to parseBuffer so that the data ends at the end of the buffer
+        long parseHi = parseBuffer + buffersLen;
+        Vect.memmove(parseHi - parseLen, parseHi - parseLen, prevParseLen);
+        Vect.memcpy(fullBuffer, parseHi - parseLen + prevParseLen, shl);
+
+        // bufHi always the same, data alwasy ends at the end of the buffer
+        // the only difference from iteration to iteration is where the data starts, which is set in shl
+        protoParser.shl(shl);
+        return parseMeasurement(parseHi);
     }
 
     private boolean parseMeasurement(long bufHi) {

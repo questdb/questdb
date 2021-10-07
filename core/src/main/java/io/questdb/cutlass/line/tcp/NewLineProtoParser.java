@@ -118,9 +118,8 @@ public class NewLineProtoParser implements Closeable {
             if (!prepareQuotedEntity(entityLo, bufHi)) {
                 return ParseResult.BUFFER_UNDERFLOW;
             }
-            errorCode = ErrorCode.NONE;
             nQuoteCharacters = 0;
-            bufAt += 1;
+            bufAt++;
             errorCode = ErrorCode.NONE;
         }
 
@@ -268,6 +267,7 @@ public class NewLineProtoParser implements Closeable {
                     long candidateQuoteIdx = bufAt + 1;
                     byte b = Unsafe.getUnsafe().getByte(candidateQuoteIdx);
                     if (b == (byte) '"') {
+                        nEscapedChars = 0;
                         nQuoteCharacters++;
                         bufAt += 2; // go to first byte of the string, past the '"'
                         return prepareQuotedEntity(candidateQuoteIdx, bufHi);
