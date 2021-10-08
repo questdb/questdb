@@ -773,7 +773,7 @@ public class TableBlockWriter implements Closeable {
                 try {
                     switch (taskType) {
                         case AppendBlock:
-                            Vect.memcpy(sourceAddress, destAddress, sourceSizeOrEnd);
+                            Vect.memcpy(destAddress, sourceAddress, sourceSizeOrEnd);
                             return true;
 
                         case GenerateStringIndex:

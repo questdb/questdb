@@ -152,7 +152,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private void deflate() {
         if (!compressedHeaderDone) {
             int len = Zip.gzipHeaderLen;
-            Vect.memcpy(Zip.gzipHeader, compressOutBuffer.getWriteAddress(len), len);
+            Vect.memcpy(compressOutBuffer.getWriteAddress(len), Zip.gzipHeader, len);
             compressOutBuffer.onWrite(len);
             compressedHeaderDone = true;
         }

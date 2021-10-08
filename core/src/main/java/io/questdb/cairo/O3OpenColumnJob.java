@@ -1944,7 +1944,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataFixSize = srcDataActualBytes + srcDataMaxBytes;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     setNull(columnType, srcDataFixAddr + srcDataActualBytes, srcDataTop);
-                    Vect.memcpy(srcDataFixAddr, srcDataFixAddr + srcDataMaxBytes, srcDataActualBytes);
+                    Vect.memcpy(srcDataFixAddr + srcDataMaxBytes, srcDataFixAddr, srcDataActualBytes);
                     srcDataTop = 0;
                     srcDataFixOffset = srcDataActualBytes;
                 } else {
@@ -2192,7 +2192,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         // null strings we just added
                         Vect.setVarColumnRefs32Bit(srcDataFixAddr + srcDataActualBytes, 0, srcDataTop);
 
-                        Vect.memcpy(srcDataVarAddr, srcDataVarAddr + srcDataVarOffset + srcDataTop * Integer.BYTES, srcDataVarOffset);
+                        Vect.memcpy(srcDataVarAddr + srcDataVarOffset + srcDataTop * Integer.BYTES, srcDataVarAddr, srcDataVarOffset);
                     } else {
                         srcDataVarOffset = srcDataVarSize;
                         srcDataVarSize += srcDataTop * Long.BYTES + srcDataVarSize;
@@ -2207,7 +2207,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         // null strings we just added
                         Vect.setVarColumnRefs64Bit(srcDataFixAddr + srcDataActualBytes, 0, srcDataTop);
 
-                        Vect.memcpy(srcDataVarAddr, srcDataVarAddr + srcDataVarOffset + srcDataTop * Long.BYTES, srcDataVarOffset);
+                        Vect.memcpy(srcDataVarAddr + srcDataVarOffset + srcDataTop * Long.BYTES, srcDataVarAddr, srcDataVarOffset);
                     }
                     srcDataTop = 0;
                     srcDataFixOffset = srcDataActualBytes;

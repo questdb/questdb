@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.MessageBus;
 import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
@@ -2250,8 +2249,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 .$(']').$();
 
         Vect.memcpy(
-                recvBuffer + readOffsetBeforeParse,
-                recvBuffer,
+                recvBuffer, recvBuffer + readOffsetBeforeParse,
                 len
         );
         recvBufferWriteOffset = len;

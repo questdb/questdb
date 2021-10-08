@@ -791,7 +791,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     }
 
     private static void copyFixedSizeCol(long src, long srcLo, long srcHi, long dst, final int shl) {
-        Vect.memcpy(src + (srcLo << shl), dst, (srcHi - srcLo + 1) << shl);
+        Vect.memcpy(dst, src + (srcLo << shl), (srcHi - srcLo + 1) << shl);
     }
 
     static void copyO3(
@@ -877,7 +877,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         // copy this before it changes
         final long dest = dstVarAddr + dstVarOffset;
         final long len = hi - lo;
-        Vect.memcpy(srcVarAddr + lo, dest, len);
+        Vect.memcpy(dest, srcVarAddr + lo, len);
         final long offset = dstVarOffset + dstVarAdjust;
         if (lo == offset) {
             copyFixedSizeCol(srcFixAddr, srcLo, srcHi + 1, dstFixAddr, 3);

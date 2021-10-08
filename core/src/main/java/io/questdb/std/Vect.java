@@ -101,7 +101,7 @@ public final class Vect {
 
     public static native long maxLong(long pLong, long count);
 
-    public static void memcpy(long src, long dst, long len) {
+    public static void memcpy(long dst, long src, long len) {
         // the split length was determined experimentally
         // using 'MemCopyBenchmark' bench
         if (len < 4096) {

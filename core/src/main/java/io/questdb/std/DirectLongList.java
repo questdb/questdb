@@ -69,7 +69,7 @@ public class DirectLongList implements Mutable, Closeable {
         if (limit - pos < thatSize) {
             extendBytes(this.capacity + thatSize - (limit - pos));
         }
-        Vect.memcpy(that.start, this.pos, thatSize);
+        Vect.memcpy(this.pos, that.start, thatSize);
         this.pos += thatSize;
     }
 

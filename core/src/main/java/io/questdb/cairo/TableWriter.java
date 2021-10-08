@@ -3163,10 +3163,10 @@ public class TableWriter implements Closeable {
             long appendAddress = o3DataMem.addressOf(dstVarOffset);
             if (srcDataMem.isMapped(srcFixOffset, extendedSize)) {
                 long sourceAddress = srcDataMem.addressOf(srcFixOffset);
-                Vect.memcpy(sourceAddress, appendAddress, extendedSize);
+                Vect.memcpy(appendAddress, sourceAddress, extendedSize);
             } else {
                 long sourceAddress = mapRO(ff, srcDataMem.getFd(), extendedSize, srcFixOffset, MemoryTag.MMAP_TABLE_WRITER);
-                Vect.memcpy(sourceAddress, appendAddress, extendedSize);
+                Vect.memcpy(appendAddress, sourceAddress, extendedSize);
                 ff.munmap(sourceAddress, extendedSize, MemoryTag.MMAP_TABLE_WRITER);
             }
             srcDataMem.jumpTo(srcFixOffset);

@@ -25,6 +25,7 @@
 package io.questdb.cairo.mig;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -107,18 +108,13 @@ class MigrationActions {
     }
 
     public static void mig608(MigrationContext migrationContext) {
-        // todo: we added column hash to metadata; extend column entries on the existing table columns and
-        //    generate hash
-
-        // todo: we also extended reserved area in _txn file; add this extension without writing anything there
-
         //  META_COLUMN_DATA_SIZE = 16 -> 32;
         //  TX_OFFSET_MAP_WRITER_COUNT = 72 -> 128
 
         final FilesFacade ff = migrationContext.getFf();
-        Path path = migrationContext.getTablePath();
-        int plen = path.length();
-        
+        final Path path = migrationContext.getTablePath();
+        final int plen = path.length();
+
         path.concat(META_FILE_NAME).$();
         if (!ff.exists(path)) {
             LOG.error().$("meta file does not exist, nothing to migrate [path=").$(path).I$();
@@ -169,7 +165,7 @@ class MigrationActions {
                 o2 -= thisMetaColumnDataSize;
             }
         }
-        
+
         // update _txn file
         path.trimTo(plen).concat(TXN_FILE_NAME).$();
         if (!ff.exists(path)) {
@@ -180,15 +176,15 @@ class MigrationActions {
 
         LOG.debug().$("opening for rw [path=").$(path).I$();
         try (MemoryMARW txMem = migrationContext.createRwMemoryOf(ff, path.$())) {
-            
+
             // calculate size of the _txn file
             final long thatTxOffsetMapWriterCount = 72;
             final long thisTxOffsetMapWriterCount = 128;
             final int longsPerAttachedPartition = 4;
-            
+
             int symbolCount = txMem.getInt(thatTxOffsetMapWriterCount);
             int partitionTableSize = txMem.getInt(thatTxOffsetMapWriterCount + 4 + symbolCount * 8L) * 8 * longsPerAttachedPartition;
-            
+
             // resize existing file:
             // thisTxOffsetMapWriterCount + symbolCount + symbolData + partitionTableEntryCount + partitionTableSize
             long thatSize = thatTxOffsetMapWriterCount + 4 + symbolCount * 8L + 4L + partitionTableSize;
@@ -208,31 +204,42 @@ class MigrationActions {
 
         final long thisMetaOffsetColumnTypes = 128;
         final long thisMetaColumnDataSize = 16;
+        final long thisTxOffsetMapWriterCount = 72;
 
         path.trimTo(plen).concat(META_FILE_NAME).$();
         try (MemoryMARW metaMem = migrationContext.getRwMemory()) {
-            metaMem.of(ff, path, ff.getPageSize(), MemoryTag.NATIVE_DEFAULT);
+            metaMem.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_DEFAULT);
             final int columnCount = metaMem.getInt(0);
             final int partitionBy = metaMem.getInt(4);
             final long columnNameOffset = thisMetaOffsetColumnTypes + columnCount * thisMetaColumnDataSize;
 
-            try (TxReader txReader = new TxReader(ff, path.trimTo(plen), partitionBy)) {
-                txReader.readUnchecked();
-                int partitionCount = txReader.getPartitionCount();
+            try (MemoryMARW txMem = new MemoryCMARWImpl(ff, path.trimTo(plen).concat(TXN_FILE_NAME).$(), ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_DEFAULT)) {
+                // this is a variable length file; we need to count of symbol maps before we get to the partition
+                // table data
+                final int symbolMapCount = txMem.getInt(thisTxOffsetMapWriterCount);
+                final long partitionCountOffset = thisTxOffsetMapWriterCount + 4 + symbolMapCount * 8L;
+                int partitionCount = txMem.getInt(partitionCountOffset) / Long.BYTES / LONGS_PER_TX_ATTACHED_PARTITION;
+                final long transientRowCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
+
+
                 if (partitionBy != PartitionBy.NONE) {
                     for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                        final long partitionDataOffset = partitionCountOffset + Integer.BYTES + partitionIndex * 8L * LONGS_PER_TX_ATTACHED_PARTITION;
+
                         setPathForPartition(
                                 path.trimTo(plen),
                                 partitionBy,
-                                txReader.getPartitionTimestamp(partitionIndex),
+                                txMem.getLong(partitionDataOffset),
                                 false
                         );
-                        long txSuffix = txReader.getPartitionNameTxn(partitionIndex);
+                        // the row count may not be stored in _txn file for the last partition
+                        // we need to use transient row count instead
+                        long rowCount = partitionIndex < partitionCount - 1 ? txMem.getLong(partitionDataOffset + Long.BYTES) : transientRowCount;
+                        long txSuffix = txMem.getLong(partitionDataOffset + 2 * Long.BYTES);
                         if (txSuffix > -1) {
                             txnPartition(path, txSuffix);
                         }
                         int plen2 = path.length();
-                        long rowCount = txReader.getPartitionSize(partitionIndex);
                         if (rowCount > 0) {
                             boolean success = bumpVarColumnIndex0(
                                     migrationContext,
@@ -252,10 +259,9 @@ class MigrationActions {
                         }
                     }
                 } else {
-                    path.concat(DEFAULT_PARTITION_NAME);
+                    path.trimTo(plen).concat(DEFAULT_PARTITION_NAME);
                     int plen2 = path.length();
-                    long rowCount = txReader.getPartitionSize(0);
-                    if (rowCount > 0) {
+                    if (transientRowCount > 0) {
                         boolean success = bumpVarColumnIndex0(
                                 migrationContext,
                                 ff,
@@ -263,7 +269,7 @@ class MigrationActions {
                                 metaMem,
                                 columnCount,
                                 plen2,
-                                rowCount,
+                                transientRowCount,
                                 columnNameOffset,
                                 thisMetaOffsetColumnTypes,
                                 thisMetaColumnDataSize
@@ -283,12 +289,13 @@ class MigrationActions {
                     currentColumnNameOffset += Vm.getStorageLength(columnName.length());
 
                     if (ColumnType.tagOf(metaMem.getInt(thisMetaOffsetColumnTypes + i * thisMetaColumnDataSize)) == ColumnType.SYMBOL) {
+                        final int symbolCount = txMem.getInt(thisTxOffsetMapWriterCount + 8 + sc * 8L);
+                        final long offset = SymbolMapWriter.HEADER_SIZE + symbolCount * 8L;
+
                         SymbolMapWriter.offsetFileName(path.trimTo(plen), columnName);
-                        final int symbolCount = txReader.getSymbolCount(sc);
                         long fd = TableUtils.openRW(ff, path, LOG);
                         try {
                             long fileLen = ff.length(fd);
-                            long offset = SymbolMapWriter.HEADER_SIZE + symbolCount * 8L;
                             if (symbolCount > 0) {
                                 if (fileLen < offset) {
                                     LOG.error().$("file is too short [path=").$(path).I$();
@@ -312,7 +319,7 @@ class MigrationActions {
                                 }
                             }
                         } finally {
-                            ff.close(fd);
+                            Vm.bestEffortClose(ff, LOG, fd, true, offset + 8);
                         }
                         sc++;
                     }
@@ -336,7 +343,7 @@ class MigrationActions {
         long mem = migrationContext.getTempMemory();
         long currentColumnNameOffset = columnNameOffset;
         for (int i = 0; i < columnCount; i++) {
-            final int columnType = ColumnType.tagOf(m.getInt(thisMetaOffsetColumnTypes + i* thisMetaColumnDataSize));
+            final int columnType = ColumnType.tagOf(m.getInt(thisMetaOffsetColumnTypes + i * thisMetaColumnDataSize));
             final CharSequence columnName = m.getStr(currentColumnNameOffset);
             currentColumnNameOffset += Vm.getStorageLength(columnName);
             if (columnType == ColumnType.STRING || columnType == ColumnType.BINARY) {
@@ -349,11 +356,11 @@ class MigrationActions {
                         false
                 );
                 final long columnRowCount = rowCount - columnTop;
+                long offset = columnRowCount * 8L;
                 iFile(path.trimTo(plen2), columnName);
                 long fd = TableUtils.openRW(ff, path, LOG);
                 try {
                     long fileLen = ff.length(fd);
-                    long offset = columnRowCount * 8L;
                     if (fileLen < offset) {
                         LOG.error().$("file is too short [path=").$(path).I$();
                         return false;
@@ -385,7 +392,7 @@ class MigrationActions {
                         TableUtils.writeLongOrFail(ff, fd, offset, dataOffset, mem, path);
                     }
                 } finally {
-                    ff.close(fd);
+                    Vm.bestEffortClose(ff, LOG, fd, true, offset + 8);
                 }
             }
         }

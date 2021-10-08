@@ -77,9 +77,9 @@ public class TableWriterTask implements Closeable {
         }
         long p = this.data;
         Unsafe.getUnsafe().putLong(p, txMemSize);
-        Vect.memcpy(txMem, p + 8, txMemSize);
+        Vect.memcpy(p + 8, txMem, txMemSize);
         Unsafe.getUnsafe().putLong(p + txMemSize + 8, metaMemSize);
-        Vect.memcpy(metaMem, p + txMemSize + 16, metaMemSize);
+        Vect.memcpy(p + txMemSize + 16, metaMem, metaMemSize);
         this.type = TSK_SLAVE_SYNC;
         this.tableId = tableId;
         this.tableName = tableName;

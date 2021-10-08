@@ -245,7 +245,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             int sz = size * 2;
             int l = SelectAccessor.ARRAY_OFFSET + 8 * sz;
             long _addr = Unsafe.malloc(l, MemoryTag.NATIVE_DEFAULT);
-            Vect.memcpy(address, _addr, lim - address);
+            Vect.memcpy(_addr, address, lim - address);
             Unsafe.free(address, lim - address, MemoryTag.NATIVE_DEFAULT);
             lim = _addr + l;
             size = sz;

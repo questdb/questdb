@@ -484,7 +484,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
                         bufPos += Integer.BYTES;
                         if (bufPos + colNameLen < bufMax) {
-                            Vect.memcpy(entity.getName().getLo(), bufPos, colNameLen);
+                            Vect.memcpy(bufPos, entity.getName().getLo(), colNameLen);
                         } else {
                             throw CairoException.instance(0).put("queue buffer overflow");
                         }

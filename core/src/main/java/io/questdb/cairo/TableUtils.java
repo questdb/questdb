@@ -83,7 +83,7 @@ public final class TableUtils {
     static final long TX_OFFSET_TXN = 0;
     static final long TX_OFFSET_DATA_VERSION = 48;
     static final long TX_OFFSET_PARTITION_TABLE_VERSION = 56;
-    static final long TX_OFFSET_MAP_WRITER_COUNT = 128;
+    public static final long TX_OFFSET_MAP_WRITER_COUNT = 128;
     /**
      * TXN file structure
      * struct {
