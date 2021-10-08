@@ -99,11 +99,11 @@ class MigrationActions {
     }
 
     public static void mig606(MigrationContext migrationContext) {
-        updateVarColumnSize(migrationContext, 420);
+        updateVarColumnSize(migrationContext);
     }
 
     public static void mig607(MigrationContext migrationContext) {
-        updateVarColumnSize(migrationContext, 421);
+        updateVarColumnSize(migrationContext);
     }
 
     public static void mig608(MigrationContext migrationContext) {
@@ -201,22 +201,32 @@ class MigrationActions {
         }
     }
 
-    private static void updateVarColumnSize(MigrationContext migrationContext, int metadataVersionToExpect) {
+    private static void updateVarColumnSize(MigrationContext migrationContext) {
         final FilesFacade ff = migrationContext.getFf();
         Path path = migrationContext.getTablePath();
         int plen = path.length();
 
+        final long thisMetaOffsetColumnTypes = 128;
+        final long thisMetaColumnDataSize = 16;
+
         path.trimTo(plen).concat(META_FILE_NAME).$();
-        try (TableReaderMetadata m = new TableReaderMetadata(ff)) {
-            m.of(path, metadataVersionToExpect);
-            final int columnCount = m.getColumnCount();
-            try (TxReader txReader = new TxReader(ff, path.trimTo(plen), m.getPartitionBy())) {
+        try (MemoryMARW metaMem = migrationContext.getRwMemory()) {
+            metaMem.of(ff, path, ff.getPageSize(), MemoryTag.NATIVE_DEFAULT);
+            final int columnCount = metaMem.getInt(0);
+            final int partitionBy = metaMem.getInt(4);
+            final long columnNameOffset = thisMetaOffsetColumnTypes + columnCount * thisMetaColumnDataSize;
+
+            try (TxReader txReader = new TxReader(ff, path.trimTo(plen), partitionBy)) {
                 txReader.readUnchecked();
                 int partitionCount = txReader.getPartitionCount();
-                int partitionBy = m.getPartitionBy();
                 if (partitionBy != PartitionBy.NONE) {
                     for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-                        setPathForPartition(path.trimTo(plen), m.getPartitionBy(), txReader.getPartitionTimestamp(partitionIndex), false);
+                        setPathForPartition(
+                                path.trimTo(plen),
+                                partitionBy,
+                                txReader.getPartitionTimestamp(partitionIndex),
+                                false
+                        );
                         long txSuffix = txReader.getPartitionNameTxn(partitionIndex);
                         if (txSuffix > -1) {
                             txnPartition(path, txSuffix);
@@ -224,7 +234,18 @@ class MigrationActions {
                         int plen2 = path.length();
                         long rowCount = txReader.getPartitionSize(partitionIndex);
                         if (rowCount > 0) {
-                            boolean success = bumpVarColumnIndex0(migrationContext, ff, path, m, columnCount, plen2, rowCount);
+                            boolean success = bumpVarColumnIndex0(
+                                    migrationContext,
+                                    ff,
+                                    path,
+                                    metaMem,
+                                    columnCount,
+                                    plen2,
+                                    rowCount,
+                                    columnNameOffset,
+                                    thisMetaOffsetColumnTypes,
+                                    thisMetaColumnDataSize
+                            );
                             if (!success) {
                                 throw CairoException.instance(0).put("cannot migrate table, column file error [path=").put(path).put("]");
                             }
@@ -235,7 +256,18 @@ class MigrationActions {
                     int plen2 = path.length();
                     long rowCount = txReader.getPartitionSize(0);
                     if (rowCount > 0) {
-                        boolean success = bumpVarColumnIndex0(migrationContext, ff, path, m, columnCount, plen2, rowCount);
+                        boolean success = bumpVarColumnIndex0(
+                                migrationContext,
+                                ff,
+                                path,
+                                metaMem,
+                                columnCount,
+                                plen2,
+                                rowCount,
+                                columnNameOffset,
+                                thisMetaOffsetColumnTypes,
+                                thisMetaColumnDataSize
+                        );
                         if (!success) {
                             throw CairoException.instance(0).put("cannot migrate table, column file error [path=").put(path).put("]");
                         }
@@ -243,11 +275,15 @@ class MigrationActions {
                 }
 
                 // update symbol maps
-                long mem = migrationContext.getTempMemory();
+                long tmpMem = migrationContext.getTempMemory();
                 int sc = 0;
+                long currentColumnNameOffset = columnNameOffset;
                 for (int i = 0; i < columnCount; i++) {
-                    if (ColumnType.tagOf(m.getColumnType(i)) == ColumnType.SYMBOL) {
-                        SymbolMapWriter.offsetFileName(path.trimTo(plen), m.getColumnName(i));
+                    final CharSequence columnName = metaMem.getStr(currentColumnNameOffset);
+                    currentColumnNameOffset += Vm.getStorageLength(columnName.length());
+
+                    if (ColumnType.tagOf(metaMem.getInt(thisMetaOffsetColumnTypes + i * thisMetaColumnDataSize)) == ColumnType.SYMBOL) {
+                        SymbolMapWriter.offsetFileName(path.trimTo(plen), columnName);
                         final int symbolCount = txReader.getSymbolCount(sc);
                         long fd = TableUtils.openRW(ff, path, LOG);
                         try {
@@ -258,18 +294,18 @@ class MigrationActions {
                                     LOG.error().$("file is too short [path=").$(path).I$();
                                 } else {
                                     TableUtils.allocateDiskSpace(ff, fd, offset + 8);
-                                    long dataOffset = TableUtils.readLongOrFail(ff, fd, offset - 8L, mem, path);
+                                    long dataOffset = TableUtils.readLongOrFail(ff, fd, offset - 8L, tmpMem, path);
                                     // string length
-                                    SymbolMapWriter.charFileName(path.trimTo(plen), m.getColumnName(i));
+                                    SymbolMapWriter.charFileName(path.trimTo(plen), columnName);
                                     long fd2 = TableUtils.openRO(ff, path, LOG);
                                     try {
-                                        long len = TableUtils.readIntOrFail(ff, fd2, dataOffset, mem, path);
+                                        long len = TableUtils.readIntOrFail(ff, fd2, dataOffset, tmpMem, path);
                                         if (len == -1) {
                                             dataOffset += 4;
                                         } else {
                                             dataOffset += 4 + len * 2L;
                                         }
-                                        TableUtils.writeLongOrFail(ff, fd, offset, dataOffset, mem, path);
+                                        TableUtils.writeLongOrFail(ff, fd, offset, dataOffset, tmpMem, path);
                                     } finally {
                                         ff.close(fd2);
                                     }
@@ -285,14 +321,35 @@ class MigrationActions {
         }
     }
 
-    private static boolean bumpVarColumnIndex0(MigrationContext migrationContext, FilesFacade ff, Path path, TableReaderMetadata m, int columnCount, int plen2, long rowCount) {
+    private static boolean bumpVarColumnIndex0(
+            MigrationContext migrationContext,
+            FilesFacade ff,
+            Path path,
+            MemoryMARW m,
+            int columnCount,
+            int plen2,
+            long rowCount,
+            long columnNameOffset,
+            long thisMetaOffsetColumnTypes,
+            long thisMetaColumnDataSize
+    ) {
         long mem = migrationContext.getTempMemory();
+        long currentColumnNameOffset = columnNameOffset;
         for (int i = 0; i < columnCount; i++) {
-            int columnType = ColumnType.tagOf(m.getColumnType(i));
+            final int columnType = ColumnType.tagOf(m.getInt(thisMetaOffsetColumnTypes + i* thisMetaColumnDataSize));
+            final CharSequence columnName = m.getStr(currentColumnNameOffset);
+            currentColumnNameOffset += Vm.getStorageLength(columnName);
             if (columnType == ColumnType.STRING || columnType == ColumnType.BINARY) {
-                final long columnTop = readColumnTop(ff, path.trimTo(plen2), m.getColumnName(i), plen2, mem, false);
+                final long columnTop = readColumnTop(
+                        ff,
+                        path.trimTo(plen2),
+                        columnName,
+                        plen2,
+                        mem,
+                        false
+                );
                 final long columnRowCount = rowCount - columnTop;
-                iFile(path.trimTo(plen2), m.getColumnName(i));
+                iFile(path.trimTo(plen2), columnName);
                 long fd = TableUtils.openRW(ff, path, LOG);
                 try {
                     long fileLen = ff.length(fd);
@@ -303,7 +360,7 @@ class MigrationActions {
                     } else {
                         TableUtils.allocateDiskSpace(ff, fd, offset + 8);
                         long dataOffset = TableUtils.readLongOrFail(ff, fd, offset - 8L, mem, path);
-                        dFile(path.trimTo(plen2), m.getColumnName(i));
+                        dFile(path.trimTo(plen2), columnName);
                         final long fd2 = TableUtils.openRO(ff, path, LOG);
                         try {
                             if (columnType == ColumnType.BINARY) {
