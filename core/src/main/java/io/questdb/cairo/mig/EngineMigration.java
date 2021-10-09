@@ -39,17 +39,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static io.questdb.cairo.TableUtils.*;
 
 public class EngineMigration {
-    public static final int VERSION_TX_STRUCT_UPDATE_1 = 418;
-    public static final int VERSION_TBL_META_COMMIT_LAG = 419;
-    public static final int VERSION_COLUMN_TYPE_ENCODING_CHANGED = 420;
-    public static final int VERSION_VAR_COLUMN_CHANGED = 421;
-    public static final int VERSION_VAR_COLUMN_CHANGED_MIGRATION_FIX = 422;
     public static final int VERSION_THAT_ADDED_TABLE_ID = 417;
 
-    // All offsets hardcoded here in case TableUtils offset calculation changes
-    // in future code version
-    public static final long TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT = 72;
-    public static final long TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY = 4;
     public static final String TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME = "_archive";
 
     private static final Log LOG = LogFactory.getLog(EngineMigration.class);
@@ -59,16 +50,15 @@ public class EngineMigration {
 
     public static void migrateEngineTo(CairoEngine engine, int latestVersion, boolean force) {
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        final CairoConfiguration configuration=  engine.getConfiguration();
+        final CairoConfiguration configuration = engine.getConfiguration();
         int tempMemSize = 8;
         long mem = Unsafe.malloc(tempMemSize, MemoryTag.NATIVE_DEFAULT);
 
         try (
-                MemoryARW virtualMem = Vm.getARWInstance(ff.getPageSize(), 8, MemoryTag.NATIVE_DEFAULT);
+                MemoryARW virtualMem = Vm.getARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
                 Path path = new Path();
                 MemoryMARW rwMemory = Vm.getMARWInstance()
         ) {
-
             MigrationContext context = new MigrationContext(engine, mem, tempMemSize, virtualMem, rwMemory);
             path.of(configuration.getRoot());
 
@@ -81,8 +71,15 @@ public class EngineMigration {
                     .$(", path=").$(path)
                     .$(']').$();
             if (existed) {
-                long readLen = ff.read(upgradeFd, mem, Integer.BYTES, 0);
-                if (readLen == Integer.BYTES && Unsafe.getUnsafe().getInt(mem) >= latestVersion) {
+                int currentVersion = TableUtils.readIntOrFail(
+                        ff,
+                        upgradeFd,
+                        0,
+                        mem,
+                        path
+                );
+
+                if (currentVersion >= latestVersion) {
                     LOG.info().$("table structures are up to date").$();
                     ff.close(upgradeFd);
                     upgradeFd = -1;
@@ -93,15 +90,23 @@ public class EngineMigration {
                 try {
                     LOG.info().$("upgrading database [version=").$(latestVersion).I$();
                     if (upgradeTables(context, latestVersion)) {
-                        Unsafe.getUnsafe().putInt(mem, latestVersion);
-                        long writeLen = ff.write(upgradeFd, mem, Integer.BYTES, 0);
-                        if (writeLen < Integer.BYTES) {
-                            LOG.error().$("could not write to ").$(UPGRADE_FILE_NAME)
-                                    .$(" [fd=").$(upgradeFd).$(",errno=").$(ff.errno()).I$();
-                        }
+                        TableUtils.writeIntOrFail(
+                                ff,
+                                upgradeFd,
+                                0,
+                                latestVersion,
+                                mem,
+                                path
+                        );
                     }
                 } finally {
-                    ff.close(upgradeFd);
+                    Vm.bestEffortClose(
+                            ff,
+                            LOG,
+                            upgradeFd,
+                            true,
+                            Integer.BYTES
+                    );
                 }
             }
         } finally {
@@ -144,13 +149,6 @@ public class EngineMigration {
         }
     }
 
-    static int readIntAtOffset(FilesFacade ff, Path path, long tempMem4b, long fd) {
-        if (ff.read(fd, tempMem4b, Integer.BYTES, EngineMigration.TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY) != Integer.BYTES) {
-            throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
-        }
-        return Unsafe.getUnsafe().getInt(tempMem4b);
-    }
-
     private static boolean upgradeTables(MigrationContext context, int latestVersion) {
         final FilesFacade ff = context.getFf();
         final CharSequence root = context.getConfiguration().getRoot();
@@ -177,59 +175,51 @@ public class EngineMigration {
                         if (ff.exists(path.$())) {
                             final long fd = openFileRWOrFail(ff, path);
                             try {
-                                if (ff.read(fd, mem, Integer.BYTES, META_OFFSET_VERSION) == Integer.BYTES) {
-                                    int currentTableVersion = Unsafe.getUnsafe().getInt(mem);
+                                int currentTableVersion = TableUtils.readIntOrFail(ff, fd, META_OFFSET_VERSION, mem, path);
+                                if (currentTableVersion < latestVersion) {
+                                    LOG.info()
+                                            .$("upgrading [path=").$(path)
+                                            .$(",fromVersion=").$(currentTableVersion)
+                                            .$(",toVersion=").$(latestVersion)
+                                            .I$();
 
-                                    if (currentTableVersion < latestVersion) {
-                                        LOG.info().$("upgrading [path=").$(path).$(",fromVersion=").$(currentTableVersion)
-                                                .$(",toVersion=").$(latestVersion).I$();
+                                    copyPath.trimTo(plen);
+                                    backupFile(ff, path, copyPath, TableUtils.META_FILE_NAME, currentTableVersion);
 
-                                        copyPath.trimTo(plen);
-                                        backupFile(ff, path, copyPath, TableUtils.META_FILE_NAME, currentTableVersion);
+                                    path.trimTo(plen);
+                                    context.of(path, copyPath, fd);
 
-                                        path.trimTo(plen);
-                                        context.of(path, copyPath, fd);
-
-                                        for (int i = currentTableVersion + 1; i <= latestVersion; i++) {
-                                            MigrationAction migration = getMigrationToVersion(i);
+                                    for (int ver = currentTableVersion + 1; ver <= latestVersion; ver++) {
+                                        MigrationAction migration = getMigrationToVersion(ver);
+                                        if (migration != null) {
                                             try {
-                                                if (migration != null) {
-                                                    LOG.info().$("upgrading table [path=").$(path).$(",toVersion=").$(i).I$();
-                                                    migration.migrate(context);
-                                                    path.trimTo(plen);
-                                                }
-                                            } catch (Exception e) {
+                                                LOG.info().$("upgrading table [path=").$(path).$(",toVersion=").$(ver).I$();
+                                                migration.migrate(context);
+                                                path.trimTo(plen);
+                                            } catch (Throwable e) {
                                                 LOG.error().$("failed to upgrade table path=")
                                                         .$(path.trimTo(plen))
                                                         .$(", exception: ")
                                                         .$(e).$();
 
-                                                if (getMigrationToVersionCriticality(i) != 0) {
+                                                if (getMigrationToVersionCriticality(ver) != 0) {
                                                     throw e;
                                                 }
                                                 updateSuccess.set(false);
                                                 return;
                                             }
-
-                                            Unsafe.getUnsafe().putInt(mem, i);
-                                            if (ff.write(fd, mem, Integer.BYTES, META_OFFSET_VERSION) != Integer.BYTES) {
-                                                // Table is migrated but we cannot write new version
-                                                // to meta file
-                                                // This is critical, table potentially left in unusable state
-                                                throw CairoException.instance(ff.errno())
-                                                        .put("failed to write updated version to table Metadata file [path=")
-                                                        .put(path.trimTo(plen))
-                                                        .put(",latestVersion=")
-                                                        .put(i)
-                                                        .put(']');
-                                            }
                                         }
+
+                                        TableUtils.writeIntOrFail(
+                                                ff,
+                                                fd,
+                                                META_OFFSET_VERSION,
+                                                ver,
+                                                mem,
+                                                path.trimTo(plen)
+                                        );
                                     }
-                                    return;
                                 }
-                                // todo: change message, log is unclear why we are here
-                                updateSuccess.set(false);
-                                throw CairoException.instance(ff.errno()).put("Could not update table [path=").put(path).put(']');
                             } finally {
                                 ff.close(fd);
                                 path.trimTo(plen);
@@ -246,12 +236,12 @@ public class EngineMigration {
 
     static {
         MIGRATIONS.extendAndSet(ColumnType.VERSION - MIGRATIONS_LIST_OFFSET, null);
-        setByVersion(VERSION_THAT_ADDED_TABLE_ID, MigrationActions::assignTableId, 1);
-        setByVersion(VERSION_TX_STRUCT_UPDATE_1, MigrationActions::rebuildTransactionFile, 0);
-        setByVersion(VERSION_TBL_META_COMMIT_LAG, MigrationActions::addTblMetaCommitLag, 0);
-        setByVersion(VERSION_COLUMN_TYPE_ENCODING_CHANGED, MigrationActions::mig605, 1);
-        setByVersion(VERSION_VAR_COLUMN_CHANGED, MigrationActions::mig606, 1);
-        setByVersion(VERSION_VAR_COLUMN_CHANGED_MIGRATION_FIX, MigrationActions::mig607, 1);
+        setByVersion(VERSION_THAT_ADDED_TABLE_ID, MigrationActions::mig505, 1);
+        // there is no tagged version with _meta 418, this is something unreleased
+        setByVersion(418, MigrationActions::rebuildTransactionFile, 0);
+        setByVersion(419, MigrationActions::mig600, 1);
+        setByVersion(420, MigrationActions::mig605, 1);
+        setByVersion(422, MigrationActions::mig607, 1);
         setByVersion(423, MigrationActions::mig608, 1);
     }
 }

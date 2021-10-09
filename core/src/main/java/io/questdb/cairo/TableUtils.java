@@ -39,6 +39,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 public final class TableUtils {
     public static final int TABLE_EXISTS = 0;
@@ -76,6 +77,7 @@ public final class TableUtils {
     public static final long TX_OFFSET_MIN_TIMESTAMP = 24;
     public static final long TX_OFFSET_MAX_TIMESTAMP = 32;
     public static final long META_COLUMN_DATA_SIZE = 32;
+    public static final long TX_OFFSET_MAP_WRITER_COUNT = 128;
     static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
@@ -83,7 +85,6 @@ public final class TableUtils {
     static final long TX_OFFSET_TXN = 0;
     static final long TX_OFFSET_DATA_VERSION = 48;
     static final long TX_OFFSET_PARTITION_TABLE_VERSION = 56;
-    public static final long TX_OFFSET_MAP_WRITER_COUNT = 128;
     /**
      * TXN file structure
      * struct {
@@ -584,7 +585,7 @@ public final class TableUtils {
         }
     }
 
-    public static long readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
+    public static int readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
         if (ff.read(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
             throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
         }
@@ -600,7 +601,17 @@ public final class TableUtils {
         }
     }
 
-    public static long readLongOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
+    public static long readLongOrFail(FilesFacade ff, long fd, long offset, long tempMem8b) {
+        return readLongOrFail(
+                ff,
+                fd,
+                offset,
+                tempMem8b,
+                null
+        );
+    }
+
+    public static long readLongOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, @Nullable Path path) {
         if (ff.read(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
             if (path != null) {
                 throw CairoException.instance(ff.errno()).put("could not read long [path=").put(path).put(", fd=").put(fd).put(", offset=").put(offset);
@@ -851,13 +862,9 @@ public final class TableUtils {
         topFile(path, columnName);
         long fd = openRW(ff, path, LOG);
         try {
-            //noinspection SuspiciousNameCombination
-            Unsafe.getUnsafe().putLong(tempBuf, columnTop);
             try {
                 allocateDiskSpace(ff, fd, Long.BYTES);
-                if (ff.write(fd, tempBuf, Long.BYTES, 0) != Long.BYTES) {
-                    throw CairoException.instance(ff.errno()).put("could not write top file [path=").put(path).put(']');
-                }
+                writeLongOrFail(ff, fd, 0, columnTop, tempBuf, path);
             } catch (Throwable e) {
                 ff.close(fd);
                 fd = -1;
@@ -868,15 +875,32 @@ public final class TableUtils {
             }
         } finally {
             if (fd != -1) {
-                ff.close(fd);
+                Vm.bestEffortClose(ff, LOG, fd, true, Long.BYTES);
             }
+        }
+    }
+
+    public static void writeIntOrFail(FilesFacade ff, long fd, long offset, int value, long tempMem8b, Path path) {
+        Unsafe.getUnsafe().putInt(tempMem8b, value);
+        if (ff.write(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
+            throw CairoException.instance(ff.errno())
+                    .put("could not write 8 bytes [path=").put(path)
+                    .put(", fd=").put(fd)
+                    .put(", offset=").put(offset)
+                    .put(", value=").put(value)
+                    .put(']');
         }
     }
 
     public static void writeLongOrFail(FilesFacade ff, long fd, long offset, long value, long tempMem8b, Path path) {
         Unsafe.getUnsafe().putLong(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
-            throw CairoException.instance(ff.errno()).put("Cannot write: ").put(path);
+            throw CairoException.instance(ff.errno())
+                    .put("could not write 8 bytes [path=").put(path)
+                    .put(", fd=").put(fd)
+                    .put(", offset=").put(offset)
+                    .put(", value=").put(value)
+                    .put(']');
         }
     }
 

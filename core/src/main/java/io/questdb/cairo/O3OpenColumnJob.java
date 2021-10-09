@@ -1857,20 +1857,15 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long tmpBuf
     ) {
         boolean dFileExists = ff.exists(dFile(path.trimTo(plen), columnName));
-        topFile(path.trimTo(plen), columnName);
-        if (dFileExists && ff.exists(path)) {
-            long topFd = openRW(ff, path, LOG);
-            try {
-                if (ff.read(topFd, tmpBuf, Long.BYTES, 0) == Long.BYTES) {
-                    return Unsafe.getUnsafe().getLong(tmpBuf);
-                }
-                throw CairoException.instance(ff.errno()).put("could not read [file=").put(path).put(']');
-            } finally {
-                ff.close(topFd);
-            }
-        }
         if (dFileExists) {
-            return 0;
+            return TableUtils.readColumnTop(
+                    ff,
+                    path.trimTo(plen),
+                    columnName,
+                    plen,
+                    tmpBuf,
+                    true
+            );
         }
         return srcDataMax;
     }

@@ -27,7 +27,10 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.cairo.SymbolMapWriter.TransientSymbolCountChangeHandler;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
@@ -1531,8 +1534,12 @@ public class TableWriter implements Closeable {
                 case ColumnType.BINARY:
                 case ColumnType.STRING:
                     assert mem2 != null;
-                    readOffsetBytes(ff, mem2, actualPosition, buf);
-                    mem1Size = Unsafe.getUnsafe().getLong(buf);
+                    mem1Size = TableUtils.readLongOrFail(
+                            ff,
+                            mem2.getFd(),
+                            actualPosition * 8L,
+                            buf
+                    );
                     if (ensureFileSize) {
                         mem1.allocate(mem1Size);
                         mem2.allocate(actualPosition * Long.BYTES + Long.BYTES);
@@ -1575,12 +1582,6 @@ public class TableWriter implements Closeable {
             nameOffset += Vm.getStorageLength(col);
         }
         return -1;
-    }
-
-    private static void readOffsetBytes(FilesFacade ff, MemoryM mem, long position, long buf) {
-        if (ff.read(mem.getFd(), buf, 8, position * 8) != 8) {
-            throw CairoException.instance(ff.errno()).put("could not read offset, fd=").put(mem.getFd()).put(", offset=").put((position - 1) * 8);
-        }
     }
 
     private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryA mem1, MemoryA mem2) {
@@ -1696,7 +1697,7 @@ public class TableWriter implements Closeable {
             if (fileSize < partitionSize * typeSize) {
                 throw CairoException.instance(0)
                         .put("Column file row count does not match timestamp file row count. ")
-                                .put("Partition files inconsistent [file=")
+                        .put("Partition files inconsistent [file=")
                         .put(path)
                         .put(",expectedSize=")
                         .put(partitionSize * typeSize)
@@ -1722,7 +1723,7 @@ public class TableWriter implements Closeable {
             if (fileSize < partitionSize << ColumnType.pow2SizeOf(columnType)) {
                 throw CairoException.instance(0)
                         .put("Column file row count does not match timestamp file row count. ")
-                                .put("Partition files inconsistent [file=")
+                        .put("Partition files inconsistent [file=")
                         .put(path)
                         .put(",expectedSize=")
                         .put(partitionSize << ColumnType.pow2SizeOf(columnType))
@@ -3343,7 +3344,7 @@ public class TableWriter implements Closeable {
                     int errno;
                     if ((errno = ff.rmdir(other)) == 0) {
                         LOG.info()
-                                        .$("purged [path=").$(other)
+                                .$("purged [path=").$(other)
                                 .$(", readerTxn=").$(readerTxn)
                                 .$(", readerTxnCount=").$(readerTxnCount)
                                 .$(']').$();
@@ -3872,11 +3873,13 @@ public class TableWriter implements Closeable {
                 // read min timestamp value
                 final long fd = TableUtils.openRO(ff, other, LOG);
                 try {
-                    long n = ff.read(fd, tempMem16b, Long.BYTES, 0);
-                    if (n != Long.BYTES) {
-                        throw CairoException.instance(Os.errno()).put("could not read timestamp value");
-                    }
-                    return Unsafe.getUnsafe().getLong(tempMem16b);
+                    return TableUtils.readLongOrFail(
+                            ff,
+                            fd,
+                            0,
+                            tempMem16b,
+                            other
+                    );
                 } finally {
                     ff.close(fd);
                 }
@@ -4927,6 +4930,8 @@ public class TableWriter implements Closeable {
 
         void putGeoHashDeg(int index, double lat, double lon);
 
+        void putGeoStr(int columnIndex, CharSequence value);
+
         void putInt(int columnIndex, int value);
 
         void putLong(int columnIndex, long value);
@@ -4956,8 +4961,6 @@ public class TableWriter implements Closeable {
         void putTimestamp(int columnIndex, long value);
 
         void putTimestamp(int columnIndex, CharSequence value);
-
-        void putGeoStr(int columnIndex, CharSequence value);
     }
 
     static class TimestampValueRecord implements Record {
@@ -5032,6 +5035,45 @@ public class TableWriter implements Closeable {
         }
 
         @Override
+        public void putGeoHash(int index, long value) {
+            int type = metadata.getColumnType(index);
+            putGeoHash0(index, value, type);
+        }
+
+        @Override
+        public void putGeoHashDeg(int index, double lat, double lon) {
+            int type = metadata.getColumnType(index);
+            putGeoHash0(index, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type);
+        }
+
+        @Override
+        public void putGeoStr(int index, CharSequence hash) {
+            long val;
+            final int type = metadata.getColumnType(index);
+            if (hash != null) {
+                final int hashLen = hash.length();
+                final int typeBits = ColumnType.getGeoHashBits(type);
+                final int charsRequired = (typeBits - 1) / 5 + 1;
+                if (hashLen < charsRequired) {
+                    val = GeoHashes.NULL;
+                } else {
+                    try {
+                        val = ColumnType.truncateGeoHashBits(
+                                GeoHashes.fromString(hash, 0, charsRequired),
+                                charsRequired * 5,
+                                typeBits
+                        );
+                    } catch (NumericException e) {
+                        val = GeoHashes.NULL;
+                    }
+                }
+            } else {
+                val = GeoHashes.NULL;
+            }
+            putGeoHash0(index, val, type);
+        }
+
+        @Override
         public void putInt(int columnIndex, int value) {
             getPrimaryColumn(columnIndex).putInt(value);
             setRowValueNotNull(columnIndex);
@@ -5071,64 +5113,6 @@ public class TableWriter implements Closeable {
         public void putShort(int columnIndex, short value) {
             getPrimaryColumn(columnIndex).putShort(value);
             setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putGeoHash(int index, long value) {
-            int type = metadata.getColumnType(index);
-            putGeoHash0(index, value, type);
-        }
-
-        @Override
-        public void putGeoHashDeg(int index, double lat, double lon) {
-            int type = metadata.getColumnType(index);
-            putGeoHash0(index, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type);
-        }
-
-        @Override
-        public void putGeoStr(int index, CharSequence hash) {
-            long val;
-            final int type = metadata.getColumnType(index);
-            if (hash != null) {
-                final int hashLen = hash.length();
-                final int typeBits = ColumnType.getGeoHashBits(type);
-                final int charsRequired = (typeBits - 1) / 5 + 1;
-                if (hashLen < charsRequired) {
-                    val = GeoHashes.NULL;
-                } else {
-                    try {
-                        val = ColumnType.truncateGeoHashBits(
-                                GeoHashes.fromString(hash, 0, charsRequired),
-                                charsRequired * 5,
-                                typeBits
-                        );
-                    } catch (NumericException e) {
-                        val = GeoHashes.NULL;
-                    }
-                }
-            } else {
-                val = GeoHashes.NULL;
-            }
-            putGeoHash0(index, val, type);
-        }
-
-        private void putGeoHash0(int index, long value, int type) {
-            final MemoryA primaryColumn = getPrimaryColumn(index);
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.GEOBYTE:
-                    primaryColumn.putByte((byte) value);
-                    break;
-                case ColumnType.GEOSHORT:
-                    primaryColumn.putShort((short) value);
-                    break;
-                case ColumnType.GEOINT:
-                    primaryColumn.putInt((int) value);
-                    break;
-                default:
-                    primaryColumn.putLong(value);
-                    break;
-            }
-            setRowValueNotNull(index);
         }
 
         @Override
@@ -5190,6 +5174,25 @@ public class TableWriter implements Closeable {
 
         private MemoryA getSecondaryColumn(int columnIndex) {
             return activeColumns.getQuick(getSecondaryColumnIndex(columnIndex));
+        }
+
+        private void putGeoHash0(int index, long value, int type) {
+            final MemoryA primaryColumn = getPrimaryColumn(index);
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.GEOBYTE:
+                    primaryColumn.putByte((byte) value);
+                    break;
+                case ColumnType.GEOSHORT:
+                    primaryColumn.putShort((short) value);
+                    break;
+                case ColumnType.GEOINT:
+                    primaryColumn.putInt((int) value);
+                    break;
+                default:
+                    primaryColumn.putLong(value);
+                    break;
+            }
+            setRowValueNotNull(index);
         }
     }
 
