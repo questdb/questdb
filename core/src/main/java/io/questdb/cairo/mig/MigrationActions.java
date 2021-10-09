@@ -43,7 +43,8 @@ import io.questdb.std.str.Path;
 import static io.questdb.cairo.TableUtils.*;
 
 class MigrationActions {
-    public static final long TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY = 4;
+    private static final long TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY = 4;
+    private static final String TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME = "_archive";
     private static final long META_OFFSET_COLUMN_TYPES_606 = 128;
     private static final long META_COLUMN_DATA_SIZE_606 = 16;
     private static final long TX_OFFSET_MAP_WRITER_COUNT_505 = 72;
@@ -496,7 +497,7 @@ class MigrationActions {
         for (long ts = timestampFloorMethod.floor(minTimestamp); ts < tsLimit; ts = timestampAddMethod.calculate(ts, 1)) {
             path.trimTo(rootLen);
             setPathForPartition(path, partitionBy, ts, false);
-            if (ff.exists(path.concat(EngineMigration.TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME).$())) {
+            if (ff.exists(path.concat(TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME).$())) {
                 if (!removedPartitionsIncludes(ts, txMem, symbolsCount)) {
                     long partitionSize = TableUtils.readLongAtOffset(ff, path, tempMem8b, 0);
 

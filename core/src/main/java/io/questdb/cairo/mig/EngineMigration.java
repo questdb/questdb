@@ -33,20 +33,17 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.META_OFFSET_VERSION;
+import static io.questdb.cairo.TableUtils.openFileRWOrFail;
 
 public class EngineMigration {
-    public static final int VERSION_THAT_ADDED_TABLE_ID = 417;
-
-    public static final String TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME = "_archive";
 
     private static final Log LOG = LogFactory.getLog(EngineMigration.class);
-    private static final ObjList<MigrationAction> MIGRATIONS = new ObjList<>();
-    private static final IntList MIGRATIONS_CRITICALITY = new IntList();
-    private static final int MIGRATIONS_LIST_OFFSET = VERSION_THAT_ADDED_TABLE_ID;
+    private static final IntObjHashMap<MigrationAction> MIGRATIONS = new IntObjHashMap<>();
 
     public static void migrateEngineTo(CairoEngine engine, int latestVersion, boolean force) {
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
@@ -114,17 +111,8 @@ public class EngineMigration {
         }
     }
 
-    static MigrationAction getMigrationToVersion(int version) {
-        return MIGRATIONS.getQuick(version - MIGRATIONS_LIST_OFFSET);
-    }
-
-    private static int getMigrationToVersionCriticality(int version) {
-        return MIGRATIONS_CRITICALITY.getQuick(version - MIGRATIONS_LIST_OFFSET);
-    }
-
-    private static void setByVersion(int version, MigrationAction action, int criticality) {
-        MIGRATIONS.setQuick(version - MIGRATIONS_LIST_OFFSET, action);
-        MIGRATIONS_CRITICALITY.extendAndSet(version - MIGRATIONS_LIST_OFFSET, criticality);
+    private static @Nullable MigrationAction getMigrationToVersion(int version) {
+        return MIGRATIONS.get(version);
     }
 
     static void backupFile(FilesFacade ff, Path src, Path toTemp, String backupName, int version) {
@@ -190,7 +178,7 @@ public class EngineMigration {
                                     context.of(path, copyPath, fd);
 
                                     for (int ver = currentTableVersion + 1; ver <= latestVersion; ver++) {
-                                        MigrationAction migration = getMigrationToVersion(ver);
+                                        final MigrationAction migration = getMigrationToVersion(ver);
                                         if (migration != null) {
                                             try {
                                                 LOG.info().$("upgrading table [path=").$(path).$(",toVersion=").$(ver).I$();
@@ -201,12 +189,7 @@ public class EngineMigration {
                                                         .$(path.trimTo(plen))
                                                         .$(", exception: ")
                                                         .$(e).$();
-
-                                                if (getMigrationToVersionCriticality(ver) != 0) {
-                                                    throw e;
-                                                }
-                                                updateSuccess.set(false);
-                                                return;
+                                                throw e;
                                             }
                                         }
 
@@ -235,13 +218,12 @@ public class EngineMigration {
     }
 
     static {
-        MIGRATIONS.extendAndSet(ColumnType.VERSION - MIGRATIONS_LIST_OFFSET, null);
-        setByVersion(VERSION_THAT_ADDED_TABLE_ID, MigrationActions::mig505, 1);
+        MIGRATIONS.put(417, MigrationActions::mig505);
         // there is no tagged version with _meta 418, this is something unreleased
-        setByVersion(418, MigrationActions::rebuildTransactionFile, 0);
-        setByVersion(419, MigrationActions::mig600, 1);
-        setByVersion(420, MigrationActions::mig605, 1);
-        setByVersion(422, MigrationActions::mig607, 1);
-        setByVersion(423, MigrationActions::mig608, 1);
+        MIGRATIONS.put(418, MigrationActions::rebuildTransactionFile);
+        MIGRATIONS.put(419, MigrationActions::mig600);
+        MIGRATIONS.put(420, MigrationActions::mig605);
+        MIGRATIONS.put(422, MigrationActions::mig607);
+        MIGRATIONS.put(423, MigrationActions::mig608);
     }
 }
