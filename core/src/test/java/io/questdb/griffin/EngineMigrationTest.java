@@ -98,6 +98,11 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void test423() throws IOException, SqlException {
+        doMigration("/migration/data_423.zip", true, true);
+    }
+
+    @Test
     public void testGenerateTables() throws SqlException, NumericException {
         generateMigrationTables();
         engine.releaseAllWriters();
