@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.udp.AbstractLineProtoReceiver;
 import io.questdb.cutlass.line.udp.LineUdpInsertTest;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -44,7 +45,7 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
 
     @Test
     public void testPutByteBadValueIsTreatedAsNull() throws Exception {
-        testColumnType(ColumnType.BYTE, 30,
+        testColumnType(ColumnType.BYTE,
                 "column\tlocation\ttimestamp\n" +
                         "5\t\t1970-01-01T00:00:04.000000Z\n",
                 (sender) -> {
@@ -68,7 +69,7 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
 
     @Test
     public void testPutShortBadValueIsTreatedAsNull() throws Exception {
-        testColumnType(ColumnType.SHORT, 30,
+        testColumnType(ColumnType.SHORT,
                 "column\tlocation\ttimestamp\n" +
                         "0\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
                         "300\t\t1970-01-01T00:00:02.000000Z\n" +
@@ -94,7 +95,7 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
 
     @Test
     public void testPutIntBadValueIsTreatedAsNull() throws Exception {
-        testColumnType(ColumnType.INT, 30,
+        testColumnType(ColumnType.INT,
                 "column\tlocation\ttimestamp\n" +
                         "NaN\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
                         "5\t\t1970-01-01T00:00:04.000000Z\n",
@@ -119,7 +120,7 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
 
     @Test
     public void testPutFloatBadValueIsTreatedAsNull() throws Exception {
-        testColumnType(ColumnType.FLOAT, 30,
+        testColumnType(ColumnType.FLOAT,
                 "column\tlocation\ttimestamp\n" +
                         "Infinity\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
                         "3.1416\t\t1970-01-01T00:00:02.000000Z\n" +
@@ -148,7 +149,7 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
 
     @Test
     public void testPutLong256BadValueIsTreatedAsNull() throws Exception {
-        testColumnType(ColumnType.LONG256, 30,
+        testColumnType(ColumnType.LONG256,
                 "column\tlocation\ttimestamp\n",
                 (sender) -> {
                     sender.metric(tableName)
@@ -171,7 +172,7 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
 
     @Test
     public void testPutBinaryBadValueIsTreatedAsNull() throws Exception {
-        testColumnType(ColumnType.BINARY, 30,
+        testColumnType(ColumnType.BINARY,
                 "column\tlocation\ttimestamp\n",
                 (sender) -> {
                     sender.metric(tableName)
@@ -254,14 +255,13 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
     }
 
     private void testColumnType(int columnType,
-                                int geohashColumnBits,
                                 String expected,
                                 Consumer<LineProtoSender> senderConsumer) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (event == PoolListener.EV_RETURN && tableName.equals(name)) {
+                    if (event == PoolListener.EV_RETURN && Chars.equals(tableName, name)) {
                         waitForData.countDown();
                     }
                 });
@@ -269,7 +269,7 @@ public class CairoLineProtoParserSupportTest extends LineUdpInsertTest {
                     try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
                         CairoTestUtils.create(model
                                 .col(targetColumnName, columnType)
-                                .col(locationColumnName, ColumnType.getGeoHashTypeWithBits(geohashColumnBits))
+                                .col(locationColumnName, ColumnType.getGeoHashTypeWithBits(30))
                                 .timestamp());
                     }
                     receiver.start();
