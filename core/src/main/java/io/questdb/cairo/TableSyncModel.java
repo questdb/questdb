@@ -144,13 +144,15 @@ public class TableSyncModel implements Mutable, Sinkable {
             }
             int type = Unsafe.getUnsafe().getInt(p);
             p += 4;
+            long hash = Unsafe.getUnsafe().getLong(p);
+            p += 8;
             boolean indexed = Unsafe.getUnsafe().getByte(p++) == 0;
             int valueBlockCapacity = Unsafe.getUnsafe().getInt(p);
             p += 4;
             addedColumnMetadata.add(
                     new TableColumnMetadata(
                             Chars.toString(nameSink),
-                            0, // todo: deserialize hash
+                            hash,
                             type,
                             indexed,
                             valueBlockCapacity,
@@ -221,6 +223,7 @@ public class TableSyncModel implements Mutable, Sinkable {
             final TableColumnMetadata metadata = addedColumnMetadata.getQuick(i);
             sink.put(metadata.getName());
             sink.put(metadata.getType()); // column type
+            sink.put(metadata.getHash());
             sink.put((byte) (metadata.isIndexed() ? 0 : 1)); // column indexed flag
             sink.put(metadata.getIndexValueBlockCapacity());
         }
@@ -322,6 +325,7 @@ public class TableSyncModel implements Mutable, Sinkable {
                 final TableColumnMetadata metadata = addedColumnMetadata.getQuick(i);
                 sink.putQuoted("name").put(':').putQuoted(metadata.getName()).put(',');
                 sink.putQuoted("type").put(':').putQuoted(ColumnType.nameOf(metadata.getType())).put(',');
+                sink.putQuoted("hash").put(':').put(metadata.getHash()).put(',');
                 sink.putQuoted("index").put(':').put(metadata.isIndexed()).put(',');
                 sink.putQuoted("indexCapacity").put(':').put(metadata.getIndexValueBlockCapacity());
 

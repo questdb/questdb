@@ -24,16 +24,14 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableSyncModel;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.network.Net;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.tasks.TableWriterTask;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -42,6 +40,12 @@ import org.junit.Test;
 import java.io.Closeable;
 
 public class ReplModelReconTest extends AbstractGriffinTest {
+
+    @Override
+    public void setUp() {
+        super.setUp();
+        CairoConfiguration.RANDOM.set(new Rnd());
+    }
 
     @Test
     public void testColumnNameCaseSensitivity() throws Exception {
@@ -467,7 +471,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":2}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":2}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -486,7 +490,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"dataTxn\":3}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"dataTxn\":3}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -524,7 +528,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"dataTxn\":3}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"dataTxn\":3}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -566,7 +570,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"dataTxn\":3}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"dataTxn\":3}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -714,7 +718,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":16,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":3}],\"columnMetaData\":[{\"name\":\"n\",\"type\":\"LONG256\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":15,\"toIndex\":-1},{\"action\":\"move\",\"fromIndex\":16,\"toIndex\":15},{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":16}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":16,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":3}],\"columnMetaData\":[{\"name\":\"n\",\"type\":\"LONG256\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":15,\"toIndex\":-1},{\"action\":\"move\",\"fromIndex\":16,\"toIndex\":15},{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":16}]}",
                     sink
             );
         });
@@ -767,7 +771,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":16,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":3}],\"columnMetaData\":[{\"name\":\"o\",\"type\":\"LONG256\",\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":16,\"toIndex\":-1},{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":16}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":16,\"top\":13600}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":3}],\"columnMetaData\":[{\"name\":\"o\",\"type\":\"LONG256\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":16,\"toIndex\":-1},{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":16}]}",
                     sink
             );
         });
