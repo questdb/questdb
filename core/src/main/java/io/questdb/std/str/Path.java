@@ -221,6 +221,20 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         }
     }
 
+    public Path of(Path path) {
+        // This is different from of(CharSequence str) because
+        // another Path is already UTF8 encoded and cannot be treated as CharSequence.
+        // Copy the path binary array representation instead of trying to UTF8 encode it
+        if (len < path.len) {
+            extend(path.len);
+        }
+        Unsafe.getUnsafe().copyMemory(path.ptr, ptr, path.len);
+        len = path.len;
+        wptr = ptr + len;
+
+        return this;
+    }
+
     private void checkClosed() {
         if (ptr == 0) {
             this.ptr = this.wptr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_DEFAULT);

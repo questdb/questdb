@@ -42,9 +42,7 @@ import io.questdb.network.IORequestProcessor;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.DirectCharSink;
-import io.questdb.std.str.FloatingDirectCharSink;
-import io.questdb.std.str.Path;
+import io.questdb.std.str.*;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -499,9 +497,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                             long tmpBufPos = bufPos;
                             int l = entity.getValue().length();
                             bufPos += Integer.BYTES + Byte.BYTES;
-                            long hi = bufPos + 2L * l;
-                            if (hi < bufMax) {
-                                floatingCharSink.of(bufPos, hi);
+                            long estimatedHi = bufPos + 2L * l;
+                            if (estimatedHi < bufMax) {
+                                floatingCharSink.of(bufPos, bufPos + 2L * l);
                                 if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
                                     throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
                                 }
@@ -516,8 +514,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                                 } else {
                                     Unsafe.getUnsafe().putByte(tmpBufPos, entity.getType());
                                     tmpBufPos += Byte.BYTES;
+                                    l = floatingCharSink.length();
                                     Unsafe.getUnsafe().putInt(tmpBufPos, l);
-                                    bufPos = hi;
+                                    bufPos = bufPos + 2L * l;
                                 }
                             } else {
                                 throw CairoException.instance(0).put("queue buffer overflow");
@@ -542,16 +541,15 @@ class LineTcpMeasurementScheduler implements Closeable {
                             final int colTypeMeta = localDetails.getColumnTypeMeta(colIndex);
                             if (colTypeMeta == 0) { // not a geohash
                                 Unsafe.getUnsafe().putByte(bufPos, entity.getType());
-                                bufPos += Byte.BYTES;
-                                int l = entity.getValue().length();
-                                Unsafe.getUnsafe().putInt(bufPos, l);
-                                bufPos += Integer.BYTES;
-                                long hi = bufPos + 2L * l; // unquote
-                                floatingCharSink.of(bufPos, hi);
+                                bufPos += Byte.BYTES + Integer.BYTES;
+                                floatingCharSink.of(bufPos, bufPos + 2L * entity.getValue().length());
                                 if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
                                     throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
                                 }
-                                bufPos = hi;
+                                int l = floatingCharSink.length();
+                                Unsafe.getUnsafe().putInt(bufPos - Integer.BYTES, l);
+                                bufPos += floatingCharSink.length() * 2L;
+
                             } else {
                                 long geohash;
                                 try {
@@ -1065,6 +1063,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             private final ObjList<SymbolCache> unusedSymbolCaches;
             // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
             private final IntList geohashBitsSizeByColIdx = new IntList();
+            private final StringSink tempSink = new StringSink();
+            private final MangledUtf8Sink mangledUtf8Sink = new MangledUtf8Sink(tempSink);
 
             ThreadLocalDetails(ObjList<SymbolCache> unusedSymbolCaches) {
                 this.unusedSymbolCaches = unusedSymbolCaches;
@@ -1107,18 +1107,23 @@ class LineTcpMeasurementScheduler implements Closeable {
                 geohashBitsSizeByColIdx.clear();
             }
 
-            int getColumnIndex(CharSequence colName) {
+            int getColumnIndex(DirectByteCharSequence colName) {
                 final int colIndex = columnIndexByName.get(colName);
                 if (colIndex != CharSequenceIntHashMap.NO_ENTRY_VALUE) {
+                    // If this line is not covered by tests, look at MangledUtf8Sink implementation and usage
                     return colIndex;
                 }
                 return getColumnIndex0(colName);
             }
 
-            private int getColumnIndex0(CharSequence colName) {
+            private int getColumnIndex0(DirectByteCharSequence colName) {
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                     TableReaderMetadata metadata = reader.getMetadata();
-                    int colIndex = metadata.getColumnIndexQuiet(colName);
+                    tempSink.clear();
+                    if (!Chars.utf8Decode(colName.getLo(), colName.getHi(), tempSink)) {
+                        throw CairoException.instance(0).put("invalid UTF8 in value for ").put(colName);
+                    }
+                    int colIndex = metadata.getColumnIndexQuiet(tempSink);
                     if (colIndex < 0) {
                         if (geohashBitsSizeByColIdx.size() == 0) {
                             geohashBitsSizeByColIdx.add(0); // first value is for cols indexed with -1
@@ -1130,7 +1135,16 @@ class LineTcpMeasurementScheduler implements Closeable {
                     geohashBitsSizeByColIdx.clear();
                     geohashBitsSizeByColIdx.add(0); // first value is for cols indexed with -1
                     for (int n = 0, sz = metadata.getColumnCount(); n < sz; n++) {
-                        columnIndexByName.put(metadata.getColumnName(n), n);
+                        String columnName = metadata.getColumnName(n);
+
+                        // We cannot cache on real column name values if chars are not ASCII
+                        // We need to construct non-ASCII CharSequence +representation same as DirectByteCharSequence will have
+                        CharSequence mangledUtf8Representation = mangledUtf8Sink.encodeMangledUtf8(columnName);
+                        // Check if mangled UTF8 length is different from original
+                        // If they are same it means column name is ASCII and DirectByteCharSequence name will be same as metadata column name
+                        String mangledColumnName = mangledUtf8Representation.length() != columnName.length() ? tempSink.toString() : columnName;
+
+                        columnIndexByName.put(mangledColumnName, n);
                         final int colType = metadata.getColumnType(n);
                         final int geoHashBits = ColumnType.getGeoHashBits(colType);
                         if (geoHashBits == 0) {
@@ -1146,6 +1160,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     return colIndex;
                 }
             }
+
 
             int getColumnTypeMeta(int colIndex) {
                 return geohashBitsSizeByColIdx.getQuick(colIndex + 1); // first val accounts for new cols, index -1
@@ -1168,6 +1183,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 }
                 return symIndex;
             }
+
         }
     }
 

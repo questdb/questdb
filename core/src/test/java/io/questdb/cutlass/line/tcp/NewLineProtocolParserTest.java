@@ -89,7 +89,7 @@ public class NewLineProtocolParserTest extends BaseLineTcpContextTest {
         assertType(NewLineProtoParser.ENTITY_TYPE_FLOAT, "1.0");
         assertType(NewLineProtoParser.ENTITY_TYPE_FLOAT, "1");
 
-        assertType(NewLineProtoParser.ENTITY_TYPE_NONE, "aaa\"", NewLineProtoParser.ParseResult.ERROR);
+        assertType(NewLineProtoParser.ENTITY_TYPE_SYMBOL, "aaa\"");
         assertType(NewLineProtoParser.ENTITY_TYPE_NONE, "\"aaa", NewLineProtoParser.ParseResult.ERROR);
 
         assertType(NewLineProtoParser.ENTITY_TYPE_TAG, "123a4i");

@@ -87,4 +87,23 @@ public class PathTest {
 
         Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat("a").concat("b").concat("c").concat("f.txt").$()));
     }
+
+    @Test
+    public void testPathOfPathUtf8() {
+        path.of("пути неисповедимы");
+        try(Path path2 = new Path()) {
+            path2.of(path);
+            TestUtils.assertEquals(path, path2);
+
+            // Reduce
+            path.of("пути");
+            path2.of(path);
+            TestUtils.assertEquals(path, path2);
+
+            // Extend
+            path.of("пути неисповедимы    , неисповедимы");
+            path2.of(path);
+            TestUtils.assertEquals(path, path2);
+        }
+    }
 }

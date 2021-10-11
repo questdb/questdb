@@ -71,6 +71,7 @@ public class NewLineProtoParser implements Closeable {
     private final EntityHandler entityNameHandler = this::expectEntityName;
     private int nQuoteCharacters;
     private boolean scape;
+    private boolean nextValueCanBeOpenQuote;
 
     @Override
     public void close() {
@@ -177,7 +178,7 @@ public class NewLineProtoParser implements Closeable {
                     break;
 
                 case (byte)'"':
-                    if (++nQuoteCharacters == 1 && tagsComplete && entityHandler == entityValueHandler) {
+                    if (nextValueCanBeOpenQuote && ++nQuoteCharacters == 1) {
                         bufAt += 1;
                         if (!prepareQuotedEntity(bufAt - 1, bufHi)) {
                             if (errorCode == ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW) {
@@ -190,10 +191,13 @@ public class NewLineProtoParser implements Closeable {
                         nQuoteCharacters = 0;
                         bufAt += 1;
                         break;
+                    } else if (isQuotedFieldValue) {
+                        return ParseResult.ERROR;
                     }
 
                 default:
                     appendByte = true;
+                    nextValueCanBeOpenQuote = false;
                     break;
             }
 
@@ -243,6 +247,7 @@ public class NewLineProtoParser implements Closeable {
         errorCode = ErrorCode.NONE;
         nQuoteCharacters = 0;
         scape = false;
+        nextValueCanBeOpenQuote = false;
     }
 
     private boolean expectEndOfLine(byte endOfEntityByte, long bufHi) {
@@ -275,9 +280,13 @@ public class NewLineProtoParser implements Closeable {
                     if (b == (byte) '"') {
                         nEscapedChars = 0;
                         nQuoteCharacters++;
-                        bufAt += 2; // go to first byte of the string, past the '"'
-                        return prepareQuotedEntity(candidateQuoteIdx, bufHi);
+                        bufAt += 2;
+                        return prepareQuotedEntity(candidateQuoteIdx, bufHi);// go to first byte of the string, past the '"'
+                    } else {
+                        nextValueCanBeOpenQuote = false;
                     }
+                } else {
+                    nextValueCanBeOpenQuote = true;
                 }
             }
             return true;
@@ -346,6 +355,7 @@ public class NewLineProtoParser implements Closeable {
                     scape = false;
                     break;
             }
+            nextValueCanBeOpenQuote = false;
             if (copyByte && nEscapedChars > 0) {
                 Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
             }
@@ -549,7 +559,8 @@ public class NewLineProtoParser implements Closeable {
                         type = ENTITY_TYPE_STRING;
                         return true;
                     }
-                    return false;
+                    type = ENTITY_TYPE_SYMBOL;
+                    return true;
                 }
                 default:
                     try {

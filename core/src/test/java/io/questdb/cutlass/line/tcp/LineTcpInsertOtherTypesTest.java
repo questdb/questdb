@@ -539,6 +539,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "xxx\t1970-01-01T00:00:02.000000Z\n" +
                         "paff\t1970-01-01T00:00:03.000000Z\n" +
                         "yyy\t1970-01-01T00:00:04.000000Z\n" +
+                        "tt\"tt\t1970-01-01T00:00:05.000000Z\n" +
                         "null\t1970-01-01T00:00:06.000000Z\n" +
                         "A\t1970-01-01T00:00:07.000000Z\n" +
                         "@plant2\t1970-01-01T00:00:08.000000Z\n" +
@@ -566,7 +567,6 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "e\t1970-01-01T00:00:01.000000Z\n" +
                         "xxx\t1970-01-01T00:00:02.000000Z\n" +
                         "paff\t1970-01-01T00:00:03.000000Z\n" +
-                        "tt\t1970-01-01T00:00:09.000000Z\n" +
                         "tt\"tt\t1970-01-01T00:00:11.000000Z\n" +
                         "tt\"tt\" \n" +
                         " =, ,=\"\t1970-01-01T00:00:12.000000Z\n" +
@@ -579,7 +579,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "paff\"", // discarded bad value
                         "null", // discarded bad type symbol
                         "yyy", // discarded bad type symbol
-                        "\"tt\"tt\"", // partially discarded bad value
+                        "\"tt\"tt\"", // discarded bad value
                         "tt\"tt\"", // discarded bad value
                         "\"tt\"tt", // discarded bad value
                         "\"tt\\\"tt\"", // valid
@@ -596,7 +596,6 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "e\t1970-01-01T00:00:01.000000Z\n" +
                         "xxx\t1970-01-01T00:00:02.000000Z\n" +
                         "paff\t1970-01-01T00:00:03.000000Z\n" +
-                        "tt\t1970-01-01T00:00:09.000000Z\n" +
                         "tt\"tt\t1970-01-01T00:00:11.000000Z\n" +
                         "tt\"tt\" \n" +
                         " =, ,=\"\t1970-01-01T00:00:12.000000Z\n" +

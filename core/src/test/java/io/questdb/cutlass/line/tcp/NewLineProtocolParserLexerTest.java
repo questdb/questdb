@@ -144,13 +144,47 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
     public void testWithEscapedKeys() {
         assertThat(
                 "measurement,t ag=value with space,tag2=value field=10000i,field 2=\"str=special,end\" 100000\n",
-                "measurement,t\\ ag=value\\ with\\ space,tag2=value field=10000i,field\\ 2=\"str=special,end\" 100000\n", 15
+                "measurement,t\\ ag=value\\ with\\ space,tag2=value field=10000i,field\\ 2=\"str=special,end\" 100000\n"
         );
 
-//        assertThat(
-//                "measurement,t\"ag=value with space,tag2=value field=10000i,field 2=\"str=special,end\" 100000\n",
-//                "measurement,t\\\"ag=value\\ with\\ space,tag2=value field=10000i,field\\ 2=\"str=special,end\" 100000\n"
-//        );
+        assertThat(
+                "measurement,t\"ag=value with space,tag2=value field=10000i,field 2=\"str=special,end\" 100000\n",
+                "measurement,t\\\"ag=value\\ with\\ space,tag2=value field=10000i,field\\ 2=\"str=special,end\" 100000\n"
+        );
+    }
+
+    @Test
+    public void testSupportsUnquotedStrings() {
+        assertThat(
+                "measurement,t\"ag=value with space,tag2=value field=10000i,field 2=strend 100000\n",
+                "measurement,t\\\"ag=value\\ with\\ space,tag2=value field=10000i,field\\ 2=strend 100000\n"
+        );
+    }
+
+    @Test
+    public void testSupportsUnquotedStringsWithQuoteInMiddle() {
+        assertThat(
+                "measurement,t\"ag=value with space,tag2=value field=10000i,field 2=str\"end 100000\n",
+                "measurement,t\\\"ag=value\\ with\\ space,tag2=value field=10000i,field\\ 2=str\"end 100000\n"
+        );
+
+        assertThat(
+                "measurement,t\"ag=value with space,tag2=value field=10000i,field 2=str\"end\" 100000\n",
+                "measurement,t\\\"ag=value\\ with\\ space,tag2=value field=10000i,field\\ 2=str\"end\" 100000\n"
+        );
+    }
+
+    @Test
+    public void testSupportsUtf8Chars() {
+        assertThat(
+                "लаблअца,символ=значение1 поле=значение2,поле2=\"значение3\" 123\n",
+                "लаблअца,символ=значение1 поле=значение2,поле2=\"значение3\" 123\n"
+        );
+
+        assertThat(
+                "लаблअца,символ=значение2 161\n",
+                "लаблअца,символ=значение2  161\n")
+        ;
     }
 
     @Override
@@ -335,7 +369,8 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
                         sink.put(entity.getValue()).put('i');
                         break;
                 default:
-                    sink.put(entity.getValue());
+                    Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), sink);
+                    break;
             }
         }
 

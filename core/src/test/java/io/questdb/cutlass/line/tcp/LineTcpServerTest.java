@@ -558,6 +558,60 @@ public class LineTcpServerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFieldWithUnquotedString() throws Exception {
+        runInContext((server) -> {
+            send(server,  "tab raw_msg=____ 1619509249714000000\n", "tab", WAIT_ENGINE_TABLE_RELEASE, false);
+            send(server,  "tab raw_msg=__\"_ 1619509249714000000\n", "tab", WAIT_ENGINE_TABLE_RELEASE, false);
+
+            String expected = "raw_msg\ttimestamp\n" +
+                    "____\t2021-04-27T07:40:49.714000Z\n" +
+                    "__\"_\t2021-04-27T07:40:49.714000Z\n";
+            assertTable(expected, "tab");
+        });
+    }
+
+    @Test
+    public void testUnicodeTableName() throws Exception {
+        byte[] utf8Bytes = "ल".getBytes(StandardCharsets.UTF_8);
+        Assert.assertEquals(3, utf8Bytes.length);
+
+        try (TableModel m = new TableModel(configuration, "लаблअца", PartitionBy.DAY)) {
+            m.col("символ", ColumnType.SYMBOL).indexed(true, 256)
+                    .col("поле", ColumnType.STRING)
+                    .timestamp("время");
+            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+        }
+
+        runInContext((server) -> {
+            String lineData = "लаблअца поле=\"значение\" 1619509249714000000\n";
+            send(server, lineData, "लаблअца", WAIT_ENGINE_TABLE_RELEASE, false);
+
+            String lineData2 = "लаблअца,символ=значение2 поле=\"значение3\" 1619509249714000000\n";
+            send(server, lineData2, "लаблअца", WAIT_ENGINE_TABLE_RELEASE, false);
+
+            assertTable("символ\tполе\tвремя\n" +
+                    "\tзначение\t2021-04-27T07:40:49.714000Z\n" +
+                    "значение2\tзначение3\t2021-04-27T07:40:49.714000Z\n", "लаблअца");
+        });
+    }
+
+    @Test
+    public void testUnicodeTableNameExistingTable() throws Exception {
+        runInContext((server) -> {
+            String lineData = "लаблअца поле=значение 1619509249714000000\n";
+            send(server, lineData, "लаблअца", WAIT_ENGINE_TABLE_RELEASE, false);
+
+            String lineData2 = "लаблअца,символ=значение2  1619509249714000000\n";
+            send(server, lineData2, "लаблअца", WAIT_ENGINE_TABLE_RELEASE, false);
+
+            String expected = "поле\ttimestamp\tсимвол\n" +
+                    "значение\t2021-04-27T07:40:49.714000Z\t\n" +
+                    "\t2021-04-27T07:40:49.714000Z\tзначение2\n";
+            assertTable(expected, "लаблअца");
+        });
+    }
+
+    @Test
     public void testWriterAllLongs() throws Exception {
         currentMicros = 1;
         try (TableModel m = new TableModel(configuration, "messages", PartitionBy.MONTH)) {
