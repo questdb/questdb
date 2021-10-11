@@ -75,7 +75,7 @@ module.exports = {
         allow: ["warn", "error", "info"],
       },
     ],
-    "prettier/prettier": ["error"],
+    "prettier/prettier": ["warn"],
   },
   settings: {
     react: {
