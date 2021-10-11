@@ -128,6 +128,14 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
     }
 
     @Test
+    public void testWithQuotedStringsWithEscapedQuotesUnsuccessful() {
+        assertThat(
+                "-- error --\n",
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,lineend\n"
+        );
+    }
+
+    @Test
     public void testWithEscapedTagValues() {
         assertThat(
                 "measurement,tag=value with space,tag2=value field=10000i,field2=\"str=special,end\" 100000\n",
@@ -231,23 +239,24 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
 
         try {
             for (int i = start; i < len; i++) {
-                sink.clear();
-                resetParser(mem + fullLen);
-                parseMeasurement(memFull, mem, fullLen, i, 0);
-//                int nextBreak = Math.abs(rnd.nextInt()) % (len - i);
-//                if (nextBreak > 0) {
-//                    parseMeasurement(mem + i + nextBreak);
-//                }
-                boolean complete;
-                complete = parseMeasurement(memFull, mem, fullLen, fullLen, i);
-                Assert.assertTrue(complete);
-                if (!Chars.equals(expected, sink)) {
-                    System.out.println(lineStr.substring(0, i));
-//                    if (nextBreak > 0) {
-//                        System.out.println(lineStr.substring(0, i + nextBreak));
-//                    }
-                    System.out.println(lineStr.substring(i));
-                    TestUtils.assertEquals("parse split " + i, expected, sink);
+                for(int nextBreak = 0; nextBreak < len - i; nextBreak++) {
+                    sink.clear();
+                    resetParser(mem + fullLen);
+                    parseMeasurement(memFull, mem, fullLen, i, 0);
+                    if (nextBreak > 0) {
+                        parseMeasurement(memFull, mem, fullLen, i + nextBreak, i);
+                    }
+                    boolean complete;
+                    complete = parseMeasurement(memFull, mem, fullLen, fullLen, i + nextBreak);
+                    Assert.assertTrue(complete);
+                    if (!Chars.equals(expected, sink)) {
+                        System.out.println(lineStr.substring(0, i));
+                        if (nextBreak > 0) {
+                            System.out.println(lineStr.substring(i, i + nextBreak));
+                        }
+                        System.out.println(lineStr.substring(i + nextBreak));
+                        TestUtils.assertEquals("parse split " + i, expected, sink);
+                    }
                 }
             }
         } finally {

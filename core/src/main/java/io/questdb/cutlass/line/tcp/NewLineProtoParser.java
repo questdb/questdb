@@ -567,9 +567,6 @@ public class NewLineProtoParser implements Closeable {
                         floatValue = Numbers.parseDouble(value);
                         type = ENTITY_TYPE_FLOAT;
                     } catch (NumericException ex) {
-                        if (value.byteAt(0) == '"') { // missing closing '"'
-                            return false;
-                        }
                         type = ENTITY_TYPE_SYMBOL;
                     }
                     return true;

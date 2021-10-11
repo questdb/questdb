@@ -516,7 +516,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "@plant2\t1970-01-01T00:00:08.000000Z\n" +
                         "@plant\t1970-01-01T00:00:09.000000Z\n" +
                         "\"@plant\"\t1970-01-01T00:00:10.000000Z\n" +
-                        "\t1970-01-01T00:00:11.000000Z\n",
+                        "\t1970-01-01T00:00:11.000000Z\n" +
+                        "\"abcd\t1970-01-01T00:00:12.000000Z\n" ,
                 new CharSequence[]{
                         "e", // valid
                         "xxx", // valid
@@ -528,7 +529,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "@plant2", // valid
                         "@plant", // valid
                         "\"@plant\"", // valid
-                        "" // valid null
+                        "", // valid null,
+                        "\"abcd", //valid symbol
                 });
     }
 
@@ -550,7 +552,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "xxx", // valid
                         "paff", // valid
                         "yyy", // valid
-                        "tt\"tt", // invalid, symbols cannot be in field set
+                        "tt\"tt", // valid
                         "null", // valid
                         "A", // valid
                         "@plant2", // valid
@@ -608,9 +610,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "paff\"", // discarded bad value
                         "null", // discarded bad type symbol
                         "yyy", // discarded bad type symbol
-                        "\"tt\"tt\"", // valid
+                        "\"tt\"tt\"", // discarded bad value
                         "tt\"tt\"", // discarded bad value
-                        "\"tt\"tt", // taken partially
+                        "\"tt\"tt", // discarded bad value
                         "\"tt\\\"tt\"", // valid
                         "\"tt\\\"tt\\\" \\\n =, ,=\\\"\"", // valid
                         "A", // discarded bad type symbol
