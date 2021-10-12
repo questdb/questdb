@@ -39,8 +39,8 @@ import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
-public class LineProtoSender extends AbstractCharSink implements Closeable {
-    private static final Log LOG = LogFactory.getLog(LineProtoSender.class);
+public class LineUdpSender extends AbstractCharSink implements Closeable {
+    private static final Log LOG = LogFactory.getLog(LineUdpSender.class);
 
     protected final int capacity;
     private final long bufA;
@@ -56,7 +56,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
     private boolean hasMetric = false;
     private boolean noFields = true;
 
-    public LineProtoSender(
+    public LineUdpSender(
             int interfaceIPv4Address,
             int sendToIPv4Address,
             int sendToPort,
@@ -66,7 +66,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
         this(NetworkFacadeImpl.INSTANCE, interfaceIPv4Address, sendToIPv4Address, sendToPort, bufferCapacity, ttl);
     }
 
-    public LineProtoSender(
+    public LineUdpSender(
             NetworkFacade nf,
             int interfaceIPv4Address,
             int sendToIPv4Address,
@@ -132,22 +132,22 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
         Unsafe.free(bufB, capacity, MemoryTag.NATIVE_DEFAULT);
     }
 
-    public LineProtoSender field(CharSequence name, long value) {
+    public LineUdpSender field(CharSequence name, long value) {
         field(name).put(value).put('i');
         return this;
     }
 
-    public LineProtoSender field(CharSequence name, CharSequence value) {
+    public LineUdpSender field(CharSequence name, CharSequence value) {
         field(name).putQuoted(value);
         return this;
     }
 
-    public LineProtoSender field(CharSequence name, double value) {
+    public LineUdpSender field(CharSequence name, double value) {
         field(name).put(value);
         return this;
     }
 
-    public LineProtoSender field(CharSequence name, boolean value) {
+    public LineUdpSender field(CharSequence name, boolean value) {
         field(name).put(value ? 't' : 'f');
         return this;
     }
@@ -159,7 +159,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
     }
 
     @Override
-    public LineProtoSender put(CharSequence cs) {
+    public LineUdpSender put(CharSequence cs) {
         int l = cs.length();
         if (ptr + l < hi) {
             Chars.asciiStrCpy(cs, l, ptr);
@@ -191,7 +191,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
         return this;
     }
 
-    public LineProtoSender metric(CharSequence metric) {
+    public LineUdpSender metric(CharSequence metric) {
         if (hasMetric) {
             throw CairoException.instance(0).put("duplicate metric");
         }
@@ -200,7 +200,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
     }
 
     @Override
-    public LineProtoSender put(char c) {
+    public LineUdpSender put(char c) {
         if (ptr >= hi) {
             send00();
         }
@@ -208,7 +208,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
         return this;
     }
 
-    public LineProtoSender tag(CharSequence tag, CharSequence value) {
+    public LineUdpSender tag(CharSequence tag, CharSequence value) {
         if (hasMetric) {
             put(',').encodeUtf8(tag).put('=').encodeUtf8(value);
             return this;
