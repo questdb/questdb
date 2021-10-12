@@ -133,7 +133,7 @@ with contributing:
   of QuestDB and submit a pull request with your proposed changes.
 
 
-As a sign of our gratitude, we'll send contributors some of our [**QuestDB swag**](https://questdb.io/community) such as stickers and t-shirts! :star2: 
+✨ As a sign of our gratitude, we also send **QuestDB swag** to our contributors. [Claim your swag here.](https://questdb.io/community)  
 
 A big thanks goes to the following wonderful people who have contributed to
 QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
