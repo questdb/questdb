@@ -22,8 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line;
+package io.questdb.cutlass.line.udp;
 
-public interface CachedCharSequence extends CharSequence {
-    long getCacheAddress();
+@FunctionalInterface
+public interface CharSequenceCache {
+    CharSequence get(long address);
 }

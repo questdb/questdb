@@ -22,9 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.tcp;
+package io.questdb.cutlass.line;
 
-import io.questdb.cutlass.line.LineProtoSender;
+import io.questdb.cutlass.line.tcp.AuthDb;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkError;
@@ -35,15 +35,15 @@ import java.nio.charset.StandardCharsets;
 import java.security.*;
 import java.util.Base64;
 
-public class AuthenticatedLineTCPProtoSender extends LineTCPProtoSender {
-    private static final Log LOG = LogFactory.getLog(LineProtoSender.class);
+public class AuthenticatedLineTcpSender extends LineTcpSender {
+    private static final Log LOG = LogFactory.getLog(LineUdpSender.class);
     private static final long BUF_SZ = 1024;
     private final byte[] keyIdBytes;
     private final PrivateKey privateKey;
     private final Signature sig;
     private long buffer;
 
-    public AuthenticatedLineTCPProtoSender(String keyId, PrivateKey privateKey, int sendToIPv4Address, int sendToPort, int bufferCapacity) {
+    public AuthenticatedLineTcpSender(String keyId, PrivateKey privateKey, int sendToIPv4Address, int sendToPort, int bufferCapacity) {
         super(sendToIPv4Address, sendToPort, bufferCapacity);
         keyIdBytes = keyId.getBytes(StandardCharsets.UTF_8);
         if (keyIdBytes.length >= (BUF_SZ - 1)) {

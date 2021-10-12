@@ -22,9 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line;
+package io.questdb.cutlass.line.udp;
 
-@FunctionalInterface
-public interface CharSequenceCache {
-    CharSequence get(long address);
+final class Utf8RepairContinue extends RuntimeException {
+    final static Utf8RepairContinue INSTANCE = new Utf8RepairContinue();
 }

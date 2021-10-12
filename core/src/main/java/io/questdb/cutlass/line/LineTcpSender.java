@@ -22,17 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.tcp;
+package io.questdb.cutlass.line;
 
-import io.questdb.cutlass.line.LineProtoSender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkError;
 
-public class LineTCPProtoSender extends LineProtoSender {
-    private static final Log LOG = LogFactory.getLog(LineProtoSender.class);
+public class LineTcpSender extends LineUdpSender {
+    private static final Log LOG = LogFactory.getLog(LineUdpSender.class);
 
-    public LineTCPProtoSender(int sendToIPv4Address, int sendToPort, int bufferCapacity) {
+    public LineTcpSender(int sendToIPv4Address, int sendToPort, int bufferCapacity) {
         super(0, sendToIPv4Address, sendToPort, bufferCapacity, 0);
     }
 

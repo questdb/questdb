@@ -24,25 +24,21 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import java.nio.charset.StandardCharsets;
-
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.std.*;
-import io.questdb.cutlass.line.LineProtoLexerTest;
-import org.junit.Assert;
-
 import io.questdb.cutlass.line.LineProtoException;
-import io.questdb.cutlass.line.tcp.NewLineProtoParser.ErrorCode;
-import io.questdb.cutlass.line.tcp.NewLineProtoParser.ParseResult;
-import io.questdb.cutlass.line.tcp.NewLineProtoParser.ProtoEntity;
+import io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode;
+import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
+import io.questdb.cutlass.line.tcp.LineTcpParser.ProtoEntity;
+import io.questdb.cutlass.line.udp.LineUdpLexerTest;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
-public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
-    private final static Log LOG = LogFactory.getLog(NewLineProtocolParserLexerTest.class);
-    private final NewLineProtoParser protoParser = new NewLineProtoParser();
+import java.nio.charset.StandardCharsets;
+
+public class LineTcpParser2Test extends LineUdpLexerTest {
+    private final LineTcpParser lineTcpParser = new LineTcpParser();
     private ErrorCode lastErrorCode;
     private boolean onErrorLine;
     private long startOfLineAddr;
@@ -297,7 +293,7 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
         lastErrorCode = null;
         onErrorLine = false;
         startOfLineAddr = mem;
-        protoParser.of(mem);
+        lineTcpParser.of(mem);
     }
 
     private boolean parseMeasurement(long fullBuffer, long parseBuffer, long buffersLen, long parseLen, long prevParseLen) {
@@ -310,36 +306,36 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
 
         // bufHi always the same, data alwasy ends at the end of the buffer
         // the only difference from iteration to iteration is where the data starts, which is set in shl
-        protoParser.shl(shl);
+        lineTcpParser.shl(shl);
         return parseMeasurement(parseHi);
     }
 
     private boolean parseMeasurement(long bufHi) {
-        while (protoParser.getBufferAddress() < bufHi) {
+        while (lineTcpParser.getBufferAddress() < bufHi) {
             ParseResult rc;
             if (!onErrorLine) {
-                rc = protoParser.parseMeasurement(bufHi);
+                rc = lineTcpParser.parseMeasurement(bufHi);
             } else {
-                rc = protoParser.skipMeasurement(bufHi);
+                rc = lineTcpParser.skipMeasurement(bufHi);
             }
             switch (rc) {
                 case MEASUREMENT_COMPLETE:
-                    startOfLineAddr = protoParser.getBufferAddress() + 1;
+                    startOfLineAddr = lineTcpParser.getBufferAddress() + 1;
                     if (!onErrorLine) {
                         assembleLine();
                     } else {
                         onErrorLine = false;
                     }
-                    protoParser.startNextMeasurement();
+                    lineTcpParser.startNextMeasurement();
                     break;
                 case BUFFER_UNDERFLOW:
                     return false;
                 case ERROR:
                     Assert.assertFalse(onErrorLine);
                     onErrorLine = true;
-                    lastErrorCode = protoParser.getErrorCode();
+                    lastErrorCode = lineTcpParser.getErrorCode();
                     StringSink tmpSink = new StringSink();
-                    if (Chars.utf8Decode(startOfLineAddr, protoParser.getBufferAddress(), tmpSink)) {
+                    if (Chars.utf8Decode(startOfLineAddr, lineTcpParser.getBufferAddress(), tmpSink)) {
                         sink.put(tmpSink.toString());
                     }
                     sink.put("-- error --\n");
@@ -350,13 +346,13 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
     }
 
     private void assembleLine() {
-        int nEntities = protoParser.getnEntities();
-        Chars.utf8Decode(protoParser.getMeasurementName().getLo(), protoParser.getMeasurementName().getHi(), sink);
+        int nEntities = lineTcpParser.getnEntities();
+        Chars.utf8Decode(lineTcpParser.getMeasurementName().getLo(), lineTcpParser.getMeasurementName().getHi(), sink);
         int n = 0;
         boolean tagsComplete = false;
         while (n < nEntities) {
-            ProtoEntity entity = protoParser.getEntity(n++);
-            if (!tagsComplete && entity.getType() != NewLineProtoParser.ENTITY_TYPE_TAG) {
+            ProtoEntity entity = lineTcpParser.getEntity(n++);
+            if (!tagsComplete && entity.getType() != LineTcpParser.ENTITY_TYPE_TAG) {
                 tagsComplete = true;
                 sink.put(' ');
             } else {
@@ -365,16 +361,13 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
             Chars.utf8Decode(entity.getName().getLo(), entity.getName().getHi(), sink);
             sink.put('=');
             switch (entity.getType()) {
-                case NewLineProtoParser.ENTITY_TYPE_TAG:
-                    Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), sink);
-                    break;
-                case NewLineProtoParser.ENTITY_TYPE_STRING:
+                case LineTcpParser.ENTITY_TYPE_STRING:
                     sink.put('"');
                     Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), sink);
                     sink.put('"');
                     break;
-                    case NewLineProtoParser.ENTITY_TYPE_INTEGER:
-                case NewLineProtoParser.ENTITY_TYPE_LONG256:
+                    case LineTcpParser.ENTITY_TYPE_INTEGER:
+                case LineTcpParser.ENTITY_TYPE_LONG256:
                         sink.put(entity.getValue()).put('i');
                         break;
                 default:
@@ -383,9 +376,9 @@ public class NewLineProtocolParserLexerTest extends LineProtoLexerTest {
             }
         }
 
-        if (protoParser.hasTimestamp()) {
+        if (lineTcpParser.hasTimestamp()) {
             sink.put(' ');
-            Numbers.append(sink, protoParser.getTimestamp());
+            Numbers.append(sink, lineTcpParser.getTimestamp());
         }
         sink.put('\n');
     }

@@ -33,7 +33,7 @@ import io.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
 
-public class NewLineProtoParser implements Closeable {
+public class LineTcpParser implements Closeable {
     public static final long NULL_TIMESTAMP = Numbers.LONG_NaN;
     public static final byte ENTITY_TYPE_NULL = 0;
     public static final byte ENTITY_TYPE_TAG = 1;
@@ -106,7 +106,7 @@ public class NewLineProtoParser implements Closeable {
         return timestamp != NULL_TIMESTAMP;
     }
 
-    public NewLineProtoParser of(long bufLo) {
+    public LineTcpParser of(long bufLo) {
         this.bufAt = bufLo - 1;
         startNextMeasurement();
         return this;
@@ -186,7 +186,6 @@ public class NewLineProtoParser implements Closeable {
                             }
                             return ParseResult.ERROR;
                         }
-                        appendByte = false;
                         errorCode = ErrorCode.NONE;
                         nQuoteCharacters = 0;
                         bufAt += 1;
@@ -238,7 +237,6 @@ public class NewLineProtoParser implements Closeable {
         nEscapedChars = 0;
         isQuotedFieldValue = false;
         entityLo = bufAt;
-        errorCode = null;
         tagsComplete = false;
         nEntities = 0;
         currentEntity = null;

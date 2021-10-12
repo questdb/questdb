@@ -22,8 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line;
+package io.questdb.cutlass.line.udp;
 
+import io.questdb.cutlass.line.LineProtoException;
 import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.AbstractCharSink;
@@ -31,13 +32,13 @@ import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
-public class LineProtoLexer implements Mutable, Closeable {
+public class LineUdpLexer implements Mutable, Closeable {
 
     protected final CharSequenceCache charSequenceCache;
     private final ArrayBackedCharSink sink = new ArrayBackedCharSink();
     private final ArrayBackedCharSequence cs = new ArrayBackedCharSequence();
     private final FloatingCharSequence floatingCharSequence = new FloatingCharSequence();
-    private int state = LineProtoParser.EVT_MEASUREMENT;
+    private int state = LineUdpParser.EVT_MEASUREMENT;
     private boolean escape = false;
     private boolean escapeQuote = false; // flag to signify we saw a '\' but while parsing a string
     private long buffer;
@@ -45,13 +46,13 @@ public class LineProtoLexer implements Mutable, Closeable {
     private long dstPos = 0;
     private long dstTop = 0;
     private boolean skipLine = false;
-    private LineProtoParser parser;
+    private LineUdpParser parser;
     private long utf8ErrorTop;
     private long utf8ErrorPos;
     private int errorCode = 0;
     private boolean unquoted = true;
 
-    public LineProtoLexer(int bufferSize) {
+    public LineUdpLexer(int bufferSize) {
         buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         bufferHi = buffer + bufferSize;
         charSequenceCache = address -> {
@@ -69,7 +70,7 @@ public class LineProtoLexer implements Mutable, Closeable {
         escape = false;
         escapeQuote = false;
         dstTop = dstPos = buffer;
-        state = LineProtoParser.EVT_MEASUREMENT;
+        state = LineUdpParser.EVT_MEASUREMENT;
         utf8ErrorTop = utf8ErrorPos = -1;
         skipLine = false;
         unquoted = true;
@@ -103,7 +104,7 @@ public class LineProtoLexer implements Mutable, Closeable {
         clear();
     }
 
-    public void withParser(LineProtoParser parser) {
+    public void withParser(LineUdpParser parser) {
         this.parser = parser;
     }
 
@@ -124,8 +125,8 @@ public class LineProtoLexer implements Mutable, Closeable {
 
     private void fireEvent() throws LineProtoException {
         // two bytes less between these and one more byte so we don't have to use >=
-        if (dstTop > dstPos - 3 && state != LineProtoParser.EVT_FIELD_VALUE) { // fields do take empty values, same as null
-            errorCode = LineProtoParser.ERROR_EMPTY;
+        if (dstTop > dstPos - 3 && state != LineUdpParser.EVT_FIELD_VALUE) { // fields do take empty values, same as null
+            errorCode = LineUdpParser.ERROR_EMPTY;
             throw LineProtoException.INSTANCE;
         }
         parser.onEvent(cs, state, charSequenceCache);
@@ -134,40 +135,40 @@ public class LineProtoLexer implements Mutable, Closeable {
 
     private void fireEventTransition(int evtTagName, int evtFieldName) {
         switch (state) {
-            case LineProtoParser.EVT_MEASUREMENT:
-            case LineProtoParser.EVT_TAG_VALUE:
+            case LineUdpParser.EVT_MEASUREMENT:
+            case LineUdpParser.EVT_TAG_VALUE:
                 fireEvent();
                 state = evtTagName;
                 break;
-            case LineProtoParser.EVT_FIELD_VALUE:
+            case LineUdpParser.EVT_FIELD_VALUE:
                 fireEvent();
                 state = evtFieldName;
                 break;
             default:
-                errorCode = LineProtoParser.ERROR_EXPECTED;
+                errorCode = LineUdpParser.ERROR_EXPECTED;
                 throw LineProtoException.INSTANCE;
         }
     }
 
     private void fireEventTransition2() {
         switch (state) {
-            case LineProtoParser.EVT_TAG_NAME:
+            case LineUdpParser.EVT_TAG_NAME:
                 fireEvent();
-                state = LineProtoParser.EVT_TAG_VALUE;
+                state = LineUdpParser.EVT_TAG_VALUE;
                 break;
-            case LineProtoParser.EVT_FIELD_NAME:
+            case LineUdpParser.EVT_FIELD_NAME:
                 fireEvent();
-                state = LineProtoParser.EVT_FIELD_VALUE;
+                state = LineUdpParser.EVT_FIELD_VALUE;
                 break;
             default:
-                errorCode = LineProtoParser.ERROR_EXPECTED;
+                errorCode = LineUdpParser.ERROR_EXPECTED;
                 throw LineProtoException.INSTANCE;
         }
     }
 
     private void onComma() {
         if (!escapeQuote && unquoted) {
-            fireEventTransition(LineProtoParser.EVT_TAG_NAME, LineProtoParser.EVT_FIELD_NAME);
+            fireEventTransition(LineUdpParser.EVT_TAG_NAME, LineUdpParser.EVT_FIELD_NAME);
         }
         escapeQuote = false;
     }
@@ -175,18 +176,18 @@ public class LineProtoLexer implements Mutable, Closeable {
     protected void onEol() throws LineProtoException {
         if (!escapeQuote) {
             switch (state) {
-                case LineProtoParser.EVT_MEASUREMENT:
+                case LineUdpParser.EVT_MEASUREMENT:
                     chop();
                     break;
-                case LineProtoParser.EVT_TAG_VALUE:
-                case LineProtoParser.EVT_FIELD_VALUE:
-                case LineProtoParser.EVT_TIMESTAMP:
+                case LineUdpParser.EVT_TAG_VALUE:
+                case LineUdpParser.EVT_FIELD_VALUE:
+                case LineUdpParser.EVT_TIMESTAMP:
                     fireEvent();
                     parser.onLineEnd(charSequenceCache);
                     clear();
                     break;
                 default:
-                    errorCode = LineProtoParser.ERROR_EXPECTED;
+                    errorCode = LineUdpParser.ERROR_EXPECTED;
                     throw LineProtoException.INSTANCE;
             }
         }
@@ -218,7 +219,7 @@ public class LineProtoLexer implements Mutable, Closeable {
 
     private void onSpace() {
         if (!escapeQuote && unquoted) {
-            fireEventTransition(LineProtoParser.EVT_FIELD_NAME, LineProtoParser.EVT_TIMESTAMP);
+            fireEventTransition(LineUdpParser.EVT_FIELD_NAME, LineUdpParser.EVT_TIMESTAMP);
         }
         escapeQuote = false;
     }
@@ -321,7 +322,7 @@ public class LineProtoLexer implements Mutable, Closeable {
             }
 
             if (n == -1 && errorLen > 3) {
-                errorCode = LineProtoParser.ERROR_ENCODING;
+                errorCode = LineUdpParser.ERROR_ENCODING;
                 throw LineProtoException.INSTANCE;
             }
 

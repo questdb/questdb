@@ -263,7 +263,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            boolean tryButCouldNotCommit(NetworkIOJob netIoJob, NewLineProtoParser protoParser, FloatingDirectCharSink charSink) {
+            boolean tryButCouldNotCommit(NetworkIOJob netIoJob, LineTcpParser protoParser, FloatingDirectCharSink charSink) {
                 if (null != onCommitNewEvent) {
                     onCommitNewEvent.run();
                 }
