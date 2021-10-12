@@ -139,12 +139,15 @@ const Row = ({
   tooltip,
   type,
 }: Props) => {
-  const handleClick = useCallback(
+  const handlePlusButtonClick = useCallback(
     (event: MouseEvent) => {
       event.stopPropagation()
-      window.bus.trigger("editor.insert.column", name)
+      window.bus.trigger(
+        "editor.insert.column",
+        kind === "table" ? `'${name}'` : name,
+      )
     },
-    [name],
+    [name, kind],
   )
 
   return (
@@ -184,7 +187,7 @@ const Row = ({
           </Type>
         )}
 
-        <PlusButton onClick={handleClick} size="sm" tooltip={tooltip}>
+        <PlusButton onClick={handlePlusButtonClick} size="sm" tooltip={tooltip}>
           <CodeSSlash size="16px" />
           <span>Add</span>
         </PlusButton>
