@@ -1,6 +1,7 @@
 import $ from "jquery"
 
 import * as qdb from "./globals"
+import { BusEvent } from "../../consts";
 
 function s4() {
   return (((1 + Math.random()) * 0x10000) | 0).toString(16).substring(1)
@@ -342,6 +343,7 @@ $.fn.importManager = function (editorBus) {
           "s</span>",
         true,
       )
+      window.bus.trigger(BusEvent.MSQ_QUERY_SCHEMA)
     } else {
       current.importState = 4
       current.response = data.status
