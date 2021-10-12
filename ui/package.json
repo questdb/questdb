@@ -126,7 +126,7 @@
   },
   "husky": {
     "hooks": {
-      "pre-commit": "yarn lint-staged"
+      "pre-commit": "npx lint-staged"
     }
   }
 }
