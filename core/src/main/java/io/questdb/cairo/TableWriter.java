@@ -1112,6 +1112,8 @@ public class TableWriter implements Closeable {
 
         final TableSyncModel model = new TableSyncModel();
 
+        model.setMaxTimestamp(getMaxTimestamp());
+
         final int symbolsCount = Unsafe.getUnsafe().getInt(slaveTxData + TX_OFFSET_MAP_WRITER_COUNT);
         final int theirLast;
         if (Unsafe.getUnsafe().getLong(slaveTxData + TX_OFFSET_DATA_VERSION) != txFile.getDataVersion()) {
@@ -1140,64 +1142,77 @@ public class TableWriter implements Closeable {
                 final long ourSize = i < ourLast ? txFile.getPartitionSize(i) : txFile.transientRowCount;
                 final long ourDataTxn = i < ourLast ? txFile.getPartitionDataTxn(i) : txFile.txn;
                 final int keyIndex = replPartitionHash.keyIndex(ts);
+                final long theirSize;
                 if (keyIndex < 0) {
                     int slavePartitionIndex = replPartitionHash.valueAt(keyIndex);
                     long p = slaveTxData + getPartitionTableIndexOffset(symbolsCount, slavePartitionIndex);
                     // check if partition name ourDataTxn is the same
                     if (Unsafe.getUnsafe().getLong(p + 16) == txFile.getPartitionNameTxn(i)) {
                         // this is the same partition roughly
-                        final long theirSize = slavePartitionIndex / 4 < theirLast ?
+                        theirSize = slavePartitionIndex / 4 < theirLast ?
                                 Unsafe.getUnsafe().getLong(p + 8) :
                                 Unsafe.getUnsafe().getLong(slaveTxData + TX_OFFSET_TRANSIENT_ROW_COUNT);
 
-                        if (theirSize != ourSize) {
-                            if (theirSize < ourSize) {
-                                // send append section
-                                model.addPartitionAction(
-                                        1,
-                                        ts,
-                                        theirSize,
-                                        ourSize - theirSize,
-                                        txFile.getPartitionNameTxn(i),
-                                        ourDataTxn
-                                );
-                            } else {
-                                LOG.error()
-                                        .$("slave partition is larger than that on master [table=").$(tableName)
-                                        .$(", ts=").$ts(ts)
-                                        .I$();
-                            }
+                        if (theirSize > ourSize) {
+                            LOG.error()
+                                    .$("slave partition is larger than that on master [table=").$(tableName)
+                                    .$(", ts=").$ts(ts)
+                                    .I$();
                         }
                     } else {
                         // partition name ourDataTxn is different, partition mutated
-                        model.addPartitionAction(
-                                0,
-                                ts,
-                                0,
-                                ourSize,
-                                txFile.getPartitionNameTxn(i),
-                                ourDataTxn
-                        );
+                        theirSize = 0;
                     }
                 } else {
-                    // send whole partition
-                    model.addPartitionAction(
-                            0,
-                            ts,
-                            0,
-                            ourSize,
-                            txFile.getPartitionNameTxn(i),
-                            ourDataTxn
-                    );
+                    theirSize = 0;
                 }
 
-                setPathForPartition(path, partitionBy, ts, false);
+                if (theirSize < ourSize) {
+                    final long partitionNameTxn = txFile.getPartitionNameTxn(i);
+                    model.addPartitionAction(
+                            theirSize == 0 ?
+                                    TableSyncModel.PARTITION_ACTION_WHOLE :
+                                    TableSyncModel.PARTITION_ACTION_APPEND,
+                            ts,
+                            theirSize,
+                            ourSize - theirSize,
+                            partitionNameTxn,
+                            ourDataTxn
+                    );
 
-                int plen = path.length();
-                for (int j = 0; j < columnCount; j++) {
-                    final long top = TableUtils.readColumnTop(ff, path, metadata.getColumnName(j), plen, tempMem16b, true);
-                    if (top > 0) {
-                        model.addColumnTop(ts, j, top);
+                    setPathForPartition(path, partitionBy, ts, false);
+
+                    if (partitionNameTxn > -1) {
+                        path.put('.').put(partitionNameTxn);
+                    }
+
+                    int plen = path.length();
+
+                    for (int j = 0; j < columnCount; j++) {
+                        final CharSequence columnName = metadata.getColumnName(j);
+                        final long top = TableUtils.readColumnTop(
+                                ff,
+                                path.trimTo(plen),
+                                columnName,
+                                plen,
+                                tempMem16b,
+                                true
+                        );
+
+                        if (top > 0) {
+                            model.addColumnTop(ts, j, top);
+                        }
+
+                        if (ColumnType.isVariableLength(metadata.getColumnType(j))) {
+                            iFile(path.trimTo(plen), columnName);
+                            long sz = TableUtils.readLongAtOffset(
+                                    ff,
+                                    path,
+                                    tempMem16b,
+                                    ourSize * 8L
+                            );
+                            model.addVarColumnSize(ts, j, sz);
+                        }
                     }
                 }
             } finally {
