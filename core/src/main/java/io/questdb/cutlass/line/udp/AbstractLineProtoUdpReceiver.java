@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.line.LineProtoLexer;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -39,10 +38,10 @@ import io.questdb.std.Os;
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public abstract class AbstractLineProtoReceiver extends SynchronizedJob implements Closeable {
-    private static final Log LOG = LogFactory.getLog(AbstractLineProtoReceiver.class);
-    protected final LineProtoLexer lexer;
-    protected final CairoLineProtoParser parser;
+public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob implements Closeable {
+    private static final Log LOG = LogFactory.getLog(AbstractLineProtoUdpReceiver.class);
+    protected final LineUdpLexer lexer;
+    protected final LineUdpParserImpl parser;
     protected final NetworkFacade nf;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final SOCountDownLatch started = new SOCountDownLatch(1);
@@ -53,7 +52,7 @@ public abstract class AbstractLineProtoReceiver extends SynchronizedJob implemen
     protected long totalCount = 0;
     protected final int commitMode;
 
-    public AbstractLineProtoReceiver(
+    public AbstractLineProtoUdpReceiver(
             LineUdpReceiverConfiguration configuration,
             CairoEngine engine,
             WorkerPool workerPool
@@ -77,8 +76,8 @@ public abstract class AbstractLineProtoReceiver extends SynchronizedJob implemen
                 LOG.error().$("cannot set receive buffer size [fd=").$(fd).$(", size=").$(configuration.getReceiveBufferSize()).$(']').$();
             }
 
-            lexer = new LineProtoLexer(configuration.getMsgBufferSize());
-            parser = new CairoLineProtoParser(engine, configuration.getCairoSecurityContext(), configuration.getTimestampAdapter());
+            lexer = new LineUdpLexer(configuration.getMsgBufferSize());
+            parser = new LineUdpParserImpl(engine, configuration.getCairoSecurityContext(), configuration.getTimestampAdapter());
             lexer.withParser(parser);
 
             if (!configuration.ownThread()) {

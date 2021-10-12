@@ -22,8 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line;
+package io.questdb.cutlass.line.udp;
 
+import io.questdb.cutlass.line.LineProtoException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
@@ -36,11 +37,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
-public class LineProtoLexerTest {
+public class LineUdpLexerTest {
 
-    private final static LineProtoLexer lexer = new LineProtoLexer(4096);
+    private final static LineUdpLexer lexer = new LineUdpLexer(4096);
     protected final StringSink sink = new StringSink();
-    private final TestLineProtoParser lineAssemblingParser = new TestLineProtoParser();
+    private final TestLineUdpParser lineAssemblingParser = new TestLineUdpParser();
 
     @Before
     public void setUp() {
@@ -78,7 +79,7 @@ public class LineProtoLexerTest {
 
     @Test
     public void testDanglingCommaOnTag() {
-        assertError("measurement,tag=value, field=x 10000\n", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 22);
+        assertError("measurement,tag=value, field=x 10000\n", LineUdpParser.EVT_TAG_NAME, LineUdpParser.ERROR_EXPECTED, 22);
     }
 
     @Test
@@ -125,22 +126,22 @@ public class LineProtoLexerTest {
 
     @Test
     public void testNoFieldName1() {
-        assertError("measurement,tag=x f=10i,f2 10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 26);
+        assertError("measurement,tag=x f=10i,f2 10000", LineUdpParser.EVT_FIELD_NAME, LineUdpParser.ERROR_EXPECTED, 26);
     }
 
     @Test
     public void testNoFieldName2() {
-        assertError("measurement,tag=x f=10i,=f2 10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EMPTY, 24);
+        assertError("measurement,tag=x f=10i,=f2 10000", LineUdpParser.EVT_FIELD_NAME, LineUdpParser.ERROR_EMPTY, 24);
     }
 
     @Test
     public void testNoFieldName3() {
-        assertError("measurement,tag=x =10i,=f2 10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EMPTY, 18);
+        assertError("measurement,tag=x =10i,=f2 10000", LineUdpParser.EVT_FIELD_NAME, LineUdpParser.ERROR_EMPTY, 18);
     }
 
     @Test
     public void testNoFieldValue1() {
-        assertError("measurement,tag=x f 10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 19);
+        assertError("measurement,tag=x f 10000", LineUdpParser.EVT_FIELD_NAME, LineUdpParser.ERROR_EXPECTED, 19);
     }
 
     @Test
@@ -151,87 +152,87 @@ public class LineProtoLexerTest {
 
     @Test
     public void testNoFieldValue3() {
-        assertError("measurement,tag=x f=, 10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 21);
+        assertError("measurement,tag=x f=, 10000", LineUdpParser.EVT_FIELD_NAME, LineUdpParser.ERROR_EXPECTED, 21);
     }
 
     @Test
     public void testNoFields1() {
-        assertError("measurement  \n", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 12);
+        assertError("measurement  \n", LineUdpParser.EVT_FIELD_NAME, LineUdpParser.ERROR_EXPECTED, 12);
     }
 
     @Test
     public void testNoFields2() {
-        assertError("measurement  ", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 12);
+        assertError("measurement  ", LineUdpParser.EVT_FIELD_NAME, LineUdpParser.ERROR_EXPECTED, 12);
     }
 
     @Test
     public void testNoFields3() {
-        assertError("measurement  10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 12);
+        assertError("measurement  10000", LineUdpParser.EVT_FIELD_NAME, LineUdpParser.ERROR_EXPECTED, 12);
     }
 
     @Test
     public void testNoFields4() {
-        assertError("measurement,tag=x 10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 23);
+        assertError("measurement,tag=x 10000", LineUdpParser.EVT_FIELD_NAME, LineUdpParser.ERROR_EXPECTED, 23);
     }
 
     @Test
     public void testNoMeasure1() {
-        assertError("tag=value field=x 10000\n", LineProtoParser.EVT_MEASUREMENT, LineProtoParser.ERROR_EXPECTED, 3);
+        assertError("tag=value field=x 10000\n", LineUdpParser.EVT_MEASUREMENT, LineUdpParser.ERROR_EXPECTED, 3);
     }
 
     @Test
     public void testNoMeasure2() {
-        assertError("tag=value field=x 10000\n", LineProtoParser.EVT_MEASUREMENT, LineProtoParser.ERROR_EXPECTED, 3);
+        assertError("tag=value field=x 10000\n", LineUdpParser.EVT_MEASUREMENT, LineUdpParser.ERROR_EXPECTED, 3);
     }
 
     @Test
     public void testNoTag4() {
-        assertError("measurement, \n", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 12);
+        assertError("measurement, \n", LineUdpParser.EVT_TAG_NAME, LineUdpParser.ERROR_EXPECTED, 12);
     }
 
     @Test
     public void testNoTagEquals1() {
-        assertError("measurement,tag field=x 10000\n", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 15);
+        assertError("measurement,tag field=x 10000\n", LineUdpParser.EVT_TAG_NAME, LineUdpParser.ERROR_EXPECTED, 15);
     }
 
     @Test
     public void testNoTagEquals2() {
-        assertError("measurement,tag, field=x 10000\n", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 15);
+        assertError("measurement,tag, field=x 10000\n", LineUdpParser.EVT_TAG_NAME, LineUdpParser.ERROR_EXPECTED, 15);
     }
 
     @Test
     public void testNoTagValue1() {
-        assertError("measurement,tag= field=x 10000\n", LineProtoParser.EVT_TAG_VALUE, LineProtoParser.ERROR_EMPTY, 16);
+        assertError("measurement,tag= field=x 10000\n", LineUdpParser.EVT_TAG_VALUE, LineUdpParser.ERROR_EMPTY, 16);
     }
 
     @Test
     public void testNoTagValue2() {
-        assertError("measurement,tag=, field=x 10000\n", LineProtoParser.EVT_TAG_VALUE, LineProtoParser.ERROR_EMPTY, 16);
+        assertError("measurement,tag=, field=x 10000\n", LineUdpParser.EVT_TAG_VALUE, LineUdpParser.ERROR_EMPTY, 16);
     }
 
     @Test
     public void testNoTagValue3() {
-        assertError("measurement,tag=", LineProtoParser.EVT_TAG_VALUE, LineProtoParser.ERROR_EMPTY, 16);
+        assertError("measurement,tag=", LineUdpParser.EVT_TAG_VALUE, LineUdpParser.ERROR_EMPTY, 16);
     }
 
     @Test
     public void testNoTagValue4() {
-        assertError("measurement,tag=\n", LineProtoParser.EVT_TAG_VALUE, LineProtoParser.ERROR_EMPTY, 16);
+        assertError("measurement,tag=\n", LineUdpParser.EVT_TAG_VALUE, LineUdpParser.ERROR_EMPTY, 16);
     }
 
     @Test
     public void testNoTags1() {
-        assertError("measurement,", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 12);
+        assertError("measurement,", LineUdpParser.EVT_TAG_NAME, LineUdpParser.ERROR_EXPECTED, 12);
     }
 
     @Test
     public void testNoTags2() {
-        assertError("measurement,\n", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 12);
+        assertError("measurement,\n", LineUdpParser.EVT_TAG_NAME, LineUdpParser.ERROR_EXPECTED, 12);
     }
 
     @Test
     public void testNoTags3() {
-        assertError("measurement, 100000\n", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 12);
+        assertError("measurement, 100000\n", LineUdpParser.EVT_TAG_NAME, LineUdpParser.ERROR_EXPECTED, 12);
     }
 
     @Test
@@ -264,7 +265,7 @@ public class LineProtoLexerTest {
     @Test
     public void testTrailingSpace() {
         assertError("measurement,tag=value,tag2=value field=10000i,field2=\"str\" \n" +
-                "measurement,tag=value3,tag2=value2 field=100i,field2=\"ok\"\n", LineProtoParser.EVT_TIMESTAMP, LineProtoParser.ERROR_EMPTY, 59);
+                "measurement,tag=value3,tag2=value2 field=100i,field2=\"ok\"\n", LineUdpParser.EVT_TIMESTAMP, LineUdpParser.ERROR_EMPTY, 59);
     }
 
     @Test
@@ -342,7 +343,7 @@ public class LineProtoLexerTest {
             }
 
             // assert small buffer
-            LineProtoLexer smallBufLexer = new LineProtoLexer(64);
+            LineUdpLexer smallBufLexer = new LineUdpLexer(64);
             lineAssemblingParser.clear();
             smallBufLexer.withParser(lineAssemblingParser);
             smallBufLexer.parse(mem, mem + len);
@@ -353,7 +354,7 @@ public class LineProtoLexerTest {
         }
     }
 
-    private class TestLineProtoParser implements LineProtoParser {
+    private class TestLineUdpParser implements LineUdpParser {
         final HashMap<Long, String> tokens = new HashMap<>();
         boolean fields = false;
         int errorState;

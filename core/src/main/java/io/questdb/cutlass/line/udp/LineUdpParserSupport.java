@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line;
+package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -34,8 +34,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 
-public class CairoLineProtoParserSupport {
-    private final static Log LOG = LogFactory.getLog(CairoLineProtoParserSupport.class);
+public class LineUdpParserSupport {
+    private final static Log LOG = LogFactory.getLog(LineUdpParserSupport.class);
 
     /**
      * Writes column value to table row. CharSequence value is interpreted depending on
@@ -187,7 +187,7 @@ public class CairoLineProtoParserSupport {
         int valueLen = value.length();
         if (valueLen > 0) {
             char first = value.charAt(0);
-            char last = value.charAt(valueLen - 1); // see LineProtoSender.field methods
+            char last = value.charAt(valueLen - 1); // see LineUdpSender.field methods
             switch (last) {
                 case 'i':
                     if (valueLen > 3 && value.charAt(0) == '0' && value.charAt(1) == 'x') {
