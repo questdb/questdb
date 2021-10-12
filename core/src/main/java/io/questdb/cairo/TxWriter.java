@@ -50,7 +50,10 @@ public final class TxWriter extends TxReader implements Closeable {
         try {
             readUnchecked();
         } catch (Throwable e) {
-            close();
+            // Do not truncate in case the file cannot be read
+            txMem.close(false);
+            txMem = null;
+            super.close();
             throw e;
         }
     }
