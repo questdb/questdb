@@ -24,7 +24,9 @@
 
 package io.questdb.std.str;
 
+import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -90,20 +92,36 @@ public class PathTest {
 
     @Test
     public void testPathOfPathUtf8() {
+        Os.init();
+
         path.of("пути неисповедимы");
-        try(Path path2 = new Path()) {
-            path2.of(path);
-            TestUtils.assertEquals(path, path2);
+        Path path2 = new Path();
+        path2.of(path);
+        TestUtils.assertEquals(path, path2);
 
-            // Reduce
-            path.of("пути");
-            path2.of(path);
-            TestUtils.assertEquals(path, path2);
+        // Reduce
+        path.of("пути");
+        path2.of(path);
+        TestUtils.assertEquals(path, path2);
 
-            // Extend
-            path.of("пути неисповедимы    , неисповедимы");
-            path2.of(path);
-            TestUtils.assertEquals(path, path2);
-        }
+        // Extend
+        path.of(Chars.repeat("пути неисповедимы", 50)).$();
+        path2.of(path);
+        TestUtils.assertEquals(path, path2);
+
+        // Clear
+        path.of("").$();
+        path2.of(path);
+        TestUtils.assertEquals(path, path2);
+
+        // Destination closed
+        path.of("1").$();
+        path2.close();
+        path2.of(path);
+        TestUtils.assertEquals(path, path2);
+
+        // Self copy
+        path2.of(path2);
+        TestUtils.assertEquals(path, path2);
     }
 }
