@@ -33,6 +33,8 @@ import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -42,6 +44,11 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     private ErrorCode lastErrorCode;
     private boolean onErrorLine;
     private long startOfLineAddr;
+
+    @BeforeClass
+    public static void init() {
+        Os.init();
+    }
 
     @Override
     public void testNoTagValue1() {
@@ -181,14 +188,20 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     @Test
     public void testSupportsUtf8Chars() {
         assertThat(
-                "लаблअца,символ=значение1 поле=значение2,поле2=\"значение3\" 123\n",
+                "लаблअца,символ=значение1 поле=значение2,поле2=\"значение3\" 123--non ascii--\n",
                 "लаблअца,символ=значение1 поле=значение2,поле2=\"значение3\" 123\n"
         );
 
         assertThat(
-                "लаблअца,символ=значение2 161\n",
-                "लаблअца,символ=значение2  161\n")
-        ;
+                "लаблअца,символ=значение2 161--non ascii--\n",
+                "लаблअца,символ=значение2  161\n"
+        );
+
+
+        assertThat(
+                "table,tag=ok field=\"значение2 non ascii quoted\" 161--non ascii--\n",
+                "table,tag=ok field=\"значение2 non ascii quoted\" 161\n"
+        );
     }
 
     @Override
@@ -379,6 +392,10 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         if (lineTcpParser.hasTimestamp()) {
             sink.put(' ');
             Numbers.append(sink, lineTcpParser.getTimestamp());
+        }
+
+        if (lineTcpParser.hasNonAsciiChars()) {
+            sink.put("--non ascii--");
         }
         sink.put('\n');
     }

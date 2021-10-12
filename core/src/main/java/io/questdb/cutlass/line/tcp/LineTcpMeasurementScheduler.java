@@ -483,6 +483,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                         Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
                         bufPos += Integer.BYTES;
                         if (bufPos + colNameLen < bufMax) {
+                            // Memcpy the buffer with the column name to the message
+                            // so that writing thread will create the column
+                            // Note that writing thread will be responsible to convert it from utf8
+                            // to utf16. This should happen rarely
                             Vect.memcpy(entity.getName().getLo(), bufPos, colNameLen);
                         } else {
                             throw CairoException.instance(0).put("queue buffer overflow");
@@ -500,20 +504,34 @@ class LineTcpMeasurementScheduler implements Closeable {
                             long estimatedHi = bufPos + 2L * l;
                             if (estimatedHi < bufMax) {
                                 floatingCharSink.of(bufPos, bufPos + 2L * l);
-                                if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
-                                    throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
+                                int symIndex;
+                                // value is UTF8 encoded potentially
+                                CharSequence columnName = entity.getValue();
+                                if (protoParser.hasNonAsciiChars()) {
+                                    if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
+                                        throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
+                                    }
+                                    columnName = floatingCharSink;
                                 }
 
-                                int symIndex = tableUpdateDetails.getSymbolIndex(localDetails, colIndex, floatingCharSink);
+                                symIndex = tableUpdateDetails.getSymbolIndex(localDetails, colIndex, columnName);
                                 if (symIndex != SymbolTable.VALUE_NOT_FOUND) {
+                                    // We know the symbol int value
+                                    // Encode the int
                                     bufPos = tmpBufPos;
                                     Unsafe.getUnsafe().putByte(bufPos, LineTcpParser.ENTITY_TYPE_CACHED_TAG);
                                     bufPos += Byte.BYTES;
                                     Unsafe.getUnsafe().putInt(bufPos, symIndex);
                                     bufPos += Integer.BYTES;
                                 } else {
+                                    // Symbol value cannot be resolved at this point
+                                    // Encode whole string value into the message
                                     Unsafe.getUnsafe().putByte(tmpBufPos, entity.getType());
                                     tmpBufPos += Byte.BYTES;
+                                    if (!protoParser.hasNonAsciiChars()) {
+                                        // if it is non-ascii, then value already copied to the buffer
+                                        floatingCharSink.put(entity.getValue());
+                                    }
                                     l = floatingCharSink.length();
                                     Unsafe.getUnsafe().putInt(tmpBufPos, l);
                                     bufPos = bufPos + 2L * l;
@@ -543,8 +561,12 @@ class LineTcpMeasurementScheduler implements Closeable {
                                 Unsafe.getUnsafe().putByte(bufPos, entity.getType());
                                 bufPos += Byte.BYTES + Integer.BYTES;
                                 floatingCharSink.of(bufPos, bufPos + 2L * entity.getValue().length());
-                                if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
-                                    throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
+                                if (protoParser.hasNonAsciiChars()) {
+                                    if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
+                                        throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
+                                    }
+                                } else {
+                                    floatingCharSink.put(entity.getValue());
                                 }
                                 int l = floatingCharSink.length();
                                 Unsafe.getUnsafe().putInt(bufPos - Integer.BYTES, l);

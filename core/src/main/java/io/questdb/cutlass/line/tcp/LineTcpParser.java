@@ -72,6 +72,7 @@ public class LineTcpParser implements Closeable {
     private int nQuoteCharacters;
     private boolean scape;
     private boolean nextValueCanBeOpenQuote;
+    private boolean hasNonAscii;
 
     @Override
     public void close() {
@@ -102,6 +103,10 @@ public class LineTcpParser implements Closeable {
         return nEntities;
     }
 
+    public boolean hasNonAsciiChars() {
+        return hasNonAscii;
+    }
+
     public boolean hasTimestamp() {
         return timestamp != NULL_TIMESTAMP;
     }
@@ -114,21 +119,34 @@ public class LineTcpParser implements Closeable {
 
     public ParseResult parseMeasurement(long bufHi) {
         assert bufAt != 0 && bufHi >= bufAt;
-        // If last exit was inside quotes, pick up from the same place
+        // We can resume from random place of the line message
+        // the class member variables should resume byte by byte parsing from the last place
+        // processing stopped.
         if (nQuoteCharacters == 1 && tagsComplete && entityHandler == entityValueHandler)  {
+            // when nQuoteCharacters it means that parsing of quoted value has started.
+            // continue parsing quoted value
             if (!prepareQuotedEntity(entityLo, bufHi)) {
+                // quoted value parsing did not reach the end
                 if (errorCode == ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW) {
+                    // because buffer exhausted
                     return ParseResult.BUFFER_UNDERFLOW;
                 }
+                // because it reached EOL or another error
                 return ParseResult.ERROR;
             }
             nQuoteCharacters = 0;
             bufAt++;
-            errorCode = ErrorCode.NONE;
         }
 
+        // Main parsing loop
         while (bufAt < bufHi) {
+            // take the byte
             byte b = Unsafe.getUnsafe().getByte(bufAt);
+            hasNonAscii |= b < 0;
+            if (!hasNonAscii)
+            {
+                int i = 0;
+            }
             boolean endOfLine = false;
             boolean appendByte = false;
             switch (b) {
@@ -141,6 +159,7 @@ public class LineTcpParser implements Closeable {
                 case (byte) ' ':
                     isQuotedFieldValue = false;
                     if (!entityHandler.completeEntity(b, bufHi)) {
+                        // parse of key or value is unsuccessful
                         if (errorCode == ErrorCode.EMPTY_LINE) {
                             // An empty line
                             bufAt++;
@@ -153,6 +172,7 @@ public class LineTcpParser implements Closeable {
                         return ParseResult.ERROR;
                     }
                     if (endOfLine) {
+                        // EOL reached, time to return
                         if (nEntities > 0) {
                             entityHandler = entityEndOfLineHandler;
                             return ParseResult.MEASUREMENT_COMPLETE;
@@ -160,30 +180,42 @@ public class LineTcpParser implements Closeable {
                         errorCode = ErrorCode.NO_FIELDS;
                         return ParseResult.ERROR;
                     }
+                    // skip the separator
                     bufAt++;
                     if (!isQuotedFieldValue) {
+                        // reset few indicators
                         nEscapedChars = 0;
+                        // start next value from here
                         entityLo = bufAt;
                     }
                     break;
 
                 case (byte) '\\':
+                    // escape next character
+                    // look forward, skip the slash
                     if ((bufAt + 1) >= bufHi) {
                         return ParseResult.BUFFER_UNDERFLOW;
                     }
                     nEscapedChars++;
                     bufAt++;
                     b = Unsafe.getUnsafe().getByte(bufAt);
+                    hasNonAscii |= b < 0;
                     appendByte = true;
                     break;
 
                 case (byte)'"':
                     if (nextValueCanBeOpenQuote && ++nQuoteCharacters == 1) {
+                        // This means that the processing resumed from "
+                        // and it's allowed to start quoted value at this point
                         bufAt += 1;
+                        // parse quoted value
                         if (!prepareQuotedEntity(bufAt - 1, bufHi)) {
+                            // parsing not successful
                             if (errorCode == ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW) {
+                                // need more data
                                 return ParseResult.BUFFER_UNDERFLOW;
                             }
+                            // invalid character sequence in the quoted value or EOL found
                             return ParseResult.ERROR;
                         }
                         errorCode = ErrorCode.NONE;
@@ -201,6 +233,9 @@ public class LineTcpParser implements Closeable {
             }
 
             if (appendByte) {
+                // If there is escaped character, like \" or \\ then the escape slash has to be excluded
+                // from the result key / value.
+                // shift copy current byte back
                 if (nEscapedChars > 0) {
                     Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
                 }
@@ -246,6 +281,7 @@ public class LineTcpParser implements Closeable {
         nQuoteCharacters = 0;
         scape = false;
         nextValueCanBeOpenQuote = false;
+        hasNonAscii = false;
     }
 
     private boolean expectEndOfLine(byte endOfEntityByte, long bufHi) {
@@ -323,6 +359,7 @@ public class LineTcpParser implements Closeable {
         while (bufAt < bufHi) { // consume until the next quote, '\n', or eof
             byte b = Unsafe.getUnsafe().getByte(bufAt);
             copyByte = true;
+            hasNonAscii |= b < 0;
             switch (b) {
                 case (byte) '\\':
                     if (!scape) {
