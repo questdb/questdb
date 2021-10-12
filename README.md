@@ -103,7 +103,7 @@ The following table shows query execution time of a billion rows run on a
 - [Tutorials:](https://questdb.io/tutorial/) Learn what's possible with QuestDB step by step.
 - [Product roadmap:](https://github.com/questdb/questdb/projects) Check out our plan for upcoming releases.
 
-### 🤔 Get support
+### ❓ Get support
 
 - [Community Slack:](https://slack.questdb.io) Join technical discussions, ask questions, and meet other users!
 - [GitHub issues:](https://github.com/questdb/questdb/issues) Report bugs or issues with QuestDB.
