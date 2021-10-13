@@ -62,7 +62,7 @@
     "throttle-debounce": "2.2.1"
   },
   "devDependencies": {
-    "@babel/cli": "7.10.1",
+    "@babel/cli": "^7.15.7",
     "@babel/core": "7.10.2",
     "@babel/plugin-transform-react-jsx-source": "7.10.1",
     "@babel/plugin-transform-runtime": "7.10.1",
@@ -103,7 +103,7 @@
     "sass": "1.26.8",
     "sass-loader": "8.0.2",
     "style-loader": "1.2.1",
-    "stylelint": "13.6.0",
+    "stylelint": "^13.13.1",
     "stylelint-config-prettier": "8.0.1",
     "stylelint-config-recommended": "3.0.0",
     "stylelint-config-styled-components": "0.1.1",
