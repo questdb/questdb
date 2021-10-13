@@ -53,6 +53,7 @@ import { color } from "utils"
 import * as QuestDB from "utils/questdb"
 
 import Table from "./Table"
+import { BusEvent } from "../../consts"
 
 type Props = Readonly<{
   hideMenu?: boolean
@@ -133,6 +134,10 @@ const Schema = ({
 
   useEffect(() => {
     void fetchTables()
+
+    window.bus.on(BusEvent.MSQ_QUERY_SCHEMA, () => {
+      void fetchTables()
+    })
   }, [fetchTables])
 
   return (

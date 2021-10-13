@@ -18,7 +18,8 @@
     "build": "cross-env NODE_ENV=production webpack && node utils/deploy.js",
     "start": "webpack-dev-server --progress",
     "start:prod": "cross-env NODE_ENV=production webpack-dev-server --progress",
-    "analyze-bundle": "cross-env ANALYZE=true NODE_ENV=production webpack-cli --display-reasons"
+    "analyze-bundle": "cross-env ANALYZE=true NODE_ENV=production webpack-cli --display-reasons",
+    "prepare": "cd .. && husky install ui/.husky"
   },
   "dependencies": {
     "@babel/runtime-corejs3": "7.10.2",
@@ -93,6 +94,8 @@
     "handlebars": "4.7.7",
     "handlebars-loader": "1.7.1",
     "html-webpack-plugin": "4.3.0",
+    "husky": ">=6",
+    "lint-staged": ">=10",
     "mini-css-extract-plugin": "0.9.0",
     "optimize-css-assets-webpack-plugin": "5.0.3",
     "prettier": "2.2.1",
@@ -115,5 +118,15 @@
   },
   "author": {
     "name": "QuestDB"
+  },
+  "lint-staged": {
+    "**/**/*.{js.jsx,js,es6,jsx,ts,tsx,md,yml}": [
+      "prettier --config ./prettier.config.js --write"
+    ]
+  },
+  "husky": {
+    "hooks": {
+      "pre-commit": "npx lint-staged"
+    }
   }
 }

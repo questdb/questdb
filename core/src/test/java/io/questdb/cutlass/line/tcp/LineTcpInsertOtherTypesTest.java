@@ -539,7 +539,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "A\t1970-01-01T00:00:07.000000Z\n" +
                         "@plant2\t1970-01-01T00:00:08.000000Z\n" +
                         "@plant\t1970-01-01T00:00:09.000000Z\n" +
-                        "\t1970-01-01T00:00:11.000000Z\n",
+                        "\"@plant\"\t1970-01-01T00:00:10.000000Z\n" +
+                        "\t1970-01-01T00:00:11.000000Z\n" +
+                        "\"abcd\t1970-01-01T00:00:12.000000Z\n" ,
                 new CharSequence[]{
                         "e", // valid
                         "xxx", // valid
@@ -550,8 +552,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "A", // valid
                         "@plant2", // valid
                         "@plant", // valid
-                        "\"@plant\"", // discarded bad type string
-                        "" // valid null
+                        "\"@plant\"", // valid
+                        "", // valid null,
+                        "\"abcd", //valid symbol
                 });
     }
 
@@ -590,10 +593,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "e\t1970-01-01T00:00:01.000000Z\n" +
                         "xxx\t1970-01-01T00:00:02.000000Z\n" +
                         "paff\t1970-01-01T00:00:03.000000Z\n" +
-                        "tt\"tt\t1970-01-01T00:00:08.000000Z\n" +
-                        "tt\\\"tt\t1970-01-01T00:00:11.000000Z\n" +
-                        "tt\\\"tt\\\" \\\n" +
-                        " =, ,=\\\"\t1970-01-01T00:00:12.000000Z\n" +
+                        "tt\"tt\t1970-01-01T00:00:11.000000Z\n" +
+                        "tt\"tt\" \n" +
+                        " =, ,=\"\t1970-01-01T00:00:12.000000Z\n" +
                         "\t1970-01-01T00:00:15.000000Z\n",
                 new CharSequence[]{
                         "\"e\"", // valid
@@ -603,7 +605,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "paff\"", // discarded bad value
                         "null", // discarded bad type symbol
                         "yyy", // discarded bad type symbol
-                        "\"tt\"tt\"", // valid
+                        "\"tt\"tt\"", // discarded bad value
                         "tt\"tt\"", // discarded bad value
                         "\"tt\"tt", // discarded bad value
                         "\"tt\\\"tt\"", // valid
@@ -620,10 +622,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "e\t1970-01-01T00:00:01.000000Z\n" +
                         "xxx\t1970-01-01T00:00:02.000000Z\n" +
                         "paff\t1970-01-01T00:00:03.000000Z\n" +
-                        "tt\"tt\t1970-01-01T00:00:08.000000Z\n" +
-                        "tt\\\"tt\t1970-01-01T00:00:11.000000Z\n" +
-                        "tt\\\"tt\\\" \\\n" +
-                        " =, ,=\\\"\t1970-01-01T00:00:12.000000Z\n" +
+                        "tt\"tt\t1970-01-01T00:00:11.000000Z\n" +
+                        "tt\"tt\" \n" +
+                        " =, ,=\"\t1970-01-01T00:00:12.000000Z\n" +
                         "\t1970-01-01T00:00:15.000000Z\n",
                 new CharSequence[]{
                         "\"e\"", // valid
@@ -633,7 +634,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "paff\"", // discarded bad value
                         "null", // discarded bad type symbol
                         "yyy", // discarded bad type symbol
-                        "\"tt\"tt\"", // valid
+                        "\"tt\"tt\"", // discarded bad value
                         "tt\"tt\"", // discarded bad value
                         "\"tt\"tt", // discarded bad value
                         "\"tt\\\"tt\"", // valid
@@ -847,8 +848,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
             long ts = 0L;
             for (int i = 0; i < values.length; i++) {
                 sink.put(table)
-                        .put(' ').put(targetColumnName).put('=').put(values[i])
-                        .put(' ').put(ts += 1000000000)
+                        .put(columnType == ColumnType.SYMBOL ? ',' : ' ').put(targetColumnName).put('=').put(values[i])
+                        .put(columnType == ColumnType.SYMBOL ? "  " : " ").put(ts += 1000000000)
                         .put('\n');
             }
             recvBuffer = sink.toString();
