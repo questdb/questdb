@@ -125,6 +125,16 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isConstant() {
+            return false;
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            return false;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
             pattern.init(symbolTableSource, executionContext);

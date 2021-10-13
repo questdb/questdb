@@ -69,6 +69,37 @@ public class MatchStrBindVariableTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(1) where '1GQO2' ~ $1", sqlExecutionContext).getRecordCursorFactory()) {
+                bindVariableService.setStr(0, "GQO");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                }
+
+                TestUtils.assertEquals("x\n" +
+                        "1\n", sink);
+
+                bindVariableService.setStr(0, "QTQ");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                }
+
+                TestUtils.assertEquals("x\n", sink);
+
+                bindVariableService.setStr(0, null);
+                try {
+                    factory.getCursor(sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(47, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testDynamicRegexFailure() throws Exception {
         assertFailure(
                 "x where s ~ s",
