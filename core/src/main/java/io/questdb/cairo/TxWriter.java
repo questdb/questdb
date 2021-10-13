@@ -110,12 +110,13 @@ public final class TxWriter extends TxReader implements Closeable {
     }
 
     public void cancelRow() {
-        if (transientRowCount == 0 && txPartitionCount > 1) {
+        if (transientRowCount == 1 && txPartitionCount > 1) {
             // we have to undo creation of partition
             txPartitionCount--;
             fixedRowCount -= prevTransientRowCount;
-            transientRowCount = prevTransientRowCount;
+            transientRowCount = prevTransientRowCount + 1; // When row cancel finishes 1 is subtracted. Add 1 to compensate.
             attachedPartitions.setPos(attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION);
+            prevTransientRowCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
         }
 
         maxTimestamp = prevMaxTimestamp;

@@ -52,6 +52,7 @@ import io.questdb.network.NetworkError;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -62,6 +63,7 @@ import org.junit.Test;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
+import java.sql.Time;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
@@ -779,6 +781,106 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWithTcpSender() throws Exception {
+        runInContext((receiver) -> {
+            send(receiver,  "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag1", "value 1")
+                            .tag("tag=2", "значение 2")
+                            .field("поле=3", "{\"ключ\": \"число\"}")
+                            .$(0);
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag1", "value 2")
+                            .$(0);
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag 2", "value=\2") // Invalid column name, last line is not saved
+                            .$(Timestamps.DAY_MICROS * 1000L);
+                    lineTcpSender.flush();
+                }
+            });
+
+            String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
+                    "value 1\tзначение 2\t{\"ключ\": \"число\"}\t1970-01-01T00:00:00.000000Z\n" +
+                    "value 2\t\t\t1970-01-01T00:00:00.000000Z\n";
+            assertTable(expected, "table");
+        });
+    }
+
+    @Test
+    public void testNewPartitionRowCancelledTwice() throws Exception {
+        runInContext((receiver) -> {
+            send(receiver,  "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag1", "value 1")
+                            .tag("tag=2", "значение 2")
+                            .field("поле=3", "{\"ключ\": \"число\"}")
+                            .$(0);
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag1", "value 2")
+                            .$(0);
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag 2", "value=\2") // Invalid column name, last line is not saved
+                            .$(Timestamps.DAY_MICROS * 1000L);
+                    // Repeat
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag 2", "value=\2") // Invalid column name, last line is not saved
+                            .$(Timestamps.DAY_MICROS * 1000L);
+                    lineTcpSender.flush();
+                }
+            });
+
+            String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
+                    "value 1\tзначение 2\t{\"ключ\": \"число\"}\t1970-01-01T00:00:00.000000Z\n" +
+                    "value 2\t\t\t1970-01-01T00:00:00.000000Z\n";
+            assertTable(expected, "table");
+        });
+    }
+
+    @Test
+    public void testFirstRowIsCancelled() throws Exception {
+        runInContext((receiver) -> {
+            send(receiver,  "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag 2", "value=\2") // Invalid column name, line is not saved
+                            .$(0);
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag1", "value 1")
+                            .tag("tag=2", "значение 2")
+                            .field("поле=3", "{\"ключ\": \"число\"}")
+                            .$(0);
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag1", "value 2")
+                            .$(0);
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag=2", "value=\\2")
+                            .$(Timestamps.DAY_MICROS * 1000L);
+                    lineTcpSender.flush();
+                }
+            });
+
+            String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
+                    "value 1\tзначение 2\t{\"ключ\": \"число\"}\t1970-01-01T00:00:00.000000Z\n" +
+                    "value 2\t\t\t1970-01-01T00:00:00.000000Z\n" +
+                    "\tvalue=\\2\t\t1970-01-02T00:00:00.000000Z\n";
+            assertTable(expected, "table");
+        });
+    }
+
     private void assertTable(CharSequence expected, CharSequence tableName) {
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
             assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
@@ -816,14 +918,22 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
     }
 
     private void send(LineTcpReceiver receiver, String lineData, String tableName, int wait) {
-        send(receiver, lineData, tableName, wait, true);
+        send(receiver, tableName, wait, () -> {
+            sendToSocket(lineData, true);
+        });
+    }
+
+    private void send(LineTcpReceiver receiver, String lineData, String tableName, int wait, boolean nolinger) {
+        send(receiver, tableName, wait, () -> {
+            sendToSocket(lineData, nolinger);
+        });
     }
 
     public static final int WAIT_NO_WAIT = 0;
     public static final int WAIT_ENGINE_TABLE_RELEASE = 1;
     public static final int WAIT_ILP_TABLE_RELEASE = 2;
 
-    private void send(LineTcpReceiver receiver, String lineData, String tableName, int wait, boolean noLinger) {
+    private void send(LineTcpReceiver receiver, String tableName, int wait, Runnable sendToSocket) {
         SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
         switch (wait) {
             case WAIT_ENGINE_TABLE_RELEASE:
@@ -845,26 +955,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
         }
 
         try {
-            int ipv4address = Net.parseIPv4("127.0.0.1");
-            long sockaddr = Net.sockaddr(ipv4address, bindPort);
-            long fd = Net.socketTcp(true);
-            try {
-                TestUtils.assertConnect(fd, sockaddr, noLinger);
-                byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
-                long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
-                try {
-                    for (int n = 0; n < lineDataBytes.length; n++) {
-                        Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
-                    }
-                    int rc = Net.send(fd, bufaddr, lineDataBytes.length);
-                    Assert.assertEquals(lineDataBytes.length, rc);
-                } finally {
-                    Unsafe.free(bufaddr, lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
-                }
-            } finally {
-                Net.close(fd);
-                Net.freeSockAddr(sockaddr);
-            }
+            sendToSocket.run();
             if (wait != WAIT_NO_WAIT) {
                 releaseLatch.await();
             }
@@ -877,6 +968,29 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                     receiver.setSchedulerListener(null);
                     break;
             }
+        }
+    }
+
+    private void sendToSocket(String lineData, boolean noLinger) {
+        int ipv4address = Net.parseIPv4("127.0.0.1");
+        long sockaddr = Net.sockaddr(ipv4address, bindPort);
+        long fd = Net.socketTcp(true);
+        try {
+            TestUtils.assertConnect(fd, sockaddr, noLinger);
+            byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
+            long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int n = 0; n < lineDataBytes.length; n++) {
+                    Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
+                }
+                int rc = Net.send(fd, bufaddr, lineDataBytes.length);
+                Assert.assertEquals(lineDataBytes.length, rc);
+            } finally {
+                Unsafe.free(bufaddr, lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
+            }
+        } finally {
+            Net.close(fd);
+            Net.freeSockAddr(sockaddr);
         }
     }
 

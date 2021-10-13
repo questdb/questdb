@@ -143,10 +143,6 @@ public class LineTcpParser implements Closeable {
             // take the byte
             byte b = Unsafe.getUnsafe().getByte(bufAt);
             hasNonAscii |= b < 0;
-            if (!hasNonAscii)
-            {
-                int i = 0;
-            }
             boolean endOfLine = false;
             boolean appendByte = false;
             switch (b) {
