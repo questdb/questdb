@@ -48,7 +48,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public final class TestUtils {
 
-    private static final RecordCursorPrinter printer = new RecordCursorPrinter();
+    public static final RecordCursorPrinter printer = new RecordCursorPrinter();
 
     private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
 

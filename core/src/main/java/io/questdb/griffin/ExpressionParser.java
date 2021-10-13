@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.*;
 
@@ -666,6 +665,9 @@ class ExpressionParser {
                                 }
                             }
                             if (prevBranch != BRANCH_DOT && nonLiteralBranches.excludes(prevBranch)) {
+                                if (SqlKeywords.isQuote(tok)) {
+                                    throw SqlException.$(position, "unclosed quoted string?");
+                                }
                                 opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, position));
                                 break;
                             } else {
