@@ -30,7 +30,7 @@ public interface PageFrame {
 
     BitmapIndexReader getBitmapIndexReader(int columnIndex, int dirForward);
 
-    long getFirstRowId();
+    long getTopRowIndex();
 
     int getPartitionIndex();
 

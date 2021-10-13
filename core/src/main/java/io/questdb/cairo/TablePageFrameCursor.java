@@ -281,7 +281,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
         }
 
         @Override
-        public long getFirstRowId() {
+        public long getTopRowIndex() {
             return frameFirstRow;
         }
 

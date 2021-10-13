@@ -2379,10 +2379,10 @@ public class SqlCodeGenerator implements Mutable {
                         int type = readerMeta.getColumnType(columnIndex);
                         int typeSize = ColumnType.sizeOf(type);
 
-                        if (framingSupported && (typeSize < Byte.BYTES || typeSize > Double.BYTES)) {
-                            // we don't frame non-primitive types yet
-                            framingSupported = false;
-                        }
+//                        if (framingSupported && (typeSize < Byte.BYTES || typeSize > Double.BYTES)) {
+//                             we don't frame non-primitive types yet
+//                            framingSupported = false;
+//                        }
                         columnIndexes.add(columnIndex);
                         columnSizes.add((Numbers.msb(typeSize)));
 
@@ -2739,7 +2739,16 @@ public class SqlCodeGenerator implements Mutable {
                 }
 
                 model.setWhereClause(intrinsicModel.filter);
-                return new DataFrameRecordCursorFactory(myMeta, dfcFactory, new DataFrameRowCursorFactory(), false, null, framingSupported, columnIndexes, columnSizes);
+                return new DataFrameRecordCursorFactory(
+                        myMeta,
+                        dfcFactory,
+                        new DataFrameRowCursorFactory(),
+                        false,
+                        null,
+                        framingSupported,
+                        columnIndexes,
+                        columnSizes
+                );
             }
 
             // no where clause
@@ -2748,6 +2757,17 @@ public class SqlCodeGenerator implements Mutable {
                 // construct new metadata, which is a copy of what we constructed just above, but
                 // in the interest of isolating problems we will only affect this factory
 
+                return new DataFrameRecordCursorFactory(
+                        myMeta,
+                        new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
+                        new DataFrameRowCursorFactory(),
+                        false,
+                        null,
+                        framingSupported,
+                        columnIndexes,
+                        columnSizes
+                );
+/*
                 return new TableReaderRecordCursorFactory(
                         myMeta,
                         engine,
@@ -2758,6 +2778,7 @@ public class SqlCodeGenerator implements Mutable {
                         columnSizes,
                         framingSupported
                 );
+*/
             }
 
             if (latestByColumnCount == 1 && myMeta.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(0))) {

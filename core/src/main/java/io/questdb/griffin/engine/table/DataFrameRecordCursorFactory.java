@@ -129,14 +129,16 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         private final int columnCount;
         private final IntList columnIndexes;
         private final IntList columnSizes;
-        private final LongList pageNRowsRemaining = new LongList();
+        private final LongList pageRowsRemaining = new LongList();
         private final LongList pageSizes = new LongList();
+        private final int timestampIndex;
         private TableReader reader;
         private int partitionIndex;
         private long partitionRemaining = 0L;
         private DataFrameCursor dataFrameCursor;
-        private final int timestampIndex;
-        private long rowLo = -1;
+        private long frameTopRowIndex = -1;
+        private long pageMin;
+        private long prevMin;
 
         public TableReaderPageFrameCursor(IntList columnIndexes, IntList columnSizes, int timestampIndex) {
             this.columnIndexes = columnIndexes;
@@ -154,11 +156,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         public @Nullable PageFrame next() {
 
             if (partitionIndex > -1) {
-                final long m = computePageMin(reader.getColumnBase(partitionIndex));
-                if (m < Long.MAX_VALUE) {
+                computePageMin(reader.getColumnBase(partitionIndex));
+                if (pageMin < Long.MAX_VALUE) {
                     // Offset next frame lowest RowId with the count of rows returned in previous frame.
-                    rowLo += pageSizes.get(timestampIndex) >> columnSizes.get(timestampIndex);
-                    return computeFrame(m);
+                    frameTopRowIndex += prevMin;
+                    return computeFrame();
                 }
             }
 
@@ -177,7 +179,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                         final int columnIndex = columnIndexes.getQuick(i);
                         topsRemaining.setQuick(i, reader.getColumnTop(base, columnIndex));
                         pages.setQuick(i, 0);
-                        pageNRowsRemaining.setQuick(i, -1L);
+                        pageRowsRemaining.setQuick(i, -1L);
                     }
 
                     // reduce
@@ -194,30 +196,52 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                         }
 
                         if (loRemaining > 0) {
-                            final MemoryR col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i)));
+                            final int readerColIndex = TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i));
+                            final MemoryR col = reader.getColumn(readerColIndex);
                             if (col instanceof NullColumn) {
-                                columnPageNextAddress.setQuick(i, 0);
-                                pageNRowsRemaining.setQuick(i, 0);
+                                columnPageNextAddress.setQuick(i * 2, 0);
+                                pageRowsRemaining.setQuick(i, 0);
                             } else {
-                                int page = pages.getQuick(i);
-                                long pageSize = col.getPageSize() >> columnSizes.getQuick(i);
-                                if (pageSize < loRemaining) {
-                                    throw CairoException.instance(0).put("partition is not mapped as single page, cannot perform vector calculation");
+                                final int sh = columnSizes.getQuick(i);
+                                final int page = pages.getQuick(i);
+                                if (sh > -1) {
+                                    long pageRowCount = col.getPageSize() >> sh;
+                                    if (pageRowCount < loRemaining) {
+                                        throw CairoException.instance(0).put("partition is not mapped as single page, cannot perform vector calculation");
+                                    }
+                                    long addr = col.getPageAddress(page);
+                                    addr += loRemaining << sh;
+                                    columnPageNextAddress.setQuick(i * 2, addr);
+                                    long pageHi = Math.min(partitionHi, pageRowCount);
+                                    pageRowsRemaining.setQuick(i, pageHi - partitionLo);
+                                    // todo: why are we setting pages to the same value?
+                                    //     should this be + 1?
+                                    pages.setQuick(i, page);
+                                } else {
+                                    // this is index column
+                                    final MemoryR col2 = reader.getColumn(readerColIndex + 1);
+                                    long pageRowCount = col2.getPageSize() >> 3;
+                                    if (pageRowCount < loRemaining) {
+                                        throw CairoException.instance(0).put("partition is not mapped as single page, cannot perform vector calculation");
+                                    }
+
+                                    long fixAddr = col2.getPageAddress(page);
+                                    fixAddr += loRemaining << 3;
+                                    columnPageNextAddress.setQuick(i * 2 + 1, fixAddr);
+                                    long pageHi = Math.min(partitionHi, pageRowCount);
+                                    pageRowsRemaining.setQuick(i, pageHi - partitionLo);
+                                    // todo: why are we setting pages to the same value?
+                                    pages.setQuick(i, page + 1);
                                 }
-                                long addr = col.getPageAddress(page);
-                                addr += loRemaining << columnSizes.getQuick(i);
-                                columnPageNextAddress.setQuick(i, addr);
-                                long pageHi = Math.min(partitionHi, pageSize);
-                                pageNRowsRemaining.setQuick(i, pageHi - partitionLo);
-                                pages.setQuick(i, page);
                             }
                         }
                     }
-                    rowLo = dataFrame.getRowLo();
-                    return computeFrame(computePageMin(base));
+                    frameTopRowIndex = dataFrame.getRowLo();
+                    computePageMin(base);
+                    return computeFrame();
                 }
             }
-            rowLo = 0;
+            frameTopRowIndex = 0;
             return null;
         }
 
@@ -227,10 +251,12 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             this.dataFrameCursor.toTop();
             pages.setAll(columnCount, 0);
             topsRemaining.setAll(columnCount, 0);
-            columnPageAddress.setAll(columnCount, 0);
-            columnPageNextAddress.setAll(columnCount, 0);
-            pageNRowsRemaining.setAll(columnCount, -1L);
-            pageSizes.setAll(columnCount, -1L);
+            columnPageAddress.setAll(columnCount * 2, 0);
+            columnPageNextAddress.setAll(columnCount * 2, 0);
+            pageRowsRemaining.setAll(columnCount, -1L);
+            pageSizes.setAll(columnCount * 2, -1L);
+            pageMin = 0;
+            prevMin = 0;
         }
 
         @Override
@@ -250,67 +276,88 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             return this;
         }
 
-        private TableReaderPageFrameCursor.TableReaderPageFrame computeFrame(long min) {
+        private TableReaderPageFrameCursor.TableReaderPageFrame computeFrame() {
             for (int i = 0; i < columnCount; i++) {
                 final long top = topsRemaining.getQuick(i);
                 if (top > 0) {
-                    assert min <= top;
-                    topsRemaining.setQuick(i, top - min);
-                    columnPageAddress.setQuick(i, 0);
-                    pageSizes.setQuick(i, min);
+                    assert pageMin <= top;
+                    topsRemaining.setQuick(i, top - pageMin);
+                    columnPageAddress.setQuick(i * 2, 0);
+                    pageSizes.setQuick(i * 2, pageMin);
                 } else {
-                    long addr = columnPageNextAddress.getQuick(i);
-                    long psz = pageNRowsRemaining.getQuick(i);
-                    pageNRowsRemaining.setQuick(i, psz - min);
-                    columnPageAddress.setQuick(i, addr);
+                    long addr = columnPageNextAddress.getQuick(i * 2);
+                    long psz = pageRowsRemaining.getQuick(i);
+                    pageRowsRemaining.setQuick(i, psz - pageMin);
+                    columnPageAddress.setQuick(i * 2, addr);
                     if (addr != 0) {
-                        long pageSize = min << columnSizes.getQuick(i);
-                        pageSizes.setQuick(i, pageSize);
-                        columnPageNextAddress.setQuick(i, addr + pageSize);
+                        final int shl = columnSizes.getQuick(i);
+                        if (shl > -1) {
+                            long pageSize = pageMin << shl;
+                            pageSizes.setQuick(i * 2, pageSize);
+                            columnPageNextAddress.setQuick(i * 2, addr + pageSize);
+                        } else {
+                            final long addr2 = columnPageNextAddress.getQuick(i * 2 + 1);
+                            final long fixPageSize = pageMin << 3;
+                            final long varPageSize = Unsafe.getUnsafe().getLong(addr2 + fixPageSize);
+                            columnPageNextAddress.setQuick(i * 2, addr + Unsafe.getUnsafe().getLong(addr2 + varPageSize));
+                            pageSizes.setQuick(i * 2, varPageSize);
+                            columnPageNextAddress.setQuick(i * 2 + 1, addr2 + fixPageSize);
+                            pageSizes.setQuick(i * 2 + 1, fixPageSize);
+                        }
                     } else {
-                        pageSizes.setQuick(i, min);
+                        pageSizes.setQuick(i * 2, pageMin);
                     }
                 }
             }
-            partitionRemaining -= min;
+            partitionRemaining -= pageMin;
             if (partitionRemaining < 0) {
                 throw CairoException.instance(0).put("incorrect frame built for vector calculation");
             }
             return frame;
         }
 
-        private long computePageMin(int base) {
+        private void computePageMin(int base) {
             // find min frame length
-            long min = Long.MAX_VALUE;
+            prevMin = pageMin;
+            pageMin = Long.MAX_VALUE;
             for (int i = 0; i < columnCount; i++) {
                 final long top = topsRemaining.getQuick(i);
                 if (top > 0) {
-                    if (min > top) {
-                        min = top;
+                    if (pageMin > top) {
+                        pageMin = top;
                     }
                 } else {
-                    long psz = pageNRowsRemaining.getQuick(i);
+                    long psz = pageRowsRemaining.getQuick(i);
                     if (psz > 0) {
-                        if (min > psz) {
-                            min = psz;
+                        if (pageMin > psz) {
+                            pageMin = psz;
                         }
                     } else if (partitionRemaining > 0) {
                         final int page = pages.getQuick(i);
                         pages.setQuick(i, page + 1);
-                        final MemoryR col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i)));
+                        final int readerColIndex = TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i));
+                        final MemoryR col = reader.getColumn(readerColIndex);
+                        final int shr = columnSizes.getQuick(i);
                         // page size is liable to change after it is mapped
                         // it is important to map page first and call pageSize() after
-                        columnPageNextAddress.setQuick(i, col.getPageAddress(page));
-                        psz = !(col instanceof NullColumn) ? col.getPageSize() >> columnSizes.getQuick(i) : partitionRemaining;
+                        columnPageNextAddress.setQuick(i * 2, col.getPageAddress(page));
+                        if (col instanceof NullColumn) {
+                            psz = partitionRemaining;
+                        } else if (shr > -1) {
+                            psz = col.getPageSize() >> shr;
+                        } else {
+                            final MemoryR col2 = reader.getColumn(readerColIndex + 1);
+                            columnPageNextAddress.setQuick(i * 2 + 1, col2.getPageAddress(page));
+                            psz = (col2.getPageSize() >> 3) - 1;
+                        }
                         final long m = Math.min(psz, partitionRemaining);
-                        pageNRowsRemaining.setQuick(i, m);
-                        if (min > m) {
-                            min = m;
+                        pageRowsRemaining.setQuick(i, m);
+                        if (pageMin > m) {
+                            pageMin = m;
                         }
                     }
                 }
             }
-            return min;
         }
 
         private class TableReaderPageFrame implements PageFrame {
@@ -320,9 +367,9 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             }
 
             @Override
-            public long getFirstRowId() {
-                assert rowLo >= 0;
-                return rowLo;
+            public long getTopRowIndex() {
+                assert frameTopRowIndex >= 0;
+                return frameTopRowIndex;
             }
 
             @Override
@@ -333,19 +380,19 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             @Override
             public long getFirstTimestamp() {
                 if (timestampIndex != -1) {
-                    return Unsafe.getUnsafe().getLong(columnPageAddress.getQuick(timestampIndex));
+                    return Unsafe.getUnsafe().getLong(columnPageAddress.getQuick(timestampIndex * 2));
                 }
                 return Long.MIN_VALUE;
             }
 
             @Override
             public long getPageAddress(int columnIndex) {
-                return columnPageAddress.getQuick(columnIndex);
+                return columnPageAddress.getQuick(columnIndex * 2);
             }
 
             @Override
             public long getPageSize(int columnIndex) {
-                return pageSizes.getQuick(columnIndex);
+                return pageSizes.getQuick(columnIndex * 2);
             }
 
             @Override
