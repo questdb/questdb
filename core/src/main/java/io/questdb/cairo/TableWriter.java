@@ -1516,6 +1516,8 @@ public class TableWriter implements Closeable {
                 masterRef--;
                 o3MasterRef = -1;
                 rowFunction = switchPartitionFunction;
+                row.activeColumns = columns;
+                row.activeNullSetters = nullSetters;
             }
             return;
         }
