@@ -32,8 +32,8 @@ import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.line.AuthenticatedLineTcpSender;
-import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -63,7 +63,6 @@ import org.junit.Test;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
-import java.sql.Time;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
@@ -192,7 +191,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                         "weather windspeed=4.0 631170000000000000\n";
 
         runInContext((receiver) -> {
-            send(receiver, lineData, "weather", WAIT_ENGINE_TABLE_RELEASE, false);
+            send(receiver, lineData, "weather", false);
 
             String expected =
                     "windspeed\ttimestamp\ttimetocycle\n" +
@@ -212,7 +211,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                         "weather windspeed=4.0 631170000000000000\n";
 
         runInContext((receiver) -> {
-            send(receiver, lineData, "weather", WAIT_ENGINE_TABLE_RELEASE, false);
+            send(receiver, lineData, "weather", false);
 
             String expected =
                     "windspeed\ttimestamp\ttimetocycle\n" +
@@ -233,7 +232,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                         "weather dir=\"SSW\",windspeed=4.0 631170000000000000\n";
 
         runInContext((receiver) -> {
-            send(receiver, lineData, "weather", WAIT_ENGINE_TABLE_RELEASE, false);
+            send(receiver, lineData, "weather", false);
 
             String expected =
                     "dir\twindspeed\ttimestamp\ttimetocycle\n" +
@@ -369,7 +368,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                     "plug,room=6A watts=\"3188\" 1631817599910\n" +
                     "plug,room=6A watts=\"3180\" 1631817902842\n" +
                     "plug,label=Power,room=6A watts=\"475\" 1631817478737\n";
-            send(receiver, lineData, "plug", WAIT_ENGINE_TABLE_RELEASE, false);
+            send(receiver, lineData, "plug", false);
 
             String expected = "room\twatts\ttimestamp\tlabel\n" +
                     "6A\t3195\t1970-01-01T00:27:11.817296Z\t\n" +
@@ -387,7 +386,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
         runInContext((receiver) -> {
             String lineData = "plug,room=6A watts=\"1\" 2631819999000\n" +
                     "plug,label=Power,room=6B watts=\"22\" 1631817902842\n";
-            send(receiver, lineData, "plug", WAIT_ENGINE_TABLE_RELEASE, false);
+            send(receiver, lineData, "plug", false);
 
             String expected = "room\twatts\ttimestamp\tlabel\n" +
                     "6B\t22\t1970-01-01T00:27:11.817902Z\tPower\n" +
@@ -403,7 +402,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
             String lineData = "plug,room=6A watts=\"1\" 2631819999000\n" +
                     "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
                     "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
-            send(receiver, lineData, "plug", WAIT_ENGINE_TABLE_RELEASE, false);
+            send(receiver, lineData, "plug", false);
 
             String expected = "room\twatts\ttimestamp\tlabel\n" +
                     "6C\t333\t1970-01-01T00:25:31.817902Z\tLine\n" +
@@ -446,7 +445,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                                     "weather windspeed=2.0 631152000000000000\n" +
                                     "weather timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
                                     "weather windspeed=4.0 631170000000000000\n";
-                    send(receiver, lineData, "weather", WAIT_ENGINE_TABLE_RELEASE, false);
+                    send(receiver, lineData, "weather", false);
                 });
 
                 try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
@@ -483,7 +482,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
         String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
 
         runInContext((receiver) -> {
-            send(receiver, lineData, "table_a", WAIT_ENGINE_TABLE_RELEASE, false);
+            send(receiver, lineData, "table_a", false);
 
             String expected = "ReceiveTime\tSequenceNumber\tMessageType\tLength\ttest\n" +
                     "2016-06-13T17:43:50.100400Z\t1\tB\t92\t1.5\n";
@@ -514,7 +513,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                                 "up in=2.0 631152000000000000\n" +
                                 "up in=3.0 631160000000000000\n" +
                                 "up in=4.0 631170000000000000\n";
-                send(receiver, lineData, "up", WAIT_ENGINE_TABLE_RELEASE, false);
+                send(receiver, lineData, "up", false);
             });
 
             TestUtils.assertSql(compiler, sqlExecutionContext, "up", sink, expected);
@@ -528,7 +527,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                 "tag_n_7=7,tag_n_8=8,tag_n_9=9,tag_n_10=10,tag_n_11=11,tag_n_12=12,tag_n_13=13," +
                 "tag_n_14=14,tag_n_15=15,tag_n_16=16,tag_n_17=17 value=42.4 1619509249714000000\n";
         runInContext((receiver) -> {
-            send(receiver, lineData, "tableCRASH", WAIT_ENGINE_TABLE_RELEASE, false);
+            send(receiver, lineData, "tableCRASH", false);
 
             String expected = "tag_n_1\ttag_n_2\ttag_n_3\ttag_n_4\ttag_n_5\ttag_n_6\ttag_n_7\ttag_n_8\ttag_n_9\ttag_n_10\ttag_n_11\ttag_n_12\ttag_n_13\ttag_n_14\ttag_n_15\ttag_n_16\ttag_n_17\tvalue\ttimestamp\n" +
                     "1\t2\t3\t4\t5\t6\t7\t8\t9\t10\t11\t12\t13\t14\t15\t16\t17\t42.400000000000006\t2021-04-27T07:40:49.714000Z\n";
@@ -547,7 +546,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                 + "tab ts_nsec=5555555555555555555i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n"
                 + "tab ts_nsec=6666666666666666666i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n";
         runInContext((receiver) -> {
-            send(receiver, lineData, "tab", WAIT_ENGINE_TABLE_RELEASE, false);
+            send(receiver, lineData, "tab", false);
 
             String expected = "ts_nsec\traw_msg\ttimestamp\n" +
                     "1111111111111111111\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n" +
@@ -563,8 +562,8 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
     @Test
     public void testFieldWithUnquotedString() throws Exception {
         runInContext((receiver) -> {
-            send(receiver,  "tab raw_msg=____ 1619509249714000000\n", "tab", WAIT_ENGINE_TABLE_RELEASE, false);
-            send(receiver,  "tab raw_msg=__\"_ 1619509249714000000\n", "tab", WAIT_ENGINE_TABLE_RELEASE, false);
+            send(receiver,  "tab raw_msg=____ 1619509249714000000\n", "tab", false);
+            send(receiver,  "tab raw_msg=__\"_ 1619509249714000000\n", "tab", false);
 
             String expected = "raw_msg\ttimestamp\n" +
                     "____\t2021-04-27T07:40:49.714000Z\n" +
@@ -587,10 +586,10 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
 
         runInContext((receiver) -> {
             String lineData = "लаблअца поле=\"значение\" 1619509249714000000\n";
-            send(receiver, lineData, "लаблअца", WAIT_ENGINE_TABLE_RELEASE, false);
+            send(receiver, lineData, "लаблअца", false);
 
             String lineData2 = "लаблअца,символ=значение2 поле=\"значение3\" 1619509249714000000\n";
-            send(receiver, lineData2, "लаблअца", WAIT_ENGINE_TABLE_RELEASE, false);
+            send(receiver, lineData2, "लаблअца", false);
 
             assertTable("символ\tполе\tвремя\n" +
                     "\tзначение\t2021-04-27T07:40:49.714000Z\n" +
@@ -602,10 +601,10 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
     public void testUnicodeTableNameExistingTable() throws Exception {
         runInContext((receiver) -> {
             String lineData = "लаблअца поле=значение 1619509249714000000\n";
-            send(receiver, lineData, "लаблअца", WAIT_ENGINE_TABLE_RELEASE, false);
+            send(receiver, lineData, "लаблअца", false);
 
             String lineData2 = "लаблअца,символ=значение2  1619509249714000000\n";
-            send(receiver, lineData2, "लаблअца", WAIT_ENGINE_TABLE_RELEASE, false);
+            send(receiver, lineData2, "लаблअца", false);
 
             String expected = "поле\ttimestamp\tсимвол\n" +
                     "значение\t2021-04-27T07:40:49.714000Z\t\n" +
@@ -773,7 +772,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
             };
 
             String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
-            send(receiver, lineData, "table_a", WAIT_ENGINE_TABLE_RELEASE, false);
+            send(receiver, lineData, "table_a", false);
 
             String expected = "ReceiveTime\tSequenceNumber\tMessageType\tLength\n";
             assertTable(expected, "table_a");
@@ -936,15 +935,11 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
     }
 
     private void send(LineTcpReceiver receiver, String lineData, String tableName, int wait) {
-        send(receiver, tableName, wait, () -> {
-            sendToSocket(lineData, true);
-        });
+        send(receiver, tableName, wait, () -> sendToSocket(lineData, true));
     }
 
-    private void send(LineTcpReceiver receiver, String lineData, String tableName, int wait, boolean nolinger) {
-        send(receiver, tableName, wait, () -> {
-            sendToSocket(lineData, nolinger);
-        });
+    private void send(LineTcpReceiver receiver, String lineData, String tableName, boolean nolinger) {
+        send(receiver, tableName, LineTcpReceiverTest.WAIT_ENGINE_TABLE_RELEASE, () -> sendToSocket(lineData, nolinger));
     }
 
     public static final int WAIT_NO_WAIT = 0;

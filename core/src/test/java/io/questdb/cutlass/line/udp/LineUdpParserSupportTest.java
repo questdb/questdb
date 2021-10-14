@@ -43,149 +43,6 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
     private static final String locationColumnName = "location";
 
     @Test
-    public void testPutByteBadValueIsTreatedAsNull() throws Exception {
-        testColumnType(ColumnType.BYTE,
-                "column\tlocation\ttimestamp\n" +
-                        "5\t\t1970-01-01T00:00:04.000000Z\n",
-                (sender) -> {
-                    sender.metric(tableName)
-                            .field(targetColumnName, Long.MAX_VALUE)
-                            .field(locationColumnName, "sp052w")
-                            .$(1000000000);
-                    sender.metric(tableName)
-                            .field(targetColumnName, 300)
-                            .$(2000000000);
-                    sender.metric(tableName)
-                            .field(targetColumnName, "not a number")
-                            .field(locationColumnName, "sp052w12")
-                            .$(3000000000L);
-                    sender.metric(tableName)
-                            .field(targetColumnName, 5)
-                            .$(4000000000L);
-                    sender.flush();
-                });
-    }
-
-    @Test
-    public void testPutShortBadValueIsTreatedAsNull() throws Exception {
-        testColumnType(ColumnType.SHORT,
-                "column\tlocation\ttimestamp\n" +
-                        "0\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
-                        "300\t\t1970-01-01T00:00:02.000000Z\n" +
-                        "5\t\t1970-01-01T00:00:04.000000Z\n",
-                (sender) -> {
-                    sender.metric(tableName)
-                            .field(targetColumnName, Long.MAX_VALUE)
-                            .field(locationColumnName, "sp052w")
-                            .$(1000000000);
-                    sender.metric(tableName)
-                            .field(targetColumnName, 300)
-                            .$(2000000000);
-                    sender.metric(tableName)
-                            .field(targetColumnName, "not a number")
-                            .field(locationColumnName, "sp052w12")
-                            .$(3000000000L);
-                    sender.metric(tableName)
-                            .field(targetColumnName, 5)
-                            .$(4000000000L);
-                    sender.flush();
-                });
-    }
-
-    @Test
-    public void testPutIntBadValueIsTreatedAsNull() throws Exception {
-        testColumnType(ColumnType.INT,
-                "column\tlocation\ttimestamp\n" +
-                        "NaN\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
-                        "5\t\t1970-01-01T00:00:04.000000Z\n",
-                (sender) -> {
-                    sender.metric(tableName)
-                            .field(targetColumnName, Long.MAX_VALUE)
-                            .field(locationColumnName, "sp052w")
-                            .$(1000000000);
-                    sender.metric(tableName)
-                            .field(targetColumnName, 300.12)
-                            .$(2000000000);
-                    sender.metric(tableName)
-                            .field(targetColumnName, "not a number")
-                            .field(locationColumnName, "sp052w12")
-                            .$(3000000000L);
-                    sender.metric(tableName)
-                            .field(targetColumnName, 5)
-                            .$(4000000000L);
-                    sender.flush();
-                });
-    }
-
-    @Test
-    public void testPutFloatBadValueIsTreatedAsNull() throws Exception {
-        testColumnType(ColumnType.FLOAT,
-                "column\tlocation\ttimestamp\n" +
-                        "Infinity\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
-                        "3.1416\t\t1970-01-01T00:00:02.000000Z\n" +
-                        "5.0000\t\t1970-01-01T00:00:05.000000Z\n",
-                (sender) -> {
-                    sender.metric(tableName)
-                            .field(targetColumnName, Double.MAX_VALUE)
-                            .field(locationColumnName, "sp052w")
-                            .$(1000000000);
-                    sender.metric(tableName)
-                            .field(targetColumnName, 3.14159)
-                            .$(2000000000);
-                    sender.metric(tableName)
-                            .field(targetColumnName, "not a number")
-                            .field(locationColumnName, "sp052w12")
-                            .$(3000000000L);
-                    sender.metric(tableName)
-                            .field(targetColumnName, 5)
-                            .$(4000000000L);
-                    sender.metric(tableName)
-                            .field(targetColumnName, 5.0)
-                            .$(5000000000L);
-                    sender.flush();
-                });
-    }
-
-    @Test
-    public void testPutLong256BadValueIsTreatedAsNull() throws Exception {
-        testColumnType(ColumnType.LONG256,
-                "column\tlocation\ttimestamp\n",
-                (sender) -> {
-                    sender.metric(tableName)
-                            .field(targetColumnName, Long.MAX_VALUE)
-                            .field(locationColumnName, "sp052w")
-                            .$(1000000000);
-                    sender.metric(tableName)
-                            .field(targetColumnName, 300)
-                            .$(2000000000);
-                    sender.metric(tableName)
-                            .field(targetColumnName, "not a number")
-                            .field(locationColumnName, "sp052w12")
-                            .$(3000000000L);
-                    sender.metric(tableName)
-                            .field(targetColumnName, 5)
-                            .$(4000000000L);
-                    sender.flush();
-                });
-    }
-
-    @Test
-    public void testPutBinaryBadValueIsTreatedAsNull() throws Exception {
-        testColumnType(ColumnType.BINARY,
-                "column\tlocation\ttimestamp\n",
-                (sender) -> {
-                    sender.metric(tableName)
-                            .field(targetColumnName, Long.MAX_VALUE)
-                            .field(locationColumnName, "sp052w")
-                            .$(1000000000);
-                    sender.metric(tableName)
-                            .field(targetColumnName, 5)
-                            .$(4000000000L);
-                    sender.flush();
-                });
-    }
-
-    @Test
     public void testGetValueType() {
         Assert.assertEquals(ColumnType.NULL, LineUdpParserSupport.getValueType(""));
 
@@ -253,10 +110,160 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
         Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("0x123a4"));
     }
 
-    private void testColumnType(int columnType,
-                                int geoHashColumnBits,
-                                String expected,
-                                Consumer<LineUdpSender> senderConsumer) throws Exception {
+    @Test
+    public void testPutBinaryBadValueIsTreatedAsNull() throws Exception {
+        testColumnType(
+                ColumnType.BINARY,
+                "column\tlocation\ttimestamp\n",
+                (sender) -> {
+                    sender.metric(tableName)
+                            .field(targetColumnName, Long.MAX_VALUE)
+                            .field(locationColumnName, "sp052w")
+                            .$(1000000000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, 5)
+                            .$(4000000000L);
+                    sender.flush();
+                });
+    }
+
+    @Test
+    public void testPutByteBadValueIsTreatedAsNull() throws Exception {
+        testColumnType(
+                ColumnType.BYTE,
+                "column\tlocation\ttimestamp\n" +
+                        "5\t\t1970-01-01T00:00:04.000000Z\n",
+                (sender) -> {
+                    sender.metric(tableName)
+                            .field(targetColumnName, Long.MAX_VALUE)
+                            .field(locationColumnName, "sp052w")
+                            .$(1000000000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, 300)
+                            .$(2000000000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, "not a number")
+                            .field(locationColumnName, "sp052w12")
+                            .$(3000000000L);
+                    sender.metric(tableName)
+                            .field(targetColumnName, 5)
+                            .$(4000000000L);
+                    sender.flush();
+                });
+    }
+
+    @Test
+    public void testPutFloatBadValueIsTreatedAsNull() throws Exception {
+        testColumnType(
+                ColumnType.FLOAT,
+                "column\tlocation\ttimestamp\n" +
+                        "Infinity\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
+                        "3.1416\t\t1970-01-01T00:00:02.000000Z\n" +
+                        "5.0000\t\t1970-01-01T00:00:05.000000Z\n",
+                (sender) -> {
+                    sender.metric(tableName)
+                            .field(targetColumnName, Double.MAX_VALUE)
+                            .field(locationColumnName, "sp052w")
+                            .$(1000000000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, 3.14159)
+                            .$(2000000000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, "not a number")
+                            .field(locationColumnName, "sp052w12")
+                            .$(3000000000L);
+                    sender.metric(tableName)
+                            .field(targetColumnName, 5)
+                            .$(4000000000L);
+                    sender.metric(tableName)
+                            .field(targetColumnName, 5.0)
+                            .$(5000000000L);
+                    sender.flush();
+                });
+    }
+
+    @Test
+    public void testPutIntBadValueIsTreatedAsNull() throws Exception {
+        testColumnType(
+                ColumnType.INT,
+                "column\tlocation\ttimestamp\n" +
+                        "NaN\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
+                        "5\t\t1970-01-01T00:00:04.000000Z\n",
+                (sender) -> {
+                    sender.metric(tableName)
+                            .field(targetColumnName, Long.MAX_VALUE)
+                            .field(locationColumnName, "sp052w")
+                            .$(1000000000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, 300.12)
+                            .$(2000000000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, "not a number")
+                            .field(locationColumnName, "sp052w12")
+                            .$(3000000000L);
+                    sender.metric(tableName)
+                            .field(targetColumnName, 5)
+                            .$(4000000000L);
+                    sender.flush();
+                });
+    }
+
+    @Test
+    public void testPutLong256BadValueIsTreatedAsNull() throws Exception {
+        testColumnType(
+                ColumnType.LONG256,
+                "column\tlocation\ttimestamp\n",
+                (sender) -> {
+                    sender.metric(tableName)
+                            .field(targetColumnName, Long.MAX_VALUE)
+                            .field(locationColumnName, "sp052w")
+                            .$(1000000000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, 300)
+                            .$(2000000000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, "not a number")
+                            .field(locationColumnName, "sp052w12")
+                            .$(3000000000L);
+                    sender.metric(tableName)
+                            .field(targetColumnName, 5)
+                            .$(4000000000L);
+                    sender.flush();
+                });
+    }
+
+    @Test
+    public void testPutShortBadValueIsTreatedAsNull() throws Exception {
+        testColumnType(
+                ColumnType.SHORT,
+                "column\tlocation\ttimestamp\n" +
+                        "0\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
+                        "300\t\t1970-01-01T00:00:02.000000Z\n" +
+                        "5\t\t1970-01-01T00:00:04.000000Z\n",
+                (sender) -> {
+                    sender.metric(tableName)
+                            .field(targetColumnName, Long.MAX_VALUE)
+                            .field(locationColumnName, "sp052w")
+                            .$(1000000000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, 300)
+                            .$(2000000000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, "not a number")
+                            .field(locationColumnName, "sp052w12")
+                            .$(3000000000L);
+                    sender.metric(tableName)
+                            .field(targetColumnName, 5)
+                            .$(4000000000L);
+                    sender.flush();
+                });
+    }
+
+    private void testColumnType(
+            int columnType,
+            String expected,
+            Consumer<LineUdpSender> senderConsumer
+    ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
@@ -269,7 +276,7 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                     try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
                         CairoTestUtils.create(model
                                 .col(targetColumnName, columnType)
-                                .col(locationColumnName, ColumnType.getGeoHashTypeWithBits(geoHashColumnBits))
+                                .col(locationColumnName, ColumnType.getGeoHashTypeWithBits(30))
                                 .timestamp());
                     }
                     receiver.start();
