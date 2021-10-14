@@ -196,7 +196,7 @@ $.fn.grid = function (msgBus) {
       renderViewportNoCompute()
       return
     }
-    $.get("/exec", { query, limit: lo + "," + hi, nm: true }).done(f)
+    $.get("/exec", { query, limit: lo + 1 + "," + hi, nm: true }).done(f)
   }
 
   function loadPagesDelayed(p1, p2) {
@@ -384,7 +384,7 @@ $.fn.grid = function (msgBus) {
         }
       }
     }
-  } 
+  }
 
   function computeColumnWidths() {
     colMax = []
@@ -393,7 +393,7 @@ $.fn.grid = function (msgBus) {
     for (i = 0; i < columns.length; i++) {
       var c = columns[i]
       var col = $('<div class="qg-header qg-w' + i + '">' + c.name + "</div>")
-        .on('click', function (e) {
+        .on("click", function (e) {
           bus.trigger("editor.insert.column", e.target.innerHTML)
         })
         .appendTo(header)
