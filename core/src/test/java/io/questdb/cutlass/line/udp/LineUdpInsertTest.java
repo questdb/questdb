@@ -26,7 +26,7 @@ package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cutlass.line.LineProtoSender;
+import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
@@ -44,18 +44,18 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
     protected static final int LOCALHOST = Net.parseIPv4("127.0.0.1");
     protected static final int PORT = RCVR_CONF.getPort();
 
-    protected static AbstractLineProtoReceiver createLineProtoReceiver(CairoEngine engine) {
-        AbstractLineProtoReceiver lpr;
+    protected static AbstractLineProtoUdpReceiver createLineProtoReceiver(CairoEngine engine) {
+        AbstractLineProtoUdpReceiver lpr;
         if (Os.type == Os.LINUX_AMD64) {
-            lpr = new LinuxMMLineProtoReceiver(RCVR_CONF, engine, null);
+            lpr = new LinuxMMLineUdpReceiver(RCVR_CONF, engine, null);
         } else {
-            lpr = new LineProtoReceiver(RCVR_CONF, engine, null);
+            lpr = new LineUdpReceiver(RCVR_CONF, engine, null);
         }
         return lpr;
     }
 
-    protected static LineProtoSender createLineProtoSender() {
-        return new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 1024, 1);
+    protected static LineUdpSender createLineProtoSender() {
+        return new LineUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 1024, 1);
     }
 
     protected static void assertReader(String tableName, String expected) {
@@ -79,7 +79,7 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                                      String targetColumnName,
                                      int columnType,
                                      String expected,
-                                     Consumer<LineProtoSender> senderConsumer,
+                                     Consumer<LineUdpSender> senderConsumer,
                                      String... expectedExtraStringColumns) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -89,14 +89,14 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                         waitForData.countDown();
                     }
                 });
-                try (AbstractLineProtoReceiver receiver = createLineProtoReceiver(engine)) {
+                try (AbstractLineProtoUdpReceiver receiver = createLineProtoReceiver(engine)) {
                     if (columnType != ColumnType.UNDEFINED) {
                         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
                             CairoTestUtils.create(model.col(targetColumnName, columnType).timestamp());
                         }
                     }
                     receiver.start();
-                    try (LineProtoSender sender = createLineProtoSender()) {
+                    try (LineUdpSender sender = createLineProtoSender()) {
                         senderConsumer.accept(sender);
                         sender.flush();
                     }

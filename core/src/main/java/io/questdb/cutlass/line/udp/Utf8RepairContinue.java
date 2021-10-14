@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line;
+package io.questdb.cutlass.line.udp;
 
 final class Utf8RepairContinue extends RuntimeException {
     final static Utf8RepairContinue INSTANCE = new Utf8RepairContinue();

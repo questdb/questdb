@@ -116,6 +116,24 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnquotedRegexFail() {
+        assertFail(
+                "s ~ '.*TDF",
+                4,
+                "unclosed quoted string?"
+        );
+    }
+
+    @Test
+    public void testUnquotedStrFail() {
+        assertFail(
+                "s ~ 'TDF",
+                4,
+                "unclosed quoted string?"
+        );
+    }
+
+    @Test
     public void testAllNoOperator() {
         assertFail(
                 "a all(b)",

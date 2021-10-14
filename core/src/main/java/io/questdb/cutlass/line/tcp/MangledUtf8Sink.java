@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2020 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,8 +22,34 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line;
+package io.questdb.cutlass.line.tcp;
 
-public interface CachedCharSequence extends CharSequence {
-    long getCacheAddress();
+import io.questdb.std.str.AbstractCharSink;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
+
+class MangledUtf8Sink extends AbstractCharSink {
+    private final StringSink tempSink;
+
+    public MangledUtf8Sink(StringSink tempSink) {
+        this.tempSink = tempSink;
+    }
+
+    public CharSequence encodeMangledUtf8(CharSequence value) {
+        tempSink.clear();
+        encodeUtf8(value);
+        return tempSink;
+    }
+
+    @Override
+    public CharSink put(char c) {
+        tempSink.put((char)((byte)c));
+        return this;
+    }
+
+    @Override
+    public CharSink put(char[] chars, int start, int len) {
+        throw new UnsupportedOperationException();
+    }
 }
+

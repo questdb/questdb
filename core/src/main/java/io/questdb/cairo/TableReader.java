@@ -81,7 +81,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
         this.path = new Path();
-        this.path.of(configuration.getRoot()).concat(tableName);
+        this.path.of(configuration.getRoot()).concat(this.tableName);
         this.rootLen = path.length();
         try {
             this.metadata = openMetaFile();
@@ -92,7 +92,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             path.trimTo(rootLen);
             LOG.debug()
                     .$("open [id=").$(metadata.getId())
-                    .$(", table=").utf8(tableName)
+                    .$(", table=").$(this.tableName)
                     .I$();
             this.txFile = new TxReader(ff, path, partitionBy);
             path.trimTo(rootLen);

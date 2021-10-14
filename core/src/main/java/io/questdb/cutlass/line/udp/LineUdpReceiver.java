@@ -29,11 +29,11 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 
-public class LineProtoReceiver extends AbstractLineProtoReceiver {
+public class LineUdpReceiver extends AbstractLineProtoUdpReceiver {
     private final int bufLen;
     private long buf;
 
-    public LineProtoReceiver(
+    public LineUdpReceiver(
             LineUdpReceiverConfiguration configuration,
             CairoEngine engine,
             WorkerPool workerPool

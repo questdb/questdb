@@ -153,6 +153,7 @@ public class AbstractCairoTest {
         TestUtils.createTestPath(root);
         engine.openTableId();
         engine.resetTableId();
+        SharedRandom.RANDOM.set(new Rnd());
     }
 
     @After

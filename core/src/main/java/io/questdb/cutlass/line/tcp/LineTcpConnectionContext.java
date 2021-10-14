@@ -26,7 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
-import io.questdb.cutlass.line.tcp.NewLineProtoParser.ParseResult;
+import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOContext;
@@ -47,7 +47,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private final LineTcpMeasurementScheduler scheduler;
     private final MillisecondClock milliClock;
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
-    private final NewLineProtoParser protoParser = new NewLineProtoParser();
+    private final LineTcpParser protoParser = new LineTcpParser();
     private final FloatingDirectCharSink charSink = new FloatingDirectCharSink();
     protected long fd;
     protected IODispatcher<LineTcpConnectionContext> dispatcher;
@@ -123,7 +123,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         if (recvBufStartOfMeasurement > recvBufStart) {
             final long len = recvBufPos - recvBufStartOfMeasurement;
             if (len > 0) {
-                Vect.memcpy(recvBufStart, recvBufStartOfMeasurement, len);
+                Vect.memmove(recvBufStart, recvBufStartOfMeasurement, len); // Use memmove, there may be an overlap
                 final long shl = recvBufStartOfMeasurement - recvBufStart;
                 protoParser.shl(shl);
                 this.recvBufStartOfMeasurement -= shl;

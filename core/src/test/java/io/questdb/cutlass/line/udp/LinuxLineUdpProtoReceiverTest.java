@@ -27,7 +27,7 @@ package io.questdb.cutlass.line.udp;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cutlass.line.LineProtoSender;
+import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
@@ -39,13 +39,13 @@ import org.junit.Test;
 
 import java.util.concurrent.locks.LockSupport;
 
-public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
+public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
 
     private final static ReceiverFactory LINUX_FACTORY =
-            (configuration, engine, workerPool, localPool, functionFactoryCache, metrics) -> new LinuxMMLineProtoReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, localPool, functionFactoryCache, metrics) -> new LinuxMMLineUdpReceiver(configuration, engine, workerPool);
 
     private final static ReceiverFactory GENERIC_FACTORY =
-            (configuration, engine, workerPool, localPool, functionFactoryCache, metrics) -> new LineProtoReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, localPool, functionFactoryCache, metrics) -> new LineUdpReceiver(configuration, engine, workerPool);
 
     @Test
     public void testGenericCannotBindSocket() throws Exception {
@@ -240,7 +240,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
 
 
-                try (AbstractLineProtoReceiver receiver = factory.create(receiverCfg, engine, null, false, null, metrics)) {
+                try (AbstractLineProtoUdpReceiver receiver = factory.create(receiverCfg, engine, null, false, null, metrics)) {
 
                     // create table
 
@@ -259,7 +259,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
                     receiver.start();
 
-                    try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, Net.parseIPv4("127.0.0.1"), receiverCfg.getPort(), 1400, 1)) {
+                    try (LineUdpSender sender = new LineUdpSender(NetworkFacadeImpl.INSTANCE, 0, Net.parseIPv4("127.0.0.1"), receiverCfg.getPort(), 1400, 1)) {
                         for (int i = 0; i < 10; i++) {
                             sender.metric("tab").tag("colour", "blue").tag("shape", "x square").field("size", 3.4).$(100000000000L);
                         }
@@ -287,6 +287,6 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
         });
     }
 
-    private interface ReceiverFactory extends WorkerPoolAwareConfiguration.ServerFactory<AbstractLineProtoReceiver, LineUdpReceiverConfiguration> {
+    private interface ReceiverFactory extends WorkerPoolAwareConfiguration.ServerFactory<AbstractLineProtoUdpReceiver, LineUdpReceiverConfiguration> {
     }
 }

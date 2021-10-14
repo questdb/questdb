@@ -149,6 +149,7 @@ const Ace = () => {
                   ),
                 }),
               )
+              bus.trigger(BusEvent.MSQ_QUERY_SCHEMA)
             }
 
             if (result.type === QuestDB.Type.DQL) {

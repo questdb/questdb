@@ -578,6 +578,10 @@ public class SqlKeywords {
         return isGeoHashKeyword(tok, i);
     }
 
+    public static boolean isQuote(CharSequence tok) {
+        return tok.length() == 1 && tok.charAt(0) == '\'';
+    }
+
     private static boolean isGeoHashKeyword(CharSequence tok, int i) {
         return (tok.charAt(i++) | 32) == 'g'
                 && (tok.charAt(i++) | 32) == 'e'
@@ -819,20 +823,6 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i++) | 32) == 'c'
                 && (tok.charAt(i) | 32) == 'k';
-    }
-
-    public static boolean isMasterKeyword(CharSequence tok) {
-        if (tok.length() != 6) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'm'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i++) | 32) == 's'
-                && (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i) | 32) == 'r';
     }
 
     public static boolean isMaxUncommittedRowsParam(CharSequence tok) {
@@ -1202,19 +1192,6 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 't';
     }
 
-    public static boolean isSlaveKeyword(CharSequence tok) {
-        if (tok.length() != 5) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 's'
-                && (tok.charAt(i++) | 32) == 'l'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i++) | 32) == 'v'
-                && (tok.charAt(i) | 32) == 'e';
-    }
-
     public static boolean isStandardConformingStringsKeyword(CharSequence tok) {
         if (tok.length() != 27) {
             return false;
@@ -1248,19 +1225,6 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'n'
                 && (tok.charAt(i++) | 32) == 'g'
                 && (tok.charAt(i) | 32) == 's';
-    }
-
-    public static boolean isStartKeyword(CharSequence tok) {
-        if (tok.length() != 5) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 's'
-                && (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i++) | 32) == 'r'
-                && (tok.charAt(i) | 32) == 't';
     }
 
     public static boolean isSumKeyword(CharSequence tok) {

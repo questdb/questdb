@@ -40,14 +40,14 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-public class LineTcpServer implements Closeable {
-    private static final Log LOG = LogFactory.getLog(LineTcpServer.class);
+public class LineTcpReceiver implements Closeable {
+    private static final Log LOG = LogFactory.getLog(LineTcpReceiver.class);
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
     private final LineTcpConnectionContextFactory contextFactory;
     private final LineTcpMeasurementScheduler scheduler;
     private final ObjList<WorkerPool> dedicatedPools;
 
-    public LineTcpServer(
+    public LineTcpReceiver(
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
             WorkerPool ioWorkerPool,
@@ -72,7 +72,7 @@ public class LineTcpServer implements Closeable {
     }
 
     @Nullable
-    public static LineTcpServer create(
+    public static LineTcpReceiver create(
             LineTcpReceiverConfiguration lineConfiguration,
             WorkerPool sharedWorkerPool,
             Log log,
@@ -93,14 +93,14 @@ public class LineTcpServer implements Closeable {
             writerWorkerPool.assignCleaner(Path.CLEANER);
             dedicatedPools.add(writerWorkerPool);
         }
-        LineTcpServer lineTcpServer = new LineTcpServer(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool, dedicatedPools);
+        LineTcpReceiver lineTcpReceiver = new LineTcpReceiver(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool, dedicatedPools);
         if (ioWorkerPool != sharedWorkerPool) {
             ioWorkerPool.start(log);
         }
         if (writerWorkerPool != sharedWorkerPool) {
             writerWorkerPool.start(log);
         }
-        return lineTcpServer;
+        return lineTcpReceiver;
     }
 
     @Override

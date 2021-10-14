@@ -271,7 +271,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                     memoryTag);
         } catch (Throwable e) {
             appendAddress = pageAddress + previousSize;
-            close();
+            close(false);
             throw e;
         }
         size = newSize;
@@ -305,7 +305,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             this.pageAddress = TableUtils.mapRW(ff, fd, size, memoryTag);
             this.lim = pageAddress + size;
         } catch (Throwable e) {
-            close();
+            close(false);
             throw e;
         }
     }
