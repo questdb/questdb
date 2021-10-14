@@ -179,7 +179,6 @@ public class TableWriter implements Closeable {
     private int rowActon = ROW_ACTION_OPEN_PARTITION;
     private final AlterTableImpl alterTableStatement = new AlterTableImpl();
     private boolean isTicking;
-    private boolean tableAlterIsPending;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot());
@@ -801,10 +800,6 @@ public class TableWriter implements Closeable {
         return tempMem16b != 0;
     }
 
-    public boolean isStructureChangePending() {
-        return tableAlterIsPending;
-    }
-
     public TableBlockWriter newBlock() {
         bumpMasterRef();
         txFile.newBlock();
@@ -1255,11 +1250,10 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private boolean processAlterTableEvent(TableWriterTask cmd, long cursor, Sequence sequence, boolean acceptStructureChange) {
+    private void processAlterTableEvent(TableWriterTask cmd, long cursor, Sequence sequence, boolean acceptStructureChange) {
         final long instance = cmd.getInstance();
         final long tableId = cmd.getTableId();
         alterTableStatement.deserialize(cmd);
-        boolean done = true;
         LOG.info()
                 .$("received ALTER TABLE cmd [tableName=").$(tableName)
                 .$(", tableId=").$(tableId)
@@ -1269,25 +1263,20 @@ public class TableWriter implements Closeable {
         try {
             alterTableStatement.apply(this, acceptStructureChange);
         } catch (TableStructureChangesException ex) {
-            done = false;
             LOG.info()
                     .$("did not ALTER TABLE cmd, table structure change is not allowed atm [tableName=").$(tableName)
                     .$(", tableId=").$(tableId)
                     .$(", src=").$(instance)
                     .I$();
+            error = "ALTER TABLE cannot change table structure while Writer is busy";
         } catch (SqlException ex) {
             error = ex.getFlyweightMessage();
         } catch (Throwable ex) {
             error = ex.getMessage();
         } finally {
-            if (done) {
-                sequence.done(cursor);
-            }
+            sequence.done(cursor);
         }
-        if (done) {
-            replAlterTableEvent0(tableId, instance, error);
-        }
-        return done;
+        replAlterTableEvent0(tableId, instance, error);
     }
 
     private void replAlterTableEvent0(long tableId, long instance, CharSequence error) {
@@ -1399,21 +1388,22 @@ public class TableWriter implements Closeable {
         return txFile.getRowCount() + (hasO3() ? getO3RowCount() : 0L);
     }
 
-    public boolean tick() {
-        return tick(false);
+    public void tick() {
+        tick(false);
     }
 
-    public boolean tick(boolean acceptStructureChange) {
+    public void tick(boolean acceptStructureChange) {
         // Some alter table trigger commit() which trigger tick()
         // If already inside the tick(), do not re-enter it.
-        if (isTicking) return !tableAlterIsPending;
+        if (isTicking) {
+            return;
+        }
         try {
             isTicking = true;
             processCommandQueue(acceptStructureChange);
         } finally {
             isTicking = false;
         }
-        return !tableAlterIsPending;
     }
 
     @Override
@@ -3888,7 +3878,6 @@ public class TableWriter implements Closeable {
                         replPublishSyncEvent(cmd, cursor, commandSubSeq);
                         break;
                     case TableWriterTask.TSK_ALTER_TABLE:
-                        tableAlterIsPending = !processAlterTableEvent(cmd, cursor, commandSubSeq, acceptStructureChange);
                         break;
                     default:
                         commandSubSeq.done(cursor);

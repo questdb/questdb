@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoSender;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;

@@ -979,9 +979,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         void handleRowAppended() {
             if (writer.checkMaxAndCommitLag(commitMode)) {
                 lastCommitMillis = milliClock.getTicks();
-                if (writer.isStructureChangePending()) {
-
-                }
             }
         }
 
@@ -1011,20 +1008,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                 LOG.debug().$("maintenance commit [table=").$(writer.getTableName()).I$();
                 try {
                     writer.commit();
-
-                    if (writer.isStructureChangePending()) {
-                        long writerMetaIdBefore = writer.getStructureVersion();
-                        writer.tick(true);
-                        long writerMetaIdAfter = writer.getStructureVersion();
-                        if (writerMetaIdBefore != writerMetaIdAfter) {
-                            // Table structure might have changed at the commit
-                            // because of processing ASYNC alter table commands
-                            LOG.info().$("detected table structure change, reloading column indexes [table=").$(writer.getTableName()).I$();
-                            for (int i = localDetailsArray.length - 1; i > -1; i--) {
-                                localDetailsArray[i].clear();
-                            }
-                        }
-                    }
                 } catch (Throwable e) {
                     LOG.error().$("could not commit [table=").$(writer.getTableName()).I$();
                     writer = Misc.free(writer);

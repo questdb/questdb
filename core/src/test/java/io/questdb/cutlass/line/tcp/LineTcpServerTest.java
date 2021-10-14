@@ -747,7 +747,10 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
                     "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
 
-            send(server, lineData, "plug", WAIT_ALTER_TABLE_RELEASE, false,
+            send(server, lineData,
+                    "plug",
+                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                    false,
                     "ALTER TABLE plug DROP COLUMN label");
 
             lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999001\n" +
@@ -757,13 +760,13 @@ public class LineTcpServerTest extends AbstractCairoTest {
             // re-send, this should re-add column label
             send(server, lineData, "plug", WAIT_ENGINE_TABLE_RELEASE);
 
-            String expected = "room\twatts\ttimestamp\tlabel\n" +
-                    "6C\t666\t1970-01-01T00:25:31.817902Z\tLine\n" +
-                    "6C\t333\t1970-01-01T00:25:31.817902Z\t\n" +
-                    "6B\t55\t1970-01-01T00:27:11.817902Z\tPower\n" +
-                    "6B\t22\t1970-01-01T00:27:11.817902Z\t\n" +
-                    "6A\t4\t1970-01-01T00:43:51.819999Z\tPower\n" +
-                    "6A\t1\t1970-01-01T00:43:51.819999Z\t\n";
+            String expected = "label\troom\twatts\ttimestamp\n" +
+                    "Line\t6C\t666\t1970-01-01T00:25:31.817902Z\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
+                    "Power\t6B\t55\t1970-01-01T00:27:11.817902Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
+                    "Power\t6A\t4\t1970-01-01T00:43:51.819999Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n";
             assertTable(expected, "plug");
         });
     }

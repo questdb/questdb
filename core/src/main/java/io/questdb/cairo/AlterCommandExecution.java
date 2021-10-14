@@ -83,8 +83,7 @@ public class AlterCommandExecution {
                     alterStatement.getTableName(), "Alter table statement")) {
                 alterStatement.apply(writer, true);
             } catch (TableStructureChangesException e) {
-                // Should never happen when acceptStructureChange passed as true
-                assert false : "wtf";
+                assert false : "TableStructureChangesException not happen when acceptStructureChange passed as true";
             }
         }
     }
