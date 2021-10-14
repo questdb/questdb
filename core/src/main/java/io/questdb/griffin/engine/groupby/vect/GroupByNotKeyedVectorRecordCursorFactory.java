@@ -107,7 +107,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
                 final int columnIndex = vaf.getColumnIndex();
                 final long pageAddress = frame.getPageAddress(columnIndex);
                 final long pageSize = frame.getPageSize(columnIndex);
-                final int colSizeShr = frame.getColumnSize(columnIndex);
+                final int colSizeShr = frame.getColumnShiftBits(columnIndex);
                 long seq = pubSeq.next();
                 if (seq < 0) {
                     // diy the func

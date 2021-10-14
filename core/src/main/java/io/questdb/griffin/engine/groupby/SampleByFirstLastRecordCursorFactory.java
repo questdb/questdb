@@ -362,7 +362,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                         record.switchFrame();
 
                         // Switch to new data frame
-                        frameNextRowId = dataFrameLo = currentFrame.getTopRowIndex();
+                        frameNextRowId = dataFrameLo = currentFrame.getPartitionLo();
                         dataFrameHi = dataFrameLo + currentFrame.getPageSize(timestampIndex) / Long.BYTES;
 
                         // Re-fetch index cursor to correctly position it to frameNextRowId

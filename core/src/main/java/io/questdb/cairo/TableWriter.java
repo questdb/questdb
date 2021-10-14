@@ -118,7 +118,6 @@ public class TableWriter implements Closeable {
     private final ObjList<Runnable> o3NullSetters;
     private final ObjList<MemoryCARW> o3Columns;
     private final ObjList<MemoryCARW> o3Columns2;
-    private final TableBlockWriter blockWriter;
     private final TimestampValueRecord dropPartitionFunctionRec = new TimestampValueRecord();
     private final ObjList<O3CallbackTask> o3PendingCallbackTasks = new ObjList<>();
     private final O3ColumnUpdateMethod oooSortVarColumnRef = this::o3SortVarColumn;
@@ -242,7 +241,6 @@ public class TableWriter implements Closeable {
         this.path.of(root).concat(tableName);
         this.other = new Path().of(root).concat(tableName);
         this.rootLen = path.length();
-        this.blockWriter = new TableBlockWriter(configuration, this.messageBus);
         try {
             if (lock) {
                 lock();
@@ -700,9 +698,6 @@ public class TableWriter implements Closeable {
 
     @Override
     public void close() {
-        if (null != blockWriter) {
-            blockWriter.clear();
-        }
         if (isOpen() && lifecycleManager.close()) {
             doClose(true);
         }
@@ -798,13 +793,6 @@ public class TableWriter implements Closeable {
 
     public boolean isOpen() {
         return tempMem16b != 0;
-    }
-
-    public TableBlockWriter newBlock() {
-        bumpMasterRef();
-        txFile.newBlock();
-        blockWriter.open(this);
-        return blockWriter;
     }
 
     public Row newRow(long timestamp) {
@@ -2221,7 +2209,6 @@ public class TableWriter implements Closeable {
         freeSymbolMapWriters();
         freeIndexers();
         Misc.free(txFile);
-        Misc.free(blockWriter);
         Misc.free(metaMem);
         Misc.free(ddlMem);
         Misc.free(indexMem);

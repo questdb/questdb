@@ -25,7 +25,6 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TableBlockWriter.TableBlockWriterTaskHolder;
 import io.questdb.mp.*;
 import io.questdb.std.Misc;
 import io.questdb.tasks.*;
@@ -89,18 +88,6 @@ public interface MessageBus extends Closeable {
     RingQueue<O3PurgeTask> getO3PurgeQueue();
 
     MCSequence getO3PurgeSubSeq();
-
-    default Sequence getTableBlockWriterPubSeq() {
-        return null;
-    }
-
-    default RingQueue<TableBlockWriterTaskHolder> getTableBlockWriterQueue() {
-        return null;
-    }
-
-    default Sequence getTableBlockWriterSubSeq() {
-        return null;
-    }
 
     MPSequence getTableWriterCommandPubSeq();
 

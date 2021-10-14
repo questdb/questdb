@@ -2767,18 +2767,6 @@ public class SqlCodeGenerator implements Mutable {
                         columnIndexes,
                         columnSizes
                 );
-/*
-                return new TableReaderRecordCursorFactory(
-                        myMeta,
-                        engine,
-                        tableName,
-                        model.getTableId(),
-                        model.getTableVersion(),
-                        columnIndexes,
-                        columnSizes,
-                        framingSupported
-                );
-*/
             }
 
             if (latestByColumnCount == 1 && myMeta.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(0))) {

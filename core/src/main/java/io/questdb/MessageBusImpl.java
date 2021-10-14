@@ -25,7 +25,6 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TableBlockWriter.TableBlockWriterTaskHolder;
 import io.questdb.mp.*;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
@@ -38,10 +37,6 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<VectorAggregateTask> vectorAggregateQueue;
     private final MPSequence vectorAggregatePubSeq;
     private final MCSequence vectorAggregateSubSeq;
-
-    private final RingQueue<TableBlockWriterTaskHolder> tableBlockWriterQueue;
-    private final MPSequence tableBlockWriterPubSeq;
-    private final MCSequence tableBlockWriterSubSeq;
 
     private final RingQueue<O3CallbackTask> o3CallbackQueue;
     private final MPSequence o3CallbackPubSeq;
@@ -91,11 +86,6 @@ public class MessageBusImpl implements MessageBus {
         this.vectorAggregatePubSeq = new MPSequence(vectorAggregateQueue.getCapacity());
         this.vectorAggregateSubSeq = new MCSequence(vectorAggregateQueue.getCapacity());
         vectorAggregatePubSeq.then(vectorAggregateSubSeq).then(vectorAggregatePubSeq);
-
-        this.tableBlockWriterQueue = new RingQueue<>(TableBlockWriterTaskHolder::new, configuration.getTableBlockWriterQueueCapacity());
-        this.tableBlockWriterPubSeq = new MPSequence(tableBlockWriterQueue.getCapacity());
-        this.tableBlockWriterSubSeq = new MCSequence(tableBlockWriterQueue.getCapacity());
-        tableBlockWriterPubSeq.then(tableBlockWriterSubSeq).then(tableBlockWriterPubSeq);
 
         this.o3CallbackQueue = new RingQueue<>(O3CallbackTask::new, configuration.getO3CallbackQueueCapacity());
         this.o3CallbackPubSeq = new MPSequence(this.o3CallbackQueue.getCapacity());
@@ -266,21 +256,6 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getO3PurgeSubSeq() {
         return o3PurgeSubSeq;
-    }
-
-    @Override
-    public Sequence getTableBlockWriterPubSeq() {
-        return tableBlockWriterPubSeq;
-    }
-
-    @Override
-    public RingQueue<TableBlockWriterTaskHolder> getTableBlockWriterQueue() {
-        return tableBlockWriterQueue;
-    }
-
-    @Override
-    public Sequence getTableBlockWriterSubSeq() {
-        return tableBlockWriterSubSeq;
     }
 
     @Override

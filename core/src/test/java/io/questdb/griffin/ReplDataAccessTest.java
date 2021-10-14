@@ -27,41 +27,71 @@ package io.questdb.griffin;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Ignore;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class ReplDataAccessTest extends AbstractGriffinTest {
 
     @Test
-    @Ignore
-    public void testSimple() throws SqlException {
-        compiler.compile("create table x as (select" +
-                " rnd_int() a," +
-                        " rnd_str() b," +
-                        " timestamp_sequence(0, 1000000) t" +
-                        " from long_sequence(10000000)" +
-                        ") timestamp (t) partition by DAY",
-                sqlExecutionContext
+    public void testSimple() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    compiler.compile("create table x as (select" +
+                                    " rnd_int() a," +
+                                    " rnd_str() b," +
+                                    " timestamp_sequence(0, 100000000) t" +
+                                    " from long_sequence(1000)" +
+                                    ") timestamp (t) partition by DAY",
+                            sqlExecutionContext
+                    );
+
+                    TestUtils.printSql(
+                            compiler,
+                            sqlExecutionContext,
+                            "select b from x",
+                            sink
+                    );
+
+                    final StringSink actualSink = new StringSink();
+                    // header
+                    actualSink.put("b\n");
+
+                    try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
+
+                        // test that we can read string column without using index
+                        try (PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext)) {
+                            PageFrame frame;
+                            while ((frame = pageFrameCursor.next()) != null) {
+                                long varAddress = frame.getPageAddress(1);
+                                long fixAddress = frame.getIndexPageAddress(1);
+                                long topOfVarAddress = varAddress;
+                                long count = frame.getPartitionHi() - frame.getPartitionLo();
+                                while (count > 0) {
+
+                                    // validate that index column has correct offsets
+                                    Assert.assertEquals(varAddress - topOfVarAddress, Unsafe.getUnsafe().getLong(fixAddress));
+                                    fixAddress += 8;
+
+                                    int len = Unsafe.getUnsafe().getInt(varAddress); // string len
+                                    varAddress += 4;
+                                    if (len != -1) {
+                                        for (int i = 0; i < len; i++) {
+                                            actualSink.put(Unsafe.getUnsafe().getChar(varAddress + i * 2L));
+                                        }
+                                        varAddress += len * 2L;
+                                    }
+                                    actualSink.put('\n');
+                                    count--;
+                                }
+                                Assert.assertEquals(varAddress - topOfVarAddress, frame.getPageSize(1));
+                            }
+                            TestUtils.assertEquals(sink, actualSink);
+                        }
+                    }
+                }
         );
-
-/*
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                "x",
-                sink
-        );
-
-        System.out.println(sink);
-*/
-
-        RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory();
-        PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext);
-        PageFrame frame;
-        while ((frame = pageFrameCursor.next()) != null) {
-            System.out.println("f");
-        }
     }
-
 }
