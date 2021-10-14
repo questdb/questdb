@@ -171,11 +171,6 @@ public class LineUdpLexerTest {
     }
 
     @Test
-    public void testNoFields4() {
-        assertError("measurement,tag=x 10000", LineUdpParser.EVT_FIELD_NAME, LineUdpParser.ERROR_EXPECTED, 23);
-    }
-
-    @Test
     public void testNoMeasure1() {
         assertError("tag=value field=x 10000\n", LineUdpParser.EVT_MEASUREMENT, LineUdpParser.ERROR_EXPECTED, 3);
     }
