@@ -109,13 +109,14 @@ The following table shows query execution time of a billion rows run on a
 - [GitHub issues:](https://github.com/questdb/questdb/issues) Report bugs or issues with QuestDB.
 - [GitHub discussions:](https://github.com/questdb/questdb/discussions) Propose new features or show what you've built.
 - [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) Look for common troubleshooting solutions.
+
 ### 🚢 Deploy QuestDB
 
-- [AWS AMI](https://questdb.io/docs/guides/aws-official-ami) 
-- [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)  
+- [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
+- [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)
 - [Official Docker image](https://questdb.io/docs/get-started/docker)
 - [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean)
-- [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)  
+- [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)
 
 ## Contribute
 
@@ -132,8 +133,8 @@ with contributing:
 - [Create a fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
   of QuestDB and submit a pull request with your proposed changes.
 
-
-✨ As a sign of our gratitude, we also send **QuestDB swag** to our contributors. [Claim your swag here.](https://questdb.io/community)  
+✨ As a sign of our gratitude, we also send **QuestDB swag** to our contributors.
+[Claim your swag here.](https://questdb.io/community)
 
 A big thanks goes to the following wonderful people who have contributed to
 QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
