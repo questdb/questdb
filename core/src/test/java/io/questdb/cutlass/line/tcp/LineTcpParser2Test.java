@@ -33,7 +33,6 @@ import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -41,13 +40,36 @@ import java.nio.charset.StandardCharsets;
 
 public class LineTcpParser2Test extends LineUdpLexerTest {
     private final LineTcpParser lineTcpParser = new LineTcpParser();
-    private ErrorCode lastErrorCode;
     private boolean onErrorLine;
     private long startOfLineAddr;
 
     @BeforeClass
     public static void init() {
         Os.init();
+    }
+
+    @Override
+    public void testDanglingCommaOnTag() {
+        assertThat(
+                "measurement,tag=value field=x 10000\n",
+                "measurement,tag=value, field=x 10000\n"
+        );
+    }
+
+    @Override
+    public void testNoFieldValue2() {
+        assertThat(
+                "measurement,tag=x f= 10000\n",
+                "measurement,tag=x f= 10000\n"
+        );
+    }
+
+    @Override
+    public void testNoFieldValue3() {
+        assertThat(
+                "measurement,tag=x f= 10000\n",
+                "measurement,tag=x f=, 10000\n"
+        );
     }
 
     @Override
@@ -95,73 +117,35 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     }
 
     @Test
-    public void testWithQuotedStringsWithSpaces() {
+    public void testNoFields() {
+        // Single space char between last tag and timestamp
         assertThat(
-                "measurement,tag=value,tag2=value field=10000i,field2=\"longstring\",fld3=\"short string\" 100000\n",
-                "measurement,tag=value,tag2=value field=10000i,field2=\"longstring\",fld3=\"short string\" 100000\n"
+                "measurement,tag=x 10000\n",
+                "measurement,tag=x 10000\n"
         );
+
+        // Single space char after last tag and invalid timestamp
+        assertThat(
+                "--ERROR=INVALID_TIMESTAMP--","measurement,tag=x 10000i\n"
+        );
+
+        // Double space char between last tag and timestamp
+        assertThat(
+                "measurement,tag=x 10000\n",
+                "measurement,tag=x  10000\n"
+        );
+
+        // Double space char between last tag and invalid timestamp
+        assertThat(
+                "--ERROR=INVALID_TIMESTAMP--","measurement,tag=x  10000i\n"
+        );
+
     }
 
     @Test
-    public void testWithQuotedStringsWithEscapedQuotes() {
-        assertThat(
-                "measurement,tag=value,tag2=value field=10000i,field2=\"str\" escaped\\ end\" 100000\n",
-                "measurement,tag=value,tag2=value field=10000i,field2=\"str\\\" escaped\\\\ end\" 100000\n"
-        );
-
-        assertThat(
-                "measurement field2=\"double escaped \\ \" and quoted\" 100000\n",
-                "measurement field2=\"double escaped \\\\ \\\" and quoted\" 100000\n"
-        );
-
-        assertThat(
-                "measurement field2=\"double escaped \\\" and quoted2\" 100000\n",
-                "measurement field2=\"double escaped \\\\\\\" and quoted2\" 100000\n"
-        );
-
-        assertThat(
-                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\" 100000\n",
-                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\" 100000\n"
-        );
-
-        assertThat(
-                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\",field3=34 100000\n",
-                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\",field3=34 100000\n"
-        );
-    }
-
-    @Test
-    public void testWithQuotedStringsWithEscapedQuotesUnsuccessful() {
-        assertThat(
-                "-- error --\n",
-                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,lineend\n"
-        );
-    }
-
-    @Test
-    public void testWithEscapedTagValues() {
-        assertThat(
-                "measurement,tag=value with space,tag2=value field=10000i,field2=\"str=special,end\" 100000\n",
-                "measurement,tag=value\\ with\\ space,tag2=value field=10000i,field2=\"str=special,end\" 100000\n"
-        );
-
-        assertThat(
-                "measurement,tag=value\\with\\slash,tag2=value field=10000i,field2=\"str=special,end\\ \" 100000\n",
-                "measurement,tag=value\\\\with\\\\slash,tag2=value field=10000i,field2=\"str=special,end\\\\ \" 100000\n"
-        );
-    }
-
-    @Test
-    public void testWithEscapedKeys() {
-        assertThat(
-                "measurement,t ag=value with space,tag2=value field=10000i,field 2=\"str=special,end\" 100000\n",
-                "measurement,t\\ ag=value\\ with\\ space,tag2=value field=10000i,field\\ 2=\"str=special,end\" 100000\n"
-        );
-
-        assertThat(
-                "measurement,t\"ag=value with space,tag2=value field=10000i,field 2=\"str=special,end\" 100000\n",
-                "measurement,t\\\"ag=value\\ with\\ space,tag2=value field=10000i,field\\ 2=\"str=special,end\" 100000\n"
-        );
+    public void testNoFieldsAndNotTags() {
+        assertThat("--ERROR=INCOMPLETE_FIELD--","measurement 10000\n"); // One space char
+        assertThat("--ERROR=NO_FIELDS--","measurement  10000\n"); // Two space chars
     }
 
     @Test
@@ -204,28 +188,116 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         );
     }
 
-    @Override
-    public void testNoFieldValue2() {
+    @Test
+    public void testWithEscapedKeys() {
         assertThat(
-                "measurement,tag=x f= 10000\n",
-                "measurement,tag=x f= 10000\n"
+                "measurement,t ag=value with space,tag2=value field=10000i,field 2=\"str=special,end\" 100000\n",
+                "measurement,t\\ ag=value\\ with\\ space,tag2=value field=10000i,field\\ 2=\"str=special,end\" 100000\n"
+        );
+
+        assertThat(
+                "measurement,t\"ag=value with space,tag2=value field=10000i,field 2=\"str=special,end\" 100000\n",
+                "measurement,t\\\"ag=value\\ with\\ space,tag2=value field=10000i,field\\ 2=\"str=special,end\" 100000\n"
         );
     }
 
-    @Override
-    public void testNoFieldValue3() {
+    @Test
+    public void testWithEscapedTagValues() {
         assertThat(
-                "measurement,tag=x f= 10000\n",
-                "measurement,tag=x f=, 10000\n"
+                "measurement,tag=value with space,tag2=value field=10000i,field2=\"str=special,end\" 100000\n",
+                "measurement,tag=value\\ with\\ space,tag2=value field=10000i,field2=\"str=special,end\" 100000\n"
+        );
+
+        assertThat(
+                "measurement,tag=value\\with\\slash,tag2=value field=10000i,field2=\"str=special,end\\ \" 100000\n",
+                "measurement,tag=value\\\\with\\\\slash,tag2=value field=10000i,field2=\"str=special,end\\\\ \" 100000\n"
         );
     }
 
-    @Override
-    public void testDanglingCommaOnTag() {
+    @Test
+    public void testWithQuotedStringsWithEscapedQuotes() {
         assertThat(
-                "measurement,tag=value field=x 10000\n",
-                "measurement,tag=value, field=x 10000\n"
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str\" escaped\\ end\" 100000\n",
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str\\\" escaped\\\\ end\" 100000\n"
         );
+
+        assertThat(
+                "measurement field2=\"double escaped \\ \" and quoted\" 100000\n",
+                "measurement field2=\"double escaped \\\\ \\\" and quoted\" 100000\n"
+        );
+
+        assertThat(
+                "measurement field2=\"double escaped \\\" and quoted2\" 100000\n",
+                "measurement field2=\"double escaped \\\\\\\" and quoted2\" 100000\n"
+        );
+
+        assertThat(
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\" 100000\n",
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\" 100000\n"
+        );
+
+        assertThat(
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\",field3=34 100000\n",
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,end\",field3=34 100000\n"
+        );
+    }
+
+    @Test
+    public void testWithQuotedStringsWithEscapedQuotesUnsuccessful() {
+        assertThat(
+                "--ERROR=INVALID_FIELD_VALUE--",
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,lineend\n"
+        );
+    }
+
+    @Test
+    public void testWithQuotedStringsWithSpaces() {
+        assertThat(
+                "measurement,tag=value,tag2=value field=10000i,field2=\"longstring\",fld3=\"short string\" 100000\n",
+                "measurement,tag=value,tag2=value field=10000i,field2=\"longstring\",fld3=\"short string\" 100000\n"
+        );
+    }
+
+    private void assembleLine() {
+        int nEntities = lineTcpParser.getnEntities();
+        Chars.utf8Decode(lineTcpParser.getMeasurementName().getLo(), lineTcpParser.getMeasurementName().getHi(), sink);
+        int n = 0;
+        boolean tagsComplete = false;
+        while (n < nEntities) {
+            ProtoEntity entity = lineTcpParser.getEntity(n++);
+            if (!tagsComplete && entity.getType() != LineTcpParser.ENTITY_TYPE_TAG) {
+                tagsComplete = true;
+                sink.put(' ');
+            } else {
+                sink.put(',');
+            }
+            Chars.utf8Decode(entity.getName().getLo(), entity.getName().getHi(), sink);
+            sink.put('=');
+            switch (entity.getType()) {
+                case LineTcpParser.ENTITY_TYPE_STRING:
+                    sink.put('"');
+                    Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), sink);
+                    sink.put('"');
+                    break;
+                case LineTcpParser.ENTITY_TYPE_INTEGER:
+                case LineTcpParser.ENTITY_TYPE_LONG256:
+                    sink.put(entity.getValue()).put('i');
+                    break;
+                default:
+                    Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), sink);
+                    break;
+            }
+        }
+
+        if (lineTcpParser.hasTimestamp()) {
+            sink.put(' ');
+            Numbers.append(sink, lineTcpParser.getTimestamp());
+        }
+
+        if (lineTcpParser.hasNonAsciiChars()) {
+            sink.put("--non ascii--");
+        }
+        sink.put('\n');
     }
 
     protected void assertThat(CharSequence expected, String lineStr) throws LineProtoException {
@@ -248,7 +320,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
 
         try {
             for (int i = start; i < len; i++) {
-                for(int nextBreak = 0; nextBreak < len - i; nextBreak++) {
+                for (int nextBreak = 0; nextBreak < len - i; nextBreak++) {
                     sink.clear();
                     resetParser(mem + fullLen);
                     parseMeasurement(memFull, mem, fullLen, i, 0);
@@ -274,55 +346,6 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         }
     }
 
-    @Override
-    protected void assertError(CharSequence line, int state, int code, int position) throws LineProtoException {
-        byte[] bytes = line.toString().getBytes(StandardCharsets.UTF_8);
-        int len = bytes.length;
-        final boolean endWithEOL = bytes[len - 1] == '\n' || bytes[len - 1] == '\r';
-        if (!endWithEOL) {
-            len++;
-        }
-        long mem = Unsafe.malloc(len + 1, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 1; i < len; i++) {
-                for (int j = 0; j < bytes.length; j++) {
-                    Unsafe.getUnsafe().putByte(mem + j, bytes[j]);
-                }
-                if (!endWithEOL) {
-                    Unsafe.getUnsafe().putByte(mem + bytes.length, (byte) '\n');
-                }
-                sink.clear();
-                resetParser(mem);
-                parseMeasurement(mem + i);
-                Assert.assertTrue(parseMeasurement(mem + len));
-                Assert.assertNotNull(lastErrorCode);
-            }
-        } finally {
-            Unsafe.free(mem, len, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    private void resetParser(long mem) {
-        lastErrorCode = null;
-        onErrorLine = false;
-        startOfLineAddr = mem;
-        lineTcpParser.of(mem);
-    }
-
-    private boolean parseMeasurement(long fullBuffer, long parseBuffer, long buffersLen, long parseLen, long prevParseLen) {
-        long shl = parseLen - prevParseLen;
-
-        // This will copy ILP data from fullBuffer to parseBuffer so that the data ends at the end of the buffer
-        long parseHi = parseBuffer + buffersLen;
-        Vect.memmove(parseHi - parseLen, parseHi - prevParseLen, prevParseLen);
-        Vect.memcpy(fullBuffer + prevParseLen, parseHi - shl, shl);
-
-        // bufHi always the same, data alwasy ends at the end of the buffer
-        // the only difference from iteration to iteration is where the data starts, which is set in shl
-        lineTcpParser.shl(shl);
-        return parseMeasurement(parseHi);
-    }
-
     private boolean parseMeasurement(long bufHi) {
         while (lineTcpParser.getBufferAddress() < bufHi) {
             ParseResult rc;
@@ -346,57 +369,36 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                 case ERROR:
                     Assert.assertFalse(onErrorLine);
                     onErrorLine = true;
-                    lastErrorCode = lineTcpParser.getErrorCode();
                     StringSink tmpSink = new StringSink();
                     if (Chars.utf8Decode(startOfLineAddr, lineTcpParser.getBufferAddress(), tmpSink)) {
                         sink.put(tmpSink.toString());
                     }
-                    sink.put("-- error --\n");
+                    sink.put("--ERROR=");
+                    sink.put(lineTcpParser.getErrorCode().toString());
+                    sink.put("--");
                     break;
             }
         }
         return true;
     }
 
-    private void assembleLine() {
-        int nEntities = lineTcpParser.getnEntities();
-        Chars.utf8Decode(lineTcpParser.getMeasurementName().getLo(), lineTcpParser.getMeasurementName().getHi(), sink);
-        int n = 0;
-        boolean tagsComplete = false;
-        while (n < nEntities) {
-            ProtoEntity entity = lineTcpParser.getEntity(n++);
-            if (!tagsComplete && entity.getType() != LineTcpParser.ENTITY_TYPE_TAG) {
-                tagsComplete = true;
-                sink.put(' ');
-            } else {
-                sink.put(',');
-            }
-            Chars.utf8Decode(entity.getName().getLo(), entity.getName().getHi(), sink);
-            sink.put('=');
-            switch (entity.getType()) {
-                case LineTcpParser.ENTITY_TYPE_STRING:
-                    sink.put('"');
-                    Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), sink);
-                    sink.put('"');
-                    break;
-                    case LineTcpParser.ENTITY_TYPE_INTEGER:
-                case LineTcpParser.ENTITY_TYPE_LONG256:
-                        sink.put(entity.getValue()).put('i');
-                        break;
-                default:
-                    Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), sink);
-                    break;
-            }
-        }
+    private boolean parseMeasurement(long fullBuffer, long parseBuffer, long buffersLen, long parseLen, long prevParseLen) {
+        long shl = parseLen - prevParseLen;
 
-        if (lineTcpParser.hasTimestamp()) {
-            sink.put(' ');
-            Numbers.append(sink, lineTcpParser.getTimestamp());
-        }
+        // This will copy ILP data from fullBuffer to parseBuffer so that the data ends at the end of the buffer
+        long parseHi = parseBuffer + buffersLen;
+        Vect.memmove(parseHi - parseLen, parseHi - prevParseLen, prevParseLen);
+        Vect.memcpy(fullBuffer + prevParseLen, parseHi - shl, shl);
 
-        if (lineTcpParser.hasNonAsciiChars()) {
-            sink.put("--non ascii--");
-        }
-        sink.put('\n');
+        // bufHi always the same, data alwasy ends at the end of the buffer
+        // the only difference from iteration to iteration is where the data starts, which is set in shl
+        lineTcpParser.shl(shl);
+        return parseMeasurement(parseHi);
+    }
+
+    private void resetParser(long mem) {
+        onErrorLine = false;
+        startOfLineAddr = mem;
+        lineTcpParser.of(mem);
     }
 }

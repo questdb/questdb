@@ -30,6 +30,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -856,6 +857,38 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCancelSecondRowNonPartitioned() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.NONE, N);
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+
+                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+
+                TableWriter.Row r = writer.newRow(ts);
+                r.putInt(0, 1234);
+                r.append();
+
+                r = writer.newRow(ts);
+                r.putInt(0, 1234);
+                r.cancel();
+
+                Assert.assertEquals(1, writer.size());
+
+                populateProducts(writer, new Rnd(), ts, N, 60 * 60000 * 1000L);
+                Assert.assertEquals(N + 1, writer.size());
+                writer.commit();
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+                Assert.assertEquals(N + 1, writer.size());
+            }
+        });
+
+    }
+
+
+    @Test
     public void testCancelFirstRowNonPartitioned() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10000;
@@ -915,6 +948,36 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
                 Assert.assertEquals(0, writer.size());
                 Assert.assertEquals(2, getDirCount());
+            }
+        });
+    }
+
+
+    @Test
+    public void testCancelFirstRowSecondPartition() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(FF, PartitionBy.DAY, 4);
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+                writer.newRow(TimestampFormatUtils.parseTimestamp("2013-03-01T00:00:00.000Z")).append();
+                writer.newRow(TimestampFormatUtils.parseTimestamp("2013-03-01T00:00:00.000Z")).append();
+
+                TableWriter.Row r = writer.newRow(TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z"));
+                r.cancel();
+                writer.commit();
+                Assert.assertEquals(2, writer.size());
+
+
+                writer.newRow(TimestampFormatUtils.parseTimestamp("2013-03-01T00:00:00.000Z")).append();
+                writer.newRow(TimestampFormatUtils.parseTimestamp("2013-03-01T00:00:00.000Z")).append();
+                r = writer.newRow(TimestampFormatUtils.parseTimestamp("2013-03-05T00:00:00.000Z"));
+                r.cancel();
+                r.cancel();
+                Assert.assertEquals(4, writer.size());
+            }
+
+            // Last 2 rows are not committed, expect size to revert to 2
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+                Assert.assertEquals(2, writer.size());
             }
         });
     }
@@ -1908,6 +1971,54 @@ public class TableWriterTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testO3AferRowCancel() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "weather", PartitionBy.DAY)
+                    .col("windspeed", ColumnType.DOUBLE)
+                    .timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+
+            try (TableWriter writer = new TableWriter(configuration, "weather")) {
+                TableWriter.Row r;
+                r = writer.newRow(IntervalUtils.parseFloorPartialDate("2021-01-31"));
+                r.putDouble(0, 1.0);
+                r.append();
+
+                // Out of order
+                r = writer.newRow(IntervalUtils.parseFloorPartialDate("2021-01-30"));
+                r.putDouble(0, 1.0);
+                r.cancel();
+
+                // Back in order
+                r = writer.newRow(IntervalUtils.parseFloorPartialDate("2021-02-01"));
+                r.putDouble(0, 1.0);
+                r.append();
+
+                Assert.assertEquals(2, writer.size());
+                writer.commit();
+            }
+
+            long[] expectedTs = new long[] {
+                    IntervalUtils.parseFloorPartialDate("2021-01-31"),
+                    IntervalUtils.parseFloorPartialDate("2021-02-01")
+            };
+            try (TableReader reader = new TableReader(configuration, "weather")) {
+                int col = reader.getMetadata().getColumnIndex("timestamp");
+                RecordCursor cursor = reader.getCursor();
+                final Record r = cursor.getRecord();
+                int i = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals("Row " + i, expectedTs[i++], r.getTimestamp(col));
+                }
+                Assert.assertEquals(expectedTs.length, i);
+            }
+        });
+    }
+
 
     @Test
     public void testOpenUnsupportedIndex() throws Exception {

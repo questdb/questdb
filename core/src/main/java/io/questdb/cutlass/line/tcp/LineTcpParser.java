@@ -143,10 +143,6 @@ public class LineTcpParser implements Closeable {
             // take the byte
             byte b = Unsafe.getUnsafe().getByte(bufAt);
             hasNonAscii |= b < 0;
-            if (!hasNonAscii)
-            {
-                int i = 0;
-            }
             boolean endOfLine = false;
             boolean appendByte = false;
             switch (b) {
@@ -339,6 +335,12 @@ public class LineTcpParser implements Closeable {
 
             if (endOfEntityByte == (byte) '\n') {
                 return true;
+            }
+        } else if (tagsComplete && (endOfEntityByte == '\n' || endOfEntityByte == '\r')) {
+            if (currentEntity != null && currentEntity.getType() == ENTITY_TYPE_TAG) {
+                // One token after last tag, and no fields
+                // This must be timestamp
+                return expectTimestamp(endOfEntityByte, bufHi);
             }
         }
 

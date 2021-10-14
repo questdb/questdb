@@ -48,6 +48,7 @@ public class LineUdpSender extends AbstractCharSink implements Closeable {
     private final long sockaddr;
     protected final long fd;
     protected final NetworkFacade nf;
+    private boolean quoted = false;
 
     private long lo;
     private long hi;
@@ -138,7 +139,11 @@ public class LineUdpSender extends AbstractCharSink implements Closeable {
     }
 
     public LineUdpSender field(CharSequence name, CharSequence value) {
-        field(name).putQuoted(value);
+        field(name).put('"');
+        quoted = true;
+        encodeUtf8(value);
+        quoted = false;
+        put('"');
         return this;
     }
 
@@ -195,6 +200,7 @@ public class LineUdpSender extends AbstractCharSink implements Closeable {
         if (hasMetric) {
             throw CairoException.instance(0).put("duplicate metric");
         }
+        quoted = false;
         hasMetric = true;
         return put(metric);
     }
@@ -236,11 +242,20 @@ public class LineUdpSender extends AbstractCharSink implements Closeable {
             case ' ':
             case ',':
             case '=':
-            case '"':
-            case '\\':
-                put('\\');
+                if (!quoted) {
+                    put('\\');
+                }
             default:
                 put(c);
+                break;
+            case '"':
+                if (quoted) {
+                    put('\\');
+                }
+                put('\"');
+                break;
+            case '\\':
+                put('\\').put('\\');
                 break;
         }
     }
