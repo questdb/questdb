@@ -336,6 +336,12 @@ public class LineTcpParser implements Closeable {
             if (endOfEntityByte == (byte) '\n') {
                 return true;
             }
+        } else if (tagsComplete && (endOfEntityByte == '\n' || endOfEntityByte == '\r')) {
+            if (currentEntity != null && currentEntity.getType() == ENTITY_TYPE_TAG) {
+                // One token after last tag, and no fields
+                // This must be timestamp
+                return expectTimestamp(endOfEntityByte, bufHi);
+            }
         }
 
         if (tagsComplete) {

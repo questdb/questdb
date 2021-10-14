@@ -112,9 +112,6 @@ public class LineUdpSender extends AbstractCharSink implements Closeable {
     }
 
     public void $(long timestamp) {
-        if (noFields) {
-            put(' ');
-        }
         put(' ').put(timestamp);
         $();
     }
@@ -241,26 +238,27 @@ public class LineUdpSender extends AbstractCharSink implements Closeable {
 
     @Override
     protected void putUtf8Special(char c) {
-        if (!quoted) {
-            switch (c) {
-                case ' ':
-                case ',':
-                case '=':
-                case '\\':
-                    put('\\');
-                default:
-                    put(c);
+        switch (c) {
+            case '"':
+                if (quoted) {
+                    put('\\').put('\"');
                     break;
-            }
-        } else {
-            switch (c) {
-                case '"':
-                case '\\':
-                    put('\\');
-                default:
-                    put(c);
+                } else {
+                    put('\"');
                     break;
-            }
+                }
+            case '\\':
+                put('\\').put('\\');
+                break;
+            case ' ':
+            case ',':
+            case '=':
+                if (!quoted) {
+                    put('\\');
+                }
+            default:
+                put(c);
+                break;
         }
     }
 

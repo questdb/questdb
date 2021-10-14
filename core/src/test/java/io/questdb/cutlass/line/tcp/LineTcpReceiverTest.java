@@ -505,6 +505,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                              null)) {
             String expected =
                     "out\ttimestamp\tin\n" +
+                            "1.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
                             "NaN\t1990-01-01T00:00:00.000000Z\t2.0\n" +
                             "NaN\t1990-01-01T02:13:20.000000Z\t3.0\n" +
                             "NaN\t1990-01-01T05:00:00.000000Z\t4.0\n";
