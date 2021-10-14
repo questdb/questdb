@@ -848,6 +848,25 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTcpSenderQuotedTagValue() throws Exception {
+        runInContext((receiver) -> {
+            send(receiver,  "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag1", "\"value 1\"")
+                            .$(0);
+                    lineTcpSender.flush();
+                }
+            });
+
+            String expected = "tag1\ttimestamp\n" +
+                    "\"value 1\"\t1970-01-01T00:00:00.000000Z\n";
+            assertTable(expected, "table");
+        });
+    }
+
+    @Test
     public void testFirstRowIsCancelled() throws Exception {
         runInContext((receiver) -> {
             send(receiver,  "table", WAIT_ENGINE_TABLE_RELEASE, () -> {

@@ -241,12 +241,10 @@ public class LineUdpSender extends AbstractCharSink implements Closeable {
         switch (c) {
             case '"':
                 if (quoted) {
-                    put('\\').put('\"');
-                    break;
-                } else {
-                    put('\"');
-                    break;
+                    put('\\');
                 }
+                put('\"');
+                break;
             case '\\':
                 put('\\').put('\\');
                 break;
