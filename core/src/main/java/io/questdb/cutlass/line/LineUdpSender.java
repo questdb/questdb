@@ -239,15 +239,6 @@ public class LineUdpSender extends AbstractCharSink implements Closeable {
     @Override
     protected void putUtf8Special(char c) {
         switch (c) {
-            case '"':
-                if (quoted) {
-                    put('\\');
-                }
-                put('\"');
-                break;
-            case '\\':
-                put('\\').put('\\');
-                break;
             case ' ':
             case ',':
             case '=':
@@ -256,6 +247,15 @@ public class LineUdpSender extends AbstractCharSink implements Closeable {
                 }
             default:
                 put(c);
+                break;
+            case '"':
+                if (quoted) {
+                    put('\\');
+                }
+                put('\"');
+                break;
+            case '\\':
+                put('\\').put('\\');
                 break;
         }
     }
