@@ -155,6 +155,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         @Override
         public @Nullable PageFrame next() {
 
+/*
             if (partitionIndex > -1) {
                 computePageMin(reader.getColumnBase(partitionIndex));
                 if (pageMin < Long.MAX_VALUE) {
@@ -164,38 +165,87 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                 }
             }
 
+*/
             DataFrame dataFrame;
             while ((dataFrame = dataFrameCursor.next()) != null) {
                 this.partitionIndex = dataFrame.getPartitionIndex();
                 final long partitionLo = dataFrame.getRowLo();
                 final long partitionHi = dataFrame.getRowHi();
+                this.frameTopRowIndex = partitionLo;
 
+                final int base = reader.getColumnBase(dataFrame.getPartitionIndex());
+                for (int i = 0; i < columnCount; i++) {
+                    final int columnIndex = columnIndexes.getQuick(i);
+                    final int readerColIndex = TableReader.getPrimaryColumnIndex(base, columnIndex);
+                    final MemoryR col = reader.getColumn(readerColIndex);
+                    // when the entire column is NULL we make it skip the whole of the data frame
+                    long top = col instanceof NullColumn ? partitionHi : reader.getColumnTop(base, columnIndex);
+
+                    long partitionLoAdjusted = partitionLo - top;
+                    long partitionHiAdjusted = partitionHi - top;
+
+                    if (partitionHiAdjusted - partitionLoAdjusted > 0) {
+                        final int sh = columnSizes.getQuick(i);
+                        if (sh > -1) {
+                            // this assumes reader uses single page to map the whole column
+                            long address = col.getPageAddress(0);
+                            long addressSize = partitionHiAdjusted << sh;
+                            long offset = partitionLoAdjusted << sh;
+                            columnPageAddress.setQuick(i * 2, address + offset);
+                            pageSizes.setQuick(i * 2, addressSize - offset);
+                        } else {
+                            final MemoryR fixCol = reader.getColumn(readerColIndex + 1);
+                            long fixAddress = fixCol.getPageAddress(0);
+                            long fixAddressSize = partitionHiAdjusted << 3;
+                            long fixOffset = partitionLoAdjusted << 3;
+
+                            long varAddress = col.getPageAddress(0);
+                            long varOffset = Unsafe.getUnsafe().getLong(fixAddress + fixOffset);
+                            long varAddressSize = Unsafe.getUnsafe().getLong(fixAddress + fixAddressSize);
+
+                            columnPageAddress.setQuick(i * 2, varAddress + varOffset);
+                            columnPageAddress.setQuick(i * 2 + 1, fixAddress + fixOffset);
+                            pageSizes.setQuick(i * 2, varAddressSize - varOffset);
+                            pageSizes.setQuick(i * 2 + 1, fixAddressSize - fixOffset);
+                        }
+                    } else {
+                        columnPageAddress.setQuick(i * 2, 0);
+                        columnPageAddress.setQuick(i * 2 + 1, 0);
+                        pageSizes.setQuick(i * 2, 0);
+                        pageSizes.setQuick(i * 2 + 1, 0);
+                    }
+                }
+
+                return frame;
+/*
                 this.partitionRemaining = partitionHi - partitionLo;
 
                 if (partitionRemaining > 0) {
-                    final int base = reader.getColumnBase(dataFrame.getPartitionIndex());
+//                    final int base = reader.getColumnBase(dataFrame.getPartitionIndex());
                     // copy table tops
                     for (int i = 0; i < columnCount; i++) {
                         final int columnIndex = columnIndexes.getQuick(i);
                         topsRemaining.setQuick(i, reader.getColumnTop(base, columnIndex));
                         pages.setQuick(i, 0);
+                        // todo: why?
                         pageRowsRemaining.setQuick(i, -1L);
                     }
 
                     // reduce
                     for (int i = 0; i < columnCount; i++) {
-                        long loRemaining = partitionLo;
+                        long partitionLoRemaining = partitionLo;
                         long top = topsRemaining.getQuick(i);
                         if (top >= partitionLo) {
-                            loRemaining = 0;
+                            partitionLoRemaining = 0;
                             top -= partitionLo;
                             topsRemaining.setQuick(i, Math.min(top, partitionHi - partitionLo));
                         } else {
                             topsRemaining.setQuick(i, 0);
-                            loRemaining -= top;
+                            partitionLoRemaining -= top;
                         }
 
-                        if (loRemaining > 0) {
+                        // try to navigate to the partitionLo, the start of the partition
+                        if (partitionLoRemaining > 0) {
                             final int readerColIndex = TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i));
                             final MemoryR col = reader.getColumn(readerColIndex);
                             if (col instanceof NullColumn) {
@@ -206,27 +256,27 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                                 final int page = pages.getQuick(i);
                                 if (sh > -1) {
                                     long pageRowCount = col.getPageSize() >> sh;
-                                    if (pageRowCount < loRemaining) {
+                                    if (pageRowCount < partitionLoRemaining) {
                                         throw CairoException.instance(0).put("partition is not mapped as single page, cannot perform vector calculation");
                                     }
                                     long addr = col.getPageAddress(page);
-                                    addr += loRemaining << sh;
+                                    addr += partitionLoRemaining << sh;
                                     columnPageNextAddress.setQuick(i * 2, addr);
                                     long pageHi = Math.min(partitionHi, pageRowCount);
                                     pageRowsRemaining.setQuick(i, pageHi - partitionLo);
                                     // todo: why are we setting pages to the same value?
                                     //     should this be + 1?
-                                    pages.setQuick(i, page);
+//                                    pages.setQuick(i, page);
                                 } else {
                                     // this is index column
                                     final MemoryR col2 = reader.getColumn(readerColIndex + 1);
                                     long pageRowCount = col2.getPageSize() >> 3;
-                                    if (pageRowCount < loRemaining) {
+                                    if (pageRowCount < partitionLoRemaining) {
                                         throw CairoException.instance(0).put("partition is not mapped as single page, cannot perform vector calculation");
                                     }
 
                                     long fixAddr = col2.getPageAddress(page);
-                                    fixAddr += loRemaining << 3;
+                                    fixAddr += partitionLoRemaining << 3;
                                     columnPageNextAddress.setQuick(i * 2 + 1, fixAddr);
                                     long pageHi = Math.min(partitionHi, pageRowCount);
                                     pageRowsRemaining.setQuick(i, pageHi - partitionLo);
@@ -240,6 +290,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                     computePageMin(base);
                     return computeFrame();
                 }
+*/
             }
             frameTopRowIndex = 0;
             return null;
