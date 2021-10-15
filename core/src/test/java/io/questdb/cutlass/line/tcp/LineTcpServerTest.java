@@ -717,12 +717,12 @@ public class LineTcpServerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAlterCommand() throws Exception {
+    public void testAlterTableAddIndex() throws Exception {
         runInContext((server) -> {
             String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819999000\n" +
                     "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
                     "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
-            send(server, lineData, "plug", WAIT_ALTER_TABLE_RELEASE, false,
+            send(server, lineData, "plug", WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE, false,
                     "ALTER TABLE plug ALTER COLUMN label ADD INDEX");
 
             String expected = "label\troom\twatts\ttimestamp\n" +
@@ -747,11 +747,14 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
                     "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
 
-            send(server, lineData,
+            SqlException exception = send(server, lineData,
                     "plug",
                     WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
                     false,
                     "ALTER TABLE plug DROP COLUMN label");
+
+            Assert.assertNotNull(exception);
+            TestUtils.assertEquals("ALTER TABLE cannot change table structure while Writer is busy", exception.getFlyweightMessage());
 
             lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999001\n" +
                     "plug,label=Power,room=6B watts=\"55\" 1631817902843\n" +
@@ -838,10 +841,10 @@ public class LineTcpServerTest extends AbstractCairoTest {
         });
     }
 
-    public static final int WAIT_NO_WAIT = 0;
-    public static final int WAIT_ENGINE_TABLE_RELEASE = 1;
-    public static final int WAIT_ILP_TABLE_RELEASE = 2;
-    public static final int WAIT_ALTER_TABLE_RELEASE = 3;
+    public static final int WAIT_NO_WAIT = 0x0;
+    public static final int WAIT_ENGINE_TABLE_RELEASE = 0x1;
+    public static final int WAIT_ILP_TABLE_RELEASE = 0x2;
+    public static final int WAIT_ALTER_TABLE_RELEASE = 0x4;
 
     private void send(LineTcpServer server, String lineData, String tableName, int wait) {
         send(server, lineData, tableName, wait, true);
@@ -851,8 +854,12 @@ public class LineTcpServerTest extends AbstractCairoTest {
         send(server, lineData, tableName, wait, noLinger, null);
     }
 
-    private void send(LineTcpServer server, String lineData, String tableName, int wait, boolean noLinger, String alterTableCommand) {
-        SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
+    private SqlException send(LineTcpServer server, String lineData, String tableName, int wait, boolean noLinger, String alterTableCommand) {
+        int countDownCount = 1;
+        if ((wait & WAIT_ENGINE_TABLE_RELEASE) != 0 && (wait & WAIT_ALTER_TABLE_RELEASE) != 0) {
+            countDownCount++;
+        }
+        SOCountDownLatch releaseLatch = new SOCountDownLatch(countDownCount);
         CyclicBarrier startBarrier = new CyclicBarrier(2);
         AlterCommandExecution.setUpWait(engine, requestContext);
 
@@ -870,7 +877,6 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     );
                 } catch (BrokenBarrierException | InterruptedException e) {
                     e.printStackTrace();
-                    releaseLatch.countDown();
                 } finally {
                     // exit this method if alter executed
                     releaseLatch.countDown();
@@ -878,45 +884,37 @@ public class LineTcpServerTest extends AbstractCairoTest {
             }).start();
         }
 
-        switch (wait) {
-            case WAIT_ENGINE_TABLE_RELEASE:
-            case WAIT_ALTER_TABLE_RELEASE:
-                sqlException = null;
-                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (Chars.equals(tableName, name)) {
-                        if (factoryType == PoolListener.SRC_WRITER) {
-                            switch (event) {
-                                case PoolListener.EV_RETURN:
-                                    releaseLatch.countDown();
-                                    break;
-                                case PoolListener.EV_GET:
-                                    if (alterTableCommand != null) {
-                                        try {
-                                            // Execute ALTER in parallel thread
-                                            alterCommandId = executeSqlOnce(alterTableCommand, false);
-                                            startBarrier.await();
-                                        } catch (BrokenBarrierException | InterruptedException e) {
-                                            e.printStackTrace();
-                                            releaseLatch.countDown();
-                                        } catch (SqlException e) {
-                                            sqlException = e;
-                                            releaseLatch.countDown();
-                                        }
+        engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+            if (Chars.equalsNc(tableName, name)) {
+                if ((wait & WAIT_ENGINE_TABLE_RELEASE) != 0 || (wait & WAIT_ALTER_TABLE_RELEASE) != 0) {
+                    if (factoryType == PoolListener.SRC_WRITER) {
+                        switch (event) {
+                            case PoolListener.EV_RETURN:
+                                releaseLatch.countDown();
+                                break;
+                            case PoolListener.EV_GET:
+                                if (alterTableCommand != null) {
+                                    try {
+                                        // Execute ALTER in parallel thread
+                                        alterCommandId = executeSqlOnce(alterTableCommand);
+                                        startBarrier.await();
+                                    } catch (BrokenBarrierException | InterruptedException e) {
+                                        e.printStackTrace();
+                                        releaseLatch.countDown();
+                                    } catch (SqlException e) {
+                                        sqlException = e;
+                                        releaseLatch.countDown();
                                     }
-                                    break;
-                            }
+                                }
+                                break;
                         }
                     }
-                });
-                break;
-            case WAIT_ILP_TABLE_RELEASE:
-                server.setSchedulerListener((tableName1, event) -> {
-                    if (Chars.equals(tableName1, tableName1)) {
-                            releaseLatch.countDown();
-                    }
-                });
-                break;
-        }
+                } else {
+                    releaseLatch.countDown();
+                }
+            }
+        });
+
 
         try {
             int ipv4address = Net.parseIPv4("127.0.0.1");
@@ -941,10 +939,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
             }
             if (wait != WAIT_NO_WAIT) {
                 releaseLatch.await();
-                if (sqlException != null) {
-                    sqlException.printStackTrace();
-                    Assert.fail(sqlException.getMessage());
-                }
+                return sqlException;
             }
         } finally {
             switch (wait) {
@@ -958,9 +953,10 @@ public class LineTcpServerTest extends AbstractCairoTest {
             }
             AlterCommandExecution.stopCommandWait(engine, requestContext);
         }
+        return null;
     }
 
-    private long executeSqlOnce(String sql, boolean wait) throws SqlException {
+    private long executeSqlOnce(String sql) throws SqlException {
         try (SqlCompiler compiler = new SqlCompiler(engine);
              SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                      .with(
@@ -972,19 +968,10 @@ public class LineTcpServerTest extends AbstractCairoTest {
             CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
             AlterStatement alterStatement = cc.getAlterStatement();
 
-
-            if (wait) {
-                AlterCommandExecution.executeAlterCommand(engine,
-                        alterStatement,
-                        sqlExecutionContext,
-                        requestContext);
-                return -1L;
-            } else {
-                return AlterCommandExecution.executeAlterCommandNoWait(engine,
-                        alterStatement,
-                        sqlExecutionContext,
-                        requestContext);
-            }
+            return AlterCommandExecution.executeAlterCommandNoWait(engine,
+                    alterStatement,
+                    sqlExecutionContext,
+                    requestContext);
         }
     }
 

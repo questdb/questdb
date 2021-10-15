@@ -3878,6 +3878,7 @@ public class TableWriter implements Closeable {
                         replPublishSyncEvent(cmd, cursor, commandSubSeq);
                         break;
                     case TableWriterTask.TSK_ALTER_TABLE:
+                        processAlterTableEvent(cmd, cursor, commandSubSeq, acceptStructureChange);
                         break;
                     default:
                         commandSubSeq.done(cursor);
