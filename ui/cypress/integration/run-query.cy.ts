@@ -31,11 +31,6 @@ it("runs a select query from telemetry_config", function () {
   cy.getByDataTest("button-run-query").click()
   cy.getByCustomData("grid-row-num", "1").should("not.be.empty")
   cy.getGridHeaderRow().within(() => {
-    cy.fixture("telemetryConfigColumns").then((columns: string[]) => {
-      columns.forEach((column) => {
-        cy.get(".qg-header").contains(column)
-      })
-    })
     cy.execQuery("telemetry_config").then(
       (response: Cypress.Response<{ columns: [] }>) => {
         const { columns } = response.body
