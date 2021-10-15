@@ -38,7 +38,11 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 class SymbolCache implements Closeable {
-    private final ObjIntHashMap<CharSequence> indexBySym = new ObjIntHashMap<>(256, 0.5, SymbolTable.VALUE_NOT_FOUND);
+    private final ObjIntHashMap<CharSequence> indexBySym = new ObjIntHashMap<>(
+            256,
+            0.5,
+            SymbolTable.VALUE_NOT_FOUND
+    );
     private final MemoryMR txMem = Vm.getMRInstance();
     private final SymbolMapReaderImpl symMapReader = new SymbolMapReaderImpl();
     private long transientSymCountOffset;
@@ -86,8 +90,8 @@ class SymbolCache implements Closeable {
                 // we will be reading INT value at `transientSymCountOffset`
                 // must ensure there is mapped memory
                 transientSymCountOffset + 4,
-                MemoryTag.MMAP_INDEX_READER)
-        ;
+                MemoryTag.MMAP_INDEX_READER
+        );
         int symCount = txMem.getInt(transientSymCountOffset);
         path.trimTo(plen);
         symMapReader.of(configuration, path, name, symCount);

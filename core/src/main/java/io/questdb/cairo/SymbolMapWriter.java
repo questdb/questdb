@@ -38,7 +38,7 @@ import io.questdb.std.str.SingleCharCharSequence;
 
 import java.io.Closeable;
 
-public class SymbolMapWriter implements Closeable {
+public class SymbolMapWriter implements Closeable, SymbolCountProvider {
     public static final int HEADER_SIZE = 64;
     public static final int HEADER_CAPACITY = 0;
     public static final int HEADER_CACHE_ENABLED = 4;
@@ -50,23 +50,24 @@ public class SymbolMapWriter implements Closeable {
     private final CharSequenceIntHashMap cache;
     private final DirectCharSequence tmpSymbol;
     private final int maxHash;
-    private final TransientSymbolCountChangeHandler transientSymbolCountChangeHandler;
     private boolean nullValue = false;
+    private final int symbolIndexInTxWriter;
+    private final TxWriter txWriter;
 
     public SymbolMapWriter(
             CairoConfiguration configuration,
             Path path,
             CharSequence name,
             int symbolCount,
-            TransientSymbolCountChangeHandler transientSymbolCountChangeHandler
+            int symbolIndexInTxWriter,
+            TxWriter txWriter
     ) {
-        this.transientSymbolCountChangeHandler = transientSymbolCountChangeHandler;
         final int plen = path.length();
         try {
             final FilesFacade ff = configuration.getFilesFacade();
             final long mapPageSize = configuration.getMiscAppendPageSize();
 
-            // this constructor does not create index. Index must exist
+            // this constructor does not create index. Index must exist,
             // and we use "offset" file to store "header"
             offsetFileName(path.trimTo(plen), name);
             if (!ff.exists(path)) {
@@ -116,6 +117,8 @@ public class SymbolMapWriter implements Closeable {
             }
 
             tmpSymbol = new DirectCharSequence();
+            this.symbolIndexInTxWriter = symbolIndexInTxWriter;
+            this.txWriter = txWriter;
             LOG.debug()
                     .$("open [name=").$(path.trimTo(plen).concat(name).$())
                     .$(", fd=").$(this.offsetMem.getFd())
@@ -246,7 +249,9 @@ public class SymbolMapWriter implements Closeable {
         indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
         offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
         jumpCharMemToSymbolCount(symbolCount);
-        transientSymbolCountChangeHandler.handleTransientSymbolCountChange(symbolCount);
+        if (txWriter != null) {
+            txWriter.writeTransientSymbolCount(symbolIndexInTxWriter, symbolCount);
+        }
         if (cache != null) {
             cache.clear();
         }
@@ -304,7 +309,9 @@ public class SymbolMapWriter implements Closeable {
         offsetMem.putLong(charMem.putStr(symbol));
         indexWriter.add(hash, offsetOffset);
         int symIndex = offsetToKey(offsetOffset);
-        transientSymbolCountChangeHandler.handleTransientSymbolCountChange(symIndex + 1);
+        if (txWriter != null) {
+            txWriter.writeTransientSymbolCount(symbolIndexInTxWriter, symIndex + 1);
+        }
         return symIndex;
     }
 
@@ -315,9 +322,5 @@ public class SymbolMapWriter implements Closeable {
         if (cache != null) {
             cache.clear();
         }
-    }
-
-    public interface TransientSymbolCountChangeHandler {
-        void handleTransientSymbolCountChange(int symbolCount);
     }
 }
