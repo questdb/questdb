@@ -83,6 +83,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private int nLoadCheckCycles = 0;
     private int nRebalances = 0;
     private LineTcpReceiver.SchedulerListener listener;
+    private final LineTcpReceiverConfiguration configuration;
 
     LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
@@ -94,6 +95,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         this.engine = engine;
         this.securityContext = lineConfiguration.getCairoSecurityContext();
         this.cairoConfiguration = engine.getConfiguration();
+        this.configuration = lineConfiguration;
         this.milliClock = cairoConfiguration.getMillisecondClock();
         this.commitMode = cairoConfiguration.getCommitMode();
 
@@ -148,7 +150,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
     @Override
     public void close() {
-        // Both the writer and the net worker pools must have been closed so that their respective cleaners have run
+        // Both the writer and the network reader worker pools must have been closed so that their respective cleaners have run
         if (null != pubSeq) {
             pubSeq = null;
             tableUpdateDetailsLock.writeLock().lock();
@@ -1111,7 +1113,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         symCache = unusedSymbolCaches.get(lastUnusedSymbolCacheIndex);
                         unusedSymbolCaches.remove(lastUnusedSymbolCacheIndex);
                     } else {
-                        symCache = new SymbolCache();
+                        symCache = new SymbolCache(configuration);
                     }
                     int symIndex = resolveSymbolIndex(reader.getMetadata(), colIndex);
                     symCache.of(cairoConfiguration, path, reader.getMetadata().getColumnName(colIndex), symIndex);

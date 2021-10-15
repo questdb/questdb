@@ -36,7 +36,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
             compiler.compile("create table x(a symbol, c int, b symbol capacity 10000000, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
 
             try (
-                    SymbolCache symbolCache = new SymbolCache();
+                    SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration());
                     Path path = new Path()
             ) {
                 path.of(configuration.getRoot()).concat("x");
@@ -138,7 +138,12 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                  TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
                          .col("symCol1", ColumnType.SYMBOL)
                          .col("symCol2", ColumnType.SYMBOL);
-                 SymbolCache cache = new SymbolCache()
+                 SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
+                     @Override
+                     public long getSymbolCacheWaitUsBeforeReload() {
+                         return 0;
+                     }
+                 })
             ) {
                 CairoTestUtils.create(model);
                 try (

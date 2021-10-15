@@ -34,6 +34,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjIntHashMap;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -46,9 +47,14 @@ class SymbolCache implements Closeable {
     );
     private final MemoryMR txMem = Vm.getMRInstance();
     private final SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl();
+    private final MicrosecondClock clock;
     private long transientSymCountOffset;
+    private long lastSymbolReaderReloadTimestamp;
+    private final long waitUsBeforeReload;
 
-    SymbolCache() {
+    SymbolCache(LineTcpReceiverConfiguration configuration) {
+        this.clock = configuration.getMicrosecondClock();
+        this.waitUsBeforeReload = configuration.getSymbolCacheWaitUsBeforeReload();
     }
 
     @Override
@@ -68,8 +74,17 @@ class SymbolCache implements Closeable {
             return symbolValueToKeyMap.valueAt(index);
         }
 
-        int symbolValueCount = txMem.getInt(transientSymCountOffset);
-        symbolMapReader.updateSymbolCount(symbolValueCount);
+        final int symbolValueCount = txMem.getInt(transientSymCountOffset);
+        final long ticks;
+
+        if (
+                symbolValueCount > symbolMapReader.size()
+                        && (ticks = clock.getTicks()) - lastSymbolReaderReloadTimestamp > waitUsBeforeReload
+        ) {
+            symbolMapReader.updateSymbolCount(symbolValueCount);
+            lastSymbolReaderReloadTimestamp = ticks;
+        }
+
         final int symbolKey = symbolMapReader.keyOf(symbolValue);
 
         if (SymbolTable.VALUE_NOT_FOUND != symbolKey) {
