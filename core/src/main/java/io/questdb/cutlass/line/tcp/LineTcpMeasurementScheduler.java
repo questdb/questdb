@@ -384,11 +384,15 @@ class LineTcpMeasurementScheduler implements Closeable {
             tableUpdateDetails = startNewMeasurementEvent(netIoJob, protoParser);
         } catch (EntryUnavailableException ex) {
             // Table writer is locked
-            LOG.info().$("could not get table writer [tableName=").$(protoParser.getMeasurementName()).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
+            LOG.info().$("could not get table writer [tableName=").$(protoParser.getMeasurementName()).$(", ex=").$(ex.getFlyweightMessage()).I$();
             return true;
         } catch (CairoException ex) {
             // Table could not be created
-            LOG.info().$("could not create table [tableName=").$(protoParser.getMeasurementName()).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
+            LOG.info()
+                    .$("could not create table [tableName=").$(protoParser.getMeasurementName())
+                    .$(", ex=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
             return false;
         }
         if (null != tableUpdateDetails) {
