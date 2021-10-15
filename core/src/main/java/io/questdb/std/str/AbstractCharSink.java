@@ -88,6 +88,35 @@ public abstract class AbstractCharSink implements CharSink {
         put(Misc.EOL);
     }
 
+    @Override
+    public int encodeSurrogate(char c, CharSequence in, int pos, int hi) {
+        int dword;
+        if (Character.isHighSurrogate(c)) {
+            if (hi - pos < 1) {
+                put('?');
+                return pos;
+            } else {
+                char c2 = in.charAt(pos++);
+                if (Character.isLowSurrogate(c2)) {
+                    dword = Character.toCodePoint(c, c2);
+                } else {
+                    put('?');
+                    return pos;
+                }
+            }
+        } else if (Character.isLowSurrogate(c)) {
+            put('?');
+            return pos;
+        } else {
+            dword = c;
+        }
+        put((char) (240 | dword >> 18)).
+                put((char) (128 | dword >> 12 & 63)).
+                put((char) (128 | dword >> 6 & 63)).
+                put((char) (128 | dword & 63));
+        return pos;
+    }
+
     private void put(Throwable throwable, StackTraceElement[] enclosingTrace, String caption, String prefix, Set<Throwable> dejaVu) {
         if (dejaVu.contains(throwable)) {
             put("\t[CIRCULAR REFERENCE:");

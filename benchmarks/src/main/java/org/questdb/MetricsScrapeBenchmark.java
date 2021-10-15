@@ -174,5 +174,10 @@ public class MetricsScrapeBenchmark {
         public CharSink put(CharSequence cs) {
             return this;
         }
+
+        @Override
+        public int encodeSurrogate(char c, CharSequence in, int pos, int hi) {
+            return 0;
+        }
     }
 }

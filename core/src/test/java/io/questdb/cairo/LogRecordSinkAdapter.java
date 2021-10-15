@@ -26,9 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.log.LogRecord;
 import io.questdb.std.Sinkable;
+import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 
-public class LogRecordSinkAdapter implements CharSink {
+public class LogRecordSinkAdapter extends AbstractCharSink {
 
     private LogRecord line;
 
