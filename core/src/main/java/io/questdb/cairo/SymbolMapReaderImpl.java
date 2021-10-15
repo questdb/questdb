@@ -84,7 +84,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     public void updateSymbolCount(int symbolCount) {
         if (symbolCount > this.symbolCount) {
             this.symbolCount = symbolCount;
-            this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
+            this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
             this.offsetMem.extend(maxOffset);
             growCharMemToSymbolCount(symbolCount);
         } else if (symbolCount < this.symbolCount) {
@@ -117,6 +117,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
             final long offsetMemSize = SymbolMapWriter.keyToOffset(symbolCount);
+            LOG.debug().$("offsetMem.of [name=").$(path).$(",offsetMemSize=").$(offsetMemSize).I$();
             this.offsetMem.of(ff, path, offsetMemSize, offsetMemSize, MemoryTag.MMAP_INDEX_READER);
             symbolCapacity = offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY);
             this.cached = offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED);
@@ -212,7 +213,9 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private void growCharMemToSymbolCount(int symbolCount) {
         long charMemLength;
         if (symbolCount > 0) {
-            charMemLength = this.offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolCount));
+            long lastSymbolOffset = this.offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolCount - 1));
+            this.charMem.extend(lastSymbolOffset + 4);
+            charMemLength = lastSymbolOffset + Vm.getStorageLength(this.charMem.getStrLen(lastSymbolOffset));
         } else {
             charMemLength = 0;
         }
