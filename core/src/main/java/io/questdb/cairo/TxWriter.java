@@ -38,7 +38,7 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.*;
 
 public final class TxWriter extends TxReader implements Closeable {
-    protected long prevTransientRowCount;
+    private long prevTransientRowCount;
     private int attachedPositionDirtyIndex;
     private int txPartitionCount;
     private long prevMaxTimestamp;

@@ -42,7 +42,6 @@ class SymbolCache implements Closeable {
     private final MemoryMR txMem = Vm.getMRInstance();
     private final SymbolMapReaderImpl symMapReader = new SymbolMapReaderImpl();
     private long transientSymCountOffset;
-    private int lastCount;
 
     SymbolCache() {
     }
@@ -65,33 +64,33 @@ class SymbolCache implements Closeable {
             return symIndex;
         }
 
-        int symCount = getSymCount();
-        if (symCount != lastCount) {
-            lastCount = symCount;
-            symMapReader.updateSymbolCount(symCount);
-            symIndex = symMapReader.keyOf(symValue);
-            if (SymbolTable.VALUE_NOT_FOUND != symIndex) {
-                indexBySym.put(symValue.toString(), symIndex);
-            }
+        int symCount = txMem.getInt(transientSymCountOffset);
+        symMapReader.updateSymbolCount(symCount);
+        symIndex = symMapReader.keyOf(symValue);
+
+        if (SymbolTable.VALUE_NOT_FOUND != symIndex) {
+            indexBySym.put(symValue.toString(), symIndex);
         }
 
         return symIndex;
     }
 
-    private int getSymCount() {
-        int symCount = txMem.getInt(transientSymCountOffset - Integer.BYTES);
-        return symCount;
-    }
-
     void of(CairoConfiguration configuration, Path path, CharSequence name, int symIndex) {
         FilesFacade ff = configuration.getFilesFacade();
-        transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symIndex) + Integer.BYTES;
+        transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symIndex);
         final int plen = path.length();
-        txMem.of(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), transientSymCountOffset, transientSymCountOffset, MemoryTag.MMAP_INDEX_READER);
-        int symCount = getSymCount();
+        txMem.of(
+                ff,
+                path.concat(TableUtils.TXN_FILE_NAME).$(),
+                transientSymCountOffset,
+                // we will be reading INT value at `transientSymCountOffset`
+                // must ensure there is mapped memory
+                transientSymCountOffset + 4,
+                MemoryTag.MMAP_INDEX_READER)
+        ;
+        int symCount = txMem.getInt(transientSymCountOffset);
         path.trimTo(plen);
         symMapReader.of(configuration, path, name, symCount);
         indexBySym.clear(symCount);
-        lastCount = symCount;
     }
 }

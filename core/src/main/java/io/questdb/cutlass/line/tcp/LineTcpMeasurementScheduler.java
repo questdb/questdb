@@ -510,15 +510,15 @@ class LineTcpMeasurementScheduler implements Closeable {
                                 floatingCharSink.of(bufPos, bufPos + 2L * l);
                                 int symIndex;
                                 // value is UTF8 encoded potentially
-                                CharSequence columnName = entity.getValue();
+                                CharSequence columnValue = entity.getValue();
                                 if (protoParser.hasNonAsciiChars()) {
                                     if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
                                         throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
                                     }
-                                    columnName = floatingCharSink;
+                                    columnValue = floatingCharSink;
                                 }
 
-                                symIndex = tableUpdateDetails.getSymbolIndex(localDetails, colIndex, columnName);
+                                symIndex = tableUpdateDetails.getSymbolIndex(localDetails, colIndex, columnValue);
                                 if (symIndex != SymbolTable.VALUE_NOT_FOUND) {
                                     // We know the symbol int value
                                     // Encode the int
