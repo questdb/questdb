@@ -12,6 +12,7 @@ module.exports = {
     "plugin:react/recommended",
     "plugin:react-hooks/recommended",
     "plugin:prettier/recommended",
+    "plugin:cypress/recommended",
   ],
   globals: { ace: true },
   parser: "@typescript-eslint/parser",
@@ -22,7 +23,14 @@ module.exports = {
     tsconfigRootDir: __dirname,
     sourceType: "module",
   },
-  plugins: ["@typescript-eslint", "babel", "prettier", "react", "standard"],
+  plugins: [
+    "@typescript-eslint",
+    "babel",
+    "prettier",
+    "react",
+    "standard",
+    "cypress",
+  ],
   rules: {
     "react/jsx-no-bind": "error",
     "react/no-deprecated": "error",

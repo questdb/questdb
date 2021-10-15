@@ -662,7 +662,13 @@ $.fn.grid = function (msgBus) {
 
   function addColumns() {
     for (var i = 0; i < dc; i++) {
-      var rowDiv = $('<div class="qg-r" tabindex="' + i + '"/>')
+      var rowDiv = $(
+        '<div class="qg-r" tabindex="' +
+          i +
+          '" data-grid-row-num="' +
+          (i + 1) +
+          '"/>',
+      )
       if (i === 0) {
         activeRowContainer = rowDiv
       }

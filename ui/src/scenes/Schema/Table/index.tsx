@@ -122,7 +122,12 @@ const Table = ({ description, expanded, onChange, refresh, table }: Props) => {
   )
 
   return (
-    <Wrapper _height={columns ? columns.length * 30 : 0} ref={ref}>
+    <Wrapper
+      _height={columns ? columns.length * 30 : 0}
+      data-table-name={table}
+      data-test="table-wrapper"
+      ref={ref}
+    >
       <ContextMenuTrigger id={table}>
         <Title
           description={description}
@@ -143,7 +148,7 @@ const Table = ({ description, expanded, onChange, refresh, table }: Props) => {
         timeout={TransitionDuration.REG}
         unmountOnExit
       >
-        <Columns>
+        <Columns data-test="table-columns">
           {columns?.map((column) => (
             <Row
               {...column}

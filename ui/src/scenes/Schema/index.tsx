@@ -141,7 +141,7 @@ const Schema = ({
   }, [fetchTables])
 
   return (
-    <Wrapper ref={innerRef} {...rest}>
+    <Wrapper data-test="schema-wrapper" ref={innerRef} {...rest}>
       <Menu>
         <Header color="draculaForeground">
           <DatabaseIcon size="18px" />

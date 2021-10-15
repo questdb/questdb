@@ -19,7 +19,9 @@
     "start": "webpack-dev-server --progress",
     "start:prod": "cross-env NODE_ENV=production webpack-dev-server --progress",
     "analyze-bundle": "cross-env ANALYZE=true NODE_ENV=production webpack-cli --display-reasons",
-    "prepare": "cd .. && husky install ui/.husky"
+    "prepare": "cd .. && husky install ui/.husky",
+    "test:cypress": "cypress run",
+    "test:cypress:dev": "cypress open"
   },
   "dependencies": {
     "@babel/runtime-corejs3": "7.10.2",
@@ -38,6 +40,7 @@
     "bootstrap-sass": "3.4.1",
     "clipboard": "2.0.6",
     "core-js": "3.6.5",
+    "cypress": "^8.6.0",
     "date-fns": "2.14.0",
     "docsearch.js": "2.6.3",
     "dotenv": "^10.0.0",
@@ -82,6 +85,7 @@
     "eslint-config-prettier": "8.0.0",
     "eslint-config-standard-with-typescript": "20.0.0",
     "eslint-plugin-babel": "5.3.1",
+    "eslint-plugin-cypress": "^2.12.1",
     "eslint-plugin-import": "2.22.1",
     "eslint-plugin-node": "11.1.0",
     "eslint-plugin-prettier": "3.3.1",

@@ -13,7 +13,7 @@ const CloseOutlineIcon = styled(CloseOutline)`
 export const ErrorNotification = (props: NotificationShape) => {
   const { createdAt, content, sideContent } = props
   return (
-    <Wrapper>
+    <Wrapper data-notification-type="error">
       <Timestamp createdAt={createdAt} />
       <CloseOutlineIcon size="18px" />
       <Content>{content}</Content>

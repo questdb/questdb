@@ -127,7 +127,12 @@ const Row = ({
   )
 
   return (
-    <Wrapper className={className} expanded={expanded} onClick={onClick}>
+    <Wrapper
+      className={className}
+      data-row-name={name}
+      expanded={expanded}
+      onClick={onClick}
+    >
       <FlexRow>
         {kind === "table" && <TitleIcon size="18px" />}
 
@@ -150,7 +155,7 @@ const Row = ({
 
         {kind === "column" && !indexed && <DotIcon size="12px" />}
 
-        <Text color="draculaForeground" ellipsis>
+        <Text color="draculaForeground" data-test="row-name" ellipsis>
           {name}
         </Text>
         {suffix}
@@ -163,7 +168,12 @@ const Row = ({
           </Type>
         )}
 
-        <PlusButton onClick={handlePlusButtonClick} size="sm" tooltip={tooltip}>
+        <PlusButton
+          data-test="add-to-editor"
+          onClick={handlePlusButtonClick}
+          size="sm"
+          tooltip={tooltip}
+        >
           <CodeSSlash size="16px" />
           <span>Add</span>
         </PlusButton>

@@ -6,7 +6,7 @@ import { Timestamp } from "../Timestamp"
 export const InfoNotification = (props: NotificationShape) => {
   const { createdAt, content, sideContent } = props
   return (
-    <Wrapper>
+    <Wrapper data-notification-type="info">
       <Timestamp createdAt={createdAt} />
       <Content>{content}</Content>
       <SideContent>{sideContent}</SideContent>

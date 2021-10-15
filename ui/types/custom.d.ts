@@ -54,3 +54,16 @@ declare class ResizeObserver {
   observe: (target: Element, options?: ResizeObserverObserveOptions) => void
   unobserve: (target: Element) => void
 }
+
+declare namespace Cypress {
+  interface Chainable<Subject> {
+    getByDataTest: (selector: string) => Cypress.Chainable<void>
+    getByDataTestLike: (selector: string) => Cypress.Chainable<void>
+    getByCustomData: (data: string, selector: string) => Cypress.Chainable<void>
+    getSqlEditor: () => Cypress.Chainable<void>
+    getSqlEditorValue: () => Cypress.Chainable<void>
+    getGrid: () => Cypress.Chainable<void>
+    getGridHeaderRow: () => Cypress.Chainable<void>
+    execQuery: (query: string) => Cypress.Chainable<Response<any>>
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "baseUrl": "http://localhost:9999",
+  "nodeVersion": "system",
+  "watchForFileChanges": true,
+  "projectId": "3s36mh",
+  "port": 3001,
+  "integrationFolder": "cypress/integration",
+  "testFiles": "**/*.cy.ts",
+  "viewportHeight": 1200,
+  "viewportWidth": 1600,
+  "videoCompression": 8
+}
