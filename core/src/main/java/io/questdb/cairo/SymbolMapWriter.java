@@ -50,9 +50,9 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
     private final CharSequenceIntHashMap cache;
     private final DirectCharSequence tmpSymbol;
     private final int maxHash;
-    private boolean nullValue = false;
-    private final int symbolIndexInTxWriter;
     private final TxWriter txWriter;
+    private boolean nullValue = false;
+    private int symbolIndexInTxWriter;
 
     public SymbolMapWriter(
             CairoConfiguration configuration,
@@ -255,6 +255,10 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
         if (cache != null) {
             cache.clear();
         }
+    }
+
+    public void setSymbolIndexInTxWriter(int symbolIndexInTxWriter) {
+        this.symbolIndexInTxWriter = symbolIndexInTxWriter;
     }
 
     public void updateCacheFlag(boolean flag) {

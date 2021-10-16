@@ -1197,7 +1197,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 if (null == symCache) {
                     symCache = addSymbolCache(colIndex);
                 }
-                return symCache.getSymIndex(symValue);
+                return symCache.getSymbolKey(symValue);
             }
 
             private int resolveSymbolIndex(TableReaderMetadata metadata, int colIndex) {

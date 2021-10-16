@@ -107,7 +107,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return -1;
     }
 
-    public void of(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
+    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, int symbolCount) {
         FilesFacade ff = configuration.getFilesFacade();
         this.symbolCount = symbolCount;
         this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
@@ -115,7 +115,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         try {
             // this constructor does not create index. Index must exist,
             // and we use "offset" file to store "header"
-            SymbolMapWriter.offsetFileName(path.trimTo(plen), name);
+            SymbolMapWriter.offsetFileName(path.trimTo(plen), columnName);
             if (!ff.exists(path)) {
                 LOG.error().$(path).$(" is not found").$();
                 throw CairoException.instance(0).put("SymbolMap does not exist: ").put(path);
@@ -131,17 +131,17 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
             final long offsetMemSize = SymbolMapWriter.keyToOffset(symbolCount);
-            LOG.debug().$("offsetMem.of [name=").$(path).$(",offsetMemSize=").$(offsetMemSize).I$();
+            LOG.debug().$("offsetMem.of [columnName=").$(path).$(",offsetMemSize=").$(offsetMemSize).I$();
             this.offsetMem.of(ff, path, offsetMemSize, offsetMemSize, MemoryTag.MMAP_INDEX_READER);
             symbolCapacity = offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY);
             this.cached = offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED);
             this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
 
             // index writer is used to identify attempts to store duplicate symbol value
-            this.indexReader.of(configuration, path.trimTo(plen), name, 0, -1);
+            this.indexReader.of(configuration, path.trimTo(plen), columnName, 0, -1);
 
             // this is the place where symbol values are stored
-            this.charMem.wholeFile(ff, SymbolMapWriter.charFileName(path.trimTo(plen), name), MemoryTag.MMAP_INDEX_READER);
+            this.charMem.wholeFile(ff, SymbolMapWriter.charFileName(path.trimTo(plen), columnName), MemoryTag.MMAP_INDEX_READER);
 
             // move append pointer for symbol values in the correct place
             this.charMem.extend(this.offsetMem.getLong(maxOffset));
@@ -154,7 +154,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 this.cache.setPos(symbolCapacity);
             }
             this.cache.clear();
-            LOG.debug().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", capacity=").$(symbolCapacity).$(']').$();
+            LOG.debug().$("open [columnName=").$(path.trimTo(plen).concat(columnName).$()).$(", fd=").$(this.offsetMem.getFd()).$(", capacity=").$(symbolCapacity).$(']').$();
         } catch (Throwable e) {
             close();
             throw e;

@@ -3886,7 +3886,13 @@ public class TableWriter implements Closeable {
         SymbolMapWriter writer = symbolMapWriters.getQuick(index);
         symbolMapWriters.remove(index);
         if (writer != null) {
-            denseSymbolMapWriters.remove(writer);
+            int symColIndex = denseSymbolMapWriters.remove(writer);
+            // Shift all subsequent symbol indexes by 1 back
+            while (symColIndex < denseSymbolMapWriters.size()) {
+                SymbolMapWriter  w = denseSymbolMapWriters.getQuick(symColIndex);
+                w.setSymbolIndexInTxWriter(symColIndex);
+                symColIndex++;
+            }
             Misc.free(writer);
         }
     }
