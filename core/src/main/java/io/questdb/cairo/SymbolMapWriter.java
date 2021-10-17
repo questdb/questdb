@@ -35,6 +35,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.SingleCharCharSequence;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -50,7 +51,7 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
     private final CharSequenceIntHashMap cache;
     private final DirectCharSequence tmpSymbol;
     private final int maxHash;
-    private final TxWriter txWriter;
+    private final SymbolValueCountCollector valueCountCollector;
     private boolean nullValue = false;
     private int symbolIndexInTxWriter;
 
@@ -60,7 +61,7 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
             CharSequence name,
             int symbolCount,
             int symbolIndexInTxWriter,
-            TxWriter txWriter
+            @NotNull SymbolValueCountCollector valueCountCollector
     ) {
         final int plen = path.length();
         try {
@@ -118,7 +119,7 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
 
             tmpSymbol = new DirectCharSequence();
             this.symbolIndexInTxWriter = symbolIndexInTxWriter;
-            this.txWriter = txWriter;
+            this.valueCountCollector = valueCountCollector;
             LOG.debug()
                     .$("open [name=").$(path.trimTo(plen).concat(name).$())
                     .$(", fd=").$(this.offsetMem.getFd())
@@ -249,9 +250,7 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
         indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
         offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
         jumpCharMemToSymbolCount(symbolCount);
-        if (txWriter != null) {
-            txWriter.writeTransientSymbolCount(symbolIndexInTxWriter, symbolCount);
-        }
+        valueCountCollector.collectValueCount(symbolIndexInTxWriter, symbolCount);
         if (cache != null) {
             cache.clear();
         }
@@ -312,10 +311,8 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
         long offsetOffset = offsetMem.getAppendOffset() - Long.BYTES;
         offsetMem.putLong(charMem.putStr(symbol));
         indexWriter.add(hash, offsetOffset);
-        int symIndex = offsetToKey(offsetOffset);
-        if (txWriter != null) {
-            txWriter.writeTransientSymbolCount(symbolIndexInTxWriter, symIndex + 1);
-        }
+        final int symIndex = offsetToKey(offsetOffset);
+        valueCountCollector.collectValueCount(symbolIndexInTxWriter, symIndex + 1);
         return symIndex;
     }
 

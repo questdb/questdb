@@ -37,7 +37,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
-public final class TxWriter extends TxReader implements Closeable {
+public final class TxWriter extends TxReader implements Closeable, SymbolValueCountCollector {
     private long prevTransientRowCount;
     private int attachedPositionDirtyIndex;
     private int txPartitionCount;
@@ -161,6 +161,11 @@ public final class TxWriter extends TxReader implements Closeable {
         } finally {
             path.trimTo(rootLen);
         }
+    }
+
+    @Override
+    public void collectValueCount(int symbolIndexInTxWriter, int count) {
+        writeTransientSymbolCount(symbolIndexInTxWriter, count);
     }
 
     public void commit(int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {

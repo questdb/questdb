@@ -37,6 +37,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class SymbolMapTest extends AbstractCairoTest {
+    private final static SymbolValueCountCollector NOOP_COLLECTOR = (symbolIndexInTxWriter, count) -> {
+    };
+
     public static void create(Path path, CharSequence name, int symbolCapacity, boolean useCache) {
         int plen = path.length();
         try {
@@ -73,7 +76,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 "x",
                                 0,
                                 -1,
-                                null
+                                NOOP_COLLECTOR
                         )
                 ) {
                     long prev = -1L;
@@ -93,7 +96,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 "x",
                                 N,
                                 -1,
-                                null
+                                NOOP_COLLECTOR
                         )
                 ) {
                     long prev = N - 1;
@@ -136,7 +139,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 "x",
                                 0,
                                 -1,
-                                null
+                                NOOP_COLLECTOR
                         )
                 ) {
                     Rnd rnd = new Rnd();
@@ -165,7 +168,14 @@ public class SymbolMapTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getRoot())) {
                 try {
-                    new SymbolMapWriter(configuration, path, "x", 0, -1, null);
+                    new SymbolMapWriter(
+                            configuration,
+                            path,
+                            "x",
+                            0,
+                            -1,
+                            NOOP_COLLECTOR
+                    );
                     Assert.fail();
                 } catch (CairoException e) {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "does not exist"));
@@ -232,7 +242,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 "x",
                                 0,
                                 -1,
-                                null
+                                NOOP_COLLECTOR
                         )
                 ) {
                     Rnd rnd = new Rnd();
@@ -274,7 +284,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 "x",
                                 0,
                                 -1,
-                                null
+                                NOOP_COLLECTOR
                         )
                 ) {
                     Assert.assertEquals(0, writer.put("A1"));
@@ -315,7 +325,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                             "x",
                             0,
                             -1,
-                            null
+                            NOOP_COLLECTOR
                     );
                     Assert.fail();
                 } catch (CairoException e) {
@@ -337,7 +347,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                         "x",
                         0,
                         -1,
-                        null
+                        NOOP_COLLECTOR
                 )
                 ) {
                     Rnd rnd = new Rnd();
@@ -368,7 +378,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 "x",
                                 0,
                                 -1,
-                                null
+                                NOOP_COLLECTOR
                         )
                 ) {
                     long prev = -1L;
@@ -410,7 +420,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 "x",
                                 0,
                                 -1,
-                                null
+                                NOOP_COLLECTOR
                         )
                 ) {
                     long prev = -1L;
@@ -459,7 +469,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 "x",
                                 0,
                                 -1,
-                                null
+                                NOOP_COLLECTOR
                         )
                 ) {
                     Rnd rnd = new Rnd();
