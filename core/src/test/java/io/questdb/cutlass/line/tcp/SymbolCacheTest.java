@@ -46,17 +46,6 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                 final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
                 final AtomicBoolean cacheInError = new AtomicBoolean(false);
 
-                class Holder implements Mutable {
-                    String value1;
-                    String value2;
-
-                    @Override
-                    public void clear() {
-                        value1 = null;
-                        value2 = null;
-                    }
-                }
-
                 RingQueue<Holder> wheel = new RingQueue<Holder>(Holder::new, 256);
                 SPSequence pubSeq = new SPSequence(wheel.getCapacity());
                 SCSequence subSeq = new SCSequence();
@@ -285,5 +274,16 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                 }
             }
         });
+    }
+
+    private static class Holder implements Mutable {
+        String value1;
+        String value2;
+
+        @Override
+        public void clear() {
+            value1 = null;
+            value2 = null;
+        }
     }
 }
