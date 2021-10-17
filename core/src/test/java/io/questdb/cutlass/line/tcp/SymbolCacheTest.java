@@ -57,7 +57,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     }
                 }
 
-                RingQueue<Holder> wheel = new RingQueue<>(Holder::new, 256);
+                RingQueue<Holder> wheel = new RingQueue<Holder>(Holder::new, 256);
                 SPSequence pubSeq = new SPSequence(wheel.getCapacity());
                 SCSequence subSeq = new SCSequence();
                 pubSeq.then(subSeq).then(pubSeq);
