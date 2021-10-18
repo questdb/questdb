@@ -63,7 +63,11 @@ declare namespace Cypress {
     getSqlEditor: () => Cypress.Chainable<void>
     getSqlEditorValue: () => Cypress.Chainable<void>
     getGrid: () => Cypress.Chainable<void>
+    getGridViewport: () => Cypress.Chainable<void>
+    getGridHeader: () => Cypress.Chainable<void>
     getGridHeaderRow: () => Cypress.Chainable<void>
+    getGridColumn: () => Cypress.Chainable<void>
+    getGridRow: (active?: boolean) => Cypress.Chainable<void>
     execQuery: (query: string) => Cypress.Chainable<Response<any>>
   }
 }

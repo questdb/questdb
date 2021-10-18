@@ -35,7 +35,7 @@ it("runs a select query from telemetry_config", function () {
       (response: Cypress.Response<{ columns: [] }>) => {
         const { columns } = response.body
         columns.forEach((column: { name: string }) => {
-          cy.get(".qg-header").contains(column.name)
+          cy.getGridHeader().contains(column.name)
         })
       },
     )

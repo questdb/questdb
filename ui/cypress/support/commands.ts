@@ -53,12 +53,24 @@ Cypress.Commands.add("getGrid", () => {
   return cy.get("#grid")
 })
 
+Cypress.Commands.add("getGridHeader", () => {
+  return cy.get("#grid .qg-header")
+})
+
 Cypress.Commands.add("getGridHeaderRow", () => {
   return cy.get("#grid .qg-header-row")
 })
 
-Cypress.Commands.add("getGridCanvas", () => {
-  return cy.get("#grid .qg-canvas")
+Cypress.Commands.add("getGridRow", (active) => {
+  return cy.get(`#grid .qg-r${active ? "-active" : ""}`)
+})
+
+Cypress.Commands.add("getGridColumn", () => {
+  return cy.get("#grid .qg-c")
+})
+
+Cypress.Commands.add("getGridViewport", () => {
+  return cy.get("#grid .qg-viewport")
 })
 
 Cypress.Commands.add("execQuery", (query) => {

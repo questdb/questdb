@@ -18,5 +18,11 @@
     "baseUrl": "./src",
     "rootDir": "./src",
   },
-  "include": ["types", "src", "cypress/integration/*.ts", "support/*.ts", "fixtures/*.ts"]
+  "include": [
+    "types",
+    "src",
+    "cypress/integration/**/*.ts",
+    "support/*.ts",
+    "fixtures/*.ts"
+  ]
 }
