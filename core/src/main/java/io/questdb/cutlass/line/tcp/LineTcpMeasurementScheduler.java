@@ -82,6 +82,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private int nLoadCheckCycles = 0;
     private int nRebalances = 0;
     private LineTcpReceiver.SchedulerListener listener;
+    private final LineTcpReceiverConfiguration configuration;
 
     LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
@@ -93,6 +94,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         this.engine = engine;
         this.securityContext = lineConfiguration.getCairoSecurityContext();
         this.cairoConfiguration = engine.getConfiguration();
+        this.configuration = lineConfiguration;
         this.milliClock = cairoConfiguration.getMillisecondClock();
         this.commitMode = cairoConfiguration.getCommitMode();
 
@@ -147,7 +149,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
     @Override
     public void close() {
-        // Both the writer and the net worker pools must have been closed so that their respective cleaners have run
+        // Both the writer and the network reader worker pools must have been closed so that their respective cleaners have run
         if (null != pubSeq) {
             pubSeq = null;
             tableUpdateDetailsLock.writeLock().lock();
@@ -383,11 +385,15 @@ class LineTcpMeasurementScheduler implements Closeable {
             tableUpdateDetails = startNewMeasurementEvent(netIoJob, protoParser);
         } catch (EntryUnavailableException ex) {
             // Table writer is locked
-            LOG.info().$("could not get table writer [tableName=").$(protoParser.getMeasurementName()).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
+            LOG.info().$("could not get table writer [tableName=").$(protoParser.getMeasurementName()).$(", ex=").$(ex.getFlyweightMessage()).I$();
             return true;
         } catch (CairoException ex) {
             // Table could not be created
-            LOG.info().$("could not create table [tableName=").$(protoParser.getMeasurementName()).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
+            LOG.info()
+                    .$("could not create table [tableName=").$(protoParser.getMeasurementName())
+                    .$(", ex=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
             return false;
         }
         if (null != tableUpdateDetails) {
@@ -505,15 +511,15 @@ class LineTcpMeasurementScheduler implements Closeable {
                                 floatingCharSink.of(bufPos, bufPos + 2L * l);
                                 int symIndex;
                                 // value is UTF8 encoded potentially
-                                CharSequence columnName = entity.getValue();
+                                CharSequence columnValue = entity.getValue();
                                 if (protoParser.hasNonAsciiChars()) {
                                     if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
                                         throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
                                     }
-                                    columnName = floatingCharSink;
+                                    columnValue = floatingCharSink;
                                 }
 
-                                symIndex = tableUpdateDetails.getSymbolIndex(localDetails, colIndex, columnName);
+                                symIndex = tableUpdateDetails.getSymbolIndex(localDetails, colIndex, columnValue);
                                 if (symIndex != SymbolTable.VALUE_NOT_FOUND) {
                                     // We know the symbol int value
                                     // Encode the int
@@ -1106,7 +1112,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         symCache = unusedSymbolCaches.get(lastUnusedSymbolCacheIndex);
                         unusedSymbolCaches.remove(lastUnusedSymbolCacheIndex);
                     } else {
-                        symCache = new SymbolCache();
+                        symCache = new SymbolCache(configuration);
                     }
                     int symIndex = resolveSymbolIndex(reader.getMetadata(), colIndex);
                     symCache.of(cairoConfiguration, path, reader.getMetadata().getColumnName(colIndex), symIndex);
@@ -1192,7 +1198,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 if (null == symCache) {
                     symCache = addSymbolCache(colIndex);
                 }
-                return symCache.getSymIndex(symValue);
+                return symCache.getSymbolKey(symValue);
             }
 
             private int resolveSymbolIndex(TableReaderMetadata metadata, int colIndex) {

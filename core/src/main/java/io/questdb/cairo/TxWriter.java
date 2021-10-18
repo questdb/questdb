@@ -40,9 +40,9 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
-public final class TxWriter extends TxReader implements Closeable {
-    private final FilesFacade ff;
+public final class TxWriter extends TxReader implements Closeable, SymbolValueCountCollector {
     private long prevTransientRowCount;
+    private final FilesFacade ff;
     private int attachedPositionDirtyIndex;
     private int txPartitionCount;
     private long prevMaxTimestamp;
@@ -90,7 +90,7 @@ public final class TxWriter extends TxReader implements Closeable {
         }
     }
 
-    public void bumpStructureVersion(ObjList<SymbolMapWriter> denseSymbolMapWriters) {
+    public void bumpStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
         txMem.putLong(TX_OFFSET_TXN, ++txn);
         Unsafe.getUnsafe().storeFence();
 
@@ -107,7 +107,7 @@ public final class TxWriter extends TxReader implements Closeable {
             // Save full attached partition list
             attachedPositionDirtyIndex = 0;
             saveAttachedPartitionsToTx(count);
-            symbolsCount = count;
+            symbolColumnCount = count;
         }
 
         Unsafe.getUnsafe().storeFence();
@@ -163,7 +163,12 @@ public final class TxWriter extends TxReader implements Closeable {
         throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
     }
 
-    public void commit(int commitMode, ObjList<SymbolMapWriter> denseSymbolMapWriters) {
+    @Override
+    public void collectValueCount(int symbolIndexInTxWriter, int count) {
+        writeTransientSymbolCount(symbolIndexInTxWriter, count);
+    }
+
+    public void commit(int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
         txMem.putLong(TX_OFFSET_TXN, ++txn);
         Unsafe.getUnsafe().storeFence();
 
@@ -173,19 +178,18 @@ public final class TxWriter extends TxReader implements Closeable {
         txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, maxTimestamp);
         txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, this.partitionTableVersion);
         // store symbol counts
-        storeSymbolCounts(denseSymbolMapWriters);
+        storeSymbolCounts(symbolCountProviders);
 
         // store attached partitions
-        symbolsCount = denseSymbolMapWriters.size();
+        symbolColumnCount = symbolCountProviders.size();
         txPartitionCount = 1;
-        saveAttachedPartitionsToTx(symbolsCount);
+        saveAttachedPartitionsToTx(symbolColumnCount);
 
         Unsafe.getUnsafe().storeFence();
         txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
         if (commitMode != CommitMode.NOSYNC) {
             txMem.sync(commitMode == CommitMode.ASYNC);
         }
-
         prevTransientRowCount = transientRowCount;
     }
 
@@ -282,7 +286,7 @@ public final class TxWriter extends TxReader implements Closeable {
     public void reset() {
         resetTxn(
                 txMem,
-                symbolsCount,
+                symbolColumnCount,
                 txMem.getLong(TX_OFFSET_TXN) + 1,
                 txMem.getLong(TX_OFFSET_DATA_VERSION) + 1,
                 txMem.getLong(TX_OFFSET_PARTITION_TABLE_VERSION) + 1);
@@ -329,7 +333,7 @@ public final class TxWriter extends TxReader implements Closeable {
         txPartitionCount = 1;
         attachedPositionDirtyIndex = 0;
         attachedPartitions.clear();
-        resetTxn(txMem, symbolsCount, txn, ++dataVersion, ++partitionTableVersion);
+        resetTxn(txMem, symbolColumnCount, txn, ++dataVersion, ++partitionTableVersion);
     }
 
     public void updateMaxTimestamp(long timestamp) {
@@ -385,9 +389,9 @@ public final class TxWriter extends TxReader implements Closeable {
         transientRowCount = committedTransientRowCount;
     }
 
-    private void saveAttachedPartitionsToTx(int symCount) {
+    private void saveAttachedPartitionsToTx(int symbolColumnCount) {
         final int size = attachedPartitions.size();
-        final long partitionTableOffset = getPartitionTableSizeOffset(symCount);
+        final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount);
         txMem.putInt(partitionTableOffset, size * Long.BYTES);
         if (maxTimestamp != Long.MIN_VALUE) {
             for (int i = attachedPositionDirtyIndex; i < size; i++) {
@@ -397,10 +401,10 @@ public final class TxWriter extends TxReader implements Closeable {
         }
     }
 
-    private void storeSymbolCounts(ObjList<SymbolMapWriter> denseSymbolMapWriters) {
-        for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+    private void storeSymbolCounts(ObjList<? extends SymbolCountProvider> symbolCountProviders) {
+        for (int i = 0, n = symbolCountProviders.size(); i < n; i++) {
             long offset = getSymbolWriterIndexOffset(i);
-            int symCount = denseSymbolMapWriters.getQuick(i).getSymbolCount();
+            int symCount = symbolCountProviders.getQuick(i).getSymbolCount();
             txMem.putInt(offset, symCount);
             offset += Integer.BYTES;
             txMem.putInt(offset, symCount);
