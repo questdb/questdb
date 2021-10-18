@@ -216,7 +216,11 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                     }
                 }
             } catch (CairoException ex) {
-                LOG.error().$('[').$(fd).$("] could not process line data [table=").$(protoParser.getMeasurementName()).$(", msg=").$(ex.getFlyweightMessage()).I$();
+                LOG.error().
+                        $('[').$(fd).$("] could not process line data [table=").$(protoParser.getMeasurementName())
+                        .$(", msg=").$(ex.getFlyweightMessage())
+                        .$(", errno=").$(ex.getErrno())
+                        .I$();
                 return IOContextResult.NEEDS_DISCONNECT;
             } catch (Throwable ex) {
                 LOG.error().$('[').$(fd).$("] could not process line data [table=").$(protoParser.getMeasurementName()).$(", ex=").$(ex).I$();
