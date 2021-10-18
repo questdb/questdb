@@ -26,7 +26,7 @@ package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cutlass.line.LineUdpSender;
+import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.Os;
@@ -256,7 +256,7 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
     private void testColumnType(int columnType,
                                 int geoHashColumnBits,
                                 String expected,
-                                Consumer<LineUdpSender> senderConsumer) throws Exception {
+                                Consumer<AbstractLineSender> senderConsumer) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
@@ -273,7 +273,7 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                                 .timestamp());
                     }
                     receiver.start();
-                    try (LineUdpSender sender = createLineProtoSender()) {
+                    try (AbstractLineSender sender = createLineProtoSender()) {
                         senderConsumer.accept(sender);
                         sender.flush();
                     }

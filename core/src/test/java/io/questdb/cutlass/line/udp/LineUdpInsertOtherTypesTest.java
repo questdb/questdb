@@ -25,7 +25,7 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
-import io.questdb.cutlass.line.LineUdpSender;
+import io.questdb.cutlass.line.AbstractLineSender;
 import org.junit.Test;
 
 
@@ -798,7 +798,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
         assertType(tableName, targetColumnName, columnType, expected, sender -> {
             long ts = 0L;
             for (int i = 0; i < values.length; i++) {
-                ((LineUdpSender) sender.metric(tableName).put(' ')
+                ((AbstractLineSender) sender.metric(tableName).put(' ')
                         .encodeUtf8(targetColumnName)) // this method belongs to a super class that returns this
                         .put('=')
                         .put(values[i]) // field method decorates this token, I want full control
