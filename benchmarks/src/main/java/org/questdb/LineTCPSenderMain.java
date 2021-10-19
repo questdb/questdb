@@ -24,7 +24,6 @@
 
 package org.questdb;
 
-import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.network.Net;
 import io.questdb.std.Rnd;
@@ -38,19 +37,20 @@ public class LineTCPSenderMain {
 
         final Rnd rnd = new Rnd();
         long start = System.nanoTime();
-        try (LineUdpSender sender = new LineTcpSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
+        try (LineTcpSender sender = new LineTcpSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
             for (int i = 0; i < count; i++) {
                 // if ((i & 0x1) == 0) {
-                    sender.metric("weather");
-                    // } else {
-                    // sender.metric("weather2");
-                    // }
+                sender.metric("weather");
+                // } else {
+                // sender.metric("weather2");
+                // }
                 sender
                         .tag("location", "london")
                         .tag("by", rnd.nextString(5))
                         .field("temp", rnd.nextPositiveLong())
                         .field("ok", rnd.nextPositiveInt())
                         .$(rnd.nextLong(5000000000000L));
+//                sender.$();
             }
             sender.flush();
         }
