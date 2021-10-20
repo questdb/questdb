@@ -28,11 +28,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkError;
 
-public class LineTcpSender extends LineUdpSender {
-    private static final Log LOG = LogFactory.getLog(LineUdpSender.class);
+public class LineTcpSender extends AbstractLineSender {
+    private static final Log LOG = LogFactory.getLog(LineTcpSender.class);
 
     public LineTcpSender(int sendToIPv4Address, int sendToPort, int bufferCapacity) {
-        super(0, sendToIPv4Address, sendToPort, bufferCapacity, 0);
+        super(0, sendToIPv4Address, sendToPort, bufferCapacity, 0, LOG);
     }
 
     @Override

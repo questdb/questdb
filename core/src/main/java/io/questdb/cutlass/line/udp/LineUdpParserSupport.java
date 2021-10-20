@@ -187,7 +187,7 @@ public class LineUdpParserSupport {
         int valueLen = value.length();
         if (valueLen > 0) {
             char first = value.charAt(0);
-            char last = value.charAt(valueLen - 1); // see LineUdpSender.field methods
+            char last = value.charAt(valueLen - 1); // see AbstractLineSender.field methods
             switch (last) {
                 case 'i':
                     if (valueLen > 3 && value.charAt(0) == '0' && value.charAt(1) == 'x') {
