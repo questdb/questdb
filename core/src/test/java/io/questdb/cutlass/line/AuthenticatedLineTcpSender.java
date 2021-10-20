@@ -36,7 +36,7 @@ import java.security.*;
 import java.util.Base64;
 
 public class AuthenticatedLineTcpSender extends LineTcpSender {
-    private static final Log LOG = LogFactory.getLog(LineUdpSender.class);
+    private static final Log LOG = LogFactory.getLog(AbstractLineSender.class);
     private static final long BUF_SZ = 1024;
     private final byte[] keyIdBytes;
     private final PrivateKey privateKey;
@@ -115,11 +115,6 @@ public class AuthenticatedLineTcpSender extends LineTcpSender {
             throw NetworkError.instance(nf.errno()).put("send error");
         }
         LOG.info().$("authenticated").$();
-    }
-
-    @Override
-    protected void sendToSocket(long fd, long lo, long sockaddr, int len) throws NetworkError {
-        super.sendToSocket(fd, lo, sockaddr, len);
     }
 
     @Override
