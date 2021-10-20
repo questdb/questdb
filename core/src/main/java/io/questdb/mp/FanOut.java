@@ -56,6 +56,8 @@ public class FanOut implements Barrier {
 
     public FanOut and(Barrier barrier) {
         Holder _new;
+        boolean barrierNotSetUp = true;
+
         do {
             Holder h = this.holder;
             // read barrier to make sure "holder" read doesn't fall below this
@@ -63,8 +65,9 @@ public class FanOut implements Barrier {
             if (h.barriers.indexOf(barrier) > -1) {
                 return this;
             }
-            if (this.barrier != null) {
+            if (barrierNotSetUp && this.barrier != null) {
                 barrier.root().setBarrier(this.barrier);
+                barrierNotSetUp = false;
             }
             _new = new Holder();
             _new.barriers.addAll(h.barriers);
