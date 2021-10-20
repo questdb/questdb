@@ -22,33 +22,34 @@
  *
  ******************************************************************************/
 
-export enum BusEvent {
-  MSG_ACTIVE_PANEL = "active.panel",
-  MSG_EDITOR_EXECUTE = "editor.execute",
-  MSG_EDITOR_EXECUTE_ALT = "editor.execute.alt",
-  MSG_EDITOR_FOCUS = "editor.focus",
-  MSG_EDITOR_SET = "editor.set",
-  MSG_QUERY_CANCEL = "query.in.cancel",
-  MSG_QUERY_DATASET = "query.out.dataset",
-  MSG_QUERY_ERROR = "query.out.error",
-  MSG_QUERY_EXEC = "query.in.exec",
-  MSG_QUERY_EXPORT = "query.in.export",
-  MSG_QUERY_FIND_N_EXEC = "query.build.execute",
-  MSG_QUERY_OK = "query.out.ok",
-  MSG_QUERY_RUNNING = "query.out.running",
-  MSQ_QUERY_SCHEMA = "query.out.schema",
-  REACT_READY = "react.ready",
+package io.questdb.cutlass.line.tcp;
+
+import io.questdb.std.str.AbstractCharSink;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
+
+class MangledUtf8Sink extends AbstractCharSink {
+    private final StringSink tempSink;
+
+    public MangledUtf8Sink(StringSink tempSink) {
+        this.tempSink = tempSink;
+    }
+
+    public CharSequence encodeMangledUtf8(CharSequence value) {
+        tempSink.clear();
+        encodeUtf8(value);
+        return tempSink;
+    }
+
+    @Override
+    public CharSink put(char c) {
+        tempSink.put((char)((byte)c));
+        return this;
+    }
+
+    @Override
+    public CharSink put(char[] chars, int start, int len) {
+        throw new UnsupportedOperationException();
+    }
 }
 
-export enum ModalId {
-  POWER_USER = "POWER_USER",
-}
-
-export enum TelemetryTable {
-  MAIN = "telemetry",
-  CONFIG = "telemetry_config",
-}
-
-const BASE = process.env.NODE_ENV === "production" ? "fara" : "alurin"
-
-export const API = `https://${BASE}.questdb.io`

@@ -26,7 +26,6 @@ package io.questdb.cutlass.line;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
@@ -39,15 +38,14 @@ import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
-public class LineProtoSender extends AbstractCharSink implements Closeable {
-    private static final Log LOG = LogFactory.getLog(LineProtoSender.class);
-
+public abstract class AbstractLineSender extends AbstractCharSink implements Closeable {
     protected final int capacity;
+    protected final long fd;
+    protected final NetworkFacade nf;
     private final long bufA;
     private final long bufB;
     private final long sockaddr;
-    protected final long fd;
-    protected final NetworkFacade nf;
+    private boolean quoted = false;
 
     private long lo;
     private long hi;
@@ -55,27 +53,31 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
     private long lineStart;
     private boolean hasMetric = false;
     private boolean noFields = true;
+    private final Log log;
 
-    public LineProtoSender(
+    public AbstractLineSender(
             int interfaceIPv4Address,
             int sendToIPv4Address,
             int sendToPort,
             int bufferCapacity,
-            int ttl
+            int ttl,
+            Log log
     ) {
-        this(NetworkFacadeImpl.INSTANCE, interfaceIPv4Address, sendToIPv4Address, sendToPort, bufferCapacity, ttl);
+        this(NetworkFacadeImpl.INSTANCE, interfaceIPv4Address, sendToIPv4Address, sendToPort, bufferCapacity, ttl, log);
     }
 
-    public LineProtoSender(
+    public AbstractLineSender(
             NetworkFacade nf,
             int interfaceIPv4Address,
             int sendToIPv4Address,
             int sendToPort,
             int capacity,
-            int ttl
+            int ttl,
+            Log log
     ) {
         this.nf = nf;
         this.capacity = capacity;
+        this.log = log;
         sockaddr = nf.sockaddr(sendToIPv4Address, sendToPort);
         fd = createSocket(interfaceIPv4Address, ttl, sockaddr);
 
@@ -86,28 +88,6 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
         hi = lo + capacity;
         ptr = lo;
         lineStart = lo;
-    }
-
-    protected long createSocket(int interfaceIPv4Address, int ttl, long sockaddr) throws NetworkError {
-        long fd = nf.socketUdp();
-
-        if (fd == -1) {
-            throw NetworkError.instance(nf.errno()).put("could not create UDP socket");
-        }
-
-        if (nf.setMulticastInterface(fd, interfaceIPv4Address) != 0) {
-            final int errno = nf.errno();
-            nf.close(fd, LOG);
-            throw NetworkError.instance(errno).put("could not bind to ").ip(interfaceIPv4Address);
-        }
-
-        if (nf.setMulticastTtl(fd, ttl) != 0) {
-            final int errno = nf.errno();
-            nf.close(fd, LOG);
-            throw NetworkError.instance(errno).put("could not set ttl [fd=").put(fd).put(", ttl=").put(ttl).put(']');
-        }
-
-        return fd;
     }
 
     public void $(long timestamp) {
@@ -125,29 +105,33 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
     @Override
     public void close() {
         if (nf.close(fd) != 0) {
-            LOG.error().$("could not close UDP socket [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+            log.error().$("could not close UDP socket [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
         }
         nf.freeSockAddr(sockaddr);
         Unsafe.free(bufA, capacity, MemoryTag.NATIVE_DEFAULT);
         Unsafe.free(bufB, capacity, MemoryTag.NATIVE_DEFAULT);
     }
 
-    public LineProtoSender field(CharSequence name, long value) {
+    public AbstractLineSender field(CharSequence name, long value) {
         field(name).put(value).put('i');
         return this;
     }
 
-    public LineProtoSender field(CharSequence name, CharSequence value) {
-        field(name).putQuoted(value);
+    public AbstractLineSender field(CharSequence name, CharSequence value) {
+        field(name).put('"');
+        quoted = true;
+        encodeUtf8(value);
+        quoted = false;
+        put('"');
         return this;
     }
 
-    public LineProtoSender field(CharSequence name, double value) {
+    public AbstractLineSender field(CharSequence name, double value) {
         field(name).put(value);
         return this;
     }
 
-    public LineProtoSender field(CharSequence name, boolean value) {
+    public AbstractLineSender field(CharSequence name, boolean value) {
         field(name).put(value ? 't' : 'f');
         return this;
     }
@@ -159,7 +143,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
     }
 
     @Override
-    public LineProtoSender put(CharSequence cs) {
+    public AbstractLineSender put(CharSequence cs) {
         int l = cs.length();
         if (ptr + l < hi) {
             Chars.asciiStrCpy(cs, l, ptr);
@@ -172,6 +156,15 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
             }
         }
         ptr += l;
+        return this;
+    }
+
+    @Override
+    public AbstractLineSender put(char c) {
+        if (ptr >= hi) {
+            send00();
+        }
+        Unsafe.getUnsafe().putByte(ptr++, (byte) c);
         return this;
     }
 
@@ -191,30 +184,24 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
         return this;
     }
 
-    public LineProtoSender metric(CharSequence metric) {
+    public AbstractLineSender metric(CharSequence metric) {
         if (hasMetric) {
             throw CairoException.instance(0).put("duplicate metric");
         }
+        quoted = false;
         hasMetric = true;
         return put(metric);
     }
 
-    @Override
-    public LineProtoSender put(char c) {
-        if (ptr >= hi) {
-            send00();
-        }
-        Unsafe.getUnsafe().putByte(ptr++, (byte) c);
-        return this;
-    }
-
-    public LineProtoSender tag(CharSequence tag, CharSequence value) {
+    public AbstractLineSender tag(CharSequence tag, CharSequence value) {
         if (hasMetric) {
             put(',').encodeUtf8(tag).put('=').encodeUtf8(value);
             return this;
         }
         throw CairoException.instance(0).put("metric expected");
     }
+
+    protected abstract long createSocket(int interfaceIPv4Address, int ttl, long sockaddr);
 
     private CharSink field(CharSequence name) {
         if (hasMetric) {
@@ -236,11 +223,20 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
             case ' ':
             case ',':
             case '=':
-            case '"':
-            case '\\':
-                put('\\');
+                if (!quoted) {
+                    put('\\');
+                }
             default:
                 put(c);
+                break;
+            case '"':
+                if (quoted) {
+                    put('\\');
+                }
+                put('\"');
+                break;
+            case '\\':
+                put('\\').put('\\');
                 break;
         }
     }
@@ -249,12 +245,6 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
         if (lo < lineStart) {
             int len = (int) (lineStart - lo);
             sendToSocket(fd, lo, sockaddr, len);
-        }
-    }
-
-    protected void sendToSocket(long fd, long lo, long sockaddr, int len) throws NetworkError {
-        if (nf.sendTo(fd, lo, len, sockaddr) != len) {
-            throw NetworkError.instance(nf.errno()).put("send error");
         }
     }
 
@@ -274,4 +264,6 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
             throw NetworkError.instance(0).put("line too long");
         }
     }
+
+    protected abstract void sendToSocket(long fd, long lo, long sockaddr, int len);
 }

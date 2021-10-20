@@ -22,9 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line;
+package io.questdb.cairo;
 
 @FunctionalInterface
-public interface CharSequenceCache {
-    CharSequence get(long address);
+public interface SymbolCountProvider {
+    int getSymbolCount();
 }

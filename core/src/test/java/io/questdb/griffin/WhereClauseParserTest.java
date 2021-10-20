@@ -288,7 +288,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("invalidTimestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "dangling expression");
+            TestUtils.assertContains(e.getFlyweightMessage(), "unclosed quoted string?");
         }
     }
 

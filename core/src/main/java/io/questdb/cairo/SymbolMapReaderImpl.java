@@ -85,23 +85,37 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         if (symbolCount > this.symbolCount) {
             this.symbolCount = symbolCount;
             this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
-            this.offsetMem.extend(maxOffset);
-            growCharMemToSymbolCount(symbolCount);
+            // offset mem contains offsets of symbolCount + 1
+            // we need to make sure we have access to the last element
+            // which will indicate size of the char column
+            this.offsetMem.extend(maxOffset + Long.BYTES);
+            this.charMem.extend(this.offsetMem.getLong(maxOffset));
         } else if (symbolCount < this.symbolCount) {
             cache.remove(symbolCount + 1, this.symbolCount);
             this.symbolCount = symbolCount;
         }
     }
 
-    public void of(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
+    @Override
+    public long symbolCharsAddressOf(int symbolIndex) {
+        if (symbolIndex < symbolCount) {
+            long offset = offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolIndex));
+            return charMem.addressOf(offset);
+        } else if (symbolIndex == symbolCount) {
+            return charMem.addressOf(charMem.getGrownLength());
+        }
+        return -1;
+    }
+
+    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, int symbolCount) {
         FilesFacade ff = configuration.getFilesFacade();
         this.symbolCount = symbolCount;
-        this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
+        this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
         final int plen = path.length();
         try {
-            // this constructor does not create index. Index must exist
+            // this constructor does not create index. Index must exist,
             // and we use "offset" file to store "header"
-            SymbolMapWriter.offsetFileName(path.trimTo(plen), name);
+            SymbolMapWriter.offsetFileName(path.trimTo(plen), columnName);
             if (!ff.exists(path)) {
                 LOG.error().$(path).$(" is not found").$();
                 throw CairoException.instance(0).put("SymbolMap does not exist: ").put(path);
@@ -117,19 +131,20 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
             final long offsetMemSize = SymbolMapWriter.keyToOffset(symbolCount);
+            LOG.debug().$("offsetMem.of [columnName=").$(path).$(",offsetMemSize=").$(offsetMemSize).I$();
             this.offsetMem.of(ff, path, offsetMemSize, offsetMemSize, MemoryTag.MMAP_INDEX_READER);
             symbolCapacity = offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY);
             this.cached = offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED);
             this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
 
             // index writer is used to identify attempts to store duplicate symbol value
-            this.indexReader.of(configuration, path.trimTo(plen), name, 0, -1);
+            this.indexReader.of(configuration, path.trimTo(plen), columnName, 0, -1);
 
             // this is the place where symbol values are stored
-            this.charMem.wholeFile(ff, SymbolMapWriter.charFileName(path.trimTo(plen), name), MemoryTag.MMAP_INDEX_READER);
+            this.charMem.wholeFile(ff, SymbolMapWriter.charFileName(path.trimTo(plen), columnName), MemoryTag.MMAP_INDEX_READER);
 
             // move append pointer for symbol values in the correct place
-            growCharMemToSymbolCount(symbolCount);
+            this.charMem.extend(this.offsetMem.getLong(maxOffset));
 
             // we use index hash maximum equals to half of symbol capacity, which
             // theoretically should require 2 value cells in index per hash
@@ -139,7 +154,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 this.cache.setPos(symbolCapacity);
             }
             this.cache.clear();
-            LOG.debug().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", capacity=").$(symbolCapacity).$(']').$();
+            LOG.debug().$("open [columnName=").$(path.trimTo(plen).concat(columnName).$()).$(", fd=").$(this.offsetMem.getFd()).$(", capacity=").$(symbolCapacity).$(']').$();
         } catch (Throwable e) {
             close();
             throw e;
@@ -157,9 +172,9 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     public int keyOf(CharSequence value) {
         if (value != null) {
             int hash = Hash.boundedHash(value, maxHash);
-            RowCursor cursor = indexReader.getCursor(true, hash, 0, maxOffset);
+            final RowCursor cursor = indexReader.getCursor(true, hash, 0, maxOffset - Long.BYTES);
             while (cursor.hasNext()) {
-                long offsetOffset = cursor.next();
+                final long offsetOffset = cursor.next();
                 if (Chars.equals(value, charMem.getStr(offsetMem.getLong(offsetOffset)))) {
                     return SymbolMapWriter.offsetToKey(offsetOffset);
                 }
@@ -209,35 +224,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return symbol;
     }
 
-    private void growCharMemToSymbolCount(int symbolCount) {
-        long charMemLength;
-        if (symbolCount > 0) {
-            long lastSymbolOffset = this.offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolCount - 1));
-            this.charMem.extend(lastSymbolOffset + 4);
-            charMemLength = lastSymbolOffset + Vm.getStorageLength(this.charMem.getStrLen(lastSymbolOffset));
-        } else {
-            charMemLength = 0;
-        }
-        this.charMem.extend(charMemLength);
-    }
-
     private CharSequence uncachedValue(int key) {
         return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
     }
 
     private CharSequence uncachedValue2(int key) {
         return charMem.getStr2(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
-    }
-
-    @Override
-    public long symbolCharsAddressOf(int symbolIndex) {
-        if (symbolIndex < symbolCount) {
-            long offset = offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolIndex));
-            return charMem.addressOf(offset);
-        } else if (symbolIndex == symbolCount) {
-            return charMem.addressOf(charMem.getGrownLength());
-        }
-
-        return -1;
     }
 }
