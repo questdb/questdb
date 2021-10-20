@@ -122,6 +122,7 @@ public class MessageBusImpl implements MessageBus {
         this.latestBySubSeq = new MCSequence(latestByQueue.getCapacity());
         latestByPubSeq.then(latestBySubSeq).then(latestByPubSeq);
 
+        // todo: move to configuration
         this.tableWriterCommandQueue = new RingQueue<>(() -> new TableWriterTask(2048), 4);
         this.tableWriterCommandPubSeq = new MPSequence(this.tableWriterCommandQueue.getCapacity());
         this.tableWriterCommandSubSeq = new FanOut();
