@@ -218,7 +218,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     @Override
-    protected void putUtf8Special(char c) {
+    public void putUtf8Special(char c) {
         switch (c) {
             case ' ':
             case ',':
