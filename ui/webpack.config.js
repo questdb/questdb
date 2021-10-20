@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2020 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,13 +31,13 @@ const MiniCssExtractPlugin = require("mini-css-extract-plugin")
 const Webpack = require("webpack")
 const AnalyzerPlugin = require("webpack-bundle-analyzer").BundleAnalyzerPlugin
 
-require('dotenv').config()
+require("dotenv").config()
 
 const PORT = 9999
 const BACKEND_PORT = 9000
 const isProdBuild = process.env.NODE_ENV === "production"
 const runBundleAnalyzer = process.env.ANALYZE
-const ASSET_PATH = process.env.ASSET_PATH || '/';
+const ASSET_PATH = process.env.ASSET_PATH || "/"
 
 if (!process.env.NODE_ENV) {
   process.env.NODE_ENV = "development"

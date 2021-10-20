@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2020 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -65,12 +65,30 @@ export const LocalStorageContext = createContext<ContextProps>(defaultValues)
 export const LocalStorageProvider = ({
   children,
 }: PropsWithChildren<Props>) => {
-  const [authPayload, setAuthPayload] = useState<string>(getValue(StoreKey.AUTH_PAYLOAD))
-  const [editorCol, setEditorCol] = useState<number>(parseInteger(getValue(StoreKey.EDITOR_COL), defaultConfig.editorCol))
-  const [editorLine, setEditorLine] = useState<number>(parseInteger(getValue(StoreKey.EDITOR_LINE), defaultConfig.editorLine))
-  const [isNotificationEnabled, setIsNotificationEnabled] = useState<boolean>(parseBoolean(getValue(StoreKey.NOTIFICATION_ENABLED), defaultConfig.isNotificationEnabled))
-  const [notificationDelay, setNotificationDelay] = useState<number>(parseInteger(getValue(StoreKey.NOTIFICATION_DELAY), defaultConfig.notificationDelay))
-  const [queryText, setQueryText] = useState<string>(getValue(StoreKey.QUERY_TEXT))
+  const [authPayload, setAuthPayload] = useState<string>(
+    getValue(StoreKey.AUTH_PAYLOAD),
+  )
+  const [editorCol, setEditorCol] = useState<number>(
+    parseInteger(getValue(StoreKey.EDITOR_COL), defaultConfig.editorCol),
+  )
+  const [editorLine, setEditorLine] = useState<number>(
+    parseInteger(getValue(StoreKey.EDITOR_LINE), defaultConfig.editorLine),
+  )
+  const [isNotificationEnabled, setIsNotificationEnabled] = useState<boolean>(
+    parseBoolean(
+      getValue(StoreKey.NOTIFICATION_ENABLED),
+      defaultConfig.isNotificationEnabled,
+    ),
+  )
+  const [notificationDelay, setNotificationDelay] = useState<number>(
+    parseInteger(
+      getValue(StoreKey.NOTIFICATION_DELAY),
+      defaultConfig.notificationDelay,
+    ),
+  )
+  const [queryText, setQueryText] = useState<string>(
+    getValue(StoreKey.QUERY_TEXT),
+  )
 
   const updateSettings = (key: StoreKey, value: SettingsType) => {
     setValue(key, value.toString())
@@ -90,10 +108,14 @@ export const LocalStorageProvider = ({
         setEditorLine(parseInteger(value, defaultConfig.editorLine))
         break
       case StoreKey.NOTIFICATION_ENABLED:
-        setIsNotificationEnabled(parseBoolean(value, defaultConfig.isNotificationEnabled))
+        setIsNotificationEnabled(
+          parseBoolean(value, defaultConfig.isNotificationEnabled),
+        )
         break
       case StoreKey.NOTIFICATION_DELAY:
-        setNotificationDelay(parseInteger(value, defaultConfig.notificationDelay))
+        setNotificationDelay(
+          parseInteger(value, defaultConfig.notificationDelay),
+        )
         break
       case StoreKey.QUERY_TEXT:
         setQueryText(value)
@@ -117,4 +139,4 @@ export const LocalStorageProvider = ({
     </LocalStorageContext.Provider>
   )
 }
-  /* eslint-enable prettier/prettier */
+/* eslint-enable prettier/prettier */

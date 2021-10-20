@@ -1,3 +1,27 @@
+<!------------------------------------------------------------------------------
+  -     ___                  _   ____  ____
+  -    / _ \ _   _  ___  ___| |_|  _ \| __ )
+  -   | | | | | | |/ _ \/ __| __| | | |  _ \
+  -   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+  -    \__\_\\__,_|\___||___/\__|____/|____/
+  -
+  -  Copyright (c) 2014-2019 Appsicle
+  -  Copyright (c) 2019-2020 QuestDB
+  -
+  -  Licensed under the Apache License, Version 2.0 (the "License");
+  -  you may not use this file except in compliance with the License.
+  -  You may obtain a copy of the License at
+  -
+  -  http://www.apache.org/licenses/LICENSE-2.0
+  -
+  -  Unless required by applicable law or agreed to in writing, software
+  -  distributed under the License is distributed on an "AS IS" BASIS,
+  -  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  -  See the License for the specific language governing permissions and
+  -  limitations under the License.
+  -
+  ----------------------------------------------------------------------------->
+
 <svg width="812" height="701" viewBox="0 0 812 701" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path d="M133.387 350.187C133.387 228.785 233.243 130.989 357.202 130.989C401.965 130.989 443.284 143.354 477.717 165.836L574.13 72.5358C514.446 27.572 438.693 0.59375 357.202 0.59375C159.786 0.59375 0.246094 156.843 0.246094 350.187C0.246094 543.531 159.786 699.781 357.202 699.781V569.386C233.243 569.386 133.387 471.589 133.387 350.187Z" fill="url(#paint0_linear)"/>
 <path d="M581.015 350.192H714.156C714.156 258.016 677.428 173.709 617.744 110.76L523.627 202.935C559.208 242.279 581.015 293.987 581.015 350.192Z" fill="url(#paint1_linear)"/>
