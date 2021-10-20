@@ -99,16 +99,16 @@ The following table shows query execution time of a billion rows run on a
 
 ### 📚 Read the docs
 
-- [QuestDB documentation:](https://questdb.io/docs/introduction/) Understand how to run and configure QuestDB.
-- [Tutorials:](https://questdb.io/tutorial/) Learn what's possible with QuestDB step by step.
-- [Product roadmap:](https://github.com/questdb/questdb/projects) Check out our plan for upcoming releases.
+- [QuestDB documentation:](https://questdb.io/docs/introduction/) understand how to run and configure QuestDB.
+- [Tutorials:](https://questdb.io/tutorial/) learn what's possible with QuestDB step by step.
+- [Product roadmap:](https://github.com/questdb/questdb/projects) check out our plan for upcoming releases.
 
 ### ❓ Get support
 
-- [Community Slack:](https://slack.questdb.io) Join technical discussions, ask questions, and meet other users!
-- [GitHub issues:](https://github.com/questdb/questdb/issues) Report bugs or issues with QuestDB.
-- [GitHub discussions:](https://github.com/questdb/questdb/discussions) Propose new features or show what you've built.
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) Look for common troubleshooting solutions.
+- [Community Slack:](https://slack.questdb.io) join technical discussions, ask questions, and meet other users!
+- [GitHub issues:](https://github.com/questdb/questdb/issues) report bugs or issues with QuestDB.
+- [GitHub discussions:](https://github.com/questdb/questdb/discussions) propose new features or show what you've built.
+- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) look for common troubleshooting solutions.
 
 ### 🚢 Deploy QuestDB
 
