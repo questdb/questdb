@@ -22,9 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line;
+package io.questdb.cutlass.line.udp;
 
-public interface LineProtoParser {
+public interface LineUdpParser {
     int EVT_MEASUREMENT = 1;
     int EVT_TAG_VALUE = 2;
     int EVT_FIELD_VALUE = 3;

@@ -33,7 +33,7 @@ import io.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
 
-public class NewLineProtoParser implements Closeable {
+public class LineTcpParser implements Closeable {
     public static final long NULL_TIMESTAMP = Numbers.LONG_NaN;
     public static final byte ENTITY_TYPE_NULL = 0;
     public static final byte ENTITY_TYPE_TAG = 1;
@@ -69,6 +69,10 @@ public class NewLineProtoParser implements Closeable {
     private final EntityHandler entityTimestampHandler = this::expectTimestamp;
     private final EntityHandler entityValueHandler = this::expectEntityValue;
     private final EntityHandler entityNameHandler = this::expectEntityName;
+    private int nQuoteCharacters;
+    private boolean scape;
+    private boolean nextValueCanBeOpenQuote;
+    private boolean hasNonAscii;
 
     @Override
     public void close() {
@@ -99,11 +103,15 @@ public class NewLineProtoParser implements Closeable {
         return nEntities;
     }
 
+    public boolean hasNonAsciiChars() {
+        return hasNonAscii;
+    }
+
     public boolean hasTimestamp() {
         return timestamp != NULL_TIMESTAMP;
     }
 
-    public NewLineProtoParser of(long bufLo) {
+    public LineTcpParser of(long bufLo) {
         this.bufAt = bufLo - 1;
         startNextMeasurement();
         return this;
@@ -111,8 +119,30 @@ public class NewLineProtoParser implements Closeable {
 
     public ParseResult parseMeasurement(long bufHi) {
         assert bufAt != 0 && bufHi >= bufAt;
+        // We can resume from random place of the line message
+        // the class member variables should resume byte by byte parsing from the last place
+        // processing stopped.
+        if (nQuoteCharacters == 1 && tagsComplete && entityHandler == entityValueHandler)  {
+            // when nQuoteCharacters it means that parsing of quoted value has started.
+            // continue parsing quoted value
+            if (!prepareQuotedEntity(entityLo, bufHi)) {
+                // quoted value parsing did not reach the end
+                if (errorCode == ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW) {
+                    // because buffer exhausted
+                    return ParseResult.BUFFER_UNDERFLOW;
+                }
+                // because it reached EOL or another error
+                return ParseResult.ERROR;
+            }
+            nQuoteCharacters = 0;
+            bufAt++;
+        }
+
+        // Main parsing loop
         while (bufAt < bufHi) {
+            // take the byte
             byte b = Unsafe.getUnsafe().getByte(bufAt);
+            hasNonAscii |= b < 0;
             boolean endOfLine = false;
             boolean appendByte = false;
             switch (b) {
@@ -125,6 +155,7 @@ public class NewLineProtoParser implements Closeable {
                 case (byte) ' ':
                     isQuotedFieldValue = false;
                     if (!entityHandler.completeEntity(b, bufHi)) {
+                        // parse of key or value is unsuccessful
                         if (errorCode == ErrorCode.EMPTY_LINE) {
                             // An empty line
                             bufAt++;
@@ -137,6 +168,7 @@ public class NewLineProtoParser implements Closeable {
                         return ParseResult.ERROR;
                     }
                     if (endOfLine) {
+                        // EOL reached, time to return
                         if (nEntities > 0) {
                             entityHandler = entityEndOfLineHandler;
                             return ParseResult.MEASUREMENT_COMPLETE;
@@ -144,27 +176,62 @@ public class NewLineProtoParser implements Closeable {
                         errorCode = ErrorCode.NO_FIELDS;
                         return ParseResult.ERROR;
                     }
+                    // skip the separator
                     bufAt++;
                     if (!isQuotedFieldValue) {
+                        // reset few indicators
                         nEscapedChars = 0;
+                        // start next value from here
                         entityLo = bufAt;
                     }
                     break;
 
                 case (byte) '\\':
+                    // escape next character
+                    // look forward, skip the slash
                     if ((bufAt + 1) >= bufHi) {
                         return ParseResult.BUFFER_UNDERFLOW;
                     }
                     nEscapedChars++;
                     bufAt++;
                     b = Unsafe.getUnsafe().getByte(bufAt);
+                    hasNonAscii |= b < 0;
+                    appendByte = true;
+                    break;
+
+                case (byte)'"':
+                    if (nextValueCanBeOpenQuote && ++nQuoteCharacters == 1) {
+                        // This means that the processing resumed from "
+                        // and it's allowed to start quoted value at this point
+                        bufAt += 1;
+                        // parse quoted value
+                        if (!prepareQuotedEntity(bufAt - 1, bufHi)) {
+                            // parsing not successful
+                            if (errorCode == ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW) {
+                                // need more data
+                                return ParseResult.BUFFER_UNDERFLOW;
+                            }
+                            // invalid character sequence in the quoted value or EOL found
+                            return ParseResult.ERROR;
+                        }
+                        errorCode = ErrorCode.NONE;
+                        nQuoteCharacters = 0;
+                        bufAt += 1;
+                        break;
+                    } else if (isQuotedFieldValue) {
+                        return ParseResult.ERROR;
+                    }
 
                 default:
                     appendByte = true;
+                    nextValueCanBeOpenQuote = false;
                     break;
             }
 
             if (appendByte) {
+                // If there is escaped character, like \" or \\ then the escape slash has to be excluded
+                // from the result key / value.
+                // shift copy current byte back
                 if (nEscapedChars > 0) {
                     Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
                 }
@@ -201,12 +268,16 @@ public class NewLineProtoParser implements Closeable {
         nEscapedChars = 0;
         isQuotedFieldValue = false;
         entityLo = bufAt;
-        errorCode = null;
         tagsComplete = false;
         nEntities = 0;
         currentEntity = null;
         entityHandler = entityTableHandler;
         timestamp = NULL_TIMESTAMP;
+        errorCode = ErrorCode.NONE;
+        nQuoteCharacters = 0;
+        scape = false;
+        nextValueCanBeOpenQuote = false;
+        hasNonAscii = false;
     }
 
     private boolean expectEndOfLine(byte endOfEntityByte, long bufHi) {
@@ -232,14 +303,20 @@ public class NewLineProtoParser implements Closeable {
             nEntities++;
             currentEntity.setName();
             entityHandler = entityValueHandler;
-
             if (tagsComplete) {
                 if (bufAt + 3 < bufHi) { // peek oncoming value's 1st byte, only caring for valid strings (2 quotes plus a follow up byte)
                     long candidateQuoteIdx = bufAt + 1;
                     byte b = Unsafe.getUnsafe().getByte(candidateQuoteIdx);
                     if (b == (byte) '"') {
-                        return prepareQuotedEntity(candidateQuoteIdx, bufHi);
+                        nEscapedChars = 0;
+                        nQuoteCharacters++;
+                        bufAt += 2;
+                        return prepareQuotedEntity(candidateQuoteIdx, bufHi);// go to first byte of the string, past the '"'
+                    } else {
+                        nextValueCanBeOpenQuote = false;
                     }
+                } else {
+                    nextValueCanBeOpenQuote = true;
                 }
             }
             return true;
@@ -259,6 +336,12 @@ public class NewLineProtoParser implements Closeable {
             if (endOfEntityByte == (byte) '\n') {
                 return true;
             }
+        } else if (tagsComplete && (endOfEntityByte == '\n' || endOfEntityByte == '\r')) {
+            if (currentEntity != null && currentEntity.getType() == ENTITY_TYPE_TAG) {
+                // One token after last tag, and no fields
+                // This must be timestamp
+                return expectTimestamp(endOfEntityByte, bufHi);
+            }
         }
 
         if (tagsComplete) {
@@ -274,16 +357,26 @@ public class NewLineProtoParser implements Closeable {
         // the start of a string value. Get it ready for immediate consumption by
         // the next completeEntity call, moving butAt to the next '"'
         entityLo = openQuoteIdx; // from the quote
-        boolean scape = false;
-        bufAt += 2; // go to first byte of the string, past the '"'
+        boolean copyByte;
         while (bufAt < bufHi) { // consume until the next quote, '\n', or eof
-            switch (Unsafe.getUnsafe().getByte(bufAt)) {
+            byte b = Unsafe.getUnsafe().getByte(bufAt);
+            copyByte = true;
+            hasNonAscii |= b < 0;
+            switch (b) {
                 case (byte) '\\':
+                    if (!scape) {
+                        nEscapedChars++;
+                        copyByte = false;
+                    }
                     scape = !scape;
                     break;
                 case (byte) '"':
                     if (!scape) {
                         isQuotedFieldValue = true;
+                        nQuoteCharacters--;
+                        if (nEscapedChars > 0) {
+                            Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
+                        }
                         return true;
                     }
                     scape = false;
@@ -298,6 +391,10 @@ public class NewLineProtoParser implements Closeable {
                 default:
                     scape = false;
                     break;
+            }
+            nextValueCanBeOpenQuote = false;
+            if (copyByte && nEscapedChars > 0) {
+                Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
             }
             bufAt++;
         }
@@ -373,7 +470,8 @@ public class NewLineProtoParser implements Closeable {
         INVALID_FIELD_SEPARATOR,
         INVALID_TIMESTAMP,
         INVALID_FIELD_VALUE,
-        INVALID_FIELD_VALUE_STR_UNDERFLOW
+        INVALID_FIELD_VALUE_STR_UNDERFLOW,
+        NONE
     }
 
     private interface EntityHandler {
@@ -498,16 +596,14 @@ public class NewLineProtoParser implements Closeable {
                         type = ENTITY_TYPE_STRING;
                         return true;
                     }
-                    return false;
+                    type = ENTITY_TYPE_SYMBOL;
+                    return true;
                 }
                 default:
                     try {
                         floatValue = Numbers.parseDouble(value);
                         type = ENTITY_TYPE_FLOAT;
                     } catch (NumericException ex) {
-                        if (value.byteAt(0) == '"') { // missing closing '"'
-                            return false;
-                        }
                         type = ENTITY_TYPE_SYMBOL;
                     }
                     return true;

@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.regex;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -35,6 +36,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -43,7 +45,7 @@ import java.util.regex.PatternSyntaxException;
 public class MatchStrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "~(Ss)";
+        return "~(SS)";
     }
 
     @Override
@@ -54,28 +56,66 @@ public class MatchStrFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        Function value = args.getQuick(0);
-        CharSequence regex = args.getQuick(1).getStr(null);
-
-        if (regex == null) {
-            throw SqlException.$(argPositions.getQuick(1), "NULL regex");
+        final Function value = args.getQuick(0);
+        final Function pattern = args.getQuick(1);
+        final int patternPosition = argPositions.getQuick(1);
+        if (pattern.isConstant()) {
+            return new MatchConstPatternFunction(value, createMatcher(pattern, patternPosition));
+        } else if (pattern.isRuntimeConstant()) {
+            return new MatchRuntimeConstPatternFunction(value, pattern, patternPosition);
         }
+        throw SqlException.$(patternPosition, "not implemented: dynamic patter would be very slow to execute");
+    }
 
+    @NotNull
+    private static Matcher createMatcher(Function pattern, int position) throws SqlException {
+        final CharSequence regex = pattern.getStr(null);
+        if (regex == null) {
+            throw SqlException.$(position, "NULL regex");
+        }
         try {
-            Matcher matcher = Pattern.compile(Chars.toString(regex)).matcher("");
-            return new MatchFunction(value, matcher);
+            return Pattern.compile(Chars.toString(regex)).matcher("");
         } catch (PatternSyntaxException e) {
-            throw SqlException.$(argPositions.getQuick(1) + e.getIndex() + 1, e.getMessage());
+            throw SqlException.$(position + e.getIndex() + 1, e.getMessage());
         }
     }
 
-    private static class MatchFunction extends BooleanFunction implements UnaryFunction {
+    private static class MatchConstPatternFunction extends BooleanFunction implements UnaryFunction {
         private final Function value;
         private final Matcher matcher;
 
-        public MatchFunction(Function value, Matcher matcher) {
+        public MatchConstPatternFunction(Function value, Matcher matcher) {
             this.value = value;
             this.matcher = matcher;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            CharSequence cs = getArg().getStr(rec);
+            return cs != null && matcher.reset(cs).find();
+        }
+    }
+
+    private static class MatchRuntimeConstPatternFunction extends BooleanFunction implements UnaryFunction {
+        private final Function value;
+        private final Function pattern;
+        private final int patternPosition;
+        private Matcher matcher;
+
+        public MatchRuntimeConstPatternFunction(Function value, Function pattern, int patternPosition) {
+            this.value = value;
+            this.pattern = pattern;
+            this.patternPosition = patternPosition;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
         }
 
         @Override
@@ -85,8 +125,20 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getArg() {
-            return value;
+        public boolean isConstant() {
+            return false;
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            return false;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            pattern.init(symbolTableSource, executionContext);
+            this.matcher = createMatcher(pattern, patternPosition);
         }
     }
 }

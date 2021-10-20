@@ -22,36 +22,50 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.tcp;
+package io.questdb.cutlass.line;
 
-import io.questdb.cutlass.line.LineProtoSender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkError;
+import io.questdb.network.NetworkFacade;
 
-public class LineTCPProtoSender extends LineProtoSender {
-    private static final Log LOG = LogFactory.getLog(LineProtoSender.class);
+public class LineUdpSender extends AbstractLineSender {
 
-    public LineTCPProtoSender(int sendToIPv4Address, int sendToPort, int bufferCapacity) {
-        super(0, sendToIPv4Address, sendToPort, bufferCapacity, 0);
+    private static final Log LOG = LogFactory.getLog(LineUdpSender.class);
+
+    public LineUdpSender(int interfaceIPv4Address, int sendToIPv4Address, int sendToPort, int bufferCapacity, int ttl) {
+        super(interfaceIPv4Address, sendToIPv4Address, sendToPort, bufferCapacity, ttl, LOG);
+    }
+
+    public LineUdpSender(NetworkFacade nf, int interfaceIPv4Address, int sendToIPv4Address, int sendToPort, int capacity, int ttl) {
+        super(nf, interfaceIPv4Address, sendToIPv4Address, sendToPort, capacity, ttl, LOG);
     }
 
     @Override
     protected long createSocket(int interfaceIPv4Address, int ttl, long sockaddr) throws NetworkError {
-        long fd = nf.socketTcp(true);
-        if (nf.connect(fd, sockaddr) != 0) {
-            throw NetworkError.instance(nf.errno(), "could not connect to ").ip(interfaceIPv4Address);
+        long fd = nf.socketUdp();
+
+        if (fd == -1) {
+            throw NetworkError.instance(nf.errno()).put("could not create UDP socket");
         }
-        int orgSndBufSz = nf.getSndBuf(fd);
-        nf.setSndBuf(fd, 2 * capacity);
-        int newSndBufSz = nf.getSndBuf(fd);
-        LOG.info().$("Send buffer size change from ").$(orgSndBufSz).$(" to ").$(newSndBufSz).$();
+
+        if (nf.setMulticastInterface(fd, interfaceIPv4Address) != 0) {
+            final int errno = nf.errno();
+            nf.close(fd, LOG);
+            throw NetworkError.instance(errno).put("could not bind to ").ip(interfaceIPv4Address);
+        }
+
+        if (nf.setMulticastTtl(fd, ttl) != 0) {
+            final int errno = nf.errno();
+            nf.close(fd, LOG);
+            throw NetworkError.instance(errno).put("could not set ttl [fd=").put(fd).put(", ttl=").put(ttl).put(']');
+        }
         return fd;
     }
 
     @Override
     protected void sendToSocket(long fd, long lo, long sockaddr, int len) throws NetworkError {
-        if (nf.send(fd, lo, len) != len) {
+        if (nf.sendTo(fd, lo, len, sockaddr) != len) {
             throw NetworkError.instance(nf.errno()).put("send error");
         }
     }

@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.*;
-import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
+import io.questdb.cutlass.line.udp.LineUdpParserSupport.BadCastException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -41,8 +41,8 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 
-public class CairoLineProtoParser implements LineProtoParser, Closeable {
-    private final static Log LOG = LogFactory.getLog(CairoLineProtoParser.class);
+public class LineUdpParserImpl implements LineUdpParser, Closeable {
+    private final static Log LOG = LogFactory.getLog(LineUdpParserImpl.class);
     private static final String WRITER_LOCK_REASON = "ilpUdp";
     private static final LineEndParser NOOP_LINE_END = cache -> {
     };
@@ -88,7 +88,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final FieldValueParser MY_FIELD_VALUE = this::parseFieldValue;
     private final FieldValueParser MY_NEW_FIELD_VALUE = this::parseFieldValueNewTable;
 
-    public CairoLineProtoParser(
+    public LineUdpParserImpl(
             CairoEngine engine,
             CairoSecurityContext cairoSecurityContext,
             LineProtoTimestampAdapter timestampAdapter
@@ -188,7 +188,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
         try {
             for (int i = 0; i < columnCount; i++) {
-                CairoLineProtoParserSupport.putValue(
+                LineUdpParserSupport.putValue(
                         row,
                         (int) columnNameType.getQuick(i * 2 + 1),
                         geohashBitsSizeByColIdx.getQuick(i),
@@ -212,7 +212,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         try {
             for (int i = 0; i < columnCount; i++) {
                 final long value = columnIndexAndType.getQuick(i);
-                CairoLineProtoParserSupport.putValue(
+                LineUdpParserSupport.putValue(
                         row,
                         Numbers.decodeHighInt(value),
                         geohashBitsSizeByColIdx.getQuick(i),
@@ -323,7 +323,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     private void parseFieldValue(CachedCharSequence value, CharSequenceCache cache) {
-        int valueType = CairoLineProtoParserSupport.getValueType(value);
+        int valueType = LineUdpParserSupport.getValueType(value);
         if (valueType == ColumnType.UNDEFINED) {
             switchModeToSkipLine();
         } else {
@@ -333,7 +333,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
     @SuppressWarnings("unused")
     private void parseFieldValueNewTable(CachedCharSequence value, CharSequenceCache cache) {
-        int valueType = CairoLineProtoParserSupport.getValueType(value);
+        int valueType = LineUdpParserSupport.getValueType(value);
         if (valueType == ColumnType.UNDEFINED || valueType == ColumnType.NULL) { // cannot create a col of type null
             switchModeToSkipLine();
         } else {

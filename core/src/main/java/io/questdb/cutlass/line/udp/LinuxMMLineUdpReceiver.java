@@ -28,11 +28,11 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 
-public class LinuxMMLineProtoReceiver extends AbstractLineProtoReceiver {
+public class LinuxMMLineUdpReceiver extends AbstractLineProtoUdpReceiver {
     private final int msgCount;
     private long msgVec;
 
-    public LinuxMMLineProtoReceiver(
+    public LinuxMMLineUdpReceiver(
             LineUdpReceiverConfiguration configuration,
             CairoEngine engine,
             WorkerPool workerPool

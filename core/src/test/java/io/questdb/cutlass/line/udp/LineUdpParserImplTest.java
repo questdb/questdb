@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cutlass.line.LineProtoLexer;
 import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -40,7 +39,7 @@ import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
 
-public class CairoLineProtoParserTest extends AbstractCairoTest {
+public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumn() throws Exception {
@@ -712,7 +711,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     private void assertThat(String expected, String lines, CharSequence tableName, CairoConfiguration configuration) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (CairoLineProtoParser parser = new CairoLineProtoParser(engine, AllowAllCairoSecurityContext.INSTANCE, LineProtoNanoTimestampAdapter.INSTANCE)) {
+                try (LineUdpParserImpl parser = new LineUdpParserImpl(engine, AllowAllCairoSecurityContext.INSTANCE, LineProtoNanoTimestampAdapter.INSTANCE)) {
                     byte[] bytes = lines.getBytes(StandardCharsets.UTF_8);
                     int len = bytes.length;
                     long mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
@@ -720,7 +719,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                         for (int i = 0; i < len; i++) {
                             Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
                         }
-                        try (LineProtoLexer lexer = new LineProtoLexer(4096)) {
+                        try (LineUdpLexer lexer = new LineUdpLexer(4096)) {
                             lexer.withParser(parser);
                             lexer.parse(mem, mem + len);
                             lexer.parseLast();

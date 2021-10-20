@@ -33,6 +33,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface LineTcpReceiverConfiguration {
+
     String getAuthDbPath();
 
     CairoSecurityContext getCairoSecurityContext();
@@ -78,4 +79,6 @@ public interface LineTcpReceiverConfiguration {
     boolean isEnabled();
 
     int getAggressiveReadRetryCount();
+
+    long getSymbolCacheWaitUsBeforeReload();
 }
