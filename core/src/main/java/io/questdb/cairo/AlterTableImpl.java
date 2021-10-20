@@ -55,9 +55,6 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
                     // it is applied at the SQL compilation time
                     break;
                 case ADD_COLUMN:
-                    if (!acceptStructureChange) {
-                        throw TableStructureChangesException.INSTANCE;
-                    }
                     applyAddColumn(tableWriter);
                     break;
                 case DROP_PARTITION:

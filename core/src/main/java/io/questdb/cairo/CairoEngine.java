@@ -190,13 +190,14 @@ public class CairoEngine implements Closeable, WriterSource {
         CharSequence tableName = alterTableStatement.getTableName();
 
         while (true) {
-            long pubCursor = messageBus.getTableWriterCommandPubSeq().next();
+            MPSequence commandPugSeq = messageBus.getTableWriterCommandPubSeq();
+            long pubCursor = commandPugSeq.next();
             if (pubCursor > -1) {
                 final TableWriterTask command = tableWriterCmdQueue.get(pubCursor);
                 long correlationId = alterCommandCommandCorrelationId.incrementAndGet();
                 alterTableStatement.serialize(command);
                 command.setInstance(correlationId);
-                messageBus.getTableWriterCommandPubSeq().done(pubCursor);
+                commandPugSeq.done(pubCursor);
                 LOG.info()
                         .$("published ASYNC writer ALTER TABLE task [table=").$(tableName)
                         .I$();
