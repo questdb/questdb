@@ -171,6 +171,31 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    public void testColumnTopMoveUncommittedLastPartContended() throws Exception {
+        executeWithPool(0, O3Test::testColumnTopMoveUncommittedLastPart0);
+    }
+
+    @Test
+    public void testColumnTopMoveUncommittedContended() throws Exception {
+        executeWithPool(0, O3Test::testColumnTopMoveUncommitted0);
+    }
+
+    @Test
+    public void testColumnTopMoveUncommittedParallel() throws Exception {
+        executeWithPool(4, O3Test::testColumnTopMoveUncommitted0);
+    }
+
+    @Test
+    public void testColumnTopMoveUncommittedLastPartParallel() throws Exception {
+        executeWithPool(4, O3Test::testColumnTopMoveUncommittedLastPart0);
+    }
+
+    @Test
+    public void testColumnTopMoveUncommittedLastPart() throws Exception {
+        executeVanilla(O3Test::testColumnTopMoveUncommittedLastPart0);
+    }
+
+    @Test
     public void testColumnTopLastDataOOODataParallel() throws Exception {
         executeWithPool(4, O3Test::testColumnTopLastDataOOOData0);
     }
@@ -3448,6 +3473,340 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "x",
                 "/o3/testColumnTopLastDataOOOData.txt"
+        );
+    }
+
+    private static void testColumnTopMoveUncommittedLastPart0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+
+        //
+        // ----- last partition
+        //
+        // +---------------+
+        // |   committed   |
+        // |               |
+        // +---------------+ <---- top
+        // |               |
+        // |  uncommitted  |
+        // |               |
+        // +---------------+
+        // |       O3      |
+        // |               |
+        // |               |
+        // +---------------+
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(500)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile("alter table x add column v double", sqlExecutionContext);
+        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
+        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
+        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
+        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
+        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
+        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
+        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
+        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
+        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
+        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
+        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
+        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+
+        // prepare data in APPEND table (non-partitioned, unordered) such, that first 100 rows are in order
+        // and another 100 rows are out of order
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(549900000001L,100000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+//        --------     new columns here ---------------
+                        " rnd_double() v," +
+                        " rnd_float() v1," +
+                        " rnd_int() v2," +
+                        " rnd_byte() v3," +
+                        " rnd_short() v4," +
+                        " rnd_boolean() v5," +
+                        " rnd_date() v6," +
+                        " rnd_timestamp(10,100000,356) v7," +
+                        " rnd_symbol('AAA','BBB', null) v8," +
+                        " rnd_char() v10," +
+                        " rnd_str() v11," +
+                        " rnd_bin() v12," +
+                        " rnd_long() v9" +
+                        " from long_sequence(100)" +
+                        ")",
+                sqlExecutionContext
+        );
+
+        // insert the O3 data, the conventional O3 logic should be triggered because this table does not
+        // have designated timestamp
+
+        compiler.compile(
+                "insert into append " +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " cast(549900000001L + ((x-1)/4) * 1000L + (4-(x-1)%4)*89 as timestamp) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+//        --------     new columns here ---------------
+                        " rnd_double() v," +
+                        " rnd_float() v1," +
+                        " rnd_int() v2," +
+                        " rnd_byte() v3," +
+                        " rnd_short() v4," +
+                        " rnd_boolean() v5," +
+                        " rnd_date() v6," +
+                        " rnd_timestamp(10,100000,356) v7," +
+                        " rnd_symbol('AAA','BBB', null) v8," +
+                        " rnd_char() v10," +
+                        " rnd_str() v11," +
+                        " rnd_bin() v12," +
+                        " rnd_long() v9" +
+                        " from long_sequence(100)",
+                sqlExecutionContext
+        );
+
+        // copy "x" away before we modify it, get rid of timestamp by ordering table differently
+        compiler.compile("create table y as (x order by 1)", sqlExecutionContext);
+        // add "append" table to the mix
+        compiler.compile("insert into y select * from append", sqlExecutionContext);
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "y order by ts",
+                sink
+        );
+
+        String expected = Chars.toString(sink);
+
+        compiler.compile("insert into x select * from append", sqlExecutionContext);
+
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                sink,
+                expected
+        );
+    }
+
+    private static void testColumnTopMoveUncommitted0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+
+        //
+        // ----- prev to last partition
+        //
+        // +---------------+
+        // |   committed   |
+        // |               |
+        // +---------------+ <---- top
+        // |               |
+        // |  uncommitted  | <----- last partition boundary
+        // |               |
+        // +---------------+
+        // |       O3      |
+        // |               |
+        // |               |
+        // +---------------+
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(500)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile("alter table x add column v double", sqlExecutionContext);
+        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
+        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
+        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
+        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
+        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
+        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
+        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
+        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
+        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
+        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
+        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
+        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+
+        // prepare data in APPEND table (non-partitioned, unordered) such, that these rows cover the rest of the
+        // last partition and will cause a new partition with uncommitted data to be created
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(549900000001L,1000000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+//        --------     new columns here ---------------
+                        " rnd_double() v," +
+                        " rnd_float() v1," +
+                        " rnd_int() v2," +
+                        " rnd_byte() v3," +
+                        " rnd_short() v4," +
+                        " rnd_boolean() v5," +
+                        " rnd_date() v6," +
+                        " rnd_timestamp(10,100000,356) v7," +
+                        " rnd_symbol('AAA','BBB', null) v8," +
+                        " rnd_char() v10," +
+                        " rnd_str() v11," +
+                        " rnd_bin() v12," +
+                        " rnd_long() v9" +
+                        " from long_sequence(100)" +
+                        ")",
+                sqlExecutionContext
+        );
+
+        // Insert the O3 data, the conventional O3 logic should be triggered because this table does not
+        // have designated timestamp. Space out O3 such that it hits the last partition.
+
+        compiler.compile(
+                "insert into append " +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " cast(639900000001L + ((x-1)/4) * 1000L + (4-(x-1)%4)*89 as timestamp) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+//        --------     new columns here ---------------
+                        " rnd_double() v," +
+                        " rnd_float() v1," +
+                        " rnd_int() v2," +
+                        " rnd_byte() v3," +
+                        " rnd_short() v4," +
+                        " rnd_boolean() v5," +
+                        " rnd_date() v6," +
+                        " rnd_timestamp(10,100000,356) v7," +
+                        " rnd_symbol('AAA','BBB', null) v8," +
+                        " rnd_char() v10," +
+                        " rnd_str() v11," +
+                        " rnd_bin() v12," +
+                        " rnd_long() v9" +
+                        " from long_sequence(100)",
+                sqlExecutionContext
+        );
+
+        // copy "x" away before we modify it, get rid of timestamp by ordering table differently
+        compiler.compile("create table y as (x order by 1)", sqlExecutionContext);
+        // add "append" table to the mix
+        compiler.compile("insert into y select * from append", sqlExecutionContext);
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "y order by ts",
+                sink
+        );
+
+        String expected = Chars.toString(sink);
+
+        compiler.compile("insert into x select * from append", sqlExecutionContext);
+
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                sink,
+                expected
         );
     }
 

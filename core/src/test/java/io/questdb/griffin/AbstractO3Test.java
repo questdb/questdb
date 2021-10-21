@@ -134,13 +134,15 @@ public class AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
-            String referenceTableDDL,
+            @Nullable String referenceTableDDL,
             String referenceSQL,
             String o3InsertSQL,
             String assertSQL
     ) throws SqlException {
         // create third table, which will contain both X and 1AM
-        compiler.compile(referenceTableDDL, sqlExecutionContext);
+        if (referenceTableDDL != null) {
+            compiler.compile(referenceTableDDL, sqlExecutionContext);
+        }
         compiler.compile(o3InsertSQL, sqlExecutionContext);
         TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG);
         engine.releaseAllReaders();
