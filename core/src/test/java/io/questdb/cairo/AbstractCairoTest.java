@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -142,11 +143,12 @@ public class AbstractCairoTest {
 
     @AfterClass
     public static void tearDownStatic() {
-        engine.close();
+        engine = Misc.free(engine);
     }
 
     @Before
     public void setUp() {
+        SharedRandom.RANDOM.set(new Rnd());
         LOG.info().$("Starting test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         TestUtils.createTestPath(root);
         engine.openTableId();

@@ -25,17 +25,9 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.std.Rnd;
-import org.junit.Before;
 import org.junit.Test;
 
 public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
-
-    @Before
-    public void setUp3() {
-        SharedRandom.RANDOM.set(new Rnd());
-    }
 
     @Test
     public void testSimple() throws Exception {

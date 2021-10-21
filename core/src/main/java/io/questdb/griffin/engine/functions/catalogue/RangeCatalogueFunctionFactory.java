@@ -43,12 +43,12 @@ public class RangeCatalogueFunctionFactory extends AbstractEmptyCatalogueFunctio
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("rngtypid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("rngsubtype", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("rngcollation", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("rngsubopc", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("rngcanonical", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("rngsubdiff", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("rngtypid", 1, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("rngsubtype", 2, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("rngcollation", 3, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("rngsubopc", 4, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("rngcanonical", 5, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("rngsubdiff", 6, ColumnType.INT));
         METADATA = metadata;
     }
 }

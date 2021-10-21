@@ -42,21 +42,8 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
     private static final int N_SYMBOL_CACHED_COL = 4;
     private static final int N_SYMBOL_CAPACITY_COL = 5;
     private static final int N_DESIGNATED_COL = 6;
-    static {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("column", ColumnType.STRING, null));
-        metadata.add(new TableColumnMetadata("type", ColumnType.STRING, null));
-        metadata.add(new TableColumnMetadata("indexed", ColumnType.BOOLEAN, null));
-        metadata.add(new TableColumnMetadata("indexBlockCapacity", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("symbolCached", ColumnType.BOOLEAN, null));
-        metadata.add(new TableColumnMetadata("symbolCapacity", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("designated", ColumnType.BOOLEAN, null));
-        METADATA = metadata;
-    }
-
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
     private final CharSequence tableName;
-
     public ShowColumnsRecordCursorFactory(CharSequence tableName) {
         this.tableName = tableName.toString();
     }
@@ -132,27 +119,6 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
 
         public class ShowColumnsRecord implements Record {
             @Override
-            public CharSequence getStr(int col) {
-                if (col == N_NAME_COL) {
-                    return reader.getMetadata().getColumnName(columnIndex);
-                }
-                if (col == N_TYPE_COL) {
-                    return ColumnType.nameOf(reader.getMetadata().getColumnType(columnIndex));
-                }
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public CharSequence getStrB(int col) {
-                return getStr(col);
-            }
-
-            @Override
-            public int getStrLen(int col) {
-                return getStr(col).length();
-            }
-
-            @Override
             public boolean getBool(int col) {
                 if (col == N_INDEXED_COL) {
                     return reader.getMetadata().isColumnIndexed(columnIndex);
@@ -184,6 +150,39 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
                 }
                 throw new UnsupportedOperationException();
             }
+
+            @Override
+            public CharSequence getStr(int col) {
+                if (col == N_NAME_COL) {
+                    return reader.getMetadata().getColumnName(columnIndex);
+                }
+                if (col == N_TYPE_COL) {
+                    return ColumnType.nameOf(reader.getMetadata().getColumnType(columnIndex));
+                }
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public CharSequence getStrB(int col) {
+                return getStr(col);
+            }
+
+            @Override
+            public int getStrLen(int col) {
+                return getStr(col).length();
+            }
         }
+    }
+
+    static {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("column", 1, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("type", 2, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("indexed", 3, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("indexBlockCapacity", 4, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("symbolCached", 5, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("symbolCapacity", 6, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("designated", 7, ColumnType.BOOLEAN));
+        METADATA = metadata;
     }
 }

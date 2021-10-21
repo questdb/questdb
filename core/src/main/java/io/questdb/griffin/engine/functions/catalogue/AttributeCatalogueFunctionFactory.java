@@ -269,15 +269,15 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("attrelid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("attname", ColumnType.STRING, null));
-        metadata.add(new TableColumnMetadata("attnum", ColumnType.SHORT, null));
-        metadata.add(new TableColumnMetadata("atttypid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("attnotnull", ColumnType.BOOLEAN, null));
-        metadata.add(new TableColumnMetadata("atttypmod", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("attlen", ColumnType.SHORT, null));
-        metadata.add(new TableColumnMetadata("attidentity", ColumnType.CHAR, null));
-        metadata.add(new TableColumnMetadata("attisdropped", ColumnType.BOOLEAN, null));
+        metadata.add(new TableColumnMetadata("attrelid", 1, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("attname", 2, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("attnum", 3, ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("atttypid", 4, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("attnotnull", 5, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("atttypmod", 6, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("attlen", 7, ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("attidentity", 8, ColumnType.CHAR));
+        metadata.add(new TableColumnMetadata("attisdropped", 9,ColumnType.BOOLEAN));
         METADATA = metadata;
     }
 }

@@ -100,7 +100,7 @@ class MonthTimestampSampler implements TimestampSampler {
             _d = maxDay;
         }
         return Timestamps.toMicros(_y, _m, _d) +
-                +startHour * Timestamps.HOUR_MICROS
+                startHour * Timestamps.HOUR_MICROS
                 + startMin * Timestamps.MINUTE_MICROS
                 + startSec * Timestamps.SECOND_MICROS
                 + startMillis * Timestamps.MILLI_MICROS

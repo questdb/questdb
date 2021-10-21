@@ -42,7 +42,7 @@ public class RecordAsAFieldRecordCursorFactory implements RecordCursorFactory {
         this.base = base;
         this.cursor = new RecordAsAFieldRecordCursor();
         this.metadata = new GenericRecordMetadata();
-        this.metadata.add(new TableColumnMetadata(Chars.toString(columnAlias), ColumnType.RECORD, base.getMetadata()));
+        this.metadata.add(new TableColumnMetadata(Chars.toString(columnAlias), 1, ColumnType.RECORD, base.getMetadata()));
     }
 
     @Override

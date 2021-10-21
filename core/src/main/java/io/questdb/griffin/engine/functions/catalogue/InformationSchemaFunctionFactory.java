@@ -43,8 +43,8 @@ public class InformationSchemaFunctionFactory extends AbstractEmptyCatalogueFunc
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("x", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("n", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("x", 1, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("n", 2, ColumnType.INT));
         METADATA = metadata;
     }
 }

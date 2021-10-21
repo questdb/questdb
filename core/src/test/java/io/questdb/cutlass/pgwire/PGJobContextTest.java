@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.DefaultIODispatcherConfiguration;
@@ -48,7 +47,10 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Ignore;
+import org.junit.Test;
 import org.postgresql.PGResultSetMetaData;
 import org.postgresql.copy.CopyIn;
 import org.postgresql.copy.CopyManager;
@@ -88,11 +90,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 .map(i -> i * Timestamps.HOUR_MICROS / 1000L)
                 .mapToObj(ts -> new Object[]{ts * 1000L, formatter.format(new java.util.Date(ts))});
         datesArr = dates.collect(Collectors.toList());
-    }
-
-    @Before
-    public void setUp3() {
-        SharedRandom.RANDOM.set(new Rnd());
     }
 
     @Test
@@ -1373,7 +1370,7 @@ nodejs code:
                         batchInsert.executeBatch();
                         Assert.fail();
                     } catch (SQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "Cannot insert rows before 1970-01-01. Table=");
+                        TestUtils.assertContains(e.getMessage(), "timestamp before 1970-01-01 is not allowed");
                         connection.rollback();
                     }
 

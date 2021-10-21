@@ -202,7 +202,7 @@ public class BinarySearchTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 path.of(root).concat("binsearch.d").$();
-                try (MemoryA appendMem = Vm.getSmallAInstance(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT)) {
+                try (MemoryA appendMem = Vm.getSmallMAInstance(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT)) {
                     for (int i = 0; i < distinctValueCount; i++) {
                         for (int j = 0; j < repeatCount; j++) {
                             appendMem.putLong(i);

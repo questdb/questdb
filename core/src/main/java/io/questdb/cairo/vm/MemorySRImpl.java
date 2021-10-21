@@ -31,8 +31,9 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 
-public class PagedSlidingReadOnlyMemory extends MemoryPARWImpl {
-    private static final Log LOG = LogFactory.getLog(PagedSlidingReadOnlyMemory.class);
+// "sliding" read only memory that reads file descriptor used for append
+public class MemorySRImpl extends MemoryPARWImpl {
+    private static final Log LOG = LogFactory.getLog(MemorySRImpl.class);
     private FilesFacade ff;
     private long fd = -1;
     private long size = 0;

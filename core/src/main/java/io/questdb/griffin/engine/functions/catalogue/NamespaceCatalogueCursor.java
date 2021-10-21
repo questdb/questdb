@@ -86,8 +86,8 @@ class NamespaceCatalogueCursor implements NoRandomAccessRecordCursor {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("nspname", ColumnType.STRING, null));
-        metadata.add(new TableColumnMetadata("oid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("nspname", 1, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("oid", 2, ColumnType.INT));
         METADATA = metadata;
     }
 }

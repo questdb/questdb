@@ -179,7 +179,6 @@ public class IntrinsicModel implements Mutable {
 
     static {
         INFINITE_INTERVAL = new LongList();
-        INFINITE_INTERVAL.add(Long.MIN_VALUE);
-        INFINITE_INTERVAL.add(Long.MAX_VALUE);
+        INFINITE_INTERVAL.add(Long.MIN_VALUE, Long.MAX_VALUE);
     }
 }

@@ -22,12 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.vm;
+
+import io.questdb.cairo.vm.api.MemoryFR;
 
 /**
- *
+ * Fixed page memory implementation. It augments a pointer of fixed size with accessor methods without
+ * owning the pointer. Therefore, memory cannot be extended.
  */
-@FunctionalInterface
-interface RowFunction {
-    TableWriter.Row newRow(long timestamp);
+public class MemoryFCRImpl extends AbstractMemoryCR implements MemoryFR {
+
+    @Override
+    public void close() {
+        // nothing to do, we do not own the memory
+        this.pageAddress = 0;
+    }
+
+    @Override
+    public void extend(long size) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void of(long pageAddress, long size) {
+        this.pageAddress = pageAddress;
+        this.size = size;
+        this.lim = pageAddress + size;
+    }
 }

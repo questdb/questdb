@@ -423,7 +423,6 @@ final public class Dates {
                                 state = STATE_END;
                                 break;
                             case '+':
-                                negative = false;
                                 state = STATE_HOUR;
                                 break;
                             case '-':
@@ -458,7 +457,6 @@ final public class Dates {
                     case STATE_SIGN:
                         switch (c) {
                             case '+':
-                                negative = false;
                                 break;
                             case '-':
                                 negative = true;

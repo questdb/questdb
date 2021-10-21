@@ -152,7 +152,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private void deflate() {
         if (!compressedHeaderDone) {
             int len = Zip.gzipHeaderLen;
-            Vect.memcpy(Zip.gzipHeader, compressOutBuffer.getWriteAddress(len), len);
+            Vect.memcpy(compressOutBuffer.getWriteAddress(len), Zip.gzipHeader, len);
             compressOutBuffer.onWrite(len);
             compressedHeaderDone = true;
         }
@@ -353,7 +353,8 @@ public class HttpResponseSink implements Closeable, Mutable {
             DateFormatUtils.formatHTTP(this, clock.getTicks());
             put(Misc.EOL);
             if (contentLength > -2) {
-                if (this.chunky = (contentLength == -1)) {
+                this.chunky = (contentLength == -1);
+                if (this.chunky) {
                     put("Transfer-Encoding: ").put("chunked").put(Misc.EOL);
                 } else {
                     put("Content-Length: ").put(contentLength).put(Misc.EOL);
@@ -448,7 +449,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        protected void putUtf8Special(char c) {
+        public void putUtf8Special(char c) {
             if (c < 32) {
                 escapeSpace(c);
             } else {
