@@ -2892,15 +2892,26 @@ public class TableWriter implements Closeable {
             long extendedSize;
             long dstVarOffset = o3DataMem.getAppendOffset();
 
+            final long columnTop = columnTops.getQuick(colIndex);
+
+            if (columnTop > 0) {
+                LOG.debug()
+                        .$("move uncommitted [columnTop=").$(columnTop)
+                        .$(", columnIndex=").$(colIndex)
+                        .$(", committedTransientRowCount=").$(committedTransientRowCount)
+                        .$(", transientRowsAdded=").$(transientRowsAdded)
+                        .I$();
+            }
+
             if (null == o3IndexMem) {
                 // Fixed size
                 extendedSize = transientRowsAdded << shl;
-                srcFixOffset = committedTransientRowCount << shl;
+                srcFixOffset = (committedTransientRowCount - columnTop) << shl;
             } else {
                 // Var size
                 int indexShl = ColumnType.pow2SizeOf(ColumnType.LONG);
                 final MemoryMAR srcFixMem = getSecondaryColumn(colIndex);
-                long sourceOffset = committedTransientRowCount << indexShl;
+                long sourceOffset = (committedTransientRowCount - columnTop) << indexShl;
 
                 // the size includes trailing LONG
                 long sourceLen = (transientRowsAdded + 1) << indexShl;
@@ -2954,6 +2965,7 @@ public class TableWriter implements Closeable {
             colIndex = -colIndex - 1;
             int shl = ColumnType.pow2SizeOf(ColumnType.TIMESTAMP);
             MemoryMAR srcDataMem = getPrimaryColumn(colIndex);
+            // this cannot have "top"
             long srcFixOffset = committedTransientRowCount << shl;
             long srcFixLen = transientRowsAdded << shl;
             boolean isMapped = srcDataMem.isMapped(srcFixOffset, srcFixLen);
