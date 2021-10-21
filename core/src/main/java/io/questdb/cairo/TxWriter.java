@@ -27,13 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
-import io.questdb.log.Log;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
-import io.questdb.std.Unsafe;
-import io.questdb.std.str.LPSZ;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -42,7 +36,6 @@ import static io.questdb.cairo.TableUtils.*;
 
 public final class TxWriter extends TxReader implements Closeable, SymbolValueCountCollector {
     private long prevTransientRowCount;
-    private final FilesFacade ff;
     private int attachedPositionDirtyIndex;
     private int txPartitionCount;
     private long prevMaxTimestamp;
@@ -51,7 +44,6 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
 
     public TxWriter(FilesFacade ff, @Transient Path path, int partitionBy) {
         super(ff, path, partitionBy);
-        this.ff = ff;
         try {
             readUnchecked();
         } catch (Throwable e) {
@@ -65,18 +57,6 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
 
     public void append() {
         transientRowCount++;
-    }
-
-    public void appendBlock(long timestampLo, long timestampHi, long nRowsAdded) {
-        if (timestampLo < maxTimestamp) {
-            throw CairoException.instance(ff.errno()).put("cannot insert rows out of order");
-        }
-
-        if (txPartitionCount == 0) {
-            txPartitionCount = 1;
-        }
-        this.maxTimestamp = timestampHi;
-        this.transientRowCount += nRowsAdded;
     }
 
     public void beginPartitionSizeUpdate() {
@@ -193,20 +173,6 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
         prevTransientRowCount = transientRowCount;
     }
 
-    public void copyTo(LPSZ file, Log log) {
-        long fd = TableUtils.openRW(ff, file, log);
-        try {
-            long len = txMem.getAppendOffset();
-            if (ff.write(fd, txMem.getPageAddress(0), txMem.getAppendOffset(), 0) != len) {
-                throw CairoException.instance(ff.errno())
-                        .put("could not write [file=").put(file)
-                        .put(", len=").put(len).put(']');
-            }
-        } finally {
-            ff.close(fd);
-        }
-    }
-
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
         this.minTimestamp = minTimestamp;
         this.maxTimestamp = maxTimestamp;
@@ -237,10 +203,6 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
 
     public boolean isActivePartition(long timestamp) {
         return getPartitionTimestampLo(maxTimestamp) == timestamp;
-    }
-
-    public void newBlock() {
-        prevMaxTimestamp = maxTimestamp;
     }
 
     public void openFirstPartition(long timestamp) {

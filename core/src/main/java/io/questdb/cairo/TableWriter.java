@@ -756,10 +756,12 @@ public class TableWriter implements Closeable {
         return metaMem.getPageAddress(0);
     }
 
+    // todo: this method is not tested in cases when metadata size changes due to column add/remove operations
     public long getRawMetaMemorySize() {
         return metadata.getFileDataSize();
     }
 
+    // todo: hide raw memory access from public interface when slave is able to send data over the network
     public long getRawTxnMemory() {
         return txWriter.getRawMemory();
     }
@@ -1899,21 +1901,6 @@ public class TableWriter implements Closeable {
         tick();
     }
 
-    void commitBlock(long firstTimestamp) {
-        if (txWriter.getMinTimestamp() == Long.MAX_VALUE) {
-            txWriter.setMinTimestamp(firstTimestamp);
-        }
-
-        for (int i = 0; i < columnCount; i++) {
-            rowValueIsNotNull.setQuick(i, masterRef);
-        }
-
-        masterRef++;
-        commit();
-
-        setAppendPosition(txWriter.getTransientRowCount(), true);
-    }
-
     private void configureAppendPosition() {
         if (this.txWriter.getMaxTimestamp() > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
             openFirstPartition(this.txWriter.getMaxTimestamp());
@@ -2361,33 +2348,9 @@ public class TableWriter implements Closeable {
         return txWriter.getPartitionSizeByIndex(index);
     }
 
-    long getPrimaryAppendOffset(long timestamp, int columnIndex) {
-        if (txWriter.getAppendedPartitionCount() == 0) {
-            openFirstPartition(timestamp);
-        }
-
-        if (timestamp > partitionTimestampHi) {
-            return 0;
-        }
-
-        return columns.get(getPrimaryColumnIndex(columnIndex)).getAppendOffset();
-    }
-
     private MemoryMAR getPrimaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getPrimaryColumnIndex(column));
-    }
-
-    long getSecondaryAppendOffset(long timestamp, int columnIndex) {
-        if (txWriter.getAppendedPartitionCount() == 0) {
-            openFirstPartition(timestamp);
-        }
-
-        if (timestamp > partitionTimestampHi) {
-            return 0;
-        }
-
-        return columns.get(getSecondaryColumnIndex(columnIndex)).getAppendOffset();
     }
 
     private MemoryMAR getSecondaryColumn(int column) {
@@ -4625,49 +4588,6 @@ public class TableWriter implements Closeable {
         );
         if (updatePartitionInterval) {
             this.partitionTimestampHi = partitionTimestampHi;
-        }
-    }
-
-    void startAppendedBlock(long timestampLo, long timestampHi, long nRowsAdded, LongList blockColumnTops) {
-        if (timestampLo < txWriter.getMaxTimestamp()) {
-            throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
-        }
-
-        if (txWriter.getAppendedPartitionCount() == 0) {
-            openFirstPartition(timestampLo);
-        }
-
-        if (partitionBy != PartitionBy.NONE && timestampLo > partitionTimestampHi) {
-            // Need close memory without truncating
-            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                MemoryMAR mem1 = getPrimaryColumn(columnIndex);
-                mem1.close(false);
-                MemoryMAR mem2 = getSecondaryColumn(columnIndex);
-                if (null != mem2) {
-                    mem2.close(false);
-                }
-            }
-            switchPartition(timestampLo);
-        }
-        this.txWriter.appendBlock(timestampLo, timestampHi, nRowsAdded);
-
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            // Handle column tops
-            long blockColumnTop = blockColumnTops.getQuick(columnIndex);
-            if (blockColumnTop != -1) {
-                long columnTop = columnTops.getQuick(columnIndex);
-                if (blockColumnTop != columnTop) {
-                    try {
-                        assert columnTop == 0;
-                        assert blockColumnTop > 0;
-                        TableUtils.setPathForPartition(path, partitionBy, timestampLo, false);
-                        columnTops.setQuick(columnIndex, blockColumnTop);
-                        writeColumnTop(getMetadata().getColumnName(columnIndex), blockColumnTop);
-                    } finally {
-                        path.trimTo(rootLen);
-                    }
-                }
-            }
         }
     }
 

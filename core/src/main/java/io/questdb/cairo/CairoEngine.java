@@ -418,6 +418,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         // it will tick on its way back to pool or earlier
                         tableWriterCmdSubSeq.done(cursor);
                     } catch (Throwable e) {
+                        tableWriterCmdSubSeq.done(cursor);
                         if (e instanceof Sinkable) {
                             LOG.error()
                                     .$("could not create table writer [tableName=").$(cmd.getTableName())

@@ -35,6 +35,7 @@ public class MemoryFCRImpl extends AbstractMemoryCR implements MemoryFR {
     @Override
     public void close() {
         // nothing to do, we do not own the memory
+        this.pageAddress = 0;
     }
 
     @Override
