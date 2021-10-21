@@ -35,6 +35,7 @@ import java.util.Arrays;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 public class ConcurrentTest {
@@ -387,6 +388,41 @@ public class ConcurrentTest {
         for (i = 0; i < subscriber.buf.length; i++) {
             Assert.assertTrue(subscriber.buf[i] > 0);
         }
+    }
+
+    @Test
+    public void testConcurrentFanOutAnd() {
+        int cycle = 1024;
+        SPSequence pubSeq = new SPSequence(cycle);
+        FanOut fout = new FanOut();
+        pubSeq.then(fout).then(pubSeq);
+
+        int threads = 2;
+        CyclicBarrier start = new CyclicBarrier(threads);
+        SOCountDownLatch latch = new SOCountDownLatch(threads);
+        int iterations = 30;
+
+        AtomicInteger doneCount = new AtomicInteger();
+        for(int i = 0; i < threads; i++) {
+            new Thread(() -> {
+                try {
+                    start.await();
+                    for(int j = 0; j < iterations; j++) {
+                        SCSequence consumer = new SCSequence();
+                        FanOut fout2 = fout.and(consumer);
+                        fout2.remove(consumer);
+                    }
+                    doneCount.addAndGet(iterations);
+                } catch (InterruptedException | BrokenBarrierException e) {
+                    e.printStackTrace();
+                } finally {
+                    latch.countDown();
+                }
+            }).start();
+        }
+
+        latch.await();
+        Assert.assertEquals(threads * iterations, doneCount.get());
     }
 
     static void publishEOE(RingQueue<Event> queue, Sequence sequence) {
