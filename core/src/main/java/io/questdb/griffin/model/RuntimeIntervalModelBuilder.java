@@ -100,8 +100,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     public void intersect(long lo, long hi) {
         if (isEmptySet()) return;
         if (dynamicRangeList.size() == 0) {
-            staticIntervals.add(lo);
-            staticIntervals.add(hi);
+            staticIntervals.add(lo, hi);
             if (intervalApplied) {
                 IntervalUtils.intersectInplace(staticIntervals, staticIntervals.size() - 2);
             }
@@ -211,8 +210,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     public void union(long lo, long hi) {
         if (isEmptySet()) return;
         if (dynamicRangeList.size() == 0) {
-            staticIntervals.add(lo);
-            staticIntervals.add(hi);
+            staticIntervals.add(lo, hi);
             if (intervalApplied) {
                 IntervalUtils.unionInplace(staticIntervals, staticIntervals.size() - 2);
             }
@@ -275,8 +273,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         if (isEmptySet()) return;
         if (dynamicRangeList.size() == 0) {
             int size = staticIntervals.size();
-            staticIntervals.add(lo);
-            staticIntervals.add(hi);
+            staticIntervals.add(lo, hi);
             IntervalUtils.invert(staticIntervals, size);
             if (intervalApplied) {
                 IntervalUtils.intersectInplace(staticIntervals, size);

@@ -38,21 +38,21 @@ import io.questdb.std.str.Path;
 
 public class TableListRecordCursorFactory implements RecordCursorFactory {
     private static final RecordMetadata METADATA;
-
-    static {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("table", ColumnType.STRING, null));
-        METADATA = metadata;
-    }
-
     private final FilesFacade ff;
-    private Path path;
     private final TableListRecordCursor cursor;
-
+    private Path path;
     public TableListRecordCursorFactory(FilesFacade ff, CharSequence dbRoot) {
         this.ff = ff;
         path = new Path().of(dbRoot).$();
         cursor = new TableListRecordCursor();
+    }
+
+    @Override
+    public void close() {
+        if (null != path) {
+            path.close();
+            path = null;
+        }
     }
 
     @Override
@@ -68,14 +68,6 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
-    }
-
-    @Override
-    public void close() {
-        if (null != path) {
-            path.close();
-            path = null;
-        }
     }
 
     private class TableListRecordCursor implements RecordCursor {
@@ -161,5 +153,11 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
                 return getStr(col).length();
             }
         }
+    }
+
+    static {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("table", 1, ColumnType.STRING));
+        METADATA = metadata;
     }
 }

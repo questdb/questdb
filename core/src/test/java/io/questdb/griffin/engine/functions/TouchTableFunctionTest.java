@@ -26,11 +26,8 @@ package io.questdb.griffin.engine.functions;
 
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 public class TouchTableFunctionTest extends AbstractGriffinTest {
@@ -43,11 +40,6 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
             " timestamp_sequence(0, 100000000000) k" +
             " from long_sequence(20)" +
             "), index(b) timestamp(k) partition by DAY";
-
-    @Before
-    public void setUp3() {
-        SharedRandom.RANDOM.set(new Rnd());
-    }
 
     @Test
     public void testTouchTableNoTimestampColumnSelected() throws Exception {

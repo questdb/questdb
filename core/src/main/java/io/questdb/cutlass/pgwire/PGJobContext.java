@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
@@ -43,8 +42,8 @@ public class PGJobContext implements Closeable {
     private final AssociativeCache<TypesAndSelect> selectAndTypesCache;
     private final WeakAutoClosableObjectPool<TypesAndSelect> selectAndTypesPool;
 
-    public PGJobContext(PGWireConfiguration configuration, CairoEngine engine, MessageBus messageBus, FunctionFactoryCache functionFactoryCache) {
-        this.compiler = new SqlCompiler(engine, messageBus, functionFactoryCache);
+    public PGJobContext(PGWireConfiguration configuration, CairoEngine engine, FunctionFactoryCache functionFactoryCache) {
+        this.compiler = new SqlCompiler(engine, functionFactoryCache);
         this.selectAndTypesCache = new AssociativeCache<>(
                 configuration.getFactoryCacheColumnCount(),
                 configuration.getFactoryCacheRowCount()

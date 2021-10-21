@@ -238,7 +238,7 @@ public class TextLexer implements Closeable, Mutable {
         long p = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         long l = lineRollBufCur - lineRollBufPtr;
         if (l > 0) {
-            Vect.memcpy(lineRollBufPtr, p, l);
+            Vect.memcpy(p, lineRollBufPtr, l);
         }
         Unsafe.free(lineRollBufPtr, lineRollBufLen, MemoryTag.NATIVE_DEFAULT);
         if (updateFields) {
@@ -374,7 +374,7 @@ public class TextLexer implements Closeable, Mutable {
         int l = (int) (hi - lo - lastLineStart);
         if (l < lineRollBufLen || growRollBuf(l, false)) {
             assert lo + lastLineStart + l <= hi;
-            Vect.memcpy(lo + lastLineStart, lineRollBufPtr, l);
+            Vect.memcpy(lineRollBufPtr, lo + lastLineStart, l);
             lineRollBufCur = lineRollBufPtr + l;
             shift(lo + lastLineStart - lineRollBufPtr);
         }

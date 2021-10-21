@@ -27,18 +27,10 @@ package io.questdb.griffin.engine.functions.bin;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Before;
 import org.junit.Test;
 
 public class Base64FunctionFactoryTest extends AbstractFunctionFactoryTest {
-
-    @Before
-    public void setup() {
-        SharedRandom.RANDOM.set(new Rnd());
-    }
 
     @Test
     public void testRandomBinSeq() throws Exception {

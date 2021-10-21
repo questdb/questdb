@@ -30,19 +30,12 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Os;
-import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 public class KeyedAggregationTest extends AbstractGriffinTest {
-    @Before
-    public void setUp3() {
-        SharedRandom.RANDOM.set(new Rnd());
-    }
 
     @Test
     public void testHourDouble() throws Exception {

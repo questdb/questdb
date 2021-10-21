@@ -163,8 +163,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             putNull();
         } else {
             long offset = mem.getAppendOffset();
-            mem.jumpTo(rowToDataOffset(recordOffset));
-            mem.putLong(varAppendOffset);
+            mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
             recordOffset += 8;
             mem.jumpTo(varAppendOffset);
             mem.putBin(value);

@@ -28,19 +28,11 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 public class NotMatchStrFunctionFactoryTest extends AbstractGriffinTest {
-
-    @Before
-    public void setUp3() {
-        SharedRandom.RANDOM.set(new Rnd());
-    }
 
     @Test
     public void testNullRegex() throws Exception {

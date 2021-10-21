@@ -1731,7 +1731,6 @@ public class IODispatcherTest {
                 3,
                 240_000_000, // 4 minutes, micro precision
                 3,
-                0,
                 6,
                 "ts,int\r\n" +
                         "2021-01-01 00:04:00,3\r\n" +
@@ -1756,7 +1755,6 @@ public class IODispatcherTest {
                 1,
                 120_000_000,
                 1,
-                0,
                 5,
                 "ts,int\r\n" +
                         "2021-01-01 00:05:00,3\r\n" +
@@ -1836,7 +1834,6 @@ public class IODispatcherTest {
                                                                         int maxUncommittedRows,
                                                                         long expectedCommitLag,
                                                                         int expectedMaxUncommittedRows,
-                                                                        int expectedRejectedRows,
                                                                         int expectedImportedRows,
                                                                         String data,
                                                                         String expectedData) throws Exception {
@@ -1852,7 +1849,7 @@ public class IODispatcherTest {
 
         String expectedMetadata = "{\"status\":\"OK\"," +
                 "\"location\":\"" + tableName + "\"," +
-                "\"rowsRejected\":" + expectedRejectedRows + "," +
+                "\"rowsRejected\":" + 0 + "," +
                 "\"rowsImported\":" + expectedImportedRows + "," +
                 "\"header\":true," +
                 "\"columns\":[" +
@@ -1904,7 +1901,6 @@ public class IODispatcherTest {
                 tableName,
                 expectedCommitLag,
                 expectedMaxUncommittedRows,
-                expectedRejectedRows,
                 expectedImportedRows,
                 expectedData);
     }
@@ -2006,7 +2002,6 @@ public class IODispatcherTest {
                 tableName,
                 expectedCommitLag,
                 expectedMaxUncommittedRows,
-                0,
                 1,
                 "2021-01-01T00:01:00.000000Z\t1\n");
     }
@@ -2014,7 +2009,6 @@ public class IODispatcherTest {
     private void assertMetadataAndData(String tableName,
                                        long expectedCommitLag,
                                        int expectedMaxUncommittedRows,
-                                       int expectedRejectedRows,
                                        int expectedImportedRows,
                                        String expectedData) {
         final String baseDir = temp.getRoot().getAbsolutePath();
@@ -2023,7 +2017,7 @@ public class IODispatcherTest {
             Assert.assertEquals(expectedCommitLag, reader.getCommitLag());
             Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
             Assert.assertEquals(expectedImportedRows, reader.size());
-            Assert.assertEquals(expectedRejectedRows, expectedImportedRows - reader.size());
+            Assert.assertEquals(0, expectedImportedRows - reader.size());
             StringSink sink = new StringSink();
             TestUtils.assertCursor(expectedData, reader.getCursor(), reader.getMetadata(), false, sink);
         }
@@ -2156,7 +2150,6 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                null,
                                 workerPool.getWorkerCount(),
                                 metrics
                         );
@@ -2632,7 +2625,6 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                null,
                                 workerPool.getWorkerCount(),
                                 metrics
                         );
@@ -3797,7 +3789,6 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                null,
                                 workerPool.getWorkerCount(),
                                 metrics
                         );
@@ -3961,7 +3952,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    @Ignore
     public void testJsonQueryWithCompressedResults1() throws Exception {
         Zip.init();
         assertMemoryLeak(() -> {
@@ -4005,7 +3995,6 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                null,
                                 workerPool.getWorkerCount(),
                                 metrics);
                     }
@@ -4054,7 +4043,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    @Ignore
     public void testJsonQueryWithCompressedResults2() throws Exception {
         Zip.init();
         assertMemoryLeak(() -> {
@@ -4099,7 +4087,6 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                null,
                                 workerPool.getWorkerCount(),
                                 metrics);
                     }
@@ -4205,8 +4192,12 @@ public class IODispatcherTest {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine,
-                                null, workerPool.getWorkerCount(), metrics);
+                        return new JsonQueryProcessor(
+                                httpConfiguration.getJsonQueryProcessorConfiguration(),
+                                engine,
+                                workerPool.getWorkerCount(),
+                                metrics
+                        );
                     }
 
                     @Override

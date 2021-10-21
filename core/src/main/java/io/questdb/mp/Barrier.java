@@ -27,6 +27,8 @@ package io.questdb.mp;
 public interface Barrier {
     long availableIndex(long lo);
 
+    long current();
+
     WaitStrategy getWaitStrategy();
 
     Barrier root();

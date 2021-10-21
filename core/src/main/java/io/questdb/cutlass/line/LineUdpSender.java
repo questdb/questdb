@@ -63,7 +63,7 @@ public class LineUdpSender extends AbstractLineSender {
         return fd;
     }
 
-    @Override
+
     protected void sendToSocket(long fd, long lo, long sockaddr, int len) throws NetworkError {
         if (nf.sendTo(fd, lo, len, sockaddr) != len) {
             throw NetworkError.instance(nf.errno()).put("send error");

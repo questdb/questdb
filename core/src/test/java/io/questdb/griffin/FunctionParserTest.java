@@ -128,8 +128,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
         });
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.BYTE, null));
-        metadata.add(new TableColumnMetadata("c", ColumnType.SHORT, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.BYTE));
+        metadata.add(new TableColumnMetadata("c", 2, ColumnType.SHORT));
         FunctionParser functionParser = createFunctionParser();
         Function f = parseFunction("a + c", metadata, functionParser);
         Assert.assertEquals(123.123f, f.getFloat(null), 0.0001);
@@ -149,7 +149,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         };
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.BOOLEAN));
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("a or not false", metadata, functionParser);
         Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
@@ -175,8 +175,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         };
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN, null));
-        metadata.add(new TableColumnMetadata("b", ColumnType.BOOLEAN, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("b", 2, ColumnType.BOOLEAN));
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("a or not b", metadata, functionParser);
         Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
@@ -218,8 +218,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testByteAndShortToIntCast() throws SqlException {
         functions.add(new AddIntFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.BYTE, null));
-        metadata.add(new TableColumnMetadata("b", ColumnType.SHORT, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.BYTE));
+        metadata.add(new TableColumnMetadata("b", 2, ColumnType.SHORT));
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("a+b", metadata, functionParser);
         Assert.assertEquals(ColumnType.INT, function.getType());
@@ -266,8 +266,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testByteToShortCast() throws SqlException {
         functions.add(new AddShortFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.BYTE, null));
-        metadata.add(new TableColumnMetadata("b", ColumnType.BYTE, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.BYTE));
+        metadata.add(new TableColumnMetadata("b", 2, ColumnType.BYTE));
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("a+b", metadata, functionParser);
         Assert.assertEquals(ColumnType.SHORT, function.getType());
@@ -330,7 +330,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testConstVarArgFunction() throws SqlException {
         functions.add(new InStrFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.STRING));
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("a in ('xu', 'yk')", metadata, functionParser);
         Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
@@ -346,7 +346,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testCountUpperCase() throws SqlException {
         functions.add(new CountGroupByFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.INT));
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("COUNT()", metadata, functionParser);
         Assert.assertEquals(ColumnType.LONG, function.getType());
@@ -438,8 +438,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void testFunctionDoesNotExist() {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN, null));
-        metadata.add(new TableColumnMetadata("c", ColumnType.SYMBOL, false, 0, false, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("c", 2, ColumnType.SYMBOL, false, 0, false, null));
         assertFail(5, "unknown function name: xyz(BOOLEAN,SYMBOL)", "a or xyz(a,c)", metadata);
     }
 
@@ -501,9 +501,9 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new ToCharBinFunctionFactory());
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.DATE, null));
-        metadata.add(new TableColumnMetadata("b", ColumnType.TIMESTAMP, null));
-        metadata.add(new TableColumnMetadata("c", ColumnType.BINARY, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.DATE));
+        metadata.add(new TableColumnMetadata("b", 2, ColumnType.TIMESTAMP));
+        metadata.add(new TableColumnMetadata("c", 3, ColumnType.BINARY));
 
         FunctionParser functionParser = createFunctionParser();
         Record record = new TestRecord();
@@ -591,7 +591,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new CastStrToGeoHashFunctionFactory());
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("gh", ColumnType.getGeoHashTypeWithBits(25), null));
+        metadata.add(new TableColumnMetadata("gh", 1, ColumnType.getGeoHashTypeWithBits(25)));
 
         FunctionParser functionParser = createFunctionParser();
         Record record = new Record() {
@@ -1035,16 +1035,16 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void testInvalidColumn() {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.SHORT, null));
-        metadata.add(new TableColumnMetadata("c", ColumnType.SHORT, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("c", 2, ColumnType.SHORT));
         assertFail(4, "Invalid column: d", "a + d", metadata);
     }
 
     @Test
     public void testInvalidConstant() {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN, null));
-        metadata.add(new TableColumnMetadata("c", ColumnType.SYMBOL, false, 0, true, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("c", 2, ColumnType.SYMBOL, false, 0, true, null));
         assertFail(4, "invalid constant: 1c", "a + 1c", metadata);
     }
 
@@ -1078,7 +1078,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void testNoArgFunctionDoesNotExist() {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.BOOLEAN));
         assertFail(5, "unknown function name", "a or xyz()", metadata);
     }
 
@@ -1086,7 +1086,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testNoArgFunctionWrongSignature() {
         functions.add(new SysdateFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.BOOLEAN));
         assertFail(7, "unexpected argument", "a or   sysdate(a)", metadata);
     }
 
@@ -1094,8 +1094,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testPassColumnToConstVarArgFunction() {
         functions.add(new InStrFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.STRING, null));
-        metadata.add(new TableColumnMetadata("b", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("b", 2, ColumnType.STRING));
         assertFail(6, "constant expected", "a in (b, 'y')", metadata);
     }
 
@@ -1138,7 +1138,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("a", 1,ColumnType.INT));
         try {
             parseFunction("x(a)", metadata, createFunctionParser());
             Assert.fail();
@@ -1210,8 +1210,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
         FunctionParser functionParser = createFunctionParser();
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.STRING, null));
-        metadata.add(new TableColumnMetadata("b", ColumnType.SYMBOL, false, 0, false, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("b", 2, ColumnType.SYMBOL, false, 0, false, null));
 
         Function function = parseFunction("length(b) - length(a)",
                 metadata,
@@ -1247,7 +1247,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void testTooFewArguments() {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.SHORT, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.SHORT));
         assertFail(2, "too few arguments for '+' [found=1,expected=2]", "a + ", metadata);
     }
 
@@ -1397,7 +1397,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new EqDoubleFunctionFactory());
         functions.add(new EqLongFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.LONG, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.LONG));
         try (Function f = parseFunction("a = $1", metadata, createFunctionParser())) {
             TestUtils.assertContains(f.getClass().getCanonicalName(), "io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory.Func");
         }
@@ -1411,7 +1411,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new EqDoubleFunctionFactory());
         functions.add(new EqLongFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.FLOAT, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.FLOAT));
         try (Function f = parseFunction("a = $1", metadata, createFunctionParser())) {
             TestUtils.assertContains(f.getClass().getCanonicalName(), "io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func");
         }
@@ -1423,7 +1423,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new InStrFunctionFactory());
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.STRING));
 
         FunctionParser functionParser = createFunctionParser();
         Record record = new Record() {
@@ -1443,7 +1443,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new InStrFunctionFactory());
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.STRING));
 
         FunctionParser functionParser = createFunctionParser();
         Record record = new Record() {
@@ -1484,8 +1484,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     private void assertCastToDouble(double expected, int type1, int type2, Record record) throws SqlException {
         functions.add(new AddDoubleFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", type1, null));
-        metadata.add(new TableColumnMetadata("b", type2, null));
+        metadata.add(new TableColumnMetadata("a", 1, type1));
+        metadata.add(new TableColumnMetadata("b", 2, type2));
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("a+b", metadata, functionParser);
         Assert.assertEquals(ColumnType.DOUBLE, function.getType());
@@ -1495,8 +1495,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     private void assertCastToFloat(Record record) throws SqlException {
         functions.add(new AddFloatFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.BYTE, null));
-        metadata.add(new TableColumnMetadata("b", ColumnType.SHORT, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.BYTE));
+        metadata.add(new TableColumnMetadata("b", 2, ColumnType.SHORT));
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("a+b", metadata, functionParser);
         Assert.assertEquals(ColumnType.FLOAT, function.getType());
@@ -1506,8 +1506,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     private void assertCastToLong(long expected, int type1, int type2, Record record) throws SqlException {
         functions.add(new AddLongFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", type1, null));
-        metadata.add(new TableColumnMetadata("b", type2, null));
+        metadata.add(new TableColumnMetadata("a", 1, type1));
+        metadata.add(new TableColumnMetadata("b", 2, type2));
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("a+b", metadata, functionParser);
         Assert.assertEquals(ColumnType.LONG, function.getType());
@@ -1568,8 +1568,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
         functions.add(new NotFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN, null));
-        metadata.add(new TableColumnMetadata("b", ColumnType.BOOLEAN, null));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("b", 2, ColumnType.BOOLEAN));
         FunctionParser functionParser = createFunctionParser();
         Assert.assertNotNull(parseFunction("a or not b", metadata, functionParser));
         Assert.assertEquals(2, functionParser.getFunctionCount());

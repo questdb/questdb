@@ -59,7 +59,7 @@ public class MetricsScrapeBenchmark {
 
     @Benchmark
     @Group
-    @GroupThreads(1)
+    @GroupThreads()
     public void testScrape() {
         metricsRegistry.scrapeIntoPrometheus(sink);
     }
@@ -173,6 +173,11 @@ public class MetricsScrapeBenchmark {
         @Override
         public CharSink put(CharSequence cs) {
             return this;
+        }
+
+        @Override
+        public int encodeSurrogate(char c, CharSequence in, int pos, int hi) {
+            return 0;
         }
     }
 }

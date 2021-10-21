@@ -655,7 +655,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     private void shiftReceiveBufferUnprocessedBytes(long start, int receivedBytes) {
         // Shift to start
         this.receivedBytes = receivedBytes;
-        Vect.memcpy(start, recvBuffer, receivedBytes);
+        Vect.memcpy(recvBuffer, start, receivedBytes);
         LOG.debug().$("peer is slow, waiting for bigger part to parse [multipart]").$();
     }
 }

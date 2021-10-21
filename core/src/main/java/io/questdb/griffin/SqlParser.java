@@ -507,7 +507,7 @@ public final class SqlParser {
         // we do not know types of columns at this stage
         // compiler must put table together using query metadata.
         for (int i = 0, n = columns.size(); i < n; i++) {
-            model.addColumn(columns.getQuick(i).getName(), -1, configuration.getDefaultSymbolCapacity());
+            model.addColumn(columns.getQuick(i).getName(), -1, configuration.getDefaultSymbolCapacity(), configuration.getRandom().nextLong());
         }
 
         model.setQueryModel(queryModel);
@@ -602,7 +602,7 @@ public final class SqlParser {
                 throw SqlException.$(position, " new column name contains invalid characters");
             }
 
-            if (!model.addColumn(name, type, configuration.getDefaultSymbolCapacity())) {
+            if (!model.addColumn(name, type, configuration.getDefaultSymbolCapacity(), configuration.getRandom().nextLong())) {
                 throw SqlException.$(position, "Duplicate column");
             }
 

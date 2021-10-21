@@ -207,7 +207,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         final long n = bufSize + l;
         if (n > bufCapacity) {
             long ptr = Unsafe.malloc(n * 2, MemoryTag.NATIVE_DEFAULT);
-            Vect.memcpy(buf, ptr, bufSize);
+            Vect.memcpy(ptr, buf, bufSize);
             if (bufCapacity > 0) {
                 Unsafe.free(buf, bufCapacity, MemoryTag.NATIVE_DEFAULT);
             }

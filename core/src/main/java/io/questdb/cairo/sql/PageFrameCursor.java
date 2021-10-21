@@ -30,6 +30,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 
 public interface PageFrameCursor extends Closeable {
+
     @Override
     void close(); // we don't throw IOException
 

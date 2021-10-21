@@ -230,7 +230,7 @@ public class FilesTest {
     }
 
     @Test
-    public void testOpenCleanRWAllocatesToSize() throws Exception {
+    public void testOpenCleanRWAllocatesToSize() {
         File temp = temporaryFolder.getRoot();
         try (Path path = new Path().of(temp.getAbsolutePath()).concat("openCleanRWParallel").$()) {
             long fd = Files.openCleanRW(path, 1024);

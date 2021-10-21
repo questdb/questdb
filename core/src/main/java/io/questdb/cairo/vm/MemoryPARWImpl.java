@@ -140,7 +140,7 @@ public class MemoryPARWImpl implements MemoryARW {
         }
 
         if (len < pageHi - appendPointer) {
-            Vect.memcpy(from, appendPointer, len);
+            Vect.memcpy(appendPointer, from, len);
             appendPointer += len;
         } else {
             putBinSlit(from, len);
@@ -152,7 +152,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public final void putBlockOfBytes(long from, long len) {
         if (len < pageHi - appendPointer) {
-            Vect.memcpy(from, appendPointer, len);
+            Vect.memcpy(appendPointer, from, len);
             appendPointer += len;
         } else {
             putBinSlit(from, len);
@@ -510,7 +510,7 @@ public class MemoryPARWImpl implements MemoryARW {
             assert pageAddress > 0;
             final long offsetInPage = offsetInPage(offset);
             final long bytesToCopy = Math.min(len, pageSize - offsetInPage);
-            Vect.memcpy(pageAddress + offsetInPage, address, bytesToCopy);
+            Vect.memcpy(address, pageAddress + offsetInPage, bytesToCopy);
             len -= bytesToCopy;
             offset += bytesToCopy;
             address += bytesToCopy;
@@ -979,12 +979,12 @@ public class MemoryPARWImpl implements MemoryARW {
         do {
             int half = (int) (pageHi - appendPointer);
             if (len <= half) {
-                Vect.memcpy(start, appendPointer, len);
+                Vect.memcpy(appendPointer, start, len);
                 appendPointer += len;
                 break;
             }
 
-            Vect.memcpy(start, appendPointer, half);
+            Vect.memcpy(appendPointer, start, half);
             pageAt(getAppendOffset() + half);  // +1?
             len -= half;
             start += half;

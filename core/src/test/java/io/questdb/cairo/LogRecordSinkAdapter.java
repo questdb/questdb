@@ -26,9 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.log.LogRecord;
 import io.questdb.std.Sinkable;
+import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 
-public class LogRecordSinkAdapter implements CharSink {
+public class LogRecordSinkAdapter extends AbstractCharSink {
 
     private LogRecord line;
 
@@ -49,11 +50,6 @@ public class LogRecordSinkAdapter implements CharSink {
     }
 
     @Override
-    public CharSink encodeUtf8AndQuote(CharSequence cs) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public char[] getDoubleDigitsBuffer() {
         throw new UnsupportedOperationException();
     }
@@ -62,11 +58,6 @@ public class LogRecordSinkAdapter implements CharSink {
     public CharSink put(char c) {
         line.$(c);
         return this;
-    }
-
-    @Override
-    public CharSink putUtf8(char c) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

@@ -33,7 +33,10 @@ public class SharedRandom {
     public static Rnd getRandom(CairoConfiguration configuration) {
         Rnd rnd = RANDOM.get();
         if (rnd == null) {
-            RANDOM.set(rnd = new Rnd(configuration.getMillisecondClock().getTicks(), configuration.getMicrosecondClock().getTicks()));
+            RANDOM.set(rnd = new Rnd(
+                    configuration.getMillisecondClock().getTicks(),
+                    configuration.getMicrosecondClock().getTicks())
+            );
         }
         return rnd;
     }

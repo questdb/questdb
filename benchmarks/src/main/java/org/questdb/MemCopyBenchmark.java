@@ -64,7 +64,7 @@ public class MemCopyBenchmark {
 
     @Benchmark
     public void testAMemCpy() {
-        Vect.memcpy(mem1, mem2, len);
+        Vect.memcpy(mem2, mem1, len);
     }
 
     @Benchmark

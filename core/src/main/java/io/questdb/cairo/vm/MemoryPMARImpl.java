@@ -32,18 +32,18 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
-public class MemoryPMAImpl extends MemoryPARWImpl implements MemoryMAR {
-    private static final Log LOG = LogFactory.getLog(MemoryPMAImpl.class);
+public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
+    private static final Log LOG = LogFactory.getLog(MemoryPMARImpl.class);
     private FilesFacade ff;
     private long fd = -1;
     private long pageAddress = 0;
     private int mappedPage;
 
-    public MemoryPMAImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag) {
+    public MemoryPMARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag) {
         of(ff, name, pageSize, memoryTag);
     }
 
-    public MemoryPMAImpl() {
+    public MemoryPMARImpl() {
     }
 
     @Override

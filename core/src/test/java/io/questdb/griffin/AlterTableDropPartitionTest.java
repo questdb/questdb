@@ -26,11 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
@@ -39,11 +36,6 @@ import java.nio.file.Paths;
 import static io.questdb.griffin.CompiledQuery.ALTER;
 
 public class AlterTableDropPartitionTest extends AbstractGriffinTest {
-
-    @Before
-    public void setUp3() {
-        SharedRandom.RANDOM.set(new Rnd());
-    }
 
     @Test
     public void testDropMalformedPartition() throws Exception {

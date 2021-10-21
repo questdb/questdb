@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
 import io.questdb.cairo.sql.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -34,7 +34,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
-import io.questdb.tasks.*;
+import io.questdb.tasks.ColumnIndexerTask;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
@@ -91,7 +91,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 row.putInt(0, rnd.nextInt());
                 row.putInt(1, rnd.nextInt());
 
-                // create partition on disk but not commit neither transaction nor row
+                // create partition on disk but do not commit transaction nor row
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
                     FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
@@ -741,7 +741,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             SymbolGroup sg = new SymbolGroup(rnd, S, N, PartitionBy.NONE, true);
 
-            final MyWorkScheduler workScheduler = new MyWorkScheduler(new MPSequence(1024) {
+            try (final MyWorkScheduler workScheduler = new MyWorkScheduler(new MPSequence(1024) {
                 private boolean flap = false;
 
                 @Override
@@ -750,38 +750,38 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     this.flap = !this.flap;
                     return flap ? -1 : -2;
                 }
-            }, null);
+            }, null)) {
 
-            long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler)) {
-                for (int i = 0; i < N; i++) {
-                    TableWriter.Row r = writer.newRow(timestamp);
-                    r.putSym(0, sg.symA[rnd.nextPositiveInt() % S]);
-                    r.putSym(1, sg.symB[rnd.nextPositiveInt() % S]);
-                    r.putSym(2, sg.symC[rnd.nextPositiveInt() % S]);
-                    r.putDouble(3, rnd.nextDouble());
-                    r.append();
+                long timestamp = 0;
+                try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler)) {
+                    for (int i = 0; i < N; i++) {
+                        TableWriter.Row r = writer.newRow(timestamp);
+                        r.putSym(0, sg.symA[rnd.nextPositiveInt() % S]);
+                        r.putSym(1, sg.symB[rnd.nextPositiveInt() % S]);
+                        r.putSym(2, sg.symC[rnd.nextPositiveInt() % S]);
+                        r.putDouble(3, rnd.nextDouble());
+                        r.append();
+                    }
+                    writer.commit();
                 }
-                writer.commit();
+
+                try (TableReader reader = new TableReader(configuration, "ABC")) {
+
+                    Assert.assertTrue(reader.getPartitionCount() > 0);
+
+                    FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
+                    TableReaderRecord record = new TableReaderRecord();
+
+                    cursor.of(reader);
+                    record.of(reader);
+
+                    assertIndexRowsMatchSymbol(cursor, record, 0, N);
+                    cursor.toTop();
+                    assertIndexRowsMatchSymbol(cursor, record, 1, N);
+                    cursor.toTop();
+                    assertIndexRowsMatchSymbol(cursor, record, 2, N);
+                }
             }
-
-            try (TableReader reader = new TableReader(configuration, "ABC")) {
-
-                Assert.assertTrue(reader.getPartitionCount() > 0);
-
-                FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
-                TableReaderRecord record = new TableReaderRecord();
-
-                cursor.of(reader);
-                record.of(reader);
-
-                assertIndexRowsMatchSymbol(cursor, record, 0, N);
-                cursor.toTop();
-                assertIndexRowsMatchSymbol(cursor, record, 1, N);
-                cursor.toTop();
-                assertIndexRowsMatchSymbol(cursor, record, 2, N);
-            }
-
         });
     }
 
@@ -1378,63 +1378,64 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
             };
 
-            MyWorkScheduler workScheduler = new MyWorkScheduler(pubSeq, subSeq);
-            final WorkerPool workerPool;
-            if (subSeq != null) {
-                workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                    @Override
-                    public int[] getWorkerAffinity() {
-                        return new int[]{-1, -1};
-                    }
+            try (MyWorkScheduler workScheduler = new MyWorkScheduler(pubSeq, subSeq)) {
+                final WorkerPool workerPool;
+                if (subSeq != null) {
+                    workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                        @Override
+                        public int[] getWorkerAffinity() {
+                            return new int[]{-1, -1};
+                        }
 
-                    @Override
-                    public int getWorkerCount() {
-                        return 2;
-                    }
+                        @Override
+                        public int getWorkerCount() {
+                            return 2;
+                        }
 
-                    @Override
-                    public boolean haltOnError() {
-                        return false;
-                    }
-                });
-                workerPool.assign(new ColumnIndexerJob(workScheduler));
-                workerPool.start(LOG);
-            } else {
-                workerPool = null;
-            }
-
-            long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler)) {
-                for (int i = 0; i < N; i++) {
-                    TableWriter.Row r = writer.newRow(timestamp += increment);
-                    r.putSym(0, sg.symA[rnd.nextPositiveInt() % S]);
-                    r.putSym(1, sg.symB[rnd.nextPositiveInt() % S]);
-                    r.putSym(2, sg.symC[rnd.nextPositiveInt() % S]);
-                    r.putDouble(3, rnd.nextDouble());
-                    r.append();
+                        @Override
+                        public boolean haltOnError() {
+                            return false;
+                        }
+                    });
+                    workerPool.assign(new ColumnIndexerJob(workScheduler));
+                    workerPool.start(LOG);
+                } else {
+                    workerPool = null;
                 }
-                writer.commit();
-            }
 
-            if (workerPool != null) {
-                workerPool.halt();
-            }
+                long timestamp = 0;
+                try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler)) {
+                    for (int i = 0; i < N; i++) {
+                        TableWriter.Row r = writer.newRow(timestamp += increment);
+                        r.putSym(0, sg.symA[rnd.nextPositiveInt() % S]);
+                        r.putSym(1, sg.symB[rnd.nextPositiveInt() % S]);
+                        r.putSym(2, sg.symC[rnd.nextPositiveInt() % S]);
+                        r.putDouble(3, rnd.nextDouble());
+                        r.append();
+                    }
+                    writer.commit();
+                }
 
-            try (TableReader reader = new TableReader(configuration, "ABC")) {
+                if (workerPool != null) {
+                    workerPool.halt();
+                }
 
-                Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
+                try (TableReader reader = new TableReader(configuration, "ABC")) {
 
-                FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
-                TableReaderRecord record = new TableReaderRecord();
+                    Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
-                cursor.of(reader);
-                record.of(reader);
+                    FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
+                    TableReaderRecord record = new TableReaderRecord();
 
-                assertIndexRowsMatchSymbol(cursor, record, 0, N);
-                cursor.toTop();
-                assertIndexRowsMatchSymbol(cursor, record, 1, N);
-                cursor.toTop();
-                assertIndexRowsMatchSymbol(cursor, record, 2, N);
+                    cursor.of(reader);
+                    record.of(reader);
+
+                    assertIndexRowsMatchSymbol(cursor, record, 0, N);
+                    cursor.toTop();
+                    assertIndexRowsMatchSymbol(cursor, record, 1, N);
+                    cursor.toTop();
+                    assertIndexRowsMatchSymbol(cursor, record, 2, N);
+                }
             }
         });
     }
@@ -1517,112 +1518,113 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 timestamp = sg.appendABC(AbstractCairoTest.configuration, rnd, N, timestamp, increment);
             }
 
-            final MyWorkScheduler workScheduler = new MyWorkScheduler();
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1};
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 2;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            });
-            workerPool.assign(new ColumnIndexerJob(workScheduler));
-
-            try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler)) {
-                try {
-                    for (int i = 0; i < (long) N; i++) {
-                        TableWriter.Row r = writer.newRow(timestamp += increment);
-                        r.putSym(0, sg.symA[rnd.nextPositiveInt() % sg.S]);
-                        r.putSym(1, sg.symB[rnd.nextPositiveInt() % sg.S]);
-                        r.putSym(2, sg.symC[rnd.nextPositiveInt() % sg.S]);
-                        r.putDouble(3, rnd.nextDouble());
-                        r.append();
+            try (final MyWorkScheduler workScheduler = new MyWorkScheduler()) {
+                final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                    @Override
+                    public int[] getWorkerAffinity() {
+                        return new int[]{-1, -1};
                     }
-                    writer.commit();
-                    Assert.fail();
-                } catch (CairoError | CairoException ignored) {
+
+                    @Override
+                    public int getWorkerCount() {
+                        return 2;
+                    }
+
+                    @Override
+                    public boolean haltOnError() {
+                        return false;
+                    }
+                });
+                workerPool.assign(new ColumnIndexerJob(workScheduler));
+
+                try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler)) {
+                    try {
+                        for (int i = 0; i < (long) N; i++) {
+                            TableWriter.Row r = writer.newRow(timestamp += increment);
+                            r.putSym(0, sg.symA[rnd.nextPositiveInt() % sg.S]);
+                            r.putSym(1, sg.symB[rnd.nextPositiveInt() % sg.S]);
+                            r.putSym(2, sg.symC[rnd.nextPositiveInt() % sg.S]);
+                            r.putDouble(3, rnd.nextDouble());
+                            r.append();
+                        }
+                        writer.commit();
+                        Assert.fail();
+                    } catch (CairoError | CairoException ignored) {
+                    }
+                    // writer must be closed, we must not interact with writer anymore
+
+                    // test that we cannot commit
+                    try {
+                        writer.commit();
+                        Assert.fail();
+                    } catch (CairoError e) {
+                        TestUtils.assertContains(e.getMessage(), "distressed");
+                    }
+
+                    // test that we cannot rollback
+                    try {
+                        writer.rollback();
+                        Assert.fail();
+                    } catch (CairoError e) {
+                        TestUtils.assertContains(e.getMessage(), "distressed");
+                    }
                 }
-                // writer must be closed, we must not interact with writer anymore
 
-                // test that we cannot commit
-                try {
-                    writer.commit();
-                    Assert.fail();
-                } catch (CairoError e) {
-                    TestUtils.assertContains(e.getMessage(), "distressed");
+                // open another writer that would fail recovery
+                // constructor must attempt to recover non-partitioned empty table
+                if (empty && partitionBy == PartitionBy.NONE) {
+                    try {
+                        new TableWriter(configuration, "ABC");
+                        Assert.fail();
+                    } catch (CairoException ignore) {
+                    }
                 }
 
-                // test that we cannot rollback
-                try {
-                    writer.rollback();
-                    Assert.fail();
-                } catch (CairoError e) {
-                    TestUtils.assertContains(e.getMessage(), "distressed");
+                workerPool.halt();
+
+                // lets see what we can read after this catastrophe
+                try (TableReader reader = new TableReader(AbstractCairoTest.configuration, "ABC")) {
+                    FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
+                    TableReaderRecord record = new TableReaderRecord();
+
+                    Assert.assertEquals(expectedPartitionCount, reader.getPartitionCount());
+
+                    cursor.of(reader);
+                    record.of(reader);
+
+                    assertSymbolFoundInIndex(cursor, record, 0, empty ? 0 : N);
+                    cursor.toTop();
+                    assertSymbolFoundInIndex(cursor, record, 1, empty ? 0 : N);
+                    cursor.toTop();
+                    assertSymbolFoundInIndex(cursor, record, 2, empty ? 0 : N);
+                    cursor.toTop();
+                    assertIndexRowsMatchSymbol(cursor, record, 0, empty ? 0 : N);
+                    cursor.toTop();
+                    assertIndexRowsMatchSymbol(cursor, record, 1, empty ? 0 : N);
+                    cursor.toTop();
+                    assertIndexRowsMatchSymbol(cursor, record, 2, empty ? 0 : N);
+                    cursor.toTop();
+                    assertData(cursor, record, eRnd, sg, empty ? 0 : N);
+                    assertMetadataEquals(reader.getMetadata(), cursor.getTableReader().getMetadata());
+
+                    // we should be able to append more rows to new writer instance once the
+                    // original problem is resolved, e.g. system can mmap again
+
+                    sg.appendABC(AbstractCairoTest.configuration, rnd, N, timestamp, increment);
+
+                    Assert.assertTrue(cursor.reload());
+                    assertSymbolFoundInIndex(cursor, record, 0, empty ? N : N * 2);
+                    cursor.toTop();
+                    assertSymbolFoundInIndex(cursor, record, 1, empty ? N : N * 2);
+                    cursor.toTop();
+                    assertSymbolFoundInIndex(cursor, record, 2, empty ? N : N * 2);
+                    cursor.toTop();
+                    assertIndexRowsMatchSymbol(cursor, record, 0, empty ? N : N * 2);
+                    cursor.toTop();
+                    assertIndexRowsMatchSymbol(cursor, record, 1, empty ? N : N * 2);
+                    cursor.toTop();
+                    assertIndexRowsMatchSymbol(cursor, record, 2, empty ? N : N * 2);
                 }
-            }
-
-            // open another writer that would fail recovery
-            // constructor must attempt to recover non-partitioned empty table
-            if (empty && partitionBy == PartitionBy.NONE) {
-                try {
-                    new TableWriter(configuration, "ABC");
-                    Assert.fail();
-                } catch (CairoException ignore) {
-                }
-            }
-
-            workerPool.halt();
-
-            // lets see what we can read after this catastrophe
-            try (TableReader reader = new TableReader(AbstractCairoTest.configuration, "ABC")) {
-                FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
-                TableReaderRecord record = new TableReaderRecord();
-
-                Assert.assertEquals(expectedPartitionCount, reader.getPartitionCount());
-
-                cursor.of(reader);
-                record.of(reader);
-
-                assertSymbolFoundInIndex(cursor, record, 0, empty ? 0 : N);
-                cursor.toTop();
-                assertSymbolFoundInIndex(cursor, record, 1, empty ? 0 : N);
-                cursor.toTop();
-                assertSymbolFoundInIndex(cursor, record, 2, empty ? 0 : N);
-                cursor.toTop();
-                assertIndexRowsMatchSymbol(cursor, record, 0, empty ? 0 : N);
-                cursor.toTop();
-                assertIndexRowsMatchSymbol(cursor, record, 1, empty ? 0 : N);
-                cursor.toTop();
-                assertIndexRowsMatchSymbol(cursor, record, 2, empty ? 0 : N);
-                cursor.toTop();
-                assertData(cursor, record, eRnd, sg, empty ? 0 : N);
-                assertMetadataEquals(reader.getMetadata(), cursor.getTableReader().getMetadata());
-
-                // we should be able to append more rows to new writer instance once the
-                // original problem is resolved, e.g. system can mmap again
-
-                sg.appendABC(AbstractCairoTest.configuration, rnd, N, timestamp, increment);
-
-                Assert.assertTrue(cursor.reload());
-                assertSymbolFoundInIndex(cursor, record, 0, empty ? N : N * 2);
-                cursor.toTop();
-                assertSymbolFoundInIndex(cursor, record, 1, empty ? N : N * 2);
-                cursor.toTop();
-                assertSymbolFoundInIndex(cursor, record, 2, empty ? N : N * 2);
-                cursor.toTop();
-                assertIndexRowsMatchSymbol(cursor, record, 0, empty ? N : N * 2);
-                cursor.toTop();
-                assertIndexRowsMatchSymbol(cursor, record, 1, empty ? N : N * 2);
-                cursor.toTop();
-                assertIndexRowsMatchSymbol(cursor, record, 2, empty ? N : N * 2);
             }
         });
     }
@@ -2462,12 +2464,16 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
     }
 
-    final static class MyWorkScheduler implements MessageBus {
+    final static class MyWorkScheduler extends MessageBusImpl {
         private final RingQueue<ColumnIndexerTask> queue = new RingQueue<>(ColumnIndexerTask::new, 1024);
         private final Sequence pubSeq;
         private final Sequence subSeq;
 
+
         public MyWorkScheduler(Sequence pubSequence, Sequence subSequence) {
+
+            super(configuration);
+
             this.pubSeq = pubSequence;
             this.subSeq = subSequence;
             if (subSeq != null) {
@@ -2477,11 +2483,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
         public MyWorkScheduler() {
             this(new MPSequence(1024), new MCSequence(1024));
-        }
-
-        @Override
-        public CairoConfiguration getConfiguration() {
-            return null;
         }
 
         @Override
@@ -2497,126 +2498,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         @Override
         public Sequence getIndexerSubSequence() {
             return subSeq;
-        }
-
-        @Override
-        public MPSequence getO3PurgeDiscoveryPubSeq() {
-            return null;
-        }
-
-        @Override
-        public RingQueue<O3PurgeDiscoveryTask> getO3PurgeDiscoveryQueue() {
-            return null;
-        }
-
-        @Override
-        public MCSequence getO3PurgeDiscoverySubSeq() {
-            return null;
-        }
-
-        @Override
-        public MPSequence getO3PurgePubSeq() {
-            return null;
-        }
-
-        @Override
-        public RingQueue<O3PurgeTask> getO3PurgeQueue() {
-            return null;
-        }
-
-        @Override
-        public MCSequence getO3PurgeSubSeq() {
-            return null;
-        }
-
-        @Override
-        public MPSequence getO3CopyPubSeq() {
-            return null;
-        }
-
-        @Override
-        public RingQueue<O3CopyTask> getO3CopyQueue() {
-            return null;
-        }
-
-        @Override
-        public MCSequence getO3CopySubSeq() {
-            return null;
-        }
-
-        @Override
-        public MPSequence getO3OpenColumnPubSeq() {
-            return null;
-        }
-
-        @Override
-        public RingQueue<O3OpenColumnTask> getO3OpenColumnQueue() {
-            return null;
-        }
-
-        @Override
-        public MCSequence getO3OpenColumnSubSeq() {
-            return null;
-        }
-
-        @Override
-        public MPSequence getO3PartitionPubSeq() {
-            return null;
-        }
-
-        @Override
-        public RingQueue<O3PartitionTask> getO3PartitionQueue() {
-            return null;
-        }
-
-        @Override
-        public MCSequence getO3PartitionSubSeq() {
-            return null;
-        }
-
-        @Override
-        public MPSequence getO3CallbackPubSeq() {
-            return null;
-        }
-
-        @Override
-        public RingQueue<O3CallbackTask> getO3CallbackQueue() {
-            return null;
-        }
-
-        @Override
-        public MCSequence getO3CallbackSubSeq() {
-            return null;
-        }
-
-        @Override
-        public Sequence getVectorAggregatePubSeq() {
-            return null;
-        }
-
-        @Override
-        public RingQueue<VectorAggregateTask> getVectorAggregateQueue() {
-            return null;
-        }
-
-        @Override
-        public Sequence getVectorAggregateSubSeq() {
-            return null;
-        }
-
-        @Override
-        public Sequence getLatestByPubSeq() {
-            return null;
-        }
-
-        @Override
-        public RingQueue<LatestByTask> getLatestByQueue() {
-            return null;
-        }
-
-        @Override
-        public Sequence getLatestBySubSeq() {
-            return null;
         }
     }
 }

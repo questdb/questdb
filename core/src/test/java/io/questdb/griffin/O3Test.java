@@ -286,13 +286,13 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testColumnTopMidMergeBlankGeoHash() throws Exception {
-        executeVanilla(O3Test::testColumnTopMidMergeBlankColumnGeohash0);
+    public void testColumnTopMidMergeBlankContended() throws Exception {
+        executeWithPool(0, O3Test::testColumnTopMidMergeBlankColumn0);
     }
 
     @Test
-    public void testColumnTopMidMergeBlankContended() throws Exception {
-        executeWithPool(0, O3Test::testColumnTopMidMergeBlankColumn0);
+    public void testColumnTopMidMergeBlankGeoHash() throws Exception {
+        executeVanilla(O3Test::testColumnTopMidMergeBlankColumnGeohash0);
     }
 
     @Test
@@ -715,6 +715,11 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    public void testSendDuplicatesContended() throws Exception {
+        executeWithPool(4, O3Test::testSendDuplicates);
+    }
+
+    @Test
     public void testTwoTablesCompeteForBuffer() throws Exception {
         executeWithPool(4, O3Test::testTwoTablesCompeteForBuffer0);
     }
@@ -1070,6 +1075,151 @@ public class O3Test extends AbstractO3Test {
         assertIndexConsistency(
                 compiler,
                 sqlExecutionContext
+        );
+    }
+
+    private static void testSendDuplicates(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        // create table with roughly 2AM data
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " cast(null as binary) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
+                        " from long_sequence(510)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        // all records but one is appended to middle partition
+        // last record is prepended to the last partition
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
+                        " from long_sequence(100)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table append2 as (" +
+                        "select" +
+                        " cast(x+100 as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
+                        " from long_sequence(100)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table append3 as (" +
+                        "select" +
+                        " cast(x + 200 as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        " rnd_long256() l256" +
+                        " from long_sequence(100)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        // create third table, which will contain both X and 1AM
+        assertO3DataCursors(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (x union all append)",
+                "y order by ts",
+                "insert into x select * from append",
+                "x"
+        );
+
+
+        assertO3DataCursors(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table z as (x union all append2)",
+                "z order by i,sym,amt",
+                "insert into x select * from append2",
+                "x order by i,sym,amt"
+        );
+
+        assertO3DataCursors(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table w as (x union all append3)",
+                "w order by i,sym,amt",
+                "insert into x select * from append3",
+                "x order by i,sym,amt"
         );
     }
 

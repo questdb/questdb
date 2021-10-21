@@ -220,7 +220,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                         TestUtils.assertEquals(expected, sink);
                         Assert.assertEquals(-1, metadata.getTimestampIndex());
                     } finally {
-                        TableReaderMetadata.freeTransitionIndex(pTransitionIndex);
+                        TableUtils.freeTransitionIndex(pTransitionIndex);
                     }
                 }
             }
@@ -254,7 +254,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                         TestUtils.assertEquals(expected, sink);
                         Assert.assertEquals(expectedFinalTimestampIndex, metadata.getTimestampIndex());
                     } finally {
-                        TableReaderMetadata.freeTransitionIndex(address);
+                        TableUtils.freeTransitionIndex(address);
                     }
                 }
             }

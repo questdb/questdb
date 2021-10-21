@@ -81,7 +81,7 @@ public class OffsetParserTest {
 
     @Test
     public void testGMTNegative() {
-        assertThat(-2 * 60 + -15, "gMt-02:15");
+        assertThat(-2 * 60 - 15, "gMt-02:15");
     }
 
     @Test
