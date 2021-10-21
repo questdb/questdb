@@ -26,19 +26,11 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 public class StringAggGroupByFunctionFactoryTest extends AbstractGriffinTest {
-
-    @Before
-    public void setUp3() {
-        SharedRandom.RANDOM.set(new Rnd());
-    }
 
     @Test
     public void testGroupKeyedUnsupported() throws Exception {

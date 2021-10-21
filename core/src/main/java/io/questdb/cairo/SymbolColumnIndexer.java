@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.PagedSlidingReadOnlyMemory;
+import io.questdb.cairo.vm.MemorySRImpl;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.MemoryTag;
@@ -38,7 +38,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
 
     private static final long SEQUENCE_OFFSET;
     private final BitmapIndexWriter writer = new BitmapIndexWriter();
-    private final PagedSlidingReadOnlyMemory sliderMem = new PagedSlidingReadOnlyMemory();
+    private final MemorySRImpl mem = new MemorySRImpl();
     private long columnTop;
     @SuppressWarnings({"unused", "FieldCanBeLocal", "FieldMayBeFinal"})
     private volatile long sequence = 0L;
@@ -47,7 +47,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     @Override
     public void close() {
         Misc.free(writer);
-        Misc.free(sliderMem);
+        Misc.free(mem);
     }
 
     @Override
@@ -57,7 +57,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
 
     @Override
     public long getFd() {
-        return sliderMem.getFd();
+        return mem.getFd();
     }
 
     @Override
@@ -67,8 +67,8 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
 
     @Override
     public void refreshSourceAndIndex(long loRow, long hiRow) {
-        sliderMem.updateSize();
-        index(sliderMem, loRow, hiRow);
+        mem.updateSize();
+        index(mem, loRow, hiRow);
     }
 
     @Override
@@ -109,7 +109,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
                     configuration.getDataIndexKeyAppendPageSize(),
                     configuration.getDataIndexValueAppendPageSize()
             );
-            this.sliderMem.of(columnMem, MemoryTag.MMAP_INDEX_SLIDER);
+            this.mem.of(columnMem, MemoryTag.MMAP_INDEX_SLIDER);
         } catch (Throwable e) {
             this.close();
             throw e;
@@ -135,7 +135,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
 
     @Override
     public void closeSlider() {
-        sliderMem.close();
+        mem.close();
     }
 
     @Override

@@ -428,6 +428,11 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
+        public long getColumnHash(int columnIndex) {
+            return configuration.getRandom().nextLong();
+        }
+
+        @Override
         public int getMaxUncommittedRows() {
             return configuration.getMaxUncommittedRows();
         }

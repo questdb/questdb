@@ -40,11 +40,16 @@ public class TableModel implements TableStructure, Closeable {
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final LongList columnBits = new LongList();
     private final Path path = new Path();
-    private final CairoConfiguration cairoCfg;
+    private final CairoConfiguration configuration;
     private int timestampIndex = -1;
 
-    public TableModel(CairoConfiguration cairoCfg, String name, int partitionBy) {
-        this.cairoCfg = cairoCfg;
+    @Override
+    public long getColumnHash(int columnIndex) {
+        return configuration.getRandom().nextLong();
+    }
+
+    public TableModel(CairoConfiguration configuration, String name, int partitionBy) {
+        this.configuration = configuration;
         this.name = name;
         this.partitionBy = partitionBy;
     }
@@ -71,8 +76,7 @@ public class TableModel implements TableStructure, Closeable {
     public TableModel col(CharSequence name, int type) {
         columnNames.add(Chars.toString(name));
         // set default symbol capacity
-        columnBits.add((128L << 32) | type);
-        columnBits.add(COLUMN_FLAG_CACHED);
+        columnBits.add((128L << 32) | type, COLUMN_FLAG_CACHED);
         return this;
     }
 
@@ -86,8 +90,8 @@ public class TableModel implements TableStructure, Closeable {
         return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_CACHED) == COLUMN_FLAG_CACHED;
     }
 
-    public CairoConfiguration getCairoCfg() {
-        return cairoCfg;
+    public CairoConfiguration getConfiguration() {
+        return configuration;
     }
 
     @Override
@@ -183,11 +187,11 @@ public class TableModel implements TableStructure, Closeable {
 
     @Override
     public int getMaxUncommittedRows() {
-        return cairoCfg.getMaxUncommittedRows();
+        return configuration.getMaxUncommittedRows();
     }
 
     @Override
     public long getCommitLag() {
-        return cairoCfg.getCommitLag();
+        return configuration.getCommitLag();
     }
 }

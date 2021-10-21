@@ -55,7 +55,14 @@ public class TableWriteBenchmark {
 
     public static void main(String[] args) throws RunnerException {
         try (CairoEngine engine = new CairoEngine(configuration)) {
-            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1, null).with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
+            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                    .with(
+                            AllowAllCairoSecurityContext.INSTANCE,
+                            null,
+                            null,
+                            -1,
+                            null
+                    );
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
                 compiler.compile("create table if not exists test1(f long) ", sqlExecutionContext);
                 compiler.compile("create table if not exists test2(f timestamp) timestamp (f)", sqlExecutionContext);

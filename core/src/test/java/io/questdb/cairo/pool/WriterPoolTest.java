@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.pool;
 
-import io.questdb.MessageBusImpl;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
@@ -763,7 +762,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     private void assertWithPool(PoolAwareCode code, CairoConfiguration configuration) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (WriterPool pool = new WriterPool(configuration, new MessageBusImpl(configuration))) {
+            try (WriterPool pool = new WriterPool(configuration, messageBus)) {
                 code.run(pool);
             }
         });

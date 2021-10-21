@@ -43,8 +43,8 @@ public class ProcCatalogueFunctionFactory extends AbstractEmptyCatalogueFunction
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("oid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("proname", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("oid", 1, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("proname", 2, ColumnType.STRING));
         METADATA = metadata;
     }
 }

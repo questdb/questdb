@@ -29,7 +29,6 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.TestBinarySequence;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Rnd;
@@ -43,7 +42,6 @@ public class InsertTest extends AbstractGriffinTest {
 
     @Before
     public void setUp3() {
-        SharedRandom.RANDOM.set(new Rnd());
         bindVariableService.clear();
     }
 

@@ -120,7 +120,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
         public void copyTo(long address, final long start, final long length) {
             long bytesRemaining = Math.min(length, this.len - start);
             long addr = this.address + start;
-            Vect.memcpy(addr, address, bytesRemaining);
+            Vect.memcpy(address, addr, bytesRemaining);
         }
 
         @Override

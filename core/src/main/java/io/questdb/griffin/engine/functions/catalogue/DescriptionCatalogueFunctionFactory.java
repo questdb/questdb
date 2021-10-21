@@ -43,11 +43,11 @@ public class DescriptionCatalogueFunctionFactory extends AbstractEmptyCatalogueF
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("objoid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("classoid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("objoid", 1, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("classoid", 2, ColumnType.INT));
         //TODO the below column was downgraded to short. We need to support type downgrading of compatible types when joining
-        metadata.add(new TableColumnMetadata("objsubid", ColumnType.SHORT, null));
-        metadata.add(new TableColumnMetadata("description", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("objsubid", 3, ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("description", 4, ColumnType.STRING));
         METADATA = metadata;
     }
 }

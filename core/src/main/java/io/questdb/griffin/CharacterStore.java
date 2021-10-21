@@ -75,14 +75,6 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
     }
 
     @Override
-    public CharSink put(CharSequence cs, int lo, int hi) {
-        for (int i = lo; i < hi; i++) {
-            put(cs.charAt(i));
-        }
-        return this;
-    }
-
-    @Override
     public CharSink put(char c) {
         if (size < capacity) {
             chars[size++] = c;

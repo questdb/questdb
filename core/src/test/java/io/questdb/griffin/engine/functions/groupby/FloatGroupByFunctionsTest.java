@@ -49,7 +49,7 @@ public class FloatGroupByFunctionsTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleByWithNulls() throws SqlException, NumericException {
+    public void testSampleByWithNulls() throws SqlException {
         sqlExecutionContext.setRandom(new Rnd());
         compiler.compile("create table tab as ( select rnd_float() ch from long_sequence(100) )", sqlExecutionContext);
 

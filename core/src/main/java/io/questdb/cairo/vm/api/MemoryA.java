@@ -32,8 +32,6 @@ import java.io.Closeable;
 
 public interface MemoryA extends Closeable {
 
-    long appendAddressFor(long bytes);
-
     @Override
     void close();
 

@@ -104,7 +104,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
     @Test
     public void testFreeNullAddressAsIndex() {
-        TableReaderMetadata.freeTransitionIndex(0);
+        TableUtils.freeTransitionIndex(0);
     }
 
     @Test
@@ -298,7 +298,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                             }
                         }
                     } finally {
-                        TableReaderMetadata.freeTransitionIndex(pTransitionIndex);
+                        TableUtils.freeTransitionIndex(pTransitionIndex);
                     }
                 }
 

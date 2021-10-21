@@ -30,11 +30,8 @@ import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -44,11 +41,6 @@ import java.util.concurrent.TimeUnit;
 import static io.questdb.griffin.CompiledQuery.TRUNCATE;
 
 public class TruncateTest extends AbstractGriffinTest {
-
-    @Before
-    public void setUp3() {
-        SharedRandom.RANDOM.set(new Rnd());
-    }
 
     @Test
     public void testExpectTableKeyword() throws Exception {
@@ -461,10 +453,10 @@ public class TruncateTest extends AbstractGriffinTest {
 
     @Test
     public void testDropColumnWithCachedPlanSelectFull() throws Exception {
-        testDropColumnWithCachedPlan("select * from y");
+        testDropColumnWithCachedPlan();
     }
     
-    private void testDropColumnWithCachedPlan(String query) throws Exception {
+    private void testDropColumnWithCachedPlan() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile(
                     "create table y as (" +
@@ -475,7 +467,7 @@ public class TruncateTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = compiler.compile("select * from y", sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);

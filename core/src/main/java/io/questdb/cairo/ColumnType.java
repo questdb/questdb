@@ -42,7 +42,7 @@ import io.questdb.std.str.StringSink;
  */
 public final class ColumnType {
     // column type version as written to the metadata file
-    public static final int VERSION = 422;
+    public static final int VERSION = 423;
 
     public static final short UNDEFINED = 0;
     public static final short BOOLEAN = 1;
@@ -160,10 +160,6 @@ public final class ColumnType {
 
     public static boolean isInt(int columnType) {
         return columnType == ColumnType.INT;
-    }
-
-    public static boolean isLong(int columnType) {
-        return columnType == ColumnType.LONG;
     }
 
     public static boolean isNull(int columnType) {

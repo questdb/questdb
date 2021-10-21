@@ -121,9 +121,9 @@ public class PrefixedPgGetKeywordsFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("word", ColumnType.STRING, null));
-        metadata.add(new TableColumnMetadata("catcode", ColumnType.STRING, null));
-        metadata.add(new TableColumnMetadata("catdesc", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("word", 1, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("catcode", 2, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("catdesc", 3, ColumnType.STRING));
         METADATA = metadata;
     }
 }

@@ -24,17 +24,10 @@
 
 package io.questdb.griffin;
 
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Before;
 import org.junit.Test;
 
 public class LimitTest extends AbstractGriffinTest {
-    @Before
-    public void setUp3() {
-        SharedRandom.RANDOM.set(new Rnd());
-    }
 
     @Test
     public void testBottomRange() throws Exception {

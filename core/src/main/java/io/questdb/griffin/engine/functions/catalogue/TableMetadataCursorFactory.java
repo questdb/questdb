@@ -266,17 +266,17 @@ public class TableMetadataCursorFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("id", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("id", 1, ColumnType.INT));
         idColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("name", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("name", 2, ColumnType.STRING));
         nameColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("designatedTimestamp", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("designatedTimestamp", 3, ColumnType.STRING));
         designatedTimestampColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("partitionBy", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("partitionBy", 4, ColumnType.STRING));
         partitionByColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("maxUncommittedRows", 5, ColumnType.INT));
         maxUncommittedRowsColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("commitLag", ColumnType.LONG, null));
+        metadata.add(new TableColumnMetadata("commitLag", 6, ColumnType.LONG));
         commitLagColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }

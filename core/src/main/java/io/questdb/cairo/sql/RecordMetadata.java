@@ -29,8 +29,8 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.std.str.CharSink;
 
 /**
- * Retrieve metadata of a table record (row) such as the column count, the type of
- * a column by numeric index, the name of a column by numeric index, the storage block capacity of
+ * Retrieve metadata of a table record (row) such as the column count, the type of column by numeric index,
+ * the name of a column by numeric index, the storage block capacity of
  * indexed symbols, and the numeric index of a designated timestamp column.
  *
  * Types are defined in {@link io.questdb.cairo.ColumnType}
@@ -45,7 +45,7 @@ public interface RecordMetadata extends ColumnTypes {
     int getColumnCount();
 
     /**
-     * Return the type of a column by index. Returns an integer defined
+     * Return the type of column by index. Returns an integer defined
      * in {@link io.questdb.cairo.ColumnType}
      *
      * @param columnIndex numeric index of a column
@@ -89,14 +89,25 @@ public interface RecordMetadata extends ColumnTypes {
      */
     int getColumnIndexQuiet(CharSequence columnName, int lo, int hi);
 
-    /**
+    /** Retrieves column name.
+     *
      * @param columnIndex numeric index of the column
      * @return name of the column
      */
     String getColumnName(int columnIndex);
 
+
     /**
-     * Return the type of a column by name
+     * Retrieves column hash. Hash augments the name to ensure when column is removed and
+     * then added with the same name the clients do not perceive this event as no-change.
+     *
+     * @param columnIndex numeric index of the column
+     * @return hash value
+     */
+    long getColumnHash(int columnIndex);
+
+    /**
+     * Return the type of column by name
      *
      * @param columnName name of the column
      * @return the type of the column

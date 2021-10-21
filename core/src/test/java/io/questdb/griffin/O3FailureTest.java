@@ -396,15 +396,17 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testColumnTopMidDataMergeDataFailRetryReadTop() throws Exception {
-        counter.set(2);
+        counter.set(1);
         executeWithoutPool(O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, new FilesFacadeImpl() {
             long theFd;
 
             @Override
-            public long openRW(LPSZ name) {
-                long fd = super.openRW(name);
-                if (Chars.endsWith(name, "1970-01-07" + Files.SEPARATOR + "v2.top") && counter.decrementAndGet() == 0) {
-                    theFd = fd;
+            public long openRO(LPSZ name) {
+                long fd = super.openRO(name);
+                if (Chars.endsWith(name, "1970-01-07" + Files.SEPARATOR + "v2.top")) {
+                    if (counter.decrementAndGet() == 0) {
+                        theFd = fd;
+                    }
                 }
                 return fd;
             }
@@ -422,13 +424,13 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testColumnTopMidDataMergeDataFailRetryReadTopContended() throws Exception {
-        counter.set(2);
+        counter.set(1);
         executeWithPool(0, O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, new FilesFacadeImpl() {
             long theFd;
 
             @Override
-            public long openRW(LPSZ name) {
-                long fd = super.openRW(name);
+            public long openRO(LPSZ name) {
+                long fd = super.openRO(name);
                 if (Chars.endsWith(name, "1970-01-07" + Files.SEPARATOR + "v2.top") && counter.decrementAndGet() == 0) {
                     theFd = fd;
                 }
@@ -591,7 +593,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testFailOnTruncateKeyIndexContended() throws Exception {
-        counter.set(82);
+        counter.set(96);
         executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
 
             @Override
@@ -606,7 +608,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testFailOnTruncateKeyValueContended() throws Exception {
-        counter.set(82);
+        counter.set(96);
         executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
             @Override
             public boolean truncate(long fd, long size) {

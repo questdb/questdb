@@ -71,24 +71,22 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            @Nullable MessageBus messageBus,
             int workerCount
     ) {
-        this(configuration, engine, messageBus, workerCount, null);
+        this(configuration, engine, workerCount, null);
     }
 
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            @Nullable MessageBus messageBus,
             int workerCount,
             @Nullable FunctionFactoryCache functionFactoryCache
     ) {
         this.configuration = configuration;
-        this.compiler = new SqlCompiler(engine, messageBus, functionFactoryCache);
+        this.compiler = new SqlCompiler(engine,functionFactoryCache);
         this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getClock();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, messageBus);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
         this.doubleScale = configuration.getDoubleScale();
         this.interruptor = new HttpSqlExecutionInterruptor(configuration.getInterruptorConfiguration());
     }
