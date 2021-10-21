@@ -35,11 +35,6 @@ import io.questdb.griffin.SqlExecutionContext;
 public class ShowStandardConformingStringsCursorFactory implements RecordCursorFactory {
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private static final StringValueRecord RECORD = new StringValueRecord("on");
-
-    static {
-        METADATA.add(new TableColumnMetadata("standard_conforming_strings", ColumnType.STRING, null));
-    }
-
     private final StringValueRecordCursor cursor = new StringValueRecordCursor(RECORD);
 
     @Override
@@ -58,4 +53,7 @@ public class ShowStandardConformingStringsCursorFactory implements RecordCursorF
         return false;
     }
 
+    static {
+        METADATA.add(new TableColumnMetadata("standard_conforming_strings", 1, ColumnType.STRING));
+    }
 }

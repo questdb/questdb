@@ -69,7 +69,7 @@ public class RndStringListFunctionFactory implements FunctionFactory {
                     continue;
                 }
                 if (typeTag == ColumnType.CHAR) {
-                    symbols.add(new java.lang.String(new char[]{f.getChar(null)}));
+                    symbols.add(String.valueOf(f.getChar(null)));
                     continue;
                 }
             }

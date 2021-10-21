@@ -43,10 +43,10 @@ public class IndexCatalogueFunctionFactory extends AbstractEmptyCatalogueFunctio
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("indkey", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("indrelid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("indexrelid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("indisprimary", ColumnType.BOOLEAN, null));
+        metadata.add(new TableColumnMetadata("indkey", 1, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("indrelid", 2, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("indexrelid", 3, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("indisprimary", 4, ColumnType.BOOLEAN));
         METADATA = metadata;
     }
 }

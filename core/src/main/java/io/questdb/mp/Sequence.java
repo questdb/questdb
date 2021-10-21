@@ -26,8 +26,6 @@ package io.questdb.mp;
 
 public interface Sequence extends Barrier {
 
-    long current();
-
     void done(long cursor);
 
     long next();

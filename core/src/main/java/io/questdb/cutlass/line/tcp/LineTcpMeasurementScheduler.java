@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Telemetry;
 import io.questdb.cairo.*;
-import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
@@ -493,7 +492,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             // so that writing thread will create the column
                             // Note that writing thread will be responsible to convert it from utf8
                             // to utf16. This should happen rarely
-                            Vect.memcpy(entity.getName().getLo(), bufPos, colNameLen);
+                            Vect.memcpy(bufPos, entity.getName().getLo(), colNameLen);
                         } else {
                             throw CairoException.instance(0).put("queue buffer overflow");
                         }
@@ -662,7 +661,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         void processMeasurementEvent(WriterJob job) {
-            Row row = null;
+            TableWriter.Row row = null;
             try {
                 TableWriter writer = tableUpdateDetails.getWriter();
                 long bufPos = bufLo;
@@ -1584,6 +1583,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                 return ColumnType.TIMESTAMP;
             }
             return DEFAULT_COLUMN_TYPES[protoParser.getEntity(columnIndex).getType()];
+        }
+
+        @Override
+        public long getColumnHash(int columnIndex) {
+            return cairoConfiguration.getRandom().nextLong();
         }
 
         @Override

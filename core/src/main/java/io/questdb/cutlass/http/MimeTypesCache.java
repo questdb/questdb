@@ -86,7 +86,6 @@ public final class MimeTypesCache extends CharSequenceObjHashMap<CharSequence> {
                                 } else {
                                     this.put(s, contentType);
                                 }
-                                newline = false;
                             }
                         }
                         break;

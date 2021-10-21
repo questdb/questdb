@@ -231,7 +231,7 @@ public class RetryIODispatcherTest {
                             .withTempFolder(temp)
                             .withWorkerCount(2)
                             .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                            .withCustomTextImportProcessor(((configuration, engine, messageBus, workerCount) -> new TextImportProcessor(engine) {
+                            .withCustomTextImportProcessor(((configuration, engine, workerCount) -> new TextImportProcessor(engine) {
                                 @Override
                                 public void onRequestRetry(HttpConnectionContext context) throws ServerDisconnectException {
                                     throw ServerDisconnectException.INSTANCE;

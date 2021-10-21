@@ -181,6 +181,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                         mem.putInt(types[i]);
                         mem.putLong(0);
                         mem.putInt(0);
+                        mem.skip(16);
                     }
                     for (int i = 0; i < names.length; i++) {
                         mem.putStr(names[i]);

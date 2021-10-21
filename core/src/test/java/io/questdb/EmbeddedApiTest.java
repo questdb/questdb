@@ -77,14 +77,13 @@ public class EmbeddedApiTest {
 
             Rnd rnd = new Rnd();
             try (
-                    final CairoEngine engine = new CairoEngine(configuration);
-                    final MessageBusImpl messageBus = new MessageBusImpl(configuration)
+                    final CairoEngine engine = new CairoEngine(configuration)
             ) {
-                workerPool.assign(new GroupByJob(messageBus));
+                workerPool.assign(new GroupByJob(engine.getMessageBus()));
                 workerPool.start(log);
                 try {
                     // number of cores is current thread + workers in the pool
-                    final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 2, messageBus);
+                    final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 2);
                     try (SqlCompiler compiler = new SqlCompiler(engine)) {
 
                         compiler.compile("create table abc (g double, ts timestamp) timestamp(ts) partition by DAY", ctx);
@@ -122,7 +121,7 @@ public class EmbeddedApiTest {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
 
         TestUtils.assertMemoryLeak(() -> {
-            // the write part
+            // write part
             try (
                     final CairoEngine engine = new CairoEngine(configuration);
                     final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);

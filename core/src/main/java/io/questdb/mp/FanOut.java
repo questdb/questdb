@@ -45,6 +45,11 @@ public class FanOut implements Barrier {
         holder = h;
     }
 
+    @Override
+    public long current() {
+        return barrier.current();
+    }
+
     public static FanOut to(Barrier barrier) {
         return new FanOut().and(barrier);
     }
@@ -75,7 +80,6 @@ public class FanOut implements Barrier {
                 _new.waitStrategies.add(barrier.getWaitStrategy());
             }
             _new.setupWaitStrategy();
-
         } while (!Unsafe.getUnsafe().compareAndSwapObject(this, HOLDER, holder, _new));
 
         return this;

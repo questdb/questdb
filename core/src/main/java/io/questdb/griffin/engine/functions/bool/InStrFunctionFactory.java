@@ -68,7 +68,7 @@ public class InStrFunctionFactory implements FunctionFactory {
                     set.add(Chars.toString(value));
                     break;
                 case ColumnType.CHAR:
-                    set.add(new String(new char[]{func.getChar(null)}));
+                    set.add(String.valueOf(func.getChar(null)));
                     break;
                 default:
                     throw SqlException.$(argPositions.getQuick(i), "STRING constant expected");

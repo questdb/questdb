@@ -69,7 +69,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                     }
                     break;
                 case ColumnType.CHAR:
-                    set.add(new String(new char[]{func.getChar(null)}));
+                    set.add(String.valueOf(func.getChar(null)));
                     break;
                 default:
                     throw SqlException.$(argPositions.getQuick(i), "STRING constant expected");

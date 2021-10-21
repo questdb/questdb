@@ -76,9 +76,7 @@ public class LineUdpInsertByteGeoHashTest extends LineUdpInsertGeoHashTest {
                 ColumnType.getGeoHashTypeWithBits(4),
                 "geohash\ttimestamp\n" +
                         "0100\t1970-01-01T00:00:01.000000Z\n",
-                sender -> {
-                    sender.metric(tableName).field(targetColumnName, "9v1s8hm7wpkssv1h").$(1_000_000_000);
-                }
+                sender -> sender.metric(tableName).field(targetColumnName, "9v1s8hm7wpkssv1h").$(1_000_000_000)
         );
     }
 
@@ -94,9 +92,7 @@ public class LineUdpInsertByteGeoHashTest extends LineUdpInsertGeoHashTest {
                 ColumnType.getGeoHashTypeWithBits(1),
                 "geohash\ttimestamp\n" +
                         "\t1970-01-01T00:00:01.000000Z\n",
-                sender -> {
-                    sender.metric(tableName).field(targetColumnName, "@").$(1_000_000_000);
-                }
+                sender -> sender.metric(tableName).field(targetColumnName, "@").$(1_000_000_000)
         );
     }
 

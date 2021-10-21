@@ -54,10 +54,16 @@ public class TxnTest extends AbstractCairoTest {
                 try (Path path = new Path()) {
                     try (
                             MemoryMARW mem = Vm.getCMARWInstance();
-                            TableModel ts = new TableModel(configuration, tableName, PartitionBy.DAY)
+                            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
                     ) {
-                        ts.timestamp();
-                        TableUtils.createTable(cleanFf, mem, path, configuration.getRoot(), ts, configuration.getMkDirMode(), 1);
+                        model.timestamp();
+                        TableUtils.createTable(
+                                configuration,
+                                mem,
+                                path,
+                                model,
+                                1
+                        );
                     }
                 }
 

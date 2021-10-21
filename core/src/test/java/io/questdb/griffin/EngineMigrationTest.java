@@ -27,14 +27,11 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.mig.EngineMigration;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.NumericException;
-import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
@@ -70,11 +67,6 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         }
     }
 
-    @Before
-    public void setUp3() {
-        SharedRandom.RANDOM.set(new Rnd());
-    }
-
     @Test
     public void test416() throws IOException, SqlException {
         doMigration("/migration/data_416.zip", false, false);
@@ -103,6 +95,11 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     @Test
     public void test422() throws IOException, SqlException {
         doMigration("/migration/data_422.zip", true, true);
+    }
+
+    @Test
+    public void test423() throws IOException, SqlException {
+        doMigration("/migration/data_423.zip", true, true);
     }
 
     @Test

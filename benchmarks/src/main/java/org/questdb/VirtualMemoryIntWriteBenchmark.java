@@ -55,8 +55,8 @@ public class VirtualMemoryIntWriteBenchmark {
 
     @Setup(Level.Iteration)
     public void reset() {
-        mem1.jumpTo(0);
-        mem3.jumpTo(0);
+        mem1.clear();
+        mem3.clear();
     }
 
     @Benchmark

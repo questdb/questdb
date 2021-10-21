@@ -31,6 +31,8 @@ public interface TableStructure {
 
     int getColumnType(int columnIndex);
 
+    long getColumnHash(int columnIndex);
+
     int getIndexBlockCapacity(int columnIndex);
 
     boolean isIndexed(int columnIndex);

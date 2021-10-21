@@ -68,7 +68,7 @@ public class TelemetryTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine, messageBus, null);
+                    SqlCompiler compiler = new SqlCompiler(engine, null);
                     TelemetryJob ignored = new TelemetryJob(engine);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
             ) {
@@ -130,7 +130,7 @@ public class TelemetryTest extends AbstractCairoTest {
        TestUtils.assertMemoryLeak(() -> {
            try (
                    CairoEngine engine = new CairoEngine(configuration);
-                   SqlCompiler compiler = new SqlCompiler(engine, messageBus, null);
+                   SqlCompiler compiler = new SqlCompiler(engine, null);
                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                compiler.compile(
                        "CREATE TABLE " + TelemetryJob.configTableName + " (id long256, enabled boolean)",
@@ -190,7 +190,7 @@ public class TelemetryTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine, messageBus, null);
+                    SqlCompiler compiler = new SqlCompiler(engine, null);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                 refVersion.set("1.0");
                 TelemetryJob telemetryJob = new TelemetryJob(engine, null);

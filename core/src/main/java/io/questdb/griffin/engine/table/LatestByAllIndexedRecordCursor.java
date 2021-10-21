@@ -85,7 +85,6 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     @Override
     protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
         final MessageBus bus = executionContext.getMessageBus();
-        assert bus != null;
 
         final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
         final Sequence pubSeq = bus.getLatestByPubSeq();

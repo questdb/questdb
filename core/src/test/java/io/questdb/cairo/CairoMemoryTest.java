@@ -25,8 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.MemoryCMRImpl;
-import io.questdb.cairo.vm.MemoryPMAImpl;
-import io.questdb.cairo.vm.PagedSlidingReadOnlyMemory;
+import io.questdb.cairo.vm.MemoryPMARImpl;
+import io.questdb.cairo.vm.MemorySRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -123,7 +123,7 @@ public class CairoMemoryTest {
 
         long openFileCount = ff.getOpenFileCount();
         try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
-            try (MemoryPMAImpl mem = new MemoryPMAImpl(ff, path, 2 * ff.getPageSize(), MemoryTag.MMAP_DEFAULT)) {
+            try (MemoryPMARImpl mem = new MemoryPMARImpl(ff, path, 2 * ff.getPageSize(), MemoryTag.MMAP_DEFAULT)) {
                 try {
                     for (int i = 0; i < N * 10; i++) {
                         mem.putLong(i);
@@ -201,7 +201,7 @@ public class CairoMemoryTest {
 
     @Test
     public void testAppendMemoryJump() throws Exception {
-        testVirtualMemoryJump(path -> new MemoryPMAImpl(FF, path, FF.getPageSize(), MemoryTag.MMAP_DEFAULT));
+        testVirtualMemoryJump(path -> new MemoryPMARImpl(FF, path, FF.getPageSize(), MemoryTag.MMAP_DEFAULT));
     }
 
     @Test
@@ -319,7 +319,7 @@ public class CairoMemoryTest {
                         mem.putLong(rnd.nextLong());
                     }
 
-                    try (PagedSlidingReadOnlyMemory mem2 = new PagedSlidingReadOnlyMemory()) {
+                    try (MemorySRImpl mem2 = new MemorySRImpl()) {
                         mem2.of(mem, MemoryTag.MMAP_DEFAULT);
 
                         // try to read outside of original page bounds
@@ -374,7 +374,7 @@ public class CairoMemoryTest {
                         mem.putLong(rnd.nextLong());
                     }
 
-                    try (PagedSlidingReadOnlyMemory mem2 = new PagedSlidingReadOnlyMemory()) {
+                    try (MemorySRImpl mem2 = new MemorySRImpl()) {
                         mem2.of(mem, MemoryTag.MMAP_DEFAULT);
 
                         try {
@@ -415,7 +415,7 @@ public class CairoMemoryTest {
             try (MemoryCMARW mem = Vm.getSmallCMARWInstance(FF, path, MemoryTag.MMAP_DEFAULT)) {
                 final int M = (int) (mem.size()/Long.BYTES);
                 for (int i = 0; i < M; i++) {
-                    Assert.assertEquals(i, mem.getLong(i * 8));
+                    Assert.assertEquals(i, mem.getLong(i * 8L));
                 }
             }
         }

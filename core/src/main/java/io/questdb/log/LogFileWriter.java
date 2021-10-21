@@ -131,7 +131,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
                 flush();
             }
 
-            Vect.memcpy(sink.getAddress(), _wptr, l);
+            Vect.memcpy(_wptr, sink.getAddress(), l);
             _wptr += l;
         }
     }
