@@ -171,6 +171,20 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
             txMem.sync(commitMode == CommitMode.ASYNC);
         }
         prevTransientRowCount = transientRowCount;
+
+//        if (fixedRowCount + transientRowCount != sumPartitionRowCount()) {
+            assert fixedRowCount + transientRowCount == sumPartitionRowCount();
+//        }
+    }
+
+    private long sumPartitionRowCount() {
+        if (partitionBy == PartitionBy.NONE) return transientRowCount;
+
+        long count = 0;
+        for(int i = 0, n = getPartitionCount(); i < n - 1; i++) {
+            count += getPartitionSizeByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+        }
+        return count + transientRowCount;
     }
 
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {

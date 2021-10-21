@@ -547,6 +547,10 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
+
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from x", sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from y", sink2);
+        TestUtils.assertEquals(sink, sink2);
     }
 
     private void testCommitLagEndingAtPartitionBoundaryPlus1WithRollback0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
