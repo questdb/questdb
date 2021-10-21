@@ -103,6 +103,12 @@ public class TableWriter implements Closeable {
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
+    // This is the same message bus. When TableWriter instance created via CairoEngine, message bus is shared
+    // and is owned by the engine. Since TableWriter would not have ownership of the bus it must not free it up.
+    // On other hand when TableWrite is created outside CairoEngine, primarily in tests, the ownership of the
+    // message bus is with the TableWriter. Therefore, message bus must be freed when writer is freed.
+    // To indicate ownership, the message bus owned by the writer will be assigned to `ownMessageBus`. This reference
+    // will be released by the writer
     private final MessageBus messageBus;
     private final MessageBus ownMessageBus;
     private final boolean parallelIndexerEnabled;
