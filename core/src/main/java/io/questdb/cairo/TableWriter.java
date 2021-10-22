@@ -3237,6 +3237,9 @@ public class TableWriter implements Closeable {
             // while adding out-of-order data
         } else if (rowDelta < -1) {
             this.txWriter.fixedRowCount += partitionSize;
+            // "last partition" just became part for the "fixed" group of partitions
+            // to indicate that rows fully moved we need to zero out transient count
+            this.txWriter.transientRowCount = 0;
         } else {
             // this is last partition
             if (partitionTimestamp > lastPartitionTimestamp) {

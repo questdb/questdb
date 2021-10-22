@@ -1470,6 +1470,20 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "select count() from y",
+                sink2
+        );
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "select count() from x",
+                sink
+        );
+        TestUtils.assertEquals(sink2, sink);
     }
 
     private static void testVanillaCommitLag0(
