@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.MessageBus;
 import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
@@ -166,12 +165,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final PGResumeProcessor resumeCursorExecuteRef = this::resumeCursorExecute;
     private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
 
-    public PGConnectionContext(
-            CairoEngine engine,
-            PGWireConfiguration configuration,
-            @Nullable MessageBus messageBus,
-            int workerCount
-    ) {
+    public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, int workerCount) {
         this.engine = engine;
         this.utf8Sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
         this.typeManager = new TypeManager(engine.getConfiguration().getTextConfiguration(), utf8Sink);
@@ -194,7 +188,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.serverVersion = configuration.getServerVersion();
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
         this.locale = configuration.getDefaultDateLocale();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, messageBus);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
         this.sqlExecutionContext.setRandom(this.rnd = configuration.getRandom());
         this.namedStatementWrapperPool = new WeakObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 16
         this.namedPortalPool = new WeakObjectPool<>(Portal::new, configuration.getNamesStatementPoolCapacity()); // 16
@@ -1016,6 +1010,22 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
             activeSelectColumnTypes.setQuick(2 * i, columnType);
             activeSelectColumnTypes.setQuick(2 * i + 1, flags);
+        }
+    }
+
+    private void clearCursorAndFactory() {
+        resumeProcessor = null;
+        currentCursor = Misc.free(currentCursor);
+        // do not free factory, it will be cached
+        currentFactory = null;
+        // we we resumed the cursor send the typeAndSelect will be null
+        // we do not want to overwrite cache entries and potentially
+        // leak memory
+        if (typesAndSelect != null) {
+            typesAndSelectCache.put(queryText, typesAndSelect);
+            // clear selectAndTypes so that context doesn't accidentally
+            // free the factory when context finishes abnormally
+            this.typesAndSelect = null;
         }
     }
 
@@ -2189,22 +2199,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    private void clearCursorAndFactory() {
-        resumeProcessor = null;
-        currentCursor = Misc.free(currentCursor);
-        // do not free factory, it will be cached
-        currentFactory = null;
-        // we we resumed the cursor send the typeAndSelect will be null
-        // we do not want to overwrite cache entries and potentially
-        // leak memory
-        if (typesAndSelect != null) {
-            typesAndSelectCache.put(queryText, typesAndSelect);
-            // clear selectAndTypes so that context doesn't accidentally
-            // free the factory when context finishes abnormally
-            this.typesAndSelect = null;
-        }
-    }
-
     private void sendReadyForNewQuery() throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareReadyForQuery();
         sendAndReset();
@@ -2255,8 +2249,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 .$(']').$();
 
         Vect.memcpy(
-                recvBuffer + readOffsetBeforeParse,
-                recvBuffer,
+                recvBuffer, recvBuffer + readOffsetBeforeParse,
                 len
         );
         recvBufferWriteOffset = len;

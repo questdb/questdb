@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -49,18 +48,15 @@ public class PGWireServer implements Closeable {
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final PGConnectionContextFactory contextFactory;
     private final WorkerPool workerPool;
-    private final MessageBus messageBus;
 
     public PGWireServer(
             PGWireConfiguration configuration,
             CairoEngine engine,
             WorkerPool workerPool,
             boolean workerPoolLocal,
-            MessageBus messageBus,
             FunctionFactoryCache functionFactoryCache
     ) {
-        this.messageBus = messageBus;
-        this.contextFactory = new PGConnectionContextFactory(engine, configuration, messageBus, workerPool.getWorkerCount());
+        this.contextFactory = new PGConnectionContextFactory(engine, configuration, workerPool.getWorkerCount());
         this.dispatcher = IODispatchers.create(
                 configuration.getDispatcherConfiguration(),
                 contextFactory
@@ -69,7 +65,7 @@ public class PGWireServer implements Closeable {
         workerPool.assign(dispatcher);
 
         for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
-            final PGJobContext jobContext = new PGJobContext(configuration, engine, messageBus, functionFactoryCache);
+            final PGJobContext jobContext = new PGJobContext(configuration, engine, functionFactoryCache);
             workerPool.assign(i, new Job() {
                 private final IORequestProcessor<PGConnectionContext> processor = (operation, context) -> {
                     try {
@@ -121,7 +117,7 @@ public class PGWireServer implements Closeable {
                 sharedWorkerPool,
                 log,
                 cairoEngine,
-                (conf, engine, workerPool, local, bus, functionFactoryCache1, metrics1) -> new PGWireServer(conf, cairoEngine, workerPool, local, bus, functionFactoryCache1),
+                (conf, engine, workerPool, local, functionFactoryCache1, metrics1) -> new PGWireServer(conf, cairoEngine, workerPool, local, functionFactoryCache1),
                 functionFactoryCache,
                 metrics
         );
@@ -135,20 +131,15 @@ public class PGWireServer implements Closeable {
         }
         Misc.free(contextFactory);
         Misc.free(dispatcher);
-
-        // when worker pool is not null we will also have local message bus
-        if (workerPool != null) {
-            Misc.free(messageBus);
-        }
     }
 
     private static class PGConnectionContextFactory implements IOContextFactory<PGConnectionContext>, Closeable, EagerThreadSetup {
         private final ThreadLocal<WeakObjectPool<PGConnectionContext>> contextPool;
         private boolean closed = false;
 
-        public PGConnectionContextFactory(CairoEngine engine, PGWireConfiguration configuration, @Nullable MessageBus messageBus, int workerCount) {
+        public PGConnectionContextFactory(CairoEngine engine, PGWireConfiguration configuration, int workerCount) {
             this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(() ->
-                    new PGConnectionContext(engine, configuration, messageBus, workerCount), configuration.getConnectionPoolInitialCapacity()));
+                    new PGConnectionContext(engine, configuration, workerCount), configuration.getConnectionPoolInitialCapacity()));
         }
 
         @Override

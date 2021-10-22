@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cutlass.line.LineProtoException;
-import io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ProtoEntity;
 import io.questdb.cutlass.line.udp.LineUdpLexerTest;
@@ -388,9 +387,9 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         // This will copy ILP data from fullBuffer to parseBuffer so that the data ends at the end of the buffer
         long parseHi = parseBuffer + buffersLen;
         Vect.memmove(parseHi - parseLen, parseHi - prevParseLen, prevParseLen);
-        Vect.memcpy(fullBuffer + prevParseLen, parseHi - shl, shl);
+        Vect.memcpy(parseHi - shl, fullBuffer + prevParseLen, shl);
 
-        // bufHi always the same, data alwasy ends at the end of the buffer
+        // bufHi always the same, data always ends at the end of the buffer
         // the only difference from iteration to iteration is where the data starts, which is set in shl
         lineTcpParser.shl(shl);
         return parseMeasurement(parseHi);

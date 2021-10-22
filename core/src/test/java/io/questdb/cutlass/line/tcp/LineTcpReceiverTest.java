@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.AuthenticatedLineTcpSender;
 import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -182,7 +183,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
     public void testFieldsReducedNonPartitioned() throws Exception {
         try (TableModel m = new TableModel(configuration, "weather", PartitionBy.NONE)) {
             m.col("windspeed", ColumnType.DOUBLE).timestamp();
-            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+            CairoTestUtils.createTable(m, ColumnType.VERSION);
         }
 
         String lineData =
@@ -415,8 +416,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
     @Test
     public void testTableTableIdChangedOnRecreate() throws Exception {
         try (SqlCompiler compiler = new SqlCompiler(engine);
-             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(
-                     engine, 1, engine.getMessageBus())
+             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                      .with(
                              AllowAllCairoSecurityContext.INSTANCE,
                              new BindVariableServiceImpl(configuration),
@@ -477,7 +477,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                     .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
                     .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
                     .col("Length", ColumnType.INT);
-            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+            CairoTestUtils.createTable(m, ColumnType.VERSION);
         }
 
         String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
@@ -494,8 +494,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
     @Test
     public void testWithColumnAsReservedKeyword() throws Exception {
         try (SqlCompiler compiler = new SqlCompiler(engine);
-             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(
-                     engine, 1, engine.getMessageBus())
+             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                      .with(
                              AllowAllCairoSecurityContext.INSTANCE,
                              new BindVariableServiceImpl(configuration),
@@ -625,7 +624,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                     .col("guild", ColumnType.LONG)
                     .col("channel", ColumnType.LONG)
                     .col("flags", ColumnType.BYTE);
-            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+            CairoTestUtils.createTable(m, ColumnType.VERSION);
         }
 
         String lineData = "messages id=843530699759026177i,author=820703963477180437i,guild=820704412095479830i,channel=820704412095479833i,flags=6i\n";
@@ -762,7 +761,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                     .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
                     .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
                     .col("Length", ColumnType.INT);
-            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+            CairoTestUtils.createTable(m, ColumnType.VERSION);
         }
 
         runInContext((receiver) -> {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,11 +43,11 @@ public class DescriptionCatalogueFunctionFactory extends AbstractEmptyCatalogueF
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("objoid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("classoid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("objoid", 1, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("classoid", 2, ColumnType.INT));
         //TODO the below column was downgraded to short. We need to support type downgrading of compatible types when joining
-        metadata.add(new TableColumnMetadata("objsubid", ColumnType.SHORT, null));
-        metadata.add(new TableColumnMetadata("description", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("objsubid", 3, ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("description", 4, ColumnType.STRING));
         METADATA = metadata;
     }
 }

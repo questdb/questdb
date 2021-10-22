@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -64,7 +64,7 @@ public class MemCopyBenchmark {
 
     @Benchmark
     public void testAMemCpy() {
-        Vect.memcpy(mem1, mem2, len);
+        Vect.memcpy(mem2, mem1, len);
     }
 
     @Benchmark

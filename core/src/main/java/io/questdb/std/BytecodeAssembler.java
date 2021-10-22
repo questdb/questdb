@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -300,11 +300,20 @@ public class BytecodeAssembler {
         putShort(count);
     }
 
+    // The count operand of the invokeinterface instruction records a measure of the number of
+    // argument values, where an argument value of type long or type double contributes two
+    // units to the count value and an argument of any other type contributes one unit. This
+    // information can also be derived from the descriptor of the selected method. The redundancy is
+    // historical
     public void invokeInterface(int interfaceIndex, int argCount) {
         putByte(185);
         putShort(interfaceIndex);
         putByte(argCount + 1);
         putByte(0);
+    }
+
+    public void invokeInterface(int interfaceIndex) {
+        invokeInterface(interfaceIndex, 1);
     }
 
     public void invokeStatic(int index) {
@@ -752,17 +761,17 @@ public class BytecodeAssembler {
         }
 
         @Override
+        public Utf8Appender put(int value) {
+            super.put(value);
+            return this;
+        }
+
+        @Override
         public CharSink put(char[] chars, int start, int len) {
             for (int i = 0; i < len; i++) {
                 BytecodeAssembler.this.putByte(chars[i + start]);
             }
             utf8len += len;
-            return this;
-        }
-
-        @Override
-        public Utf8Appender put(int value) {
-            super.put(value);
             return this;
         }
     }

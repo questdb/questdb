@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,8 +39,8 @@ import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_NAME;
 class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
     static final RecordMetadata METADATA;
     private static final int rowCount = PG_TYPE_OIDS.size();
-    private final TypeCatalogueRecord record = new TypeCatalogueRecord();
     public final int[] intValues = new int[METADATA.getColumnCount()];
+    private final TypeCatalogueRecord record = new TypeCatalogueRecord();
     private int row = -1;
 
     public TypeCatalogueCursor() {
@@ -84,6 +84,16 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
     class TypeCatalogueRecord implements Record {
 
         @Override
+        public boolean getBool(int col) {
+            return false;
+        }
+
+        @Override
+        public char getChar(int col) {
+            return 'b';
+        }
+
+        @Override
         public int getInt(int col) {
             return intValues[col];
         }
@@ -102,33 +112,23 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
         public int getStrLen(int col) {
             return getStr(col).length();
         }
-
-        @Override
-        public char getChar(int col) {
-            return 'b';
-        }
-
-        @Override
-        public boolean getBool(int col) {
-            return false;
-        }
     }
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("oid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("typname", ColumnType.STRING, null));
-        metadata.add(new TableColumnMetadata("typbasetype", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("typarray", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("typnamespace", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("typnotnull", ColumnType.BOOLEAN, null));
-        metadata.add(new TableColumnMetadata("typtypmod", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("typtype", ColumnType.CHAR, null));
-        metadata.add(new TableColumnMetadata("typrelid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("typelem", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("typreceive", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("typdelim", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("typinput", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("oid", 1, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typname", 2, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("typbasetype", 3, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typarray", 4, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typnamespace", 5, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typnotnull", 6, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("typtypmod", 7, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typtype", 8, ColumnType.CHAR));
+        metadata.add(new TableColumnMetadata("typrelid", 9, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typelem", 10, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typreceive", 11, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typdelim", 12, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typinput", 13, ColumnType.INT));
         METADATA = metadata;
     }
 }

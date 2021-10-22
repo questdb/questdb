@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -60,14 +60,6 @@ public final class StdoutSink extends AbstractCharSink implements Closeable {
             for (int i = 0, len = cs.length(); i < len; i++) {
                 put(cs.charAt(i));
             }
-        }
-        return this;
-    }
-
-    @Override
-    public CharSink put(char[] chars, int start, int len) {
-        for (int i = 0; i < len; i++) {
-            put(chars[i + start]);
         }
         return this;
     }

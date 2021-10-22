@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -166,7 +166,6 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         }
 
         final MessageBus bus = executionContext.getMessageBus();
-        assert bus != null;
 
         final PageFrameCursor cursor = base.getPageFrameCursor(executionContext);
         final int vafCount = vafList.size();
@@ -207,7 +206,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
                 final int columnIndex = vaf.getColumnIndex();
                 final long valueAddress = columnIndex > -1 ? frame.getPageAddress(columnIndex) : 0;
                 final int pageColIndex = columnIndex > -1 ? columnIndex : keyColumnIndex;
-                final int columnSizeShr = frame.getColumnSize(pageColIndex);
+                final int columnSizeShr = frame.getColumnShiftBits(pageColIndex);
                 final long valueAddressSize = frame.getPageSize(pageColIndex);
 
                 long seq = pubSeq.next();

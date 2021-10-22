@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -51,12 +51,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.test.tools.TestUtils.getSendDelayNetworkFacade;
 
 public class ImportIODispatcherTest {
-    @Rule
-    public TemporaryFolder temp = new TemporaryFolder();
     private static final Log LOG = LogFactory.getLog(ImportIODispatcherTest.class);
     private static final String RequestFooter = "\r\n" +
             "--------------------------27d997ca93d2689d--";
-
     private static final String PostHeader = "POST /upload?name=trips HTTP/1.1\r\n" +
             "Host: localhost:9001\r\n" +
             "User-Agent: curl/7.64.0\r\n" +
@@ -85,17 +82,14 @@ public class ImportIODispatcherTest {
             "  }\r\n" +
             "]\r\n" +
             "\r\n";
-
     private static final String Request1DataHeader = "--------------------------27d997ca93d2689d\r\n" +
             "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
             "Content-Type: application/octet-stream\r\n" +
             "\r\n" +
             "Col1,Pickup_DateTime,DropOff_datetime\r\n";
-
     private static final String Request1Header = PostHeader +
             Request1SchemaPart +
             Request1DataHeader;
-
     private static final String ValidImportRequest1 = Request1Header +
             "B00008,2017-02-01 00:30:00,\r\n" +
             "B00008,2017-02-01 00:40:00,\r\n" +
@@ -122,7 +116,6 @@ public class ImportIODispatcherTest {
             "B00014,2017-02-01 15:33:00,\r\n" +
             "B00014,2017-02-01 15:45:00,\r\n" +
             RequestFooter;
-
     private static final String Request2Header = "POST /upload?name=trips HTTP/1.1\r\n" +
             "Host: localhost:9001\r\n" +
             "User-Agent: curl/7.64.0\r\n" +
@@ -164,7 +157,6 @@ public class ImportIODispatcherTest {
             "Content-Type: application/octet-stream\r\n" +
             "\r\n" +
             "Col1,Col2,Col3,Col4,Pickup_DateTime\r\n";
-
     private static final String ValidImportRequest2 = Request2Header +
             "B00008,,,,2017-02-01 00:30:00\r\n" +
             "B00008,,,,2017-02-01 00:40:00\r\n" +
@@ -191,7 +183,6 @@ public class ImportIODispatcherTest {
             "B00014,,,,2017-02-01 15:33:00\r\n" +
             "B00014,,,,2017-02-01 15:45:00\r\n" +
             RequestFooter;
-
     private final String ValidImportResponse1 = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -214,7 +205,6 @@ public class ImportIODispatcherTest {
             "\r\n" +
             "00\r\n" +
             "\r\n";
-
     private final String ValidImportResponse2 = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -239,7 +229,6 @@ public class ImportIODispatcherTest {
             "\r\n" +
             "00\r\n" +
             "\r\n";
-
     private final String WarningValidImportResponse1 = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -262,7 +251,6 @@ public class ImportIODispatcherTest {
             "\r\n" +
             "00\r\n" +
             "\r\n";
-
     private final String WarningValidImportResponse1Json = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -285,273 +273,120 @@ public class ImportIODispatcherTest {
             "]}\r\n" +
             "00\r\n" +
             "\r\n";
-
     private final String DdlCols1 = "(Col1+STRING,Pickup_DateTime+TIMESTAMP,DropOff_datetime+STRING)";
     private final String DdlCols2 = "(Col1+STRING,Col2+STRING,Col3+STRING,Col4+STRING,Pickup_DateTime+TIMESTAMP)+timestamp(Pickup_DateTime)";
+    @Rule
+    public TemporaryFolder temp = new TemporaryFolder();
     private SqlCompiler compiler;
     private SqlExecutionContextImpl sqlExecutionContext;
 
     @Test
-    public void testImportWithWrongTimestampSpecifiedLoop() throws Exception {
-        for (int i = 0; i < 5; i++) {
-            System.out.println("*************************************************************************************");
-            System.out.println("**************************         Run " + i + "            ********************************");
-            System.out.println("*************************************************************************************");
-            testImportWithWrongTimestampSpecified();
-            temp.delete();
-            temp.create();
-        }
-    }
-
-    private void testImportWithWrongTimestampSpecified() throws Exception {
-        final int parallelCount = 2;
-        final int insertCount = 9;
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(parallelCount)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .run((engine) -> {
-                    CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
-                    AtomicInteger success = new AtomicInteger();
-                    String[] reqeusts = new String[]{ValidImportRequest1, ValidImportRequest2};
-                    String[] response = new String[]{ValidImportResponse1, ValidImportResponse2};
-                    String[] ddl = new String[]{DdlCols1, DdlCols2};
-
-                    for (int i = 0; i < parallelCount; i++) {
-                        final int thread = i;
-                        final String respTemplate = response[i];
-                        final String requestTemplate = reqeusts[i];
-                        final String ddlCols = ddl[i];
-                        final String tableName = "trip" + i;
-
-                        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                                "GET /query?query=CREATE+TABLE+" + tableName + ddlCols + "; HTTP/1.1\r\n",
-                                "0d\r\n" +
-                                        "{\"ddl\":\"OK\"}\n\r\n" +
-                                        "00\r\n" +
-                                        "\r\n");
-
-                        new Thread(() -> {
-                            try {
-                                for (int r = 0; r < insertCount; r++) {
-                                    try {
-                                        String timestamp = "";
-                                        if (r > 0 && thread > 0) {
-                                            timestamp = "&timestamp=Pickup_DateTime";
-                                        }
-                                        String request = requestTemplate
-                                                .replace("POST /upload?name=trips HTTP", "POST /upload?name=" + tableName + timestamp + " HTTP")
-                                                .replace("2017-02-01", "2017-02-0" + (r + 1));
-
-                                        String resp = respTemplate;
-                                        resp = resp.replace("trips", tableName);
-                                        new SendAndReceiveRequestBuilder().execute(request, resp);
-                                        success.incrementAndGet();
-                                    } catch (Exception e) {
-                                        LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
-                                    }
-                                }
-                            } finally {
-                                countDownLatch.countDown();
-                            }
-                        }).start();
-                    }
-
-                    final int totalImports = parallelCount * insertCount;
-                    boolean finished = countDownLatch.await(200 * totalImports, TimeUnit.MILLISECONDS);
-                    Assert.assertTrue(
-                            "Import is not finished in reasonable time, check server errors",
-                            finished);
-                    Assert.assertEquals(
-                            "Expected successful import count does not match actual imports",
-                            totalImports,
-                            success.get());
-                });
-    }
-
-    @Test
-    public void testImportLocksTable() throws Exception {
-        final String tableName = "trips";
+    public void testImportDesignatedTsFromSchema() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> {
-                    AtomicBoolean locked = new AtomicBoolean(false);
+                .run(engine -> {
+                    setupSql(engine);
+                    final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                     engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                        if (event == PoolListener.EV_LOCK_SUCCESS && Chars.equalsNc(name, tableName)) {
-                            try (Path path = new Path()) {
-                                if (engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
-                                    locked.set(true);
-                                }
-                            }
+                        if (event == PoolListener.EV_RETURN && Chars.equals("syms", name)) {
+                            waitForData.countDown();
                         }
                     });
-
-                    new SendAndReceiveRequestBuilder().execute(ValidImportRequest1, ValidImportResponse1);
-                    Assert.assertTrue("Engine must be locked on table creation from upload", locked.get());
-                });
-    }
-
-
-    @Test
-    public void testImportWitNocacheSymbolsLoop() throws Exception {
-        for (int i = 0; i < 2; i++) {
-            System.out.println("*************************************************************************************");
-            System.out.println("**************************         Run " + i + "            ********************************");
-            System.out.println("*************************************************************************************");
-            testImportWitNocacheSymbols();
-            temp.delete();
-            temp.create();
-        }
-    }
-
-    private void testImportWitNocacheSymbols() throws Exception {
-        final int parallelCount = 2;
-        final int insertCount = 1;
-        final int importRowCount = 10;
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(parallelCount)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .run((engine) -> {
-                    CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
-                    AtomicInteger success = new AtomicInteger();
-
-                    String ddl1 = "(Col1+SYMBOL+NOCACHE+INDEX,Pickup_DateTime+TIMESTAMP," +
-                            "DropOff_datetime+SYMBOL)+timestamp(Pickup_DateTime)";
-                    String ddl2 = "(Col1+SYMBOL+NOCACHE+INDEX,Col2+STRING,Col3+STRING,Col4+STRING,Pickup_DateTime+TIMESTAMP)" +
-                            "+timestamp(Pickup_DateTime)";
-                    String[] ddl = new String[]{ddl1, ddl2};
-                    String[] headers = new String[]{Request1Header, Request2Header};
-
-                    String[][] csvTemplate = {
-                            new String[]{"SYM-%d", "2017-02-01 00:00:00", "SYM-2-%s"},
-                            new String[]{"SYM-%d", "%d", "%d", "", "2017-02-01 00:00:00"}
-                    };
-
-                    for (int i = 0; i < parallelCount; i++) {
-                        final String ddlCols = ddl[i];
-                        final String tableName = "trip" + i;
-                        final int tableIndex = i;
-
-                        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                                "GET /query?query=CREATE+TABLE+" + tableName + ddlCols + "; HTTP/1.1\r\n",
-                                "0d\r\n" +
-                                        "{\"ddl\":\"OK\"}\n\r\n" +
-                                        "00\r\n" +
-                                        "\r\n");
-
-                        new Thread(() -> {
-                            try {
-                                try {
-                                    for (int batch = 0; batch < 2; batch++) {
-                                        int low = importRowCount / 2 * batch;
-                                        int hi = importRowCount / 2 * (batch + 1);
-                                        String requestTemplate =
-                                                headers[tableIndex].replace("POST /upload?name=trips ", "POST /upload?name=" + tableName + " ")
-                                                        + generateImportCsv(low, hi, csvTemplate[tableIndex])
-                                                        + RequestFooter;
-
-                                        new SendAndReceiveRequestBuilder()
-                                                .withCompareLength(15)
-                                                .execute(requestTemplate, "HTTP/1.1 200 OK");
-                                    }
-
-                                    new SendAndReceiveRequestBuilder().withExpectDisconnect(false).executeMany(httpClient -> {
-                                        for (int row = 0; row < importRowCount; row++) {
-                                            final String request = "SELECT+Col1+FROM+" + tableName + "+WHERE+Col1%3D%27SYM-" + row + "%27; ";
-
-                                            httpClient.executeWithStandardHeaders(
-                                                    "GET /query?query=" + request + "HTTP/1.1\r\n",
-                                                    "8" + (stringLen(row) * 2) + "\r\n" +
-                                                            "{\"query\":\"SELECT Col1 FROM " + tableName + " WHERE Col1='SYM-"
-                                                            + row +
-                                                            "';\",\"columns\":[{\"name\":\"Col1\",\"type\":\"SYMBOL\"}]," +
-                                                            "\"dataset\":[[\"SYM-" + row + "\"]],\"count\":1}\r\n"
-                                                            + "00\r\n"
-                                                            + "\r\n");
-                                        }
-                                    });
-
-                                    success.incrementAndGet();
-                                } catch (Exception e) {
-                                    LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
-                                }
-                            } finally {
-                                countDownLatch.countDown();
-                            }
-                        }).start();
+                    new SendAndReceiveRequestBuilder().execute(
+                            "POST /upload?name=syms&timestamp=ts1 HTTP/1.1\r\n" +
+                                    "Host: localhost:9001\r\n" +
+                                    "User-Agent: curl/7.64.0\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "Content-Length: 437760673\r\n" +
+                                    "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                                    "Expect: 100-continue\r\n" +
+                                    "\r\n" +
+                                    "--------------------------27d997ca93d2689d\r\n" +
+                                    "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
+                                    "Content-Type: application/octet-stream\r\n" +
+                                    "\r\n" +
+                                    "[\r\n" +
+                                    "  {\r\n" +
+                                    "    \"name\": \"col1\",\r\n" +
+                                    "    \"type\": \"SYMBOL\",\r\n" +
+                                    "    \"index\": \"false\"\r\n" +
+                                    "  },\r\n" +
+                                    "  {\r\n" +
+                                    "    \"name\": \"col2\",\r\n" +
+                                    "    \"type\": \"SYMBOL\",\r\n" +
+                                    "    \"index\": \"true\"\r\n" +
+                                    "  },\r\n" +
+                                    "  {\r\n" +
+                                    "    \"name\": \"ts1\",\r\n" +
+                                    "    \"type\": \"TIMESTAMP\",\r\n" +
+                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
+                                    "  },\r\n" +
+                                    "  {\r\n" +
+                                    "    \"name\": \"ts2\",\r\n" +
+                                    "    \"type\": \"TIMESTAMP\",\r\n" +
+                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
+                                    "  },\r\n" +
+                                    "  {\r\n" +
+                                    "    \"name\": \"ts3\",\r\n" +
+                                    "    \"type\": \"TIMESTAMP\",\r\n" +
+                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
+                                    "  }\r\n" +
+                                    "]\r\n" +
+                                    "\r\n" +
+                                    "--------------------------27d997ca93d2689d\r\n" +
+                                    "Content-Disposition: form-data; name=\"data\"; filename=\"table2.csv\"\r\n" +
+                                    "Content-Type: application/octet-stream\r\n" +
+                                    "\r\n" +
+                                    "col1,col2,ts1,ts2,ts3\r\n" +
+                                    "sym1,sym2,,2017-02-01 00:30:00,2017-02-01 00:30:01\r\n" +
+                                    "\r\n" +
+                                    "--------------------------27d997ca93d2689d--",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: text/plain; charset=utf-8\r\n" +
+                                    "\r\n" +
+                                    "0666\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|      Location:  |                                              syms  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                    "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                                    "|      Timestamp  |                                               ts1  |                 |         |              |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|   Rows handled  |                                                 1  |                 |         |              |\r\n" +
+                                    "|  Rows imported  |                                                 0  |                 |         |              |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|              0  |                                              col1  |                   SYMBOL  |           0  |\r\n" +
+                                    "|              1  |                                              col2  |         (idx/256) SYMBOL  |           0  |\r\n" +
+                                    "|              2  |                                               ts1  |                TIMESTAMP  |           1  |\r\n" +
+                                    "|              3  |                                               ts2  |                TIMESTAMP  |           0  |\r\n" +
+                                    "|              4  |                                               ts3  |                TIMESTAMP  |           0  |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "\r\n" +
+                                    "00\r\n" +
+                                    "\r\n");
+                    if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
+                        Assert.fail();
                     }
-
-                    final int totalImports = parallelCount * insertCount;
-                    boolean finished = countDownLatch.await(Math.max(10 * importRowCount, 2000) * totalImports, TimeUnit.MILLISECONDS);
-                    Assert.assertTrue(
-                            "Import is not finished in reasonable time, check server errors",
-                            finished);
-                    Assert.assertEquals(
-                            "Expected successful import count does not match actual imports",
-                            totalImports,
-                            success.get());
-                });
-    }
-
-    @Test
-    public void testImportWithWrongPartitionBy() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(2)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .run((engine) -> {
-                    String[] reqeusts = new String[]{ValidImportRequest1, ValidImportRequest2};
-                    String[] ddl = new String[]{DdlCols1, DdlCols2};
-
-                    final String requestTemplate = reqeusts[0];
-                    final String ddlCols = ddl[0];
-
-                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                            "GET /query?query=CREATE+TABLE+trips" + ddlCols + "; HTTP/1.1\r\n",
-                            "0d\r\n" +
-                                    "{\"ddl\":\"OK\"}\n\r\n" +
-                                    "00\r\n" +
-                                    "\r\n");
-
-                    String request = requestTemplate
-                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&partitionBy=DAY&timestamp=Pickup_DateTime HTTP");
-
-                    new SendAndReceiveRequestBuilder().execute(request, WarningValidImportResponse1);
-                });
-    }
-
-    @Test
-    public void testImportWithWrongPartitionByJson() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(2)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .run((engine) -> {
-                    String[] reqeusts = new String[]{ValidImportRequest1, ValidImportRequest2};
-                    String[] ddl = new String[]{DdlCols1, DdlCols2};
-
-                    final String requestTemplate = reqeusts[0];
-                    final String ddlCols = ddl[0];
-
-                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                            "GET /query?query=CREATE+TABLE+trips" + ddlCols + "; HTTP/1.1\r\n",
-                            "0d\r\n" +
-                                    "{\"ddl\":\"OK\"}\n\r\n" +
-                                    "00\r\n" +
-                                    "\r\n");
-
-                    String request = requestTemplate
-                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&fmt=json&partitionBy=DAY&timestamp=Pickup_DateTime HTTP");
-
-                    new SendAndReceiveRequestBuilder().execute(request, WarningValidImportResponse1Json);
+                    try (TableReader reader = new TableReader(engine.getConfiguration(), "syms")) {
+                        TableReaderMetadata meta = reader.getMetadata();
+                        Assert.assertEquals(5, meta.getColumnCount());
+                        Assert.assertEquals(2, meta.getTimestampIndex());
+                        Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("col1"));
+                        Assert.assertFalse(meta.isColumnIndexed(0));
+                        Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("col2"));
+                        Assert.assertTrue(meta.isColumnIndexed(1));
+                        Assert.assertEquals(ColumnType.TIMESTAMP, meta.getColumnType("ts1"));
+                        Assert.assertFalse(meta.isColumnIndexed(2));
+                        Assert.assertEquals(ColumnType.TIMESTAMP, meta.getColumnType("ts2"));
+                        Assert.assertFalse(meta.isColumnIndexed(3));
+                        Assert.assertEquals(ColumnType.TIMESTAMP, meta.getColumnType("ts3"));
+                        Assert.assertFalse(meta.isColumnIndexed(4));
+                    }
+                    compiler.close();
                 });
     }
 
@@ -688,6 +523,41 @@ public class ImportIODispatcherTest {
     }
 
     @Test
+    public void testImportLocksTable() throws Exception {
+        final String tableName = "trips";
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    AtomicBoolean locked = new AtomicBoolean(false);
+                    engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                        if (event == PoolListener.EV_LOCK_SUCCESS && Chars.equalsNc(name, tableName)) {
+                            try (Path path = new Path()) {
+                                if (engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
+                                    locked.set(true);
+                                }
+                            }
+                        }
+                    });
+
+                    new SendAndReceiveRequestBuilder().execute(ValidImportRequest1, ValidImportResponse1);
+                    Assert.assertTrue("Engine must be locked on table creation from upload", locked.get());
+                });
+    }
+
+    @Test
+    public void testImportMisDetectsTimestampColumn() throws Exception {
+        testImportMisDetectsTimestampColumn(new HttpServerConfigurationBuilder(), 1000000);
+    }
+
+    @Test
+    public void testImportMisDetectsTimestampColumnSlowPeer() throws Exception {
+        testImportMisDetectsTimestampColumn(new HttpServerConfigurationBuilder().withNetwork(getSendDelayNetworkFacade(50)), 10);
+    }
+
+    @Test
     public void testImportSymbolIndexedFromSchema() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
@@ -698,7 +568,7 @@ public class ImportIODispatcherTest {
                     setupSql(engine);
                     final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                     engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                        if (event == PoolListener.EV_RETURN && "syms".equals(name)) {
+                        if (event == PoolListener.EV_RETURN && Chars.equals("syms", name)) {
                             waitForData.countDown();
                         }
                     });
@@ -777,7 +647,7 @@ public class ImportIODispatcherTest {
                     if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
                         Assert.fail();
                     }
-                    try(TableReader reader = new TableReader(engine.getConfiguration(), "syms")) {
+                    try (TableReader reader = new TableReader(engine.getConfiguration(), "syms")) {
                         TableReaderMetadata meta = reader.getMetadata();
                         Assert.assertEquals(5, meta.getColumnCount());
                         Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("col1"));
@@ -796,123 +666,122 @@ public class ImportIODispatcherTest {
     }
 
     @Test
-    public void testImportDesignatedTsFromSchema() throws Exception {
+    public void testImportWitNocacheSymbolsLoop() throws Exception {
+        for (int i = 0; i < 2; i++) {
+            System.out.println("*************************************************************************************");
+            System.out.println("**************************         Run " + i + "            ********************************");
+            System.out.println("*************************************************************************************");
+            testImportWitNocacheSymbols();
+            temp.delete();
+            temp.create();
+        }
+    }
+
+    @Test
+    public void testImportWithWrongPartitionBy() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
-                .withWorkerCount(1)
+                .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run(engine -> {
-                    setupSql(engine);
-                    final SOCountDownLatch waitForData = new SOCountDownLatch(1);
-                    engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                        if (event == PoolListener.EV_RETURN && "syms".equals(name)) {
-                            waitForData.countDown();
-                        }
-                    });
-                    new SendAndReceiveRequestBuilder().execute(
-                            "POST /upload?name=syms&timestamp=ts1 HTTP/1.1\r\n" +
-                                    "Host: localhost:9001\r\n" +
-                                    "User-Agent: curl/7.64.0\r\n" +
-                                    "Accept: */*\r\n" +
-                                    "Content-Length: 437760673\r\n" +
-                                    "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
-                                    "Expect: 100-continue\r\n" +
-                                    "\r\n" +
-                                    "--------------------------27d997ca93d2689d\r\n" +
-                                    "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
-                                    "Content-Type: application/octet-stream\r\n" +
-                                    "\r\n" +
-                                    "[\r\n" +
-                                    "  {\r\n" +
-                                    "    \"name\": \"col1\",\r\n" +
-                                    "    \"type\": \"SYMBOL\",\r\n" +
-                                    "    \"index\": \"false\"\r\n" +
-                                    "  },\r\n" +
-                                    "  {\r\n" +
-                                    "    \"name\": \"col2\",\r\n" +
-                                    "    \"type\": \"SYMBOL\",\r\n" +
-                                    "    \"index\": \"true\"\r\n" +
-                                    "  },\r\n" +
-                                    "  {\r\n" +
-                                    "    \"name\": \"ts1\",\r\n" +
-                                    "    \"type\": \"TIMESTAMP\",\r\n" +
-                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
-                                    "  },\r\n" +
-                                    "  {\r\n" +
-                                    "    \"name\": \"ts2\",\r\n" +
-                                    "    \"type\": \"TIMESTAMP\",\r\n" +
-                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
-                                    "  },\r\n" +
-                                    "  {\r\n" +
-                                    "    \"name\": \"ts3\",\r\n" +
-                                    "    \"type\": \"TIMESTAMP\",\r\n" +
-                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
-                                    "  }\r\n" +
-                                    "]\r\n" +
-                                    "\r\n" +
-                                    "--------------------------27d997ca93d2689d\r\n" +
-                                    "Content-Disposition: form-data; name=\"data\"; filename=\"table2.csv\"\r\n" +
-                                    "Content-Type: application/octet-stream\r\n" +
-                                    "\r\n" +
-                                    "col1,col2,ts1,ts2,ts3\r\n" +
-                                    "sym1,sym2,,2017-02-01 00:30:00,2017-02-01 00:30:01\r\n" +
-                                    "\r\n" +
-                                    "--------------------------27d997ca93d2689d--",
-                            "HTTP/1.1 200 OK\r\n" +
-                                    "Server: questDB/1.0\r\n" +
-                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                    "Transfer-Encoding: chunked\r\n" +
-                                    "Content-Type: text/plain; charset=utf-8\r\n" +
-                                    "\r\n" +
-                                    "0666\r\n" +
-                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                    "|      Location:  |                                              syms  |        Pattern  | Locale  |      Errors  |\r\n" +
-                                    "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
-                                    "|      Timestamp  |                                               ts1  |                 |         |              |\r\n" +
-                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                    "|   Rows handled  |                                                 1  |                 |         |              |\r\n" +
-                                    "|  Rows imported  |                                                 0  |                 |         |              |\r\n" +
-                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                    "|              0  |                                              col1  |                   SYMBOL  |           0  |\r\n" +
-                                    "|              1  |                                              col2  |         (idx/256) SYMBOL  |           0  |\r\n" +
-                                    "|              2  |                                               ts1  |                TIMESTAMP  |           1  |\r\n" +
-                                    "|              3  |                                               ts2  |                TIMESTAMP  |           0  |\r\n" +
-                                    "|              4  |                                               ts3  |                TIMESTAMP  |           0  |\r\n" +
-                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                    "\r\n" +
+                .run((engine) -> {
+                    String[] reqeusts = new String[]{ValidImportRequest1, ValidImportRequest2};
+                    String[] ddl = new String[]{DdlCols1, DdlCols2};
+
+                    final String requestTemplate = reqeusts[0];
+                    final String ddlCols = ddl[0];
+
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=CREATE+TABLE+trips" + ddlCols + "; HTTP/1.1\r\n",
+                            "0d\r\n" +
+                                    "{\"ddl\":\"OK\"}\n\r\n" +
                                     "00\r\n" +
                                     "\r\n");
-                    if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
-                        Assert.fail();
-                    }
-                    try(TableReader reader = new TableReader(engine.getConfiguration(), "syms")) {
-                        TableReaderMetadata meta = reader.getMetadata();
-                        Assert.assertEquals(5, meta.getColumnCount());
-                        Assert.assertEquals(2, meta.getTimestampIndex());
-                        Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("col1"));
-                        Assert.assertFalse(meta.isColumnIndexed(0));
-                        Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("col2"));
-                        Assert.assertTrue(meta.isColumnIndexed(1));
-                        Assert.assertEquals(ColumnType.TIMESTAMP, meta.getColumnType("ts1"));
-                        Assert.assertFalse(meta.isColumnIndexed(2));
-                        Assert.assertEquals(ColumnType.TIMESTAMP, meta.getColumnType("ts2"));
-                        Assert.assertFalse(meta.isColumnIndexed(3));
-                        Assert.assertEquals(ColumnType.TIMESTAMP, meta.getColumnType("ts3"));
-                        Assert.assertFalse(meta.isColumnIndexed(4));
-                    }
-                    compiler.close();
+
+                    String request = requestTemplate
+                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&partitionBy=DAY&timestamp=Pickup_DateTime HTTP");
+
+                    new SendAndReceiveRequestBuilder().execute(request, WarningValidImportResponse1);
                 });
     }
 
     @Test
-    public void testImportMisDetectsTimestampColumn() throws Exception {
-        testImportMisDetectsTimestampColumn(new HttpServerConfigurationBuilder(), 1000000);
+    public void testImportWithWrongPartitionByJson() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    String[] reqeusts = new String[]{ValidImportRequest1, ValidImportRequest2};
+                    String[] ddl = new String[]{DdlCols1, DdlCols2};
+
+                    final String requestTemplate = reqeusts[0];
+                    final String ddlCols = ddl[0];
+
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=CREATE+TABLE+trips" + ddlCols + "; HTTP/1.1\r\n",
+                            "0d\r\n" +
+                                    "{\"ddl\":\"OK\"}\n\r\n" +
+                                    "00\r\n" +
+                                    "\r\n");
+
+                    String request = requestTemplate
+                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&fmt=json&partitionBy=DAY&timestamp=Pickup_DateTime HTTP");
+
+                    new SendAndReceiveRequestBuilder().execute(request, WarningValidImportResponse1Json);
+                });
     }
 
     @Test
-    public void testImportMisDetectsTimestampColumnSlowPeer() throws Exception {
-        testImportMisDetectsTimestampColumn(new HttpServerConfigurationBuilder().withNetwork(getSendDelayNetworkFacade(50)), 10);
+    public void testImportWithWrongTimestampSpecifiedLoop() throws Exception {
+        for (int i = 0; i < 5; i++) {
+            System.out.println("*************************************************************************************");
+            System.out.println("**************************         Run " + i + "            ********************************");
+            System.out.println("*************************************************************************************");
+            testImportWithWrongTimestampSpecified();
+            temp.delete();
+            temp.create();
+        }
+    }
+
+    private static int stringLen(int number) {
+        int length = 1;
+        long temp = 10;
+        while (temp <= number) {
+            length++;
+            temp *= 10;
+        }
+        return length;
+    }
+
+    private String generateImportCsv(int low, int hi, String... columnTemplates) {
+        StringBuilder csvStringBuilder = new StringBuilder();
+        for (int i = low; i < hi; i++) {
+            for (int j = 0; j < columnTemplates.length; j++) {
+                final String template = columnTemplates[j];
+                csvStringBuilder.append(String.format(template, i));
+                if (j < columnTemplates.length - 1) {
+                    csvStringBuilder.append(',');
+                } else {
+                    csvStringBuilder.append("\r\n");
+                }
+            }
+        }
+        return csvStringBuilder.toString();
+    }
+
+    private void setupSql(CairoEngine engine) {
+        compiler = new SqlCompiler(engine);
+        BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
+        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                .with(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService,
+                        null,
+                        -1,
+                        null);
+        bindVariableService.clear();
     }
 
     private void testImportMisDetectsTimestampColumn(HttpServerConfigurationBuilder serverConfigBuilder, int rowCount) throws Exception {
@@ -959,43 +828,161 @@ public class ImportIODispatcherTest {
                 });
     }
 
-    private void setupSql(CairoEngine engine) {
-        compiler = new SqlCompiler(engine);
-        BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-        sqlExecutionContext = new SqlExecutionContextImpl(
-                engine, 1, engine.getMessageBus())
-                .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService,
-                        null,
-                        -1,
-                        null);
-        bindVariableService.clear();
+    private void testImportWitNocacheSymbols() throws Exception {
+        final int parallelCount = 2;
+        final int insertCount = 1;
+        final int importRowCount = 10;
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(parallelCount)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
+                    AtomicInteger success = new AtomicInteger();
+
+                    String ddl1 = "(Col1+SYMBOL+NOCACHE+INDEX,Pickup_DateTime+TIMESTAMP," +
+                            "DropOff_datetime+SYMBOL)+timestamp(Pickup_DateTime)";
+                    String ddl2 = "(Col1+SYMBOL+NOCACHE+INDEX,Col2+STRING,Col3+STRING,Col4+STRING,Pickup_DateTime+TIMESTAMP)" +
+                            "+timestamp(Pickup_DateTime)";
+                    String[] ddl = new String[]{ddl1, ddl2};
+                    String[] headers = new String[]{Request1Header, Request2Header};
+
+                    String[][] csvTemplate = {
+                            new String[]{"SYM-%d", "2017-02-01 00:00:00", "SYM-2-%s"},
+                            new String[]{"SYM-%d", "%d", "%d", "", "2017-02-01 00:00:00"}
+                    };
+
+                    for (int i = 0; i < parallelCount; i++) {
+                        final String ddlCols = ddl[i];
+                        final String tableName = "trip" + i;
+                        final int tableIndex = i;
+
+                        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                "GET /query?query=CREATE+TABLE+" + tableName + ddlCols + "; HTTP/1.1\r\n",
+                                "0d\r\n" +
+                                        "{\"ddl\":\"OK\"}\n\r\n" +
+                                        "00\r\n" +
+                                        "\r\n");
+
+                        new Thread(() -> {
+                            try {
+                                try {
+                                    for (int batch = 0; batch < 2; batch++) {
+                                        int low = importRowCount / 2 * batch;
+                                        int hi = importRowCount / 2 * (batch + 1);
+                                        String requestTemplate =
+                                                headers[tableIndex].replace("POST /upload?name=trips ", "POST /upload?name=" + tableName + " ")
+                                                        + generateImportCsv(low, hi, csvTemplate[tableIndex])
+                                                        + RequestFooter;
+
+                                        new SendAndReceiveRequestBuilder()
+                                                .withCompareLength(15)
+                                                .execute(requestTemplate, "HTTP/1.1 200 OK");
+                                    }
+
+                                    new SendAndReceiveRequestBuilder().withExpectDisconnect(false).executeMany(httpClient -> {
+                                        for (int row = 0; row < importRowCount; row++) {
+                                            final String request = "SELECT+Col1+FROM+" + tableName + "+WHERE+Col1%3D%27SYM-" + row + "%27; ";
+
+                                            httpClient.executeWithStandardHeaders(
+                                                    "GET /query?query=" + request + "HTTP/1.1\r\n",
+                                                    "8" + (stringLen(row) * 2) + "\r\n" +
+                                                            "{\"query\":\"SELECT Col1 FROM " + tableName + " WHERE Col1='SYM-"
+                                                            + row +
+                                                            "';\",\"columns\":[{\"name\":\"Col1\",\"type\":\"SYMBOL\"}]," +
+                                                            "\"dataset\":[[\"SYM-" + row + "\"]],\"count\":1}\r\n"
+                                                            + "00\r\n"
+                                                            + "\r\n");
+                                        }
+                                    });
+
+                                    success.incrementAndGet();
+                                } catch (Exception e) {
+                                    LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
+                                }
+                            } finally {
+                                countDownLatch.countDown();
+                            }
+                        }).start();
+                    }
+
+                    final int totalImports = parallelCount * insertCount;
+                    boolean finished = countDownLatch.await(Math.max(10 * importRowCount, 2000) * totalImports, TimeUnit.MILLISECONDS);
+                    Assert.assertTrue(
+                            "Import is not finished in reasonable time, check server errors",
+                            finished);
+                    Assert.assertEquals(
+                            "Expected successful import count does not match actual imports",
+                            totalImports,
+                            success.get());
+                });
     }
 
-    private static int stringLen(int number) {
-        int length = 1;
-        long temp = 10;
-        while (temp <= number) {
-            length++;
-            temp *= 10;
-        }
-        return length;
-    }
+    private void testImportWithWrongTimestampSpecified() throws Exception {
+        final int parallelCount = 2;
+        final int insertCount = 9;
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(parallelCount)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
+                    AtomicInteger success = new AtomicInteger();
+                    String[] reqeusts = new String[]{ValidImportRequest1, ValidImportRequest2};
+                    String[] response = new String[]{ValidImportResponse1, ValidImportResponse2};
+                    String[] ddl = new String[]{DdlCols1, DdlCols2};
 
-    private String generateImportCsv(int low, int hi, String... columnTemplates) {
-        StringBuilder csvStringBuilder = new StringBuilder();
-        for (int i = low; i < hi; i++) {
-            for (int j = 0; j < columnTemplates.length; j++) {
-                final String template = columnTemplates[j];
-                csvStringBuilder.append(String.format(template, i));
-                if (j < columnTemplates.length - 1) {
-                    csvStringBuilder.append(',');
-                } else {
-                    csvStringBuilder.append("\r\n");
-                }
-            }
-        }
-        return csvStringBuilder.toString();
+                    for (int i = 0; i < parallelCount; i++) {
+                        final int thread = i;
+                        final String respTemplate = response[i];
+                        final String requestTemplate = reqeusts[i];
+                        final String ddlCols = ddl[i];
+                        final String tableName = "trip" + i;
+
+                        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                "GET /query?query=CREATE+TABLE+" + tableName + ddlCols + "; HTTP/1.1\r\n",
+                                "0d\r\n" +
+                                        "{\"ddl\":\"OK\"}\n\r\n" +
+                                        "00\r\n" +
+                                        "\r\n");
+
+                        new Thread(() -> {
+                            try {
+                                for (int r = 0; r < insertCount; r++) {
+                                    try {
+                                        String timestamp = "";
+                                        if (r > 0 && thread > 0) {
+                                            timestamp = "&timestamp=Pickup_DateTime";
+                                        }
+                                        String request = requestTemplate
+                                                .replace("POST /upload?name=trips HTTP", "POST /upload?name=" + tableName + timestamp + " HTTP")
+                                                .replace("2017-02-01", "2017-02-0" + (r + 1));
+
+                                        String resp = respTemplate;
+                                        resp = resp.replace("trips", tableName);
+                                        new SendAndReceiveRequestBuilder().execute(request, resp);
+                                        success.incrementAndGet();
+                                    } catch (Exception e) {
+                                        LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
+                                    }
+                                }
+                            } finally {
+                                countDownLatch.countDown();
+                            }
+                        }).start();
+                    }
+
+                    final int totalImports = parallelCount * insertCount;
+                    boolean finished = countDownLatch.await(200 * totalImports, TimeUnit.MILLISECONDS);
+                    Assert.assertTrue(
+                            "Import is not finished in reasonable time, check server errors",
+                            finished);
+                    Assert.assertEquals(
+                            "Expected successful import count does not match actual imports",
+                            totalImports,
+                            success.get());
+                });
     }
 }

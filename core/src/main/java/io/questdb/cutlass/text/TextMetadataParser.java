@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -207,7 +207,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         final long n = bufSize + l;
         if (n > bufCapacity) {
             long ptr = Unsafe.malloc(n * 2, MemoryTag.NATIVE_DEFAULT);
-            Vect.memcpy(buf, ptr, bufSize);
+            Vect.memcpy(ptr, buf, bufSize);
             if (bufCapacity > 0) {
                 Unsafe.free(buf, bufCapacity, MemoryTag.NATIVE_DEFAULT);
             }

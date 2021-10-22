@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,15 +39,15 @@ import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.TableWriterTask;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
 public class CairoEngine implements Closeable, WriterSource {
-    private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     public static final String BUSY_READER = "busyReader";
-
+    private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     private final WriterPool writerPool;
     private final ReaderPool readerPool;
     private final CairoConfiguration configuration;
@@ -56,6 +56,8 @@ public class CairoEngine implements Closeable, WriterSource {
     private final RingQueue<TelemetryTask> telemetryQueue;
     private final MPSequence telemetryPubSeq;
     private final SCSequence telemetrySubSeq;
+    private final RingQueue<TableWriterTask> tableWriterCmdQueue;
+    private final MCSequence tableWriterCmdSubSeq;
     private final long tableIdMemSize;
     private long tableIdFd = -1;
     private long tableIdMem = 0;
@@ -77,22 +79,13 @@ public class CairoEngine implements Closeable, WriterSource {
             this.telemetrySubSeq = null;
         }
         this.tableIdMemSize = Files.PAGE_SIZE;
+        // subscribe to table writer commands to provide cold command handling
+        this.tableWriterCmdQueue = messageBus.getTableWriterCommandQueue();
+        final FanOut fanOut = messageBus.getTableWriterCommandFanOut();
+        fanOut.and(tableWriterCmdSubSeq = new MCSequence(fanOut.current(), tableWriterCmdQueue.getCapacity()));
         openTableId();
         try {
             EngineMigration.migrateEngineTo(this, ColumnType.VERSION, false);
-        } catch (Throwable e) {
-            close();
-            throw e;
-        }
-    }
-
-    public void openTableId() {
-        freeTableId();
-        FilesFacade ff = configuration.getFilesFacade();
-        Path path = Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-        try {
-            tableIdFd = TableUtils.openFileRWOrFail(ff, path);
-            this.tableIdMem = TableUtils.mapRW(ff, tableIdFd, tableIdMemSize, MemoryTag.MMAP_DEFAULT);
         } catch (Throwable e) {
             close();
             throw e;
@@ -149,12 +142,10 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.checkWritePermission();
         TableUtils.createTable(
-                configuration.getFilesFacade(),
+                configuration,
                 mem,
                 path,
-                configuration.getRoot(),
                 struct,
-                configuration.getMkDirMode(),
                 (int) getNextTableId()
         );
     }
@@ -177,7 +168,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.checkWritePermission();
         // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
-        return new TableWriter(configuration, tableName, messageBus, true, DefaultLifecycleManager.INSTANCE, backupDirName);
+        return new TableWriter(configuration, tableName, messageBus, null, true, DefaultLifecycleManager.INSTANCE, backupDirName);
     }
 
     public int getBusyReaderCount() {
@@ -219,7 +210,7 @@ public class CairoEngine implements Closeable, WriterSource {
             CairoSecurityContext securityContext,
             CharSequence tableName
     ) {
-        return getReader(securityContext, tableName,  TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION);
+        return getReader(securityContext, tableName, TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION);
     }
 
     public TableReader getReader(
@@ -230,7 +221,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         TableReader reader = readerPool.get(tableName);
         if ((version > -1 && reader.getVersion() != version)
-            || tableId > -1 && reader.getMetadata().getId() != tableId) {
+                || tableId > -1 && reader.getMetadata().getId() != tableId) {
             reader.close();
             throw ReaderOutOfDateException.of(tableName);
         }
@@ -313,6 +304,19 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.lock(tableName, lockReason);
     }
 
+    public void openTableId() {
+        freeTableId();
+        FilesFacade ff = configuration.getFilesFacade();
+        Path path = Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+        try {
+            tableIdFd = TableUtils.openFileRWOrFail(ff, path);
+            this.tableIdMem = TableUtils.mapRW(ff, tableIdFd, tableIdMemSize, MemoryTag.MMAP_DEFAULT);
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
+    }
+
     public boolean releaseAllReaders() {
         return readerPool.releaseAll();
     }
@@ -381,6 +385,57 @@ public class CairoEngine implements Closeable, WriterSource {
     // It is useful for testing only
     public void resetTableId() {
         Unsafe.getUnsafe().putLong(tableIdMem, 0);
+    }
+
+    public void tick() {
+        final long cursor = tableWriterCmdSubSeq.next();
+        if (cursor > -1) {
+            TableWriterTask cmd = tableWriterCmdQueue.get(cursor);
+            switch (cmd.getType()) {
+                case TableWriterTask.TSK_SLAVE_SYNC:
+
+                    final long dst = cmd.getInstance();
+                    final long dstIP = cmd.getIp();
+                    final long tableId = cmd.getTableId();
+
+                    LOG.info()
+                            .$("received replication SYNC cmd [tableName=").$(cmd.getTableName())
+                            .$(", tableId=").$(cmd.getTableId())
+                            .$(", src=").$(cmd.getInstance())
+                            .$(", srcIP=").$ip(cmd.getIp())
+                            .$(", cursor=").$(cursor)
+                            .I$();
+
+                    try (TableWriter writer = writerPool.get(cmd.getTableName(), "slave sync")) {
+                        final TableSyncModel syncModel = writer.replHandleSyncCmd(cmd);
+                        // release command queue slot not to hold both queues
+                        tableWriterCmdSubSeq.done(cursor);
+                        if (syncModel != null) {
+                            writer.replPublishSyncEvent0(syncModel, tableId, dst, dstIP);
+                        }
+                    } catch (EntryUnavailableException e) {
+                        // ignore command, writer is busy
+                        // it will tick on its way back to pool or earlier
+                        tableWriterCmdSubSeq.done(cursor);
+                    } catch (Throwable e) {
+                        tableWriterCmdSubSeq.done(cursor);
+                        if (e instanceof Sinkable) {
+                            LOG.error()
+                                    .$("could not create table writer [tableName=").$(cmd.getTableName())
+                                    .$(", tableId=").$(cmd.getTableId())
+                                    .$(", ex=`").$((Sinkable) e).$('`')
+                                    .I$();
+                        } else {
+                            LOG.error()
+                                    .$("could not create table writer [tableName=").$(cmd.getTableName())
+                                    .$(", tableId=").$(cmd.getTableId())
+                                    .$(", ex=`").$(e).$('`')
+                                    .I$();
+                        }
+                    }
+
+            }
+        }
     }
 
     public void unlock(

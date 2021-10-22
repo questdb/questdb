@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -58,6 +58,38 @@ public class LongList implements Mutable, LongVec {
     public void add(long value) {
         ensureCapacity(pos + 1);
         buffer[pos++] = value;
+    }
+
+    public void add(long value0, long value1) {
+        int n = pos;
+        ensureCapacity(n + 2);
+        buffer[n++] = value0;
+        buffer[n++] = value1;
+        pos = n;
+    }
+
+    public void add(long value0, long value1, long value2, long value3) {
+        int n = pos;
+        ensureCapacity(n + 4);
+        buffer[n++] = value0;
+        buffer[n++] = value1;
+        buffer[n++] = value2;
+        buffer[n++] = value3;
+        pos = n;
+    }
+
+    public void add(long value0, long value1, long value2, long value3, long value4, long value5, long value6, long value7) {
+        int n = pos;
+        ensureCapacity(n + 8);
+        buffer[n++] = value0;
+        buffer[n++] = value1;
+        buffer[n++] = value2;
+        buffer[n++] = value3;
+        buffer[n++] = value4;
+        buffer[n++] = value5;
+        buffer[n++] = value6;
+        buffer[n++] = value7;
+        pos = n;
     }
 
     public void add(LongList that) {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,8 +43,8 @@ public class ProcCatalogueFunctionFactory extends AbstractEmptyCatalogueFunction
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("oid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("proname", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("oid", 1, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("proname", 2, ColumnType.STRING));
         METADATA = metadata;
     }
 }

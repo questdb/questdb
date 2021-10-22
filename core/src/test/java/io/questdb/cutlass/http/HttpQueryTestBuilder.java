@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,8 +24,6 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.MessageBus;
-import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.TelemetryJob;
 import io.questdb.cairo.CairoConfiguration;
@@ -39,7 +37,6 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
-import org.jetbrains.annotations.Nullable;
 import org.junit.rules.TemporaryFolder;
 
 import java.util.Arrays;
@@ -48,56 +45,15 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class HttpQueryTestBuilder {
 
-    @FunctionalInterface
-    public interface HttpRequestProcessorBuilder {
-        HttpRequestProcessor create(JsonQueryProcessorConfiguration configuration,
-                                    CairoEngine engine,
-                                    @Nullable MessageBus messageBus,
-                                    int workerCount);
-    }
-
     private static final Log LOG = LogFactory.getLog(HttpQueryTestBuilder.class);
     private boolean telemetry;
     private TemporaryFolder temp;
     private HttpServerConfigurationBuilder serverConfigBuilder;
     private HttpRequestProcessorBuilder textImportProcessor;
-
-    @FunctionalInterface
-    public interface HttpClientCode {
-        void run(CairoEngine engine) throws InterruptedException, SqlException;
-    }
-
     private int workerCount = 1;
-
-    public HttpQueryTestBuilder withWorkerCount(int workerCount) {
-        this.workerCount = workerCount;
-        return this;
-    }
 
     public int getWorkerCount() {
         return this.workerCount;
-    }
-
-
-    public HttpQueryTestBuilder withTelemetry(boolean telemetry) {
-        this.telemetry = telemetry;
-        return this;
-    }
-
-    public HttpQueryTestBuilder withTempFolder(TemporaryFolder temp) {
-        this.temp = temp;
-        return this;
-    }
-
-    public HttpQueryTestBuilder withHttpServerConfigBuilder(HttpServerConfigurationBuilder serverConfigBuilder) {
-        this.serverConfigBuilder = serverConfigBuilder;
-        return this;
-    }
-
-
-    public HttpQueryTestBuilder withCustomTextImportProcessor(HttpRequestProcessorBuilder textQueryProcessor) {
-        this.textImportProcessor = textQueryProcessor;
-        return this;
     }
 
     public void run(HttpClientCode code) throws Exception {
@@ -140,8 +96,7 @@ public class HttpQueryTestBuilder {
             }
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false);
-                    final MessageBus messageBus = new MessageBusImpl(cairoConfiguration)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
             ) {
                 TelemetryJob telemetryJob = null;
                 if (telemetry) {
@@ -165,7 +120,6 @@ public class HttpQueryTestBuilder {
                         return textImportProcessor != null ? textImportProcessor.create(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                null,
                                 workerPool.getWorkerCount()
                         ) : new TextImportProcessor(engine);
                     }
@@ -182,7 +136,6 @@ public class HttpQueryTestBuilder {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                messageBus,
                                 workerPool.getWorkerCount(),
                                 Metrics.enabled()
                         );
@@ -200,7 +153,6 @@ public class HttpQueryTestBuilder {
                         return new TextQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                null,
                                 workerPool.getWorkerCount()
                         );
                     }
@@ -230,7 +182,6 @@ public class HttpQueryTestBuilder {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                engine.getMessageBus(),
                                 1,
                                 Metrics.enabled()
                         );
@@ -257,5 +208,44 @@ public class HttpQueryTestBuilder {
                 }
             }
         });
+    }
+
+    public HttpQueryTestBuilder withCustomTextImportProcessor(HttpRequestProcessorBuilder textQueryProcessor) {
+        this.textImportProcessor = textQueryProcessor;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withHttpServerConfigBuilder(HttpServerConfigurationBuilder serverConfigBuilder) {
+        this.serverConfigBuilder = serverConfigBuilder;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withTelemetry(boolean telemetry) {
+        this.telemetry = telemetry;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withTempFolder(TemporaryFolder temp) {
+        this.temp = temp;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withWorkerCount(int workerCount) {
+        this.workerCount = workerCount;
+        return this;
+    }
+
+    @FunctionalInterface
+    public interface HttpRequestProcessorBuilder {
+        HttpRequestProcessor create(
+                JsonQueryProcessorConfiguration configuration,
+                CairoEngine engine,
+                int workerCount
+        );
+    }
+
+    @FunctionalInterface
+    public interface HttpClientCode {
+        void run(CairoEngine engine) throws InterruptedException, SqlException;
     }
 }

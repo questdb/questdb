@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,6 +45,11 @@ public class FanOut implements Barrier {
         holder = h;
     }
 
+    @Override
+    public long current() {
+        return barrier.current();
+    }
+
     public static FanOut to(Barrier barrier) {
         return new FanOut().and(barrier);
     }
@@ -56,6 +61,8 @@ public class FanOut implements Barrier {
 
     public FanOut and(Barrier barrier) {
         Holder _new;
+        boolean barrierNotSetUp = true;
+
         do {
             Holder h = this.holder;
             // read barrier to make sure "holder" read doesn't fall below this
@@ -63,8 +70,9 @@ public class FanOut implements Barrier {
             if (h.barriers.indexOf(barrier) > -1) {
                 return this;
             }
-            if (this.barrier != null) {
+            if (barrierNotSetUp && this.barrier != null) {
                 barrier.root().setBarrier(this.barrier);
+                barrierNotSetUp = false;
             }
             _new = new Holder();
             _new.barriers.addAll(h.barriers);
@@ -75,7 +83,6 @@ public class FanOut implements Barrier {
                 _new.waitStrategies.add(barrier.getWaitStrategy());
             }
             _new.setupWaitStrategy();
-
         } while (!Unsafe.getUnsafe().compareAndSwapObject(this, HOLDER, holder, _new));
 
         return this;

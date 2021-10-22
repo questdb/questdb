@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,18 +31,11 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.math.NegIntFunctionFactory;
-import io.questdb.std.Rnd;
-import org.junit.Before;
 import org.junit.Test;
 
 public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     private static final CairoEngine engine = new CairoEngine(configuration);
     private static final SqlCompiler compiler = new SqlCompiler(engine);
-
-    @Before
-    public void setup() {
-        SharedRandom.RANDOM.set(new Rnd());
-    }
 
     @Test
     public void testBadMinimum() {

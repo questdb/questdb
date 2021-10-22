@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -65,12 +65,11 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     public BitmapIndexWriter() {
     }
 
-    public static void initKeyMemory(MemoryA keyMem, int blockValueCount) {
+    public static void initKeyMemory(MemoryMA keyMem, int blockValueCount) {
 
         // block value count must be power of 2
         assert blockValueCount == Numbers.ceilPow2(blockValueCount);
-
-        keyMem.jumpTo(0);
+        keyMem.toTop();
         keyMem.putByte(BitmapIndexUtils.SIGNATURE);
         keyMem.putLong(1); // SEQUENCE
         Unsafe.getUnsafe().storeFence();
@@ -139,12 +138,12 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     @Override
     public void close() {
         if (keyMem.isOpen() && keyCount > -1) {
-            keyMem.jumpTo(keyMemSize());
+            keyMem.setSize(keyMemSize());
         }
         Misc.free(keyMem);
 
         if (valueMem.isOpen() && valueMemSize > -1) {
-            valueMem.jumpTo(valueMemSize);
+            valueMem.setSize(valueMemSize);
         }
         Misc.free(valueMem);
     }
@@ -403,7 +402,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         valueMem.putLong(newValueBlockOffset, value);
 
         // reserve memory for value block
-        valueMem.jumpTo(valueMemSize + blockCapacity);
+        valueMem.skip(blockCapacity);
 
         // make sure we change value memory size after jump was successful
         valueMemSize += blockCapacity;
