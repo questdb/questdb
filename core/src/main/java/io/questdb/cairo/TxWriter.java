@@ -172,9 +172,9 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
         }
         prevTransientRowCount = transientRowCount;
 
-//        if (fixedRowCount + transientRowCount != sumPartitionRowCount()) {
+        if (fixedRowCount + transientRowCount != sumPartitionRowCount()) {
             assert fixedRowCount + transientRowCount == sumPartitionRowCount();
-//        }
+        }
     }
 
     private long sumPartitionRowCount() {
@@ -257,15 +257,6 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
         this.maxTimestamp = maxTimestamp;
         this.transientRowCount = transientRowCount;
         this.txn = txn;
-    }
-
-    public void reset() {
-        resetTxn(
-                txMem,
-                symbolColumnCount,
-                txMem.getLong(TX_OFFSET_TXN) + 1,
-                txMem.getLong(TX_OFFSET_DATA_VERSION) + 1,
-                txMem.getLong(TX_OFFSET_PARTITION_TABLE_VERSION) + 1);
     }
 
     public void resetTimestamp() {

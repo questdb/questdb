@@ -3231,15 +3231,14 @@ public class TableWriter implements Closeable {
         this.txWriter.minTimestamp = Math.min(timestampMin, this.txWriter.minTimestamp);
         final long partitionSize = srcDataMax + srcOooPartitionHi - srcOooPartitionLo + 1;
         final long rowDelta = srcOooPartitionHi - srcOooMax;
-        if (partitionTimestamp < lastPartitionTimestamp) {
+        if (partitionTimestamp < lastPartitionTimestamp /* partition was not last */
+                || rowDelta < -1) {                     /* partition was last but it is not last anymore */
+            // Add row count added in this commit to fixed row count
+            // If the partition was last but another added in the last commit
+            // else section will add all transient row count anyway
             this.txWriter.fixedRowCount += partitionSize - srcDataMax;
             // when we exit here we need to rollback transientRowCount we've been incrementing
             // while adding out-of-order data
-        } else if (rowDelta < -1) {
-            this.txWriter.fixedRowCount += partitionSize;
-            // "last partition" just became part for the "fixed" group of partitions
-            // to indicate that rows fully moved we need to zero out transient count
-            this.txWriter.transientRowCount = 0;
         } else {
             // this is last partition
             if (partitionTimestamp > lastPartitionTimestamp) {
@@ -4299,6 +4298,7 @@ public class TableWriter implements Closeable {
                             TableUtils.dFile(path.trimTo(p), metadata.getColumnName(metadata.getTimestampIndex()));
                             maxTimestamp = TableUtils.readLongAtOffset(ff, path, tempMem16b, (transientRowCount - 1) * Long.BYTES);
                             actualSize -= transientRowCount;
+                            txWriter.removeAttachedPartitions(txWriter.getMaxTimestamp());
                             LOG.info()
                                     .$("updated active partition [name=").$(path.trimTo(p).$())
                                     .$(", maxTimestamp=").$ts(maxTimestamp)
@@ -4359,7 +4359,7 @@ public class TableWriter implements Closeable {
         if (partitionBy != PartitionBy.NONE) {
             removePartitionDirectories();
         }
-        txWriter.reset();
+        txWriter.truncate();
         clearTodoLog();
     }
 
