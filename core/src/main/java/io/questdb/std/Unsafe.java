@@ -101,6 +101,8 @@ public final class Unsafe {
 
     private static boolean getOrdinaryObjectPointersCompressionStatus(boolean is32BitJVM) {
         class Probe {
+            private int intField; // Accessed through reflection
+
             boolean probe() {
                 long offset = getFieldOffset(Probe.class, "intField");
                 if (offset == 8L) {
