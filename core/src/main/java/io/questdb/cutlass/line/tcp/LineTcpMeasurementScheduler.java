@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -823,13 +823,40 @@ class LineTcpMeasurementScheduler implements Closeable {
                             byte b = Unsafe.getUnsafe().getByte(bufPos);
                             bufPos += Byte.BYTES;
                             final int colType = writer.getMetadata().getColumnType(colIndex);
-                            if (ColumnType.isBoolean(colType) || ColumnType.isLong(colType)) {
-                                row.putBool(colIndex, b == 1);
-                            } else {
-                                throw CairoException.instance(0)
-                                        .put("cast error for line protocol boolean [columnIndex=").put(colIndex)
-                                        .put(", columnType=").put(ColumnType.nameOf(colType))
-                                        .put(']');
+                            switch (ColumnType.tagOf(colType)) {
+                                case ColumnType.BOOLEAN:
+                                    row.putBool(colIndex, b == 1);
+                                    break;
+
+                                case ColumnType.BYTE:
+                                    row.putByte(colIndex, b);
+                                    break;
+
+                                case ColumnType.SHORT:
+                                    row.putShort(colIndex, b);
+                                    break;
+
+                                case ColumnType.INT:
+                                    row.putInt(colIndex, b);
+                                    break;
+
+                                case ColumnType.LONG:
+                                    row.putLong(colIndex, b);
+                                    break;
+
+                                case ColumnType.FLOAT:
+                                    row.putFloat(colIndex, b);
+                                    break;
+
+                                case ColumnType.DOUBLE:
+                                    row.putDouble(colIndex, b);
+                                    break;
+
+                                default:
+                                    throw CairoException.instance(0)
+                                            .put("cast error for line protocol boolean [columnIndex=").put(colIndex)
+                                            .put(", columnType=").put(ColumnType.nameOf(colType))
+                                            .put(']');
                             }
                             break;
                         }
