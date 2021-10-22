@@ -171,31 +171,6 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testColumnTopMoveUncommittedLastPartContended() throws Exception {
-        executeWithPool(0, O3Test::testColumnTopMoveUncommittedLastPart0);
-    }
-
-    @Test
-    public void testColumnTopMoveUncommittedContended() throws Exception {
-        executeWithPool(0, O3Test::testColumnTopMoveUncommitted0);
-    }
-
-    @Test
-    public void testColumnTopMoveUncommittedParallel() throws Exception {
-        executeWithPool(4, O3Test::testColumnTopMoveUncommitted0);
-    }
-
-    @Test
-    public void testColumnTopMoveUncommittedLastPartParallel() throws Exception {
-        executeWithPool(4, O3Test::testColumnTopMoveUncommittedLastPart0);
-    }
-
-    @Test
-    public void testColumnTopMoveUncommittedLastPart() throws Exception {
-        executeVanilla(O3Test::testColumnTopMoveUncommittedLastPart0);
-    }
-
-    @Test
     public void testColumnTopLastDataOOODataParallel() throws Exception {
         executeWithPool(4, O3Test::testColumnTopLastDataOOOData0);
     }
@@ -313,6 +288,31 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testColumnTopMidOOODataParallel() throws Exception {
         executeWithPool(4, O3Test::testColumnTopMidOOOData0);
+    }
+
+    @Test
+    public void testColumnTopMoveUncommittedContended() throws Exception {
+        executeWithPool(0, O3Test::testColumnTopMoveUncommitted0);
+    }
+
+    @Test
+    public void testColumnTopMoveUncommittedLastPart() throws Exception {
+        executeVanilla(O3Test::testColumnTopMoveUncommittedLastPart0);
+    }
+
+    @Test
+    public void testColumnTopMoveUncommittedLastPartContended() throws Exception {
+        executeWithPool(0, O3Test::testColumnTopMoveUncommittedLastPart0);
+    }
+
+    @Test
+    public void testColumnTopMoveUncommittedLastPartParallel() throws Exception {
+        executeWithPool(4, O3Test::testColumnTopMoveUncommittedLastPart0);
+    }
+
+    @Test
+    public void testColumnTopMoveUncommittedParallel() throws Exception {
+        executeWithPool(4, O3Test::testColumnTopMoveUncommitted0);
     }
 
     @Test
@@ -1470,20 +1470,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                "select count() from y",
-                sink2
-        );
-
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                "select count() from x",
-                sink
-        );
-        TestUtils.assertEquals(sink2, sink);
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testVanillaCommitLag0(
@@ -2756,6 +2743,7 @@ public class O3Test extends AbstractO3Test {
                 "/o3/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt"
         );
         assertIndexConsistency(compiler, sqlExecutionContext);
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedDataOOIntoLastIndexSearchBug0(
@@ -3062,6 +3050,7 @@ public class O3Test extends AbstractO3Test {
         AbstractO3Test.assertSqlResultAgainstFile(compiler, sqlExecutionContext,
                 filteredColumnSelect + " where sym = 'googl'",
                 "/o3/testPartitionedDataMergeData_Index.txt");
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedDataMergeEnd0(
@@ -3480,6 +3469,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (x union all append)", sink2);
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
         assertSqlResultAgainstFile(
@@ -3488,6 +3478,7 @@ public class O3Test extends AbstractO3Test {
                 "x",
                 "/o3/testColumnTopLastDataOOOData.txt"
         );
+        assertXCount(compiler, sqlExecutionContext);
     }
 
     private static void testColumnTopMoveUncommittedLastPart0(
@@ -3960,6 +3951,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (x union all append)", sink2);
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
         assertSqlResultAgainstFile(
@@ -3968,6 +3960,7 @@ public class O3Test extends AbstractO3Test {
                 "x",
                 "/o3/testColumnTopLastDataMergeData.txt"
         );
+        assertXCount(compiler, sqlExecutionContext);
     }
 
     private static void testColumnTopMidDataMergeData0(
@@ -4092,6 +4085,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (x union all append)", sink2);
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
         assertSqlResultAgainstFile(
@@ -4100,6 +4094,7 @@ public class O3Test extends AbstractO3Test {
                 "x",
                 "/o3/testColumnTopMidDataMergeData.txt"
         );
+        assertXCount(compiler, sqlExecutionContext);
     }
 
     private static void testColumnTopLastDataMerge2Data0(
@@ -4277,6 +4272,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // straight append
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (x union all append2)", sink2);
         compiler.compile("insert into x select * from append2", sqlExecutionContext);
 
         assertSqlResultAgainstFile(
@@ -4285,6 +4281,7 @@ public class O3Test extends AbstractO3Test {
                 "x",
                 "/o3/testColumnTopLastDataMerge2DataStep2.txt"
         );
+        assertXCount(compiler, sqlExecutionContext);
     }
 
     private static void testColumnTopLastOOOPrefix0(
@@ -4414,6 +4411,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (x union all append)", sink2);
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
         assertSqlResultAgainstFile(
@@ -4422,6 +4420,12 @@ public class O3Test extends AbstractO3Test {
                 "select i,sym,amt,timestamp,b,c,d,e,f,g,ik,j,ts,l,m,n,t,v,v1,v2,v3,v4,v5,v6,v7,v8,v10,v11,v12,v9 from x",
                 "/o3/testColumnTopLastOOOPrefix.txt"
         );
+        assertXCount(compiler, sqlExecutionContext);
+    }
+
+    private static void assertXCount(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        printSqlResult(compiler, sqlExecutionContext, "select count() from x");
+        TestUtils.assertEquals(sink2, sink);
     }
 
     private static void testColumnTopLastOOOData0(
@@ -4545,6 +4549,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (x union all append)", sink2);
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
         assertSqlResultAgainstFile(
@@ -4553,6 +4558,7 @@ public class O3Test extends AbstractO3Test {
                 "x",
                 "/o3/testColumnTopLastOOOData.txt"
         );
+        assertXCount(compiler, sqlExecutionContext);
     }
 
     private static void testColumnTopMidOOOData0(
@@ -4676,6 +4682,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (x union all append)", sink2);
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
         assertSqlResultAgainstFile(
@@ -4684,6 +4691,7 @@ public class O3Test extends AbstractO3Test {
                 "x",
                 "/o3/testColumnTopMidOOOData.txt"
         );
+        assertXCount(compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedDataAppendOOData0(

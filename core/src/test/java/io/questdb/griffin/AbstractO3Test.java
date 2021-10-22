@@ -147,6 +147,14 @@ public class AbstractO3Test {
         TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG);
         engine.releaseAllReaders();
         TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG);
+
+        TestUtils.assertSqlCursors(
+                compiler,
+                sqlExecutionContext,
+                "select count() from " + referenceSQL,
+                "select count() from " + assertSQL,
+                LOG
+        );
     }
 
     protected static void assertO3DataConsistency(
@@ -256,6 +264,16 @@ public class AbstractO3Test {
                 // we need to create entire engine
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
+                    public int getO3PurgeDiscoveryQueueCapacity() {
+                        return 0;
+                    }
+
+                    @Override
+                    public int getO3PurgeQueueCapacity() {
+                        return 0;
+                    }
+
+                    @Override
                     public FilesFacade getFilesFacade() {
                         return ff;
                     }
@@ -277,16 +295,6 @@ public class AbstractO3Test {
 
                     @Override
                     public int getO3CopyQueueCapacity() {
-                        return 0;
-                    }
-
-                    @Override
-                    public int getO3PurgeDiscoveryQueueCapacity() {
-                        return 0;
-                    }
-
-                    @Override
-                    public int getO3PurgeQueueCapacity() {
                         return 0;
                     }
 
@@ -332,6 +340,10 @@ public class AbstractO3Test {
                 O3Utils.freeBuf();
             }
         }
+    }
+
+    protected static void assertXCountY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "select count() from x", "select count() from y", LOG);
     }
 
     protected static void executeVanilla(O3Runnable code) throws Exception {
