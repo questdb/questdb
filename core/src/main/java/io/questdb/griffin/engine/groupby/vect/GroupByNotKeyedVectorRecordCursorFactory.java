@@ -105,9 +105,18 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
             for (int i = 0; i < vafCount; i++) {
                 final VectorAggregateFunction vaf = vafList.getQuick(i);
                 final int columnIndex = vaf.getColumnIndex();
-                final long pageAddress = frame.getPageAddress(columnIndex);
-                final long pageSize = frame.getPageSize(columnIndex);
-                final int colSizeShr = frame.getColumnShiftBits(columnIndex);
+                // for functions like `count()`, that do not have arguments we are required to provide
+                // count of rows in table in a form of "pageSize >> shr". Since `vaf` doesn't provide column
+                // this code used column 0. Assumption here that column 0 is fixed size.
+                // This assumption only holds because our aggressive algorithm for "top down columns", e.g.
+                // the algorithm that forces page frame to provide only columns required by the select. At the time
+                // of writing this code there is no way to return variable length column out of non-keyed aggregation
+                // query. This might change if we introduce something like `first(string)`. When this happens we will
+                // need to rethink our way of computing size for the count. This would be either type checking column
+                // 0 and working out size differently or finding any fixed-size column and using that.
+                final long pageAddress = columnIndex > -1 ? frame.getPageAddress(columnIndex) : 0;
+                final long pageSize = columnIndex > -1 ? frame.getPageSize(columnIndex) : frame.getPageSize(0);
+                final int colSizeShr = columnIndex > -1 ? frame.getColumnShiftBits(columnIndex) : frame.getColumnShiftBits(0);
                 long seq = pubSeq.next();
                 if (seq < 0) {
                     // diy the func
