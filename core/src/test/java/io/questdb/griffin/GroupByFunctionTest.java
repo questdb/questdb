@@ -2947,6 +2947,26 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testVectorCountFirstColumnIsVar() throws Exception {
+        assertQuery("s\tc\n" +
+                        "101.99359297570571\t200\n",
+                "select sum(d) s, count() c from x",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_str() s," +
+                        " rnd_double() d" +
+                        " from" +
+                        " long_sequence(200)" +
+                        ")",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testVectorNSumOneDouble() throws Exception {
         assertQuery("sum\n" +
                         "833539.8830410708\n",
