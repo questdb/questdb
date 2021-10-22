@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -81,11 +81,11 @@ public class Vm {
     }
 
     public static MemoryMA getMAInstance() {
-        return new MemoryPMAImpl();
+        return new MemoryPMARImpl();
     }
 
     public static MemoryMAR getMARInstance() {
-        return new MemoryPMAImpl();
+        return new MemoryPMARImpl();
     }
 
     public static MemoryMARW getMARWInstance() {
@@ -104,11 +104,11 @@ public class Vm {
         return new MemoryCMRImpl(ff, name, size, memoryTag);
     }
 
-    public static MemoryA getSmallAInstance(FilesFacade ff, LPSZ name, int memoryTag) {
+    public static MemoryMA getSmallMAInstance(FilesFacade ff, LPSZ name, int memoryTag) {
         return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1, memoryTag);
     }
 
-    public static MemoryARW getSmallARWInstance(FilesFacade ff, LPSZ name, int memoryTag) {
+    public static MemoryMARW getSmallMARWInstance(FilesFacade ff, LPSZ name, int memoryTag) {
         return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1, memoryTag);
     }
 

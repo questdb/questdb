@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -95,6 +95,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .$(", table=").$(this.tableName)
                     .I$();
             this.txFile = new TxReader(ff, path, partitionBy);
+            path.trimTo(rootLen);
             readTxnSlow();
             openSymbolMaps();
             partitionCount = txFile.getPartitionCount();
@@ -533,14 +534,6 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private static int getColumnBits(int columnCount) {
         return Numbers.msb(Numbers.ceilPow2(columnCount) * 2);
-    }
-
-    private static boolean isEntryToBeProcessed(long address, int index) {
-        if (Unsafe.getUnsafe().getByte(address + index) == -1) {
-            return false;
-        }
-        Unsafe.getUnsafe().putByte(address + index, (byte) -1);
-        return true;
     }
 
     private static void growColumn(MemoryR mem1, MemoryR mem2, int type, long rowCount) {
@@ -1118,7 +1111,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             reshuffleSymbolMapReaders(pTransitionIndex);
             this.columnCount = columnCount;
         } finally {
-            TableReaderMetadata.freeTransitionIndex(pTransitionIndex);
+            TableUtils.freeTransitionIndex(pTransitionIndex);
         }
     }
 
@@ -1234,7 +1227,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                 for (int i = 0; i < columnCount; i++) {
 
-                    if (isEntryToBeProcessed(pState, i)) {
+                    if (TableUtils.isEntryToBeProcessed(pState, i)) {
                         final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L) - 1;
 
                         if (copyFrom == i) {
@@ -1264,7 +1257,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                             fetchColumnsFrom(base, copyFrom);
                             copyColumnsTo(this.columns, this.columnTops, this.bitmapIndexes, base, i, partitionRowCount);
                             int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4) - 1;
-                            while (copyTo > -1 && isEntryToBeProcessed(pState, copyTo)) {
+                            while (copyTo > -1 && TableUtils.isEntryToBeProcessed(pState, copyTo)) {
                                 copyColumnsTo(this.columns, this.columnTops, this.bitmapIndexes, base, copyTo, partitionRowCount);
                                 copyTo = Unsafe.getUnsafe().getInt(pIndexBase + (copyTo - 1) * 8L + 4);
                             }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
@@ -47,8 +46,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final int workerCount;
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
-    @Nullable
-    private final MessageBus messageBus;
     private final MicrosecondClock clock;
     private final AnalyticContextImpl analyticContext = new AnalyticContextImpl();
     private final RingQueue<TelemetryTask> telemetryQueue;
@@ -62,12 +59,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long now;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
-        this(cairoEngine, workerCount, cairoEngine.getMessageBus());
-    }
-
-    public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, @Nullable MessageBus messageBus) {
         this.cairoConfiguration = cairoEngine.getConfiguration();
-        this.messageBus = messageBus;
         this.workerCount = workerCount;
         assert workerCount > 0;
         this.cairoEngine = cairoEngine;
@@ -75,7 +67,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
 
         this.telemetryQueue = cairoEngine.getTelemetryQueue();
-        if (messageBus != null && telemetryQueue != null) {
+        if (telemetryQueue != null) {
             this.telemetryPubSeq = cairoEngine.getTelemetryPubSequence();
             this.telemetryMethod = this::doStoreTelemetry;
         }
@@ -89,12 +81,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public CairoSecurityContext getCairoSecurityContext() {
         return cairoSecurityContext;
-    }
-
-    @Override
-    @Nullable
-    public MessageBus getMessageBus() {
-        return messageBus;
     }
 
     @Override

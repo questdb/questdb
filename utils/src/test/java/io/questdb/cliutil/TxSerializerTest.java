@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,20 +49,18 @@ public class TxSerializerTest {
     private static SqlCompiler compiler;
     private static SqlExecutionContextImpl sqlExecutionContext;
 
-    @BeforeClass
-    public static void setUpStatic() {
-        setCairoStatic();
-        compiler = new SqlCompiler(engine);
-        BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(configuration);
-        sqlExecutionContext = new SqlExecutionContextImpl(
-                engine, 1, engine.getMessageBus())
-                .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService,
-                        null,
-                        -1,
-                        null);
-        bindVariableService.clear();
+    public static void createTestPath(CharSequence root) {
+        try (Path path = new Path().of(root).$()) {
+            if (Files.exists(path)) {
+                return;
+            }
+            Files.mkdirs(path.of(root).slash$(), 509);
+        }
+    }
+
+    public static void removeTestPath(CharSequence root) {
+        Path path = Path.getThreadLocal(root);
+        Files.rmdir(path.slash$());
     }
 
     public static void setCairoStatic() {
@@ -79,24 +77,25 @@ public class TxSerializerTest {
         engine = new CairoEngine(configuration);
     }
 
+    @BeforeClass
+    public static void setUpStatic() {
+        setCairoStatic();
+        compiler = new SqlCompiler(engine);
+        BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(configuration);
+        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                .with(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService,
+                        null,
+                        -1,
+                        null);
+        bindVariableService.clear();
+    }
+
     @AfterClass
     public static void tearDownStatic() {
         engine.close();
         compiler.close();
-    }
-
-    public static void createTestPath(CharSequence root) {
-        try (Path path = new Path().of(root).$()) {
-            if (Files.exists(path)) {
-                return;
-            }
-            Files.mkdirs(path.of(root).slash$(), 509);
-        }
-    }
-
-    public static void removeTestPath(CharSequence root) {
-        Path path = Path.getThreadLocal(root);
-        Files.rmdir(path.slash$());
     }
 
     @Before
@@ -156,6 +155,24 @@ public class TxSerializerTest {
         testRoundTxnSerialization(createTableSql, false);
     }
 
+    private void assertFirstColumnValueLong(String sql, long expected) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(expected, cursor.getRecord().getLong(0));
+            }
+        }
+    }
+
+    private long getColumnValueLong(String sql) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(cursor.hasNext());
+                return cursor.getRecord().getLong(0);
+            }
+        }
+    }
+
     private void testRoundTxnSerialization(String createTableSql, boolean oooSupports) throws SqlException {
         compiler.compile(createTableSql, sqlExecutionContext);
         assertFirstColumnValueLong("select count() from xxx", 10);
@@ -193,23 +210,5 @@ public class TxSerializerTest {
         assertFirstColumnValueLong("select count_distinct(sym1) from xxx", symCount);
         assertFirstColumnValueLong("select count_distinct(sym2) from xxx", symCount2);
         assertFirstColumnValueLong("select x from xxx limit 1", 1);
-    }
-
-    private void assertFirstColumnValueLong(String sql, long expected) throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(expected, cursor.getRecord().getLong(0));
-            }
-        }
-    }
-
-    private long getColumnValueLong(String sql) throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Assert.assertTrue(cursor.hasNext());
-                return cursor.getRecord().getLong(0);
-            }
-        }
     }
 }

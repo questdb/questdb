@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -63,7 +63,7 @@ public class LineUdpSender extends AbstractLineSender {
         return fd;
     }
 
-    @Override
+
     protected void sendToSocket(long fd, long lo, long sockaddr, int len) throws NetworkError {
         if (nf.sendTo(fd, lo, len, sockaddr) != len) {
             throw NetworkError.instance(nf.errno()).put("send error");

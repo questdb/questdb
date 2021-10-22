@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -134,13 +134,15 @@ public class AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
-            String referenceTableDDL,
+            @Nullable String referenceTableDDL,
             String referenceSQL,
             String o3InsertSQL,
             String assertSQL
     ) throws SqlException {
         // create third table, which will contain both X and 1AM
-        compiler.compile(referenceTableDDL, sqlExecutionContext);
+        if (referenceTableDDL != null) {
+            compiler.compile(referenceTableDDL, sqlExecutionContext);
+        }
         compiler.compile(o3InsertSQL, sqlExecutionContext);
         TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG);
         engine.releaseAllReaders();

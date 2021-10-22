@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -84,7 +84,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         if (pageFrameCursor != null) {
             return pageFrameCursor.of(dataFrameCursor);
         } else if (framingSupported) {
-            pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes, getMetadata().getTimestampIndex());
+            pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes);
             return pageFrameCursor.of(dataFrameCursor);
         } else {
             return null;
@@ -129,20 +129,19 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         private final int columnCount;
         private final IntList columnIndexes;
         private final IntList columnSizes;
-        private final LongList pageNRowsRemaining = new LongList();
+        private final LongList pageRowsRemaining = new LongList();
         private final LongList pageSizes = new LongList();
         private TableReader reader;
-        private int partitionIndex;
-        private long partitionRemaining = 0L;
+        private int reenterPartitionIndex;
         private DataFrameCursor dataFrameCursor;
-        private final int timestampIndex;
-        private long rowLo = -1;
+        private long reenterPartitionLo;
+        private long reenterPartitionHi;
+        private boolean reenterDataFrame = false;
 
-        public TableReaderPageFrameCursor(IntList columnIndexes, IntList columnSizes, int timestampIndex) {
+        public TableReaderPageFrameCursor(IntList columnIndexes, IntList columnSizes) {
             this.columnIndexes = columnIndexes;
             this.columnSizes = columnSizes;
             this.columnCount = columnIndexes.size();
-            this.timestampIndex = timestampIndex;
         }
 
         @Override
@@ -153,84 +152,27 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         @Override
         public @Nullable PageFrame next() {
 
-            if (partitionIndex > -1) {
-                final long m = computePageMin(reader.getColumnBase(partitionIndex));
-                if (m < Long.MAX_VALUE) {
-                    // Offset next frame lowest RowId with the count of rows returned in previous frame.
-                    rowLo += pageSizes.get(timestampIndex) >> columnSizes.get(timestampIndex);
-                    return computeFrame(m);
-                }
+            if (this.reenterDataFrame) {
+                return computeFrame(reenterPartitionLo, reenterPartitionHi);
             }
-
-            DataFrame dataFrame;
-            while ((dataFrame = dataFrameCursor.next()) != null) {
-                this.partitionIndex = dataFrame.getPartitionIndex();
-                final long partitionLo = dataFrame.getRowLo();
-                final long partitionHi = dataFrame.getRowHi();
-
-                this.partitionRemaining = partitionHi - partitionLo;
-
-                if (partitionRemaining > 0) {
-                    final int base = reader.getColumnBase(dataFrame.getPartitionIndex());
-                    // copy table tops
-                    for (int i = 0; i < columnCount; i++) {
-                        final int columnIndex = columnIndexes.getQuick(i);
-                        topsRemaining.setQuick(i, reader.getColumnTop(base, columnIndex));
-                        pages.setQuick(i, 0);
-                        pageNRowsRemaining.setQuick(i, -1L);
-                    }
-
-                    // reduce
-                    for (int i = 0; i < columnCount; i++) {
-                        long loRemaining = partitionLo;
-                        long top = topsRemaining.getQuick(i);
-                        if (top >= partitionLo) {
-                            loRemaining = 0;
-                            top -= partitionLo;
-                            topsRemaining.setQuick(i, Math.min(top, partitionHi - partitionLo));
-                        } else {
-                            topsRemaining.setQuick(i, 0);
-                            loRemaining -= top;
-                        }
-
-                        if (loRemaining > 0) {
-                            final MemoryR col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i)));
-                            if (col instanceof NullColumn) {
-                                columnPageNextAddress.setQuick(i, 0);
-                                pageNRowsRemaining.setQuick(i, 0);
-                            } else {
-                                int page = pages.getQuick(i);
-                                long pageSize = col.getPageSize() >> columnSizes.getQuick(i);
-                                if (pageSize < loRemaining) {
-                                    throw CairoException.instance(0).put("partition is not mapped as single page, cannot perform vector calculation");
-                                }
-                                long addr = col.getPageAddress(page);
-                                addr += loRemaining << columnSizes.getQuick(i);
-                                columnPageNextAddress.setQuick(i, addr);
-                                long pageHi = Math.min(partitionHi, pageSize);
-                                pageNRowsRemaining.setQuick(i, pageHi - partitionLo);
-                                pages.setQuick(i, page);
-                            }
-                        }
-                    }
-                    rowLo = dataFrame.getRowLo();
-                    return computeFrame(computePageMin(base));
-                }
+            DataFrame dataFrame = dataFrameCursor.next();
+            if (dataFrame != null) {
+                this.reenterPartitionIndex = dataFrame.getPartitionIndex();
+                return computeFrame(dataFrame.getRowLo(), dataFrame.getRowHi());
             }
-            rowLo = 0;
             return null;
         }
 
         @Override
         public void toTop() {
-            this.partitionIndex = -1;
             this.dataFrameCursor.toTop();
             pages.setAll(columnCount, 0);
             topsRemaining.setAll(columnCount, 0);
-            columnPageAddress.setAll(columnCount, 0);
-            columnPageNextAddress.setAll(columnCount, 0);
-            pageNRowsRemaining.setAll(columnCount, -1L);
-            pageSizes.setAll(columnCount, -1L);
+            columnPageAddress.setAll(columnCount * 2, 0);
+            columnPageNextAddress.setAll(columnCount * 2, 0);
+            pageRowsRemaining.setAll(columnCount, -1L);
+            pageSizes.setAll(columnCount * 2, -1L);
+            reenterDataFrame = false;
         }
 
         @Override
@@ -250,79 +192,106 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             return this;
         }
 
-        private TableReaderPageFrameCursor.TableReaderPageFrame computeFrame(long min) {
+        private TableReaderPageFrame computeFrame(final long partitionLo, final long partitionHi) {
+            final int base = reader.getColumnBase(reenterPartitionIndex);
+
+            // we may need to split this data frame along "top" lines
+            // to do this, we calculate min top value from given position
+            long minTop = partitionHi;
             for (int i = 0; i < columnCount; i++) {
-                final long top = topsRemaining.getQuick(i);
-                if (top > 0) {
-                    assert min <= top;
-                    topsRemaining.setQuick(i, top - min);
-                    columnPageAddress.setQuick(i, 0);
-                    pageSizes.setQuick(i, min);
-                } else {
-                    long addr = columnPageNextAddress.getQuick(i);
-                    long psz = pageNRowsRemaining.getQuick(i);
-                    pageNRowsRemaining.setQuick(i, psz - min);
-                    columnPageAddress.setQuick(i, addr);
-                    if (addr != 0) {
-                        long pageSize = min << columnSizes.getQuick(i);
-                        pageSizes.setQuick(i, pageSize);
-                        columnPageNextAddress.setQuick(i, addr + pageSize);
-                    } else {
-                        pageSizes.setQuick(i, min);
-                    }
+                final int columnIndex = columnIndexes.getQuick(i);
+                long top = reader.getColumnTop(base, columnIndex);
+                if (top > partitionLo && top < minTop) {
+                    minTop = top;
                 }
             }
-            partitionRemaining -= min;
-            if (partitionRemaining < 0) {
-                throw CairoException.instance(0).put("incorrect frame built for vector calculation");
+
+            for (int i = 0; i < columnCount; i++) {
+                final int columnIndex = columnIndexes.getQuick(i);
+                final int readerColIndex = TableReader.getPrimaryColumnIndex(base, columnIndex);
+                final MemoryR col = reader.getColumn(readerColIndex);
+                // when the entire column is NULL we make it skip the whole of the data frame
+                final long top = col instanceof NullColumn ? minTop : reader.getColumnTop(base, columnIndex);
+                final long partitionLoAdjusted = partitionLo - top;
+                final long partitionHiAdjusted = minTop - top;
+                final int sh = columnSizes.getQuick(i);
+
+                if (partitionHiAdjusted > 0) {
+                    if (sh > -1) {
+                        // this assumes reader uses single page to map the whole column
+                        // non-negative sh means fixed length column
+                        long address = col.getPageAddress(0);
+                        long addressSize = partitionHiAdjusted << sh;
+                        long offset = partitionLoAdjusted << sh;
+                        columnPageAddress.setQuick(i * 2, address + offset);
+                        pageSizes.setQuick(i * 2, addressSize - offset);
+                    } else {
+                        final MemoryR fixCol = reader.getColumn(readerColIndex + 1);
+                        long fixAddress = fixCol.getPageAddress(0);
+                        long fixAddressSize = partitionHiAdjusted << 3;
+                        long fixOffset = partitionLoAdjusted << 3;
+
+                        long varAddress = col.getPageAddress(0);
+                        long varOffset = Unsafe.getUnsafe().getLong(fixAddress + fixOffset);
+                        long varAddressSize = Unsafe.getUnsafe().getLong(fixAddress + fixAddressSize);
+
+                        columnPageAddress.setQuick(i * 2, varAddress + varOffset);
+                        columnPageAddress.setQuick(i * 2 + 1, fixAddress + fixOffset);
+                        pageSizes.setQuick(i * 2, varAddressSize - varOffset);
+                        pageSizes.setQuick(i * 2 + 1, fixAddressSize - fixOffset);
+                    }
+                } else {
+                    columnPageAddress.setQuick(i * 2, 0);
+                    columnPageAddress.setQuick(i * 2 + 1, 0);
+                    pageSizes.setQuick(i * 2, (partitionHiAdjusted - partitionLoAdjusted) << (sh > -1 ? sh : 3));
+                    pageSizes.setQuick(i * 2 + 1, 0);
+                }
             }
+
+            // it is possible that all columns in data frame are empty, but it doesn't mean the data frame size is 0
+            // sometimes we may want to imply nulls
+            if (minTop < partitionHi) {
+                this.reenterPartitionLo = minTop;
+                this.reenterPartitionHi = partitionHi;
+                this.reenterDataFrame = true;
+            } else {
+                this.reenterDataFrame = false;
+            }
+
+            frame.partitionLo = partitionLo;
+            frame.partitionHi = minTop;
+            frame.partitionIndex = reenterPartitionIndex;
             return frame;
         }
 
-        private long computePageMin(int base) {
-            // find min frame length
-            long min = Long.MAX_VALUE;
-            for (int i = 0; i < columnCount; i++) {
-                final long top = topsRemaining.getQuick(i);
-                if (top > 0) {
-                    if (min > top) {
-                        min = top;
-                    }
-                } else {
-                    long psz = pageNRowsRemaining.getQuick(i);
-                    if (psz > 0) {
-                        if (min > psz) {
-                            min = psz;
-                        }
-                    } else if (partitionRemaining > 0) {
-                        final int page = pages.getQuick(i);
-                        pages.setQuick(i, page + 1);
-                        final MemoryR col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i)));
-                        // page size is liable to change after it is mapped
-                        // it is important to map page first and call pageSize() after
-                        columnPageNextAddress.setQuick(i, col.getPageAddress(page));
-                        psz = !(col instanceof NullColumn) ? col.getPageSize() >> columnSizes.getQuick(i) : partitionRemaining;
-                        final long m = Math.min(psz, partitionRemaining);
-                        pageNRowsRemaining.setQuick(i, m);
-                        if (min > m) {
-                            min = m;
-                        }
-                    }
-                }
-            }
-            return min;
-        }
-
         private class TableReaderPageFrame implements PageFrame {
+            private long partitionLo;
+            private long partitionHi;
+            private int partitionIndex;
+
             @Override
             public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
                 return reader.getBitmapIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
             }
 
             @Override
-            public long getFirstRowId() {
-                assert rowLo >= 0;
-                return rowLo;
+            public int getColumnShiftBits(int columnIndex) {
+                return columnSizes.getQuick(columnIndex);
+            }
+
+            @Override
+            public long getPageAddress(int columnIndex) {
+                return columnPageAddress.getQuick(columnIndex * 2);
+            }
+
+            @Override
+            public long getIndexPageAddress(int columnIndex) {
+                return columnPageAddress.getQuick(columnIndex * 2 + 1);
+            }
+
+            @Override
+            public long getPageSize(int columnIndex) {
+                return pageSizes.getQuick(columnIndex * 2);
             }
 
             @Override
@@ -331,29 +300,14 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             }
 
             @Override
-            public long getFirstTimestamp() {
-                if (timestampIndex != -1) {
-                    return Unsafe.getUnsafe().getLong(columnPageAddress.getQuick(timestampIndex));
-                }
-                return Long.MIN_VALUE;
+            public long getPartitionLo() {
+                return partitionLo;
             }
 
             @Override
-            public long getPageAddress(int columnIndex) {
-                return columnPageAddress.getQuick(columnIndex);
+            public long getPartitionHi() {
+                return partitionHi;
             }
-
-            @Override
-            public long getPageSize(int columnIndex) {
-                return pageSizes.getQuick(columnIndex);
-            }
-
-            @Override
-            public int getColumnSize(int columnIndex) {
-                return columnSizes.getQuick(columnIndex);
-            }
-
         }
     }
-
 }

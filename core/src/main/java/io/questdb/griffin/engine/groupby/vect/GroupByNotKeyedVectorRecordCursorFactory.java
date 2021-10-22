@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -70,7 +70,6 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final MessageBus bus = executionContext.getMessageBus();
-        assert bus != null;
 
         final PageFrameCursor cursor = base.getPageFrameCursor(executionContext);
         final int vafCount = vafList.size();
@@ -108,7 +107,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
                 final int columnIndex = vaf.getColumnIndex();
                 final long pageAddress = frame.getPageAddress(columnIndex);
                 final long pageSize = frame.getPageSize(columnIndex);
-                final int colSizeShr = frame.getColumnSize(columnIndex);
+                final int colSizeShr = frame.getColumnShiftBits(columnIndex);
                 long seq = pubSeq.next();
                 if (seq < 0) {
                     // diy the func

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.MessageBusImpl;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -52,7 +51,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
                 bindVariableService.setLong("high", 0L);
                 try (
                         final SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(
-                                engine, 1, new MessageBusImpl(configuration)).with(AllowAllCairoSecurityContext.INSTANCE,
+                                engine, 1).with(AllowAllCairoSecurityContext.INSTANCE,
                                 bindVariableService,
                                 null
                         )
@@ -88,8 +87,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
                 final SqlCompiler compiler = new SqlCompiler(engine);
                 final SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(
                         engine,
-                        1,
-                        new MessageBusImpl(configuration)).with(
+                        1).with(
                         AllowAllCairoSecurityContext.INSTANCE,
                         new BindVariableServiceImpl(configuration),
                         null

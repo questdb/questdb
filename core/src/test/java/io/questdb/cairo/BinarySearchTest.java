@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -202,7 +202,7 @@ public class BinarySearchTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 path.of(root).concat("binsearch.d").$();
-                try (MemoryA appendMem = Vm.getSmallAInstance(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT)) {
+                try (MemoryA appendMem = Vm.getSmallMAInstance(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT)) {
                     for (int i = 0; i < distinctValueCount; i++) {
                         for (int j = 0; j < repeatCount; j++) {
                             appendMem.putLong(i);

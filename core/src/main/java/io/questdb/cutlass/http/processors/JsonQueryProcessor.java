@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.cairo.CairoEngine;
@@ -67,28 +66,25 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            @Nullable MessageBus messageBus,
             int workerCount,
             Metrics metrics
     ) {
-        this(configuration, engine, messageBus, workerCount, (FunctionFactoryCache) null, metrics);
+        this(configuration, engine, workerCount, (FunctionFactoryCache) null, metrics);
     }
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            @Nullable MessageBus messageBus,
             int workerCount,
             @Nullable FunctionFactoryCache functionFactoryCache,
             Metrics metrics
     ) {
-        this(configuration, engine, messageBus, workerCount, new SqlCompiler(engine, messageBus, functionFactoryCache), metrics);
+        this(configuration, engine, workerCount, new SqlCompiler(engine, functionFactoryCache), metrics);
     }
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            @Nullable MessageBus messageBus,
             int workerCount,
             SqlCompiler sqlCompiler,
             Metrics metrics
@@ -109,7 +105,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT_AS_SELECT, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.COPY_REMOTE, JsonQueryProcessor::cannotCopyRemote);
         this.queryExecutors.extendAndSet(CompiledQuery.BACKUP_TABLE, sendConfirmation);
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, messageBus);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
         this.nanosecondClock = engine.getConfiguration().getNanosecondClock();
         this.interruptor = new HttpSqlExecutionInterruptor(configuration.getInterruptorConfiguration());
         this.metrics = metrics;

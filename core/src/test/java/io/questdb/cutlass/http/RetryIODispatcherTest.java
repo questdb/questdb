@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -231,7 +231,7 @@ public class RetryIODispatcherTest {
                             .withTempFolder(temp)
                             .withWorkerCount(2)
                             .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                            .withCustomTextImportProcessor(((configuration, engine, messageBus, workerCount) -> new TextImportProcessor(engine) {
+                            .withCustomTextImportProcessor(((configuration, engine, workerCount) -> new TextImportProcessor(engine) {
                                 @Override
                                 public void onRequestRetry(HttpConnectionContext context) throws ServerDisconnectException {
                                     throw ServerDisconnectException.INSTANCE;

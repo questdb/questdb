@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -86,8 +86,8 @@ class NamespaceCatalogueCursor implements NoRandomAccessRecordCursor {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("nspname", ColumnType.STRING, null));
-        metadata.add(new TableColumnMetadata("oid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("nspname", 1, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("oid", 2, ColumnType.INT));
         METADATA = metadata;
     }
 }

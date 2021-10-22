@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,9 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.log.LogRecord;
 import io.questdb.std.Sinkable;
+import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 
-public class LogRecordSinkAdapter implements CharSink {
+public class LogRecordSinkAdapter extends AbstractCharSink {
 
     private LogRecord line;
 
@@ -49,11 +50,6 @@ public class LogRecordSinkAdapter implements CharSink {
     }
 
     @Override
-    public CharSink encodeUtf8AndQuote(CharSequence cs) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public char[] getDoubleDigitsBuffer() {
         throw new UnsupportedOperationException();
     }
@@ -62,11 +58,6 @@ public class LogRecordSinkAdapter implements CharSink {
     public CharSink put(char c) {
         line.$(c);
         return this;
-    }
-
-    @Override
-    public CharSink putUtf8(char c) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

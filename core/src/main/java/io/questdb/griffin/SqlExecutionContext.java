@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,9 +32,9 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
-import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -45,7 +45,9 @@ public interface SqlExecutionContext extends Closeable {
 
     CairoSecurityContext getCairoSecurityContext();
 
-    @Nullable MessageBus getMessageBus();
+    default @NotNull MessageBus getMessageBus() {
+        return getCairoEngine().getMessageBus();
+    }
 
     boolean isTimestampRequired();
 
@@ -83,6 +85,5 @@ public interface SqlExecutionContext extends Closeable {
 
     @Override
     default void close(){
-        Misc.free(getMessageBus());
     }
 }

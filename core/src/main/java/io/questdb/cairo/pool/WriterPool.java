@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -272,7 +272,7 @@ public class WriterPool extends AbstractPool {
                 // we cache the writer in the writerPool whose access via the engine is thread safe
                 assert writer == null && e.lockFd != -1;
                 LOG.info().$("created [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
-                writer = new TableWriter(configuration, name, messageBus, false, e, root);
+                writer = new TableWriter(configuration, name, messageBus, null, false, e, root);
             }
 
             if (writer == null) {
@@ -393,7 +393,7 @@ public class WriterPool extends AbstractPool {
         try {
             checkClosed();
             LOG.info().$("open [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
-            e.writer = new TableWriter(configuration, name, messageBus, true, e, root);
+            e.writer = new TableWriter(configuration, name, messageBus, null, true, e, root);
             e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {

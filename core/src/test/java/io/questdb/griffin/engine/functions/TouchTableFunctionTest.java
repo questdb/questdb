@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,11 +26,8 @@ package io.questdb.griffin.engine.functions;
 
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 public class TouchTableFunctionTest extends AbstractGriffinTest {
@@ -43,11 +40,6 @@ public class TouchTableFunctionTest extends AbstractGriffinTest {
             " timestamp_sequence(0, 100000000000) k" +
             " from long_sequence(20)" +
             "), index(b) timestamp(k) partition by DAY";
-
-    @Before
-    public void setUp3() {
-        SharedRandom.RANDOM.set(new Rnd());
-    }
 
     @Test
     public void testTouchTableNoTimestampColumnSelected() throws Exception {

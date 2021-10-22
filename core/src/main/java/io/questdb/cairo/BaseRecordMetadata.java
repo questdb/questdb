@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,6 +41,7 @@ public abstract class BaseRecordMetadata implements RecordMetadata {
         }
         return new TableColumnMetadata(
                 metadata.getColumnName(columnIndex),
+                metadata.getColumnHash(columnIndex),
                 metadata.getColumnType(columnIndex),
                 metadata.isColumnIndexed(columnIndex),
                 metadata.getIndexValueBlockCapacity(columnIndex),
@@ -66,6 +67,11 @@ public abstract class BaseRecordMetadata implements RecordMetadata {
             return columnNameIndexMap.valueAt(index);
         }
         return -1;
+    }
+
+    @Override
+    public long getColumnHash(int columnIndex) {
+        return getColumnQuick(columnIndex).getHash();
     }
 
     @Override
@@ -101,4 +107,5 @@ public abstract class BaseRecordMetadata implements RecordMetadata {
     public TableColumnMetadata getColumnQuick(int index) {
         return columnMetadata.getQuick(index);
     }
+
 }

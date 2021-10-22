@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,19 +35,19 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
     @Test
     public void testSimple() {
         JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 10);
-        metadata.add("a", "x", ColumnType.INT, false, 0, false, null);
-        metadata.add("a", "y", ColumnType.DOUBLE, false, 0, false, null);
-        metadata.add("a", "m", ColumnType.DOUBLE, false, 0, false, null);
-        metadata.add("b", "x", ColumnType.DOUBLE, false, 0, false, null);
-        metadata.add("b", "y", ColumnType.BINARY, false, 0, false, null);
-        metadata.add("b", "z", ColumnType.FLOAT, false, 0, false, null);
+        metadata.add("a", "x", 1, ColumnType.INT, false, 0, false, null);
+        metadata.add("a", "y", 2, ColumnType.DOUBLE, false, 0, false, null);
+        metadata.add("a", "m", 3, ColumnType.DOUBLE, false, 0, false, null);
+        metadata.add("b", "x", 4, ColumnType.DOUBLE, false, 0, false, null);
+        metadata.add("b", "y", 5, ColumnType.BINARY, false, 0, false, null);
+        metadata.add("b", "z", 6, ColumnType.FLOAT, false, 0, false, null);
         try {
-            metadata.add("b", "y", ColumnType.FLOAT, false, 0, false, null);
+            metadata.add("b", "y", 7,ColumnType.FLOAT, false, 0, false, null);
             Assert.fail();
         } catch (Exception ignored) {
         }
 
-        metadata.add(null, "c.x", ColumnType.STRING, false, 0, false, null);
+        metadata.add(null, "c.x", 8, ColumnType.STRING, false, 0, false, null);
 
         Assert.assertEquals(-1, metadata.getColumnIndexQuiet("x"));
         Assert.assertEquals(0, metadata.getColumnIndexQuiet("a.x"));
@@ -64,7 +64,7 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
         Assert.assertEquals(-1, metadata.getColumnIndexQuiet("b.k"));
 
         // add ambiguity to column names without aliases
-        metadata.add(null, "z.m", ColumnType.STRING, false, 0, false, null);
+        metadata.add(null, "z.m", 9, ColumnType.STRING, false, 0, false, null);
         Assert.assertEquals(-1, metadata.getColumnIndexQuiet("m"));
 
         Assert.assertEquals(ColumnType.BINARY, metadata.getColumnType("b.y"));
