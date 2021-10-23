@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-import React, { forwardRef, Ref, useEffect, useState } from "react"
+import React, { forwardRef, Ref, useCallback, useEffect, useState } from "react"
 import styled from "styled-components"
 import { DownArrowSquare } from "@styled-icons/boxicons-solid/DownArrowSquare"
 import { UpArrowSquare } from "@styled-icons/boxicons-solid/UpArrowSquare"
@@ -72,6 +72,14 @@ const QueryPicker = ({ hidePicker, queries, ref }: Props) => {
   const [cursor, setCursor] = useState(0)
   const [hovered, setHovered] = useState<QueryShape | undefined>()
 
+  const addQuery = useCallback(
+    (query: QueryShape) => {
+      hidePicker()
+      window.bus.trigger(BusEvent.MSG_EDITOR_INSERT_QUERY, query.value)
+    },
+    [hidePicker],
+  )
+
   useEffect(() => {
     if (queries.length && downPress) {
       setCursor((prevState) =>
@@ -88,10 +96,9 @@ const QueryPicker = ({ hidePicker, queries, ref }: Props) => {
 
   useEffect(() => {
     if (enterPress && queries[cursor]) {
-      hidePicker()
-      window.bus.trigger(BusEvent.MSG_EDITOR_SET, queries[cursor].value)
+      addQuery(queries[cursor])
     }
-  }, [cursor, enterPress, hidePicker, queries])
+  }, [cursor, enterPress, hidePicker, queries, addQuery])
 
   useEffect(() => {
     if (hovered) {
@@ -113,7 +120,8 @@ const QueryPicker = ({ hidePicker, queries, ref }: Props) => {
         <Row
           active={i === cursor}
           hidePicker={hidePicker}
-          key={query.name}
+          key={query.value}
+          onAdd={addQuery}
           onHover={setHovered}
           query={query}
         />
