@@ -27,7 +27,6 @@ import styled, { css } from "styled-components"
 import { FileCode } from "@styled-icons/remix-line/FileCode"
 
 import { Text, TransitionDuration } from "components"
-import { BusEvent } from "consts"
 import { QueryShape } from "types"
 import { color } from "utils"
 
@@ -35,6 +34,7 @@ type Props = Readonly<{
   active: boolean
   hidePicker: () => void
   onHover: (query?: QueryShape) => void
+  onAdd: (query: QueryShape) => void
   query: QueryShape
 }>
 
@@ -78,11 +78,10 @@ const Name = styled(Text)`
   flex: 0 0 auto;
 `
 
-const Row = ({ active, hidePicker, onHover, query }: Props) => {
+const Row = ({ active, onHover, onAdd, query }: Props) => {
   const handleClick = useCallback(() => {
-    hidePicker()
-    window.bus.trigger(BusEvent.MSG_EDITOR_SET, query.value)
-  }, [hidePicker, query])
+    onAdd(query)
+  }, [query, onAdd])
   const handleMouseEnter = useCallback(() => {
     onHover(query)
   }, [query, onHover])
