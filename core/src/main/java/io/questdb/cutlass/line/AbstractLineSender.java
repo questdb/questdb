@@ -255,7 +255,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             ptr = lineStart = lo;
         } else if (len < capacity) {
             long target = lo == bufA ? bufB : bufA;
-            Vect.memcpy(lineStart, target, len);
+            Vect.memcpy(target, lineStart, len);
             send();
             lineStart = lo = target;
             ptr = target + len;

@@ -24,9 +24,13 @@
 
 package org.questdb;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.network.Net;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
 
 public class LineTCPSenderMain {
     public static void main(String[] args) {
@@ -37,23 +41,59 @@ public class LineTCPSenderMain {
 
         final Rnd rnd = new Rnd();
         long start = System.nanoTime();
-        try (LineTcpSender sender = new LineTcpSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
-            for (int i = 0; i < count; i++) {
-                // if ((i & 0x1) == 0) {
-                sender.metric("weather");
-                // } else {
-                // sender.metric("weather2");
-                // }
-                sender
-                        .tag("location", "london")
-                        .tag("by", rnd.nextString(5))
-                        .field("temp", rnd.nextPositiveLong())
-                        .field("ok", rnd.nextPositiveInt())
-                        .$(rnd.nextLong(5000000000000L));
-//                sender.$();
+        FilesFacade ff = new FilesFacadeImpl();
+        try(Path path = new Path()) {
+            long logFd = -1;
+            if (args.length == 1) {
+                path.put(args[0]).$();
+                logFd = ff.openRW(path);
             }
-            sender.flush();
+            try (LineTcpSender sender = new LoggingLineTcpSender(Net.parseIPv4(hostIPv4), port, bufferCapacity, logFd, ff)) {
+                for (int i = 0; i < count; i++) {
+                    // if ((i & 0x1) == 0) {
+                    sender.metric("weather");
+                    // } else {
+                    // sender.metric("weather2");
+                    // }
+                    sender
+                            .field("by", rnd.nextString(Math.abs(rnd.nextInt() % 512)))
+                            .field("with", rnd.nextString(Math.abs(rnd.nextInt() % 64)))
+                            .field("and", rnd.nextString(Math.abs(rnd.nextInt() % 32)))
+                            .field("temp", rnd.nextPositiveLong())
+                            .field("ok", rnd.nextPositiveInt())
+                            .$(i * 1000_000_000L);
+//                sender.$();
+                }
+                sender.flush();
+            } finally {
+                if (logFd > 0) {
+                    ff.close(logFd);
+                }
+            }
         }
         System.out.println("Actual rate: " + (count * 1_000_000_000L / (System.nanoTime() - start)));
+    }
+
+    private static class LoggingLineTcpSender extends LineTcpSender {
+        private final long outFileFd;
+        private final FilesFacade ff;
+        private long fileOffset = 0;
+
+        public LoggingLineTcpSender(int sendToIPv4Address, int sendToPort, int bufferCapacity, long outFileFd, FilesFacade ff) {
+            super(sendToIPv4Address, sendToPort, bufferCapacity);
+            this.outFileFd = outFileFd;
+            this.ff = ff;
+        }
+
+        @Override
+        protected void sendToSocket(long fd, long lo, long sockaddr, int len) {
+            if (outFileFd > -1) {
+                if (ff.write(outFileFd, lo, len, fileOffset) != len) {
+                    throw CairoException.instance(ff.errno()).put("Cannot write to file");
+                }
+                fileOffset += len;
+            }
+            super.sendToSocket(fd, lo, sockaddr, len);
+        }
     }
 }
