@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,30 +24,22 @@
 
 package io.questdb.griffin;
 
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import static io.questdb.griffin.CompiledQuery.RENAME_TABLE;
 
 public class RenameTableTest extends AbstractGriffinTest {
 
-    @Before
-    public void setUp3() {
-        SharedRandom.RANDOM.set(new Rnd());
-    }
-
     @Test
     public void testFunctionDestTableName() throws Exception {
-        assertFailure("rename table x to y()", 18, "literal or constant expected");
+        assertFailure("rename table x to y()", 18);
     }
 
     @Test
     public void testFunctionSrcTableName() throws Exception {
-        assertFailure("rename table x() to y", 13, "literal or constant expected");
+        assertFailure("rename table x() to y", 13);
     }
 
     @Test
@@ -80,7 +72,7 @@ public class RenameTableTest extends AbstractGriffinTest {
         );
     }
 
-    private void assertFailure(String sql, int position, String message) throws Exception {
+    private void assertFailure(String sql, int position) throws Exception {
         assertMemoryLeak(() -> {
             try {
                 createX();
@@ -88,7 +80,7 @@ public class RenameTableTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), message);
+                TestUtils.assertContains(e.getFlyweightMessage(), "literal or constant expected");
             }
         });
     }

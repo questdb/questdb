@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,13 +24,9 @@
 
 package io.questdb.griffin.engine.functions.eq;
 
-import org.junit.Before;
-import org.junit.Test;
-
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.std.Rnd;
+import org.junit.Test;
 
 public class EqLong256StrFunctionFactoryTest extends AbstractGriffinTest {
     @Test
@@ -61,10 +57,5 @@ public class EqLong256StrFunctionFactoryTest extends AbstractGriffinTest {
                 "create table xxxx as (select rnd_long256() from long_sequence(1));",
                 null,
                 true);
-    }
-
-    @Before
-    public void setUp3() {
-        SharedRandom.RANDOM.set(new Rnd());
     }
 }

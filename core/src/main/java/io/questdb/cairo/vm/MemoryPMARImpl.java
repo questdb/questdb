@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,18 +32,18 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
-public class MemoryPMAImpl extends MemoryPARWImpl implements MemoryMAR {
-    private static final Log LOG = LogFactory.getLog(MemoryPMAImpl.class);
+public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
+    private static final Log LOG = LogFactory.getLog(MemoryPMARImpl.class);
     private FilesFacade ff;
     private long fd = -1;
     private long pageAddress = 0;
     private int mappedPage;
 
-    public MemoryPMAImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag) {
+    public MemoryPMARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag) {
         of(ff, name, pageSize, memoryTag);
     }
 
-    public MemoryPMAImpl() {
+    public MemoryPMARImpl() {
     }
 
     @Override

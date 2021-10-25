@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,14 +30,13 @@ public interface PageFrame {
 
     BitmapIndexReader getBitmapIndexReader(int columnIndex, int dirForward);
 
-    long getFirstRowId();
-
-    int getPartitionIndex();
-
-    // todo: implement for TablePageFrameCursor
-    default long getFirstTimestamp() {
-        throw new UnsupportedOperationException();
-    }
+    /**
+     * Return the size the column as power 2 of the bytes e.g. long == 3, int == 2 etc.
+     *
+     * @param columnIndex index of column
+     * @return logarithm base 2 of size of column in bytes
+     */
+    int getColumnShiftBits(int columnIndex);
 
     /**
      * Return the address of the start of the page frame or if this page represents
@@ -49,20 +48,23 @@ public interface PageFrame {
     long getPageAddress(int columnIndex);
 
     /**
-     * Return the size of the page frame or if the page represents a column top
-     * (a column that was added to the table when other columns already had data),
-     * then return the number of empty rows at the top of a column
+     * Index page for variable-length column types, such as String and Binary
+     * @param columnIndex index of variable length column
+     * @return contiguous memory address containing offsets for variable value entries
+     */
+    long getIndexPageAddress(int columnIndex);
+
+    /**
+     * Return the size of the page frame column in bytes.
      *
      * @param columnIndex index of column
-     * @return size of page in bytes
+     * @return size of column in bytes
      */
     long getPageSize(int columnIndex);
 
-    /**
-     * Return the size the column as power 2 of the bytes e.g. long == 3, int == 2 etc.
-     *
-     * @param columnIndex index of column
-     * @return logarithm base 2 of size of column in bytes
-     */
-    int getColumnSize(int columnIndex);
+    int getPartitionIndex();
+
+    long getPartitionLo();
+
+    long getPartitionHi();
 }

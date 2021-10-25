@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -303,12 +303,12 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("relname", ColumnType.STRING, null));
-        metadata.add(new TableColumnMetadata("relnamespace", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("relkind", ColumnType.CHAR, null));
-        metadata.add(new TableColumnMetadata("relowner", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("oid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("relpartbound", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("relname", 1, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("relnamespace", 2, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("relkind", 3, ColumnType.CHAR));
+        metadata.add(new TableColumnMetadata("relowner", 4, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("oid", 5, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("relpartbound", 6, ColumnType.STRING));
         METADATA = metadata;
     }
 }

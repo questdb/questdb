@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class TableColumnMetadata {
     private final int type;
+    private long hash;
     private final boolean symbolTableStatic;
     @Nullable
     private final RecordMetadata metadata;
@@ -36,8 +37,12 @@ public class TableColumnMetadata {
     private int indexValueBlockCapacity;
     private boolean indexed;
 
-    public TableColumnMetadata(String name, int type, @Nullable RecordMetadata metadata) {
-        this(name, type, false, 0, false, metadata);
+    public TableColumnMetadata(String name, long hash, int type) {
+        this(name, hash, type, null);
+    }
+
+    public TableColumnMetadata(String name, long hash, int type, @Nullable RecordMetadata metadata) {
+        this(name, hash, type, false, 0, false, metadata);
         // Do not allow using this constructor for symbol types.
         // Use version where you specify symbol table parameters
         assert !ColumnType.isSymbol(type);
@@ -45,6 +50,7 @@ public class TableColumnMetadata {
 
     public TableColumnMetadata(
             String name,
+            long hash,
             int type,
             boolean indexFlag,
             int indexValueBlockCapacity,
@@ -52,11 +58,16 @@ public class TableColumnMetadata {
             @Nullable RecordMetadata metadata
     ) {
         this.name = name;
+        this.hash = hash;
         this.type = type;
         this.indexed = indexFlag;
         this.indexValueBlockCapacity = indexValueBlockCapacity;
         this.symbolTableStatic = symbolTableStatic;
         this.metadata = GenericRecordMetadata.copyOf(metadata);
+    }
+
+    public long getHash() {
+        return hash;
     }
 
     public int getIndexValueBlockCapacity() {

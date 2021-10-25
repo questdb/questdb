@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -121,9 +121,9 @@ public class PrefixedPgGetKeywordsFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("word", ColumnType.STRING, null));
-        metadata.add(new TableColumnMetadata("catcode", ColumnType.STRING, null));
-        metadata.add(new TableColumnMetadata("catdesc", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("word", 1, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("catcode", 2, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("catdesc", 3, ColumnType.STRING));
         METADATA = metadata;
     }
 }

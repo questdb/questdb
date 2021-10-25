@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,12 +31,21 @@ public class CairoTestUtils {
 
     public static void create(TableModel model) {
         TableUtils.createTable(
-                model.getCairoCfg().getFilesFacade(),
+                model.getConfiguration(),
                 model.getMem(),
                 model.getPath(),
-                model.getCairoCfg().getRoot(),
                 model,
-                model.getCairoCfg().getMkDirMode(),
+                1
+        );
+    }
+
+    public static void createTableWithVersion(TableModel model, int version) {
+        TableUtils.createTable(
+                model.getConfiguration(),
+                model.getMem(),
+                model.getPath(),
+                model,
+                version,
                 1
         );
     }
@@ -60,26 +69,15 @@ public class CairoTestUtils {
     }
 
     public static void createTable(TableModel model) {
-        TableUtils.createTable(
-                model.getCairoCfg().getFilesFacade(),
-                model.getMem(),
-                model.getPath(),
-                model.getCairoCfg().getRoot(),
-                model,
-                model.getCairoCfg().getMkDirMode(),
-                ColumnType.VERSION,
-                1
-        );
+        createTable(model, ColumnType.VERSION);
     }
 
-    public static void createTableWithVersion(TableModel model, int version) {
+    public static void createTable(TableModel model, int version) {
         TableUtils.createTable(
-                model.getCairoCfg().getFilesFacade(),
+                model.getConfiguration(),
                 model.getMem(),
                 model.getPath(),
-                model.getCairoCfg().getRoot(),
                 model,
-                model.getCairoCfg().getMkDirMode(),
                 version,
                 1
         );
@@ -87,12 +85,10 @@ public class CairoTestUtils {
 
     public static void createTableWithVersionAndId(TableModel model, int version, int tableId) {
         TableUtils.createTable(
-                model.getCairoCfg().getFilesFacade(),
+                model.getConfiguration(),
                 model.getMem(),
                 model.getPath(),
-                model.getCairoCfg().getRoot(),
                 model,
-                model.getCairoCfg().getMkDirMode(),
                 version,
                 tableId
         );

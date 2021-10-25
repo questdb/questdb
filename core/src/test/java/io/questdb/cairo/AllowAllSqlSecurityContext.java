@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.MessageBus;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -47,23 +46,16 @@ public final class AllowAllSqlSecurityContext {
         }
 
         @Override
-        public @Nullable MessageBus getMessageBus() {
-            return null;
-        }
-
-        @Override
         public boolean isTimestampRequired() {
             return false;
         }
 
         @Override
         public void popTimestampRequiredFlag() {
-
         }
 
         @Override
         public void pushTimestampRequiredFlag(boolean flag) {
-
         }
 
         @Override
@@ -98,7 +90,6 @@ public final class AllowAllSqlSecurityContext {
 
         @Override
         public void storeTelemetry(short event, short origin) {
-
         }
 
         @Override
@@ -107,13 +98,17 @@ public final class AllowAllSqlSecurityContext {
         }
 
         @Override
-        public void configureAnalyticContext(@Nullable VirtualRecord partitionByRecord, @Nullable RecordSink partitionBySink, @Nullable ColumnTypes keyTypes, boolean isOrdered, boolean baseSupportsRandomAccess) {
-
+        public void configureAnalyticContext(
+                @Nullable VirtualRecord partitionByRecord,
+                @Nullable RecordSink partitionBySink,
+                @Nullable ColumnTypes keyTypes,
+                boolean isOrdered,
+                boolean baseSupportsRandomAccess
+        ) {
         }
 
         @Override
         public void initNow() {
-
         }
 
         @Override

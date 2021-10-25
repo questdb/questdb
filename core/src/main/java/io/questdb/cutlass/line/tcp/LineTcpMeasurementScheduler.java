@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Telemetry;
 import io.questdb.cairo.*;
-import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
@@ -493,7 +492,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             // so that writing thread will create the column
                             // Note that writing thread will be responsible to convert it from utf8
                             // to utf16. This should happen rarely
-                            Vect.memcpy(entity.getName().getLo(), bufPos, colNameLen);
+                            Vect.memcpy(bufPos, entity.getName().getLo(), colNameLen);
                         } else {
                             throw CairoException.instance(0).put("queue buffer overflow");
                         }
@@ -662,7 +661,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         void processMeasurementEvent(WriterJob job) {
-            Row row = null;
+            TableWriter.Row row = null;
             try {
                 TableWriter writer = tableUpdateDetails.getWriter();
                 long bufPos = bufLo;
@@ -824,13 +823,40 @@ class LineTcpMeasurementScheduler implements Closeable {
                             byte b = Unsafe.getUnsafe().getByte(bufPos);
                             bufPos += Byte.BYTES;
                             final int colType = writer.getMetadata().getColumnType(colIndex);
-                            if (ColumnType.isBoolean(colType) || ColumnType.isLong(colType)) {
-                                row.putBool(colIndex, b == 1);
-                            } else {
-                                throw CairoException.instance(0)
-                                        .put("cast error for line protocol boolean [columnIndex=").put(colIndex)
-                                        .put(", columnType=").put(ColumnType.nameOf(colType))
-                                        .put(']');
+                            switch (ColumnType.tagOf(colType)) {
+                                case ColumnType.BOOLEAN:
+                                    row.putBool(colIndex, b == 1);
+                                    break;
+
+                                case ColumnType.BYTE:
+                                    row.putByte(colIndex, b);
+                                    break;
+
+                                case ColumnType.SHORT:
+                                    row.putShort(colIndex, b);
+                                    break;
+
+                                case ColumnType.INT:
+                                    row.putInt(colIndex, b);
+                                    break;
+
+                                case ColumnType.LONG:
+                                    row.putLong(colIndex, b);
+                                    break;
+
+                                case ColumnType.FLOAT:
+                                    row.putFloat(colIndex, b);
+                                    break;
+
+                                case ColumnType.DOUBLE:
+                                    row.putDouble(colIndex, b);
+                                    break;
+
+                                default:
+                                    throw CairoException.instance(0)
+                                            .put("cast error for line protocol boolean [columnIndex=").put(colIndex)
+                                            .put(", columnType=").put(ColumnType.nameOf(colType))
+                                            .put(']');
                             }
                             break;
                         }
@@ -1557,6 +1583,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                 return ColumnType.TIMESTAMP;
             }
             return DEFAULT_COLUMN_TYPES[protoParser.getEntity(columnIndex).getType()];
+        }
+
+        @Override
+        public long getColumnHash(int columnIndex) {
+            return cairoConfiguration.getRandom().nextLong();
         }
 
         @Override

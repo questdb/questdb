@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,10 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -45,7 +42,7 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
     private long prevMinTimestamp;
     private MemoryCMARW txMem;
 
-    public TxWriter(FilesFacade ff, Path path, int partitionBy) {
+    public TxWriter(FilesFacade ff, @Transient Path path, int partitionBy) {
         super(ff, path, partitionBy);
         try {
             readUnchecked();
@@ -60,18 +57,6 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
 
     public void append() {
         transientRowCount++;
-    }
-
-    public void appendBlock(long timestampLo, long timestampHi, long nRowsAdded) {
-        if (timestampLo < maxTimestamp) {
-            throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
-        }
-
-        if (txPartitionCount == 0) {
-            txPartitionCount = 1;
-        }
-        this.maxTimestamp = timestampHi;
-        this.transientRowCount += nRowsAdded;
     }
 
     public void beginPartitionSizeUpdate() {
@@ -151,16 +136,11 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
     }
 
     @Override
-    protected MemoryCMR openTxnFile(FilesFacade ff, Path path, int rootLen) {
-        try {
-            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-                return txMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT);
-            }
-            throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
-
-        } finally {
-            path.trimTo(rootLen);
+    protected MemoryCMR openTxnFile(FilesFacade ff, Path path) {
+        if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
+            return txMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT);
         }
+        throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
     }
 
     @Override
@@ -177,7 +157,6 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
         txMem.putLong(TX_OFFSET_MIN_TIMESTAMP, minTimestamp);
         txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, maxTimestamp);
         txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, this.partitionTableVersion);
-
         // store symbol counts
         storeSymbolCounts(symbolCountProviders);
 
@@ -224,10 +203,6 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
 
     public boolean isActivePartition(long timestamp) {
         return getPartitionTimestampLo(maxTimestamp) == timestamp;
-    }
-
-    public void newBlock() {
-        prevMaxTimestamp = maxTimestamp;
     }
 
     public void openFirstPartition(long timestamp) {

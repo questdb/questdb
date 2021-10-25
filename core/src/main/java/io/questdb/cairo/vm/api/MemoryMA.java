@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,4 +38,12 @@ public interface MemoryMA extends MemoryM, MemoryA {
     void sync(boolean async);
 
     void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag);
+
+    default void setSize(long size) {
+        jumpTo(size);
+    }
+
+    default void toTop() {
+        jumpTo(0);
+    }
 }

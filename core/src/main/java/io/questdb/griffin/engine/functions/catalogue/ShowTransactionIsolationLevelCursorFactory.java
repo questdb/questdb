@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,12 +35,6 @@ import io.questdb.griffin.SqlExecutionContext;
 public class ShowTransactionIsolationLevelCursorFactory implements RecordCursorFactory {
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private final static StringValueRecord RECORD = new StringValueRecord("read committed");
-
-
-    static {
-        METADATA.add(new TableColumnMetadata("transaction_isolation", ColumnType.STRING, null));
-    }
-
     private final StringValueRecordCursor cursor = new StringValueRecordCursor(RECORD);
 
     @Override
@@ -57,5 +51,9 @@ public class ShowTransactionIsolationLevelCursorFactory implements RecordCursorF
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    static {
+        METADATA.add(new TableColumnMetadata("transaction_isolation", 1, ColumnType.STRING));
     }
 }
