@@ -171,12 +171,6 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
             txMem.sync(commitMode == CommitMode.ASYNC);
         }
         prevTransientRowCount = transientRowCount;
-
-        long expected = sumPartitionRowCount();
-        if (fixedRowCount + transientRowCount != expected) {
-            System.out.println("fixed: " + fixedRowCount + ", trans=" + transientRowCount + ", exp=" + expected);
-            assert false;
-        }
     }
 
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
@@ -369,16 +363,6 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
             offset += Integer.BYTES;
             txMem.putInt(offset, symCount);
         }
-    }
-
-    private long sumPartitionRowCount() {
-        if (partitionBy == PartitionBy.NONE) return transientRowCount;
-
-        long count = 0;
-        for (int i = 0, n = getPartitionCount(); i < n - 1; i++) {
-            count += getPartitionSizeByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
-        }
-        return count + transientRowCount;
     }
 
     private int updateAttachedPartitionSizeByIndex(int partitionIndex, long partitionTimestampLo, long partitionSize) {
