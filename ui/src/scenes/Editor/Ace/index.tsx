@@ -308,8 +308,19 @@ const Ace = () => {
       },
     )
 
-    window.bus.on("editor.insert.column", (_event, column) => {
+    window.bus.on(BusEvent.MSG_EDITOR_INSERT_COLUMN, (_event, column) => {
       editor.insert(column)
+      editor.focus()
+    })
+
+    window.bus.on(BusEvent.MSG_EDITOR_INSERT_QUERY, (_event, text) => {
+      const firstLine = editor.session.getLine(0)
+      const { row } = editor.getCursorPosition()
+      const line = editor.session.getLine(row)
+      editor.session.insert(
+        { column: line.length, row },
+        firstLine === "" ? text : `\n\n${text}`,
+      )
       editor.focus()
     })
 

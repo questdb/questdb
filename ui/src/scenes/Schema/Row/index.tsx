@@ -38,6 +38,7 @@ import {
   TransitionDuration,
 } from "components"
 import { color } from "utils"
+import { BusEvent } from "../../../consts"
 
 type Props = Readonly<{
   className?: string
@@ -143,7 +144,7 @@ const Row = ({
     (event: MouseEvent) => {
       event.stopPropagation()
       window.bus.trigger(
-        "editor.insert.column",
+        BusEvent.MSG_EDITOR_INSERT_COLUMN,
         kind === "table" ? `'${name}'` : name,
       )
     },

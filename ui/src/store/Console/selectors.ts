@@ -28,7 +28,7 @@ import { ConsoleConfigShape, StoreShape } from "types"
 import { defaultConfig } from "./reducers"
 
 const getConfig: (store: StoreShape) => ConsoleConfigShape = (store) =>
-  store.console.config || defaultConfig
+  store.console.config ?? defaultConfig
 
 const getSideMenuOpened: (store: StoreShape) => boolean = (store) =>
   store.console.sideMenuOpened
