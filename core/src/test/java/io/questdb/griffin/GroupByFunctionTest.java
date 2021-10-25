@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -2936,6 +2936,26 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         "(" +
                         "select" +
                         " NaN d" +
+                        " from" +
+                        " long_sequence(200)" +
+                        ")",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testVectorCountFirstColumnIsVar() throws Exception {
+        assertQuery("s\tc\n" +
+                        "101.99359297570571\t200\n",
+                "select sum(d) s, count() c from x",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_str() s," +
+                        " rnd_double() d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",

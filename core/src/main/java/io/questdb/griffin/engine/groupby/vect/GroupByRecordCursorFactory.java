@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -202,10 +202,19 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             for (int i = 0; i < vafCount; i++) {
                 final VectorAggregateFunction vaf = vafList.getQuick(i);
                 // when column index = -1 we assume that vector function does not have value
-                // argument and it can only derive count via memory size
+                // argument, and it can only derive count via memory size
                 final int columnIndex = vaf.getColumnIndex();
+                // for functions like `count()`, that do not have arguments we are required to provide
+                // count of rows in table in a form of "pageSize >> shr". Since `vaf` doesn't provide column
+                // this code used column 0. Assumption here that column 0 is fixed size.
+                // This assumption only holds because our aggressive algorithm for "top down columns", e.g.
+                // the algorithm that forces page frame to provide only columns required by the select. At the time
+                // of writing this code there is no way to return variable length column out of non-keyed aggregation
+                // query. This might change if we introduce something like `first(string)`. When this happens we will
+                // need to rethink our way of computing size for the count. This would be either type checking column
+                // 0 and working out size differently or finding any fixed-size column and using that.
                 final long valueAddress = columnIndex > -1 ? frame.getPageAddress(columnIndex) : 0;
-                final int pageColIndex = columnIndex > -1 ? columnIndex : keyColumnIndex;
+                final int pageColIndex = columnIndex > -1 ? columnIndex : 0;
                 final int columnSizeShr = frame.getColumnShiftBits(pageColIndex);
                 final long valueAddressSize = frame.getPageSize(pageColIndex);
 
