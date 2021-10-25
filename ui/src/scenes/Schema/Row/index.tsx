@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,6 +38,7 @@ import {
   TransitionDuration,
 } from "components"
 import { color } from "utils"
+import { BusEvent } from "../../../consts"
 
 type Props = Readonly<{
   className?: string
@@ -143,7 +144,7 @@ const Row = ({
     (event: MouseEvent) => {
       event.stopPropagation()
       window.bus.trigger(
-        "editor.insert.column",
+        BusEvent.MSG_EDITOR_INSERT_COLUMN,
         kind === "table" ? `'${name}'` : name,
       )
     },
