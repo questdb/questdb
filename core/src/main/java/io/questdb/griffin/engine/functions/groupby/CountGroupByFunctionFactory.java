@@ -47,3 +47,20 @@ public class CountGroupByFunctionFactory implements FunctionFactory {
         return new CountGroupByFunction();
     }
 }
+public class CountConstGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature(int const) {
+        String str1 = Integer.toString(const);
+        return "count(" + str1 + ")";
+    }
+
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new CountGroupByFunction();
+    }
+}
