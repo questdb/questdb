@@ -34,7 +34,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.AuthenticatedLineTcpSender;
 import io.questdb.cutlass.line.LineTcpSender;
-import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -807,6 +806,94 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                     "value 1\tзначение 2\t{\"ключ\": \"число\"}\t1970-01-01T00:00:00.000000Z\n" +
                     "value 2\t\t\t1970-01-01T00:00:00.000000Z\n";
             assertTable(expected, "table");
+        });
+    }
+
+    @Test
+    public void testStringsWithTcpSenderWithNewLineChars() throws Exception {
+        runInContext((receiver) -> {
+            send(receiver,  "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag1", "value 1")
+                            .tag("tag=2", "значение 2")
+                            .field("поле=3", "{\"ключ\": \n \"число\", \r\n \"key2\": \"value2\"}\n")
+                            .$(0);
+                    lineTcpSender.flush();
+                }
+            });
+
+            String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
+                    "value 1\tзначение 2\t{\"ключ\": \n" +
+                    " \"число\", \r\n" +
+                    " \"key2\": \"value2\"}\n\t1970-01-01T00:00:00.000000Z\n";
+            assertTable(expected, "table");
+        });
+    }
+
+    @Test
+    public void testTcpSenderWithNewLineCharsInFieldName() throws Exception {
+        runInContext((receiver) -> {
+            String tableName = "table";
+            send(receiver,  tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender
+                            .metric(tableName)
+                            .tag("tag\n1", "value 1")
+                            .field("tag\n2", "value 2")
+                            .$(0);
+                    lineTcpSender.flush();
+                }
+            });
+
+            String expected = "tag\n" +
+                    "1\ttag\n" +
+                    "2\ttimestamp\n" +
+                    "value 1\tvalue 2\t1970-01-01T00:00:00.000000Z\n";
+            assertTable(expected, tableName);
+        });
+    }
+
+    @Test
+    public void testTcpSenderWithSpaceInTableName() throws Exception {
+        runInContext((receiver) -> {
+            String tableName = "ta ble";
+            send(receiver,  tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender
+                            .metric(tableName)
+                            .tag("tag1", "value 1")
+                            .field("tag2", "value 2")
+                            .$(0);
+                    lineTcpSender.flush();
+                }
+            });
+
+            String expected = "tag1\ttag2\ttimestamp\n" +
+                    "value 1\tvalue 2\t1970-01-01T00:00:00.000000Z\n";
+            assertTable(expected, tableName);
+        });
+    }
+
+    @Test
+    public void testTcpSenderWithNewLineInTableName() throws Exception {
+        runInContext((receiver) -> {
+            String tableName = "ta\nble";
+            send(receiver,  tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender
+                            .metric(tableName)
+                            .tag("tag1", "value 1")
+                            .field("tag2", "value 2")
+                            .$(0);
+                    lineTcpSender.flush();
+                }
+            });
+
+            String expected = "tag1\ttag2\ttimestamp\n" +
+                    "value 1\tvalue 2\t1970-01-01T00:00:00.000000Z\n";
+            assertTable(expected, tableName);
         });
     }
 

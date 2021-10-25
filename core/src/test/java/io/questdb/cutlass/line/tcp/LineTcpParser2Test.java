@@ -259,15 +259,32 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
 
     @Test
     public void testWithQuotedStringsWithSpaces2() {
+        // Good test, but runs 5s to check all combinations because message is quite long
+//        assertThat(
+//                "md_msgs ts_nsec=1634886503004129476i,pkt_size=1111i,pcap_file=\"_______________________________________________________\",pcap_msg=1111111i,raw_msg=\"__\"________\"___,\"_______\"___,\"______\"________,\"__________\"__\"___________\"____,\"_____\"_____,\"_________\"___,\"______\"________,\",Length=11i,MsgSeqNum=111111i,MsgType=11i,src_ip=\"______________\",dst_ip=\"_____________\",src_port=11111i,dst_port=11111i,first_dir=T 1634886503004129476\n" +
+//                        "md_msgs ts_nsec=1634886503004129476i,pkt_size=1111i,pcap_file=\"_______________________________________________________\",pcap_msg=1111111i,raw_msg=\"__\"________\"___,\"_______\"___,\"______\"________,\"__________\"__\"___________\"____,\"_____\"_____,\"_________\"___,\"______\"________,\"________\"________\",Length=11i,MsgSeqNum=111111i,MsgType=11i,src_ip=\"______________\",dst_ip=\"_____________\",src_port=11111i,dst_port=11111i,first_dir=T 1634886503004129476\n",
+//                "md_msgs ts_nsec=1634886503004129476i,pkt_size=1111i,pcap_file=\"_______________________________________________________\",pcap_msg=1111111i," +
+//                        "raw_msg=\"__\\\"________\\\"___,\\\"_______\\\"___,\\\"______\\\"________,\\\"__________\\\"__\\\"___________\\\"____,\\\"_____\\\"_____,\\\"_________\\\"___,\\\"______\\\"________,\"," +
+//                        "Length=11i,MsgSeqNum=111111i,MsgType=11i,src_ip=\"______________\",dst_ip=\"_____________\",src_port=11111i,dst_port=11111i,first_dir=T 1634886503004129476\r\n" +
+//                        "md_msgs ts_nsec=1634886503004129476i,pkt_size=1111i,pcap_file=\"_______________________________________________________\"," +
+//                        "pcap_msg=1111111i,raw_msg=\"__\\\"________\\\"___,\\\"_______\\\"___,\\\"______\\\"________,\\\"__________\\\"__\\\"___________\\\"____,\\\"_____\\\"_____,\\\"_________\\\"___,\\\"______\\\"________,\\\"________\\\"________\"," +
+//                        "Length=11i,MsgSeqNum=111111i,MsgType=11i,src_ip=\"______________\",dst_ip=\"_____________\",src_port=11111i,dst_port=11111i,first_dir=T 1634886503004129476\r"
+//        );
+
+        // Shorter version
         assertThat(
-                "md_msgs ts_nsec=1634886503004129476i,pkt_size=1111i,pcap_file=\"_______________________________________________________\",pcap_msg=1111111i,raw_msg=\"__\"________\"___,\"_______\"___,\"______\"________,\"__________\"__\"___________\"____,\"_____\"_____,\"_________\"___,\"______\"________,\",Length=11i,MsgSeqNum=111111i,MsgType=11i,src_ip=\"______________\",dst_ip=\"_____________\",src_port=11111i,dst_port=11111i,first_dir=T 1634886503004129476\n" +
-                        "md_msgs ts_nsec=1634886503004129476i,pkt_size=1111i,pcap_file=\"_______________________________________________________\",pcap_msg=1111111i,raw_msg=\"__\"________\"___,\"_______\"___,\"______\"________,\"__________\"__\"___________\"____,\"_____\"_____,\"_________\"___,\"______\"________,\"________\"________\",Length=11i,MsgSeqNum=111111i,MsgType=11i,src_ip=\"______________\",dst_ip=\"_____________\",src_port=11111i,dst_port=11111i,first_dir=T 1634886503004129476\n",
-                "md_msgs ts_nsec=1634886503004129476i,pkt_size=1111i,pcap_file=\"_______________________________________________________\",pcap_msg=1111111i," +
-                        "raw_msg=\"__\\\"________\\\"___,\\\"_______\\\"___,\\\"______\\\"________,\\\"__________\\\"__\\\"___________\\\"____,\\\"_____\\\"_____,\\\"_________\\\"___,\\\"______\\\"________,\"," +
-                        "Length=11i,MsgSeqNum=111111i,MsgType=11i,src_ip=\"______________\",dst_ip=\"_____________\",src_port=11111i,dst_port=11111i,first_dir=T 1634886503004129476\n" +
-                        "md_msgs ts_nsec=1634886503004129476i,pkt_size=1111i,pcap_file=\"_______________________________________________________\"," +
-                        "pcap_msg=1111111i,raw_msg=\"__\\\"________\\\"___,\\\"_______\\\"___,\\\"______\\\"________,\\\"__________\\\"__\\\"___________\\\"____,\\\"_____\\\"_____,\\\"_________\\\"___,\\\"______\\\"________,\\\"________\\\"________\"," +
-                        "Length=11i,MsgSeqNum=111111i,MsgType=11i,src_ip=\"______________\",dst_ip=\"_____________\",src_port=11111i,dst_port=11111i,first_dir=T 1634886503004129476\n"
+        "md_msgs ts_nsec=1634886503004129476i,pcap_msg=1111111i,raw_msg=\"__\"____\"___,\"_______\"___,\"___\"________,\",Length=11i,MsgSeqNum=111111i,MsgType=11i,first_dir=T 1634886503004129476\n" +
+                "md_msgs ts_nsec=1634886503004129476i,pkt_size=1111i,pcap_file=\"_______________________________________________________\",raw_msg=\"__\"___________,\"________\"________\",Length=11i,first_dir=T 1634886503004129476\n",
+        "md_msgs ts_nsec=1634886503004129476i,pcap_msg=1111111i,raw_msg=\"__\\\"____\\\"___,\\\"_______\\\"___,\\\"___\\\"________,\",Length=11i,MsgSeqNum=111111i,MsgType=11i,first_dir=T 1634886503004129476\r\n" +
+                "md_msgs ts_nsec=1634886503004129476i,pkt_size=1111i,pcap_file=\"_______________________________________________________\",raw_msg=\"__\\\"___________,\\\"________\\\"________\",Length=11i,first_dir=T 1634886503004129476\r"
+        );
+    }
+
+    @Test
+    public void testSpaceInMesurmentName() {
+        assertThat(
+                "tab ble,tag= 1 field=2 123\n",
+                "tab\\ ble,tag=\\ 1 field=2 123\n"
         );
     }
 
@@ -342,8 +359,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                     }
                     boolean complete;
                     complete = parseMeasurement(memFull, mem, fullLen, fullLen, i + nextBreak);
-                    Assert.assertTrue(complete);
-                    if (!Chars.equals(expected, sink)) {
+                    if (!complete || !Chars.equals(expected, sink)) {
                         System.out.println(lineStr.substring(0, i));
                         if (nextBreak > 0) {
                             System.out.println(lineStr.substring(i, i + nextBreak));
@@ -351,6 +367,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                         System.out.println(lineStr.substring(i + nextBreak));
                         TestUtils.assertEquals("parse split " + i, expected, sink);
                     }
+                    Assert.assertTrue(complete);
                 }
             }
         } finally {

@@ -31,10 +31,14 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 public class LineTCPSenderMain {
+    private static StringSink sink = new StringSink();
+    private static char[] chars = new char[] {'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', ' ', '"', '\\', '\n'};
+
     public static void main(String[] args) {
-        final long count = 10_000_000;
+        final long count = 10_000_000_000L;
         String hostIPv4 = "127.0.0.1";
         int port = 9009; // 8089 influx
         int bufferCapacity = 256 * 1024;
@@ -51,17 +55,24 @@ public class LineTCPSenderMain {
             try (LineTcpSender sender = new LoggingLineTcpSender(Net.parseIPv4(hostIPv4), port, bufferCapacity, logFd, ff)) {
                 for (int i = 0; i < count; i++) {
                     // if ((i & 0x1) == 0) {
-                    sender.metric("weather");
+                    sender.metric("md_msgs");
                     // } else {
                     // sender.metric("weather2");
                     // }
                     sender
-                            .field("by", rnd.nextString(Math.abs(rnd.nextInt() % 512)))
-                            .field("with", rnd.nextString(Math.abs(rnd.nextInt() % 64)))
-                            .field("and", rnd.nextString(Math.abs(rnd.nextInt() % 32)))
-                            .field("temp", rnd.nextPositiveLong())
-                            .field("ok", rnd.nextPositiveInt())
-                            .$(i * 1000_000_000L);
+                            .field("ts_nsec", rnd.nextPositiveLong())
+                            .field("pkt_size", rnd.nextPositiveInt())
+                            .field("pcap_file", nextString(rnd.nextPositiveInt() % 64, rnd))
+                            .field("raw_msg", nextString(rnd.nextPositiveInt() % 512, rnd))
+                            .field("Length", rnd.nextInt())
+                            .field("MsgSeqNum", i)
+                            .field("MsgType", rnd.nextInt() % 1000)
+                            .field("src_ip", rnd.nextString(rnd.nextPositiveInt() % 16))
+                            .field("dst_ip", rnd.nextString(rnd.nextPositiveInt() % 16))
+                            .field("src_port", rnd.nextInt() % 10000)
+                            .field("dst_port", rnd.nextInt() % 10000)
+                            .field("first_dir", rnd.nextBoolean())
+                            .$(i * 10_000_000L);
 //                sender.$();
                 }
                 sender.flush();
@@ -72,6 +83,15 @@ public class LineTCPSenderMain {
             }
         }
         System.out.println("Actual rate: " + (count * 1_000_000_000L / (System.nanoTime() - start)));
+    }
+
+    private static CharSequence nextString(int len, Rnd rnd) {
+        sink.clear();
+        int arrLen = chars.length;
+        for (int i = 0; i < len; i++) {
+            sink.put(chars[rnd.nextPositiveInt() % arrLen]);
+        }
+        return sink;
     }
 
     private static class LoggingLineTcpSender extends LineTcpSender {

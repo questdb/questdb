@@ -138,7 +138,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
 
     @Override
     public void flush() {
-        send();
+        sendLine();
         ptr = lineStart = lo;
     }
 
@@ -190,7 +190,8 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         }
         quoted = false;
         hasMetric = true;
-        return put(metric);
+        encodeUtf8(metric);
+        return this;
     }
 
     public AbstractLineSender tag(CharSequence tag, CharSequence value) {
@@ -229,11 +230,15 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             default:
                 put(c);
                 break;
+            case '\n':
+            case '\r':
+                put('\\').put(c);
+                break;
             case '"':
                 if (quoted) {
                     put('\\');
                 }
-                put('\"');
+                put(c);
                 break;
             case '\\':
                 put('\\').put('\\');
@@ -241,27 +246,35 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         }
     }
 
-    private void send() {
+    private void sendLine() {
         if (lo < lineStart) {
             int len = (int) (lineStart - lo);
             sendToSocket(fd, lo, sockaddr, len);
         }
     }
 
-    private void send00() {
+    protected void send00() {
         int len = (int) (ptr - lineStart);
         if (len == 0) {
-            send();
+            sendLine();
             ptr = lineStart = lo;
         } else if (len < capacity) {
             long target = lo == bufA ? bufB : bufA;
             Vect.memcpy(target, lineStart, len);
-            send();
+            sendLine();
             lineStart = lo = target;
             ptr = target + len;
             hi = lo + capacity;
         } else {
             throw NetworkError.instance(0).put("line too long");
+        }
+    }
+
+    protected void sendAll() {
+        if (lo < ptr) {
+            int len = (int) (ptr - lo);
+            sendToSocket(fd, lo, sockaddr, len);
+            lineStart = ptr = lo;
         }
     }
 
