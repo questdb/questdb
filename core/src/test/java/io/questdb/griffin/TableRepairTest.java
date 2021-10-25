@@ -35,7 +35,9 @@ public class TableRepairTest extends AbstractGriffinTest {
 
     @Test
     public void testDeleteActivePartition() throws Exception {
+
         // this delete partition actually deletes files, simulating manual intervention
+
         assertMemoryLeak(() -> {
             compiler.compile(
                     "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY",
@@ -67,14 +69,11 @@ public class TableRepairTest extends AbstractGriffinTest {
                     row.putInt(0, 150);
                     row.putDouble(1, 0.67);
                     row.append();
-
                     w.commit();
                 }
 
                 Assert.assertTrue(reader.reload());
                 Assert.assertEquals(95041, reader.size());
-
-
             }
         });
     }
@@ -108,5 +107,4 @@ public class TableRepairTest extends AbstractGriffinTest {
             }
         });
     }
-
 }

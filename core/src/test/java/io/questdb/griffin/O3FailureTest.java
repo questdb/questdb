@@ -1029,12 +1029,35 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "select count() from x",
+                sink2
+        );
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from x",
+                sink
+        );
+
+        final String expectedMaxTimestamp = Chars.toString(sink);
+
         try {
             compiler.compile("insert into x select * from top", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ex) {
             Chars.contains(ex.getFlyweightMessage(), "timestamps before 1970-01-01");
         }
+
+        assertXCount(compiler, sqlExecutionContext);
+        assertMaxTimestamp(
+                engine,
+                sqlExecutionContext,
+                expectedMaxTimestamp
+        );
 
         assertO3DataConsistency(
                 engine,
@@ -1044,6 +1067,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x select * from top where ts >= 0"
         );
         assertIndexConsistency(compiler, sqlExecutionContext);
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testInsertAsSelectNegativeTimestamp0(
@@ -1075,12 +1099,31 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "select count() from x",
+                sink2
+        );
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from x",
+                sink
+        );
+
+        final String expectedMaxTimestamp = Chars.toString(sink);
+
         try {
             compiler.compile("insert into x select * from top", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ex) {
             Chars.contains(ex.getFlyweightMessage(), "timestamps before 1970-01-01");
         }
+
+        assertXCount(compiler, sqlExecutionContext);
+        assertMaxTimestamp(engine, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -1090,6 +1133,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x select * from top where ts >= 0"
         );
         assertIndexConsistency(compiler, sqlExecutionContext);
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedOOPrefixesExistingPartitionsFailRetry0(
@@ -1149,11 +1193,30 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "select count() from x",
+                sink2
+        );
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from x",
+                sink
+        );
+
+        final String expectedMaxTimestamp = Chars.toString(sink);
+
         try {
             compiler.compile("insert into x select * from top", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
+
+        assertXCount(compiler, sqlExecutionContext);
+        assertMaxTimestamp(engine, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -1164,6 +1227,7 @@ public class O3FailureTest extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedDataAppendOODataNotNullStrTailFailRetry0(

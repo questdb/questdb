@@ -172,8 +172,10 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
         }
         prevTransientRowCount = transientRowCount;
 
-        if (fixedRowCount + transientRowCount != sumPartitionRowCount()) {
-            assert fixedRowCount + transientRowCount == sumPartitionRowCount();
+        long expected = sumPartitionRowCount();
+        if (fixedRowCount + transientRowCount != expected) {
+            System.out.println("fixed: " + fixedRowCount + ", trans=" + transientRowCount + ", exp=" + expected);
+            assert false;
         }
     }
 
@@ -186,6 +188,7 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
         }
         return count + transientRowCount;
     }
+
 
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
         this.minTimestamp = minTimestamp;

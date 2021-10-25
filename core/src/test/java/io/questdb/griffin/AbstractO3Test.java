@@ -33,6 +33,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -344,6 +345,7 @@ public class AbstractO3Test {
 
     protected static void assertXCountY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "select count() from x", "select count() from y", LOG);
+        assertMaxTimestamp(compiler.getEngine(), compiler, sqlExecutionContext, "select max(ts) from y");
     }
 
     protected static void executeVanilla(O3Runnable code) throws Exception {
@@ -384,5 +386,47 @@ public class AbstractO3Test {
         );
 
         TestUtils.assertEquals(sink, sink2);
+    }
+
+    static void assertMaxTimestamp(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext executionContext,
+            String expectedSql
+    ) throws SqlException {
+        TestUtils.printSql(
+                compiler,
+                executionContext,
+                expectedSql,
+                sink2
+        );
+
+        assertMaxTimestamp(engine, executionContext, sink2);
+    }
+
+    static void assertMaxTimestamp(
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            CharSequence expected
+    ) {
+        try (
+                final TableWriter w = engine.getWriter(
+                        executionContext.getCairoSecurityContext(),
+                        "x",
+                        "test"
+                )
+        ) {
+            sink.clear();
+            sink.put("max\n");
+            TimestampFormatUtils.appendDateTimeUSec(sink, w.getMaxTimestamp());
+            sink.put('\n');
+            TestUtils.assertEquals(expected, sink);
+            Assert.assertEquals(0, w.getO3RowCount());
+        }
+    }
+
+    static void assertXCount(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        printSqlResult(compiler, sqlExecutionContext, "select count() from x");
+        TestUtils.assertEquals(sink2, sink);
     }
 }

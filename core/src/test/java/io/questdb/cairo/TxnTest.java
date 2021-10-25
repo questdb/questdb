@@ -67,7 +67,6 @@ public class TxnTest extends AbstractCairoTest {
                     }
                 }
 
-
                 try (Path path = new Path()) {
                     path.of(configuration.getRoot()).concat(tableName);
                     int testPartitionCount = 3000;
@@ -108,5 +107,4 @@ public class TxnTest extends AbstractCairoTest {
             });
         });
     }
-
 }

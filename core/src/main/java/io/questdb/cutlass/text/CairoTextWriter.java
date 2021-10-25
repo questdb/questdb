@@ -191,7 +191,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     private void checkMaxAndCommitLag() {
         if (writer != null && maxUncommittedRows > 0 && writer.getO3RowCount() >= maxUncommittedRows) {
-            writer.checkMaxAndCommitLag(durable ? CommitMode.SYNC : CommitMode.NOSYNC);
+            writer.commitWithLag(durable ? CommitMode.SYNC : CommitMode.NOSYNC);
         }
     }
 

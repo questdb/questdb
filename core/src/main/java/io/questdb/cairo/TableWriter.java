@@ -686,7 +686,7 @@ public class TableWriter implements Closeable {
     }
 
     public boolean checkMaxAndCommitLag(int commitMode) {
-        if (getO3RowCount() < metadata.getMaxUncommittedRows()) {
+        if (!hasO3() || getO3RowCount0() < metadata.getMaxUncommittedRows()) {
             return false;
         }
         commit(commitMode, metadata.getCommitLag());
@@ -716,6 +716,10 @@ public class TableWriter implements Closeable {
         commit(defaultCommitMode, lagMicros);
     }
 
+    public void commitWithLag(int commitMode) {
+        commit(commitMode, metadata.getCommitLag());
+    }
+
     public int getColumnIndex(CharSequence name) {
         int index = metadata.getColumnIndexQuiet(name);
         if (index > -1) {
@@ -741,6 +745,10 @@ public class TableWriter implements Closeable {
     }
 
     public long getO3RowCount() {
+        return hasO3() ? getO3RowCount0() : 0;
+    }
+
+    private long getO3RowCount0() {
         return (masterRef - o3MasterRef + 1) / 2;
     }
 
@@ -1373,7 +1381,7 @@ public class TableWriter implements Closeable {
 
     public long size() {
         // This is uncommitted row count
-        return txWriter.getRowCount() + (hasO3() ? getO3RowCount() : 0L);
+        return txWriter.getRowCount() + getO3RowCount();
     }
 
     public void tick() {
@@ -1454,18 +1462,6 @@ public class TableWriter implements Closeable {
         }
 
         LOG.info().$("truncated [name=").$(tableName).$(']').$();
-    }
-
-    public void updateSymbols(int columnIndex, SymbolMapReader symReader) {
-        int nSourceSymbols = symReader.size();
-        SymbolMapWriter symWriter = getSymbolMapWriter(columnIndex);
-        int nDestinationSymbols = symWriter.getSymbolCount();
-
-        if (nSourceSymbols > nDestinationSymbols) {
-            long address = symReader.symbolCharsAddressOf(nDestinationSymbols);
-            long addressHi = symReader.symbolCharsAddressOf(nSourceSymbols);
-            symWriter.appendSymbolCharsBlock(addressHi - address, address);
-        }
     }
 
     /**
@@ -2362,10 +2358,6 @@ public class TableWriter implements Closeable {
         return symbolMapWriters.getQuick(columnIndex);
     }
 
-    private boolean hasO3() {
-        return o3MasterRef > -1 && getO3RowCount() > 0;
-    }
-
     private long indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize) {
         final long ts = this.txWriter.getMaxTimestamp();
         if (ts > Numbers.LONG_NaN) {
@@ -2470,7 +2462,7 @@ public class TableWriter implements Closeable {
      * @return <i>true</i> when commit has is a NOOP, e.g. no data has been committed to disk. <i>false</i> otherwise.
      */
     private boolean o3Commit(long lag) {
-        o3RowCount = getO3RowCount();
+        o3RowCount = getO3RowCount0();
         o3PartitionRemoveCandidates.clear();
         o3ErrorCount.set(0);
         o3ColumnCounters.clear();
@@ -2478,11 +2470,12 @@ public class TableWriter implements Closeable {
 
         long o3LagRowCount = 0;
         long maxUncommittedRows = metadata.getMaxUncommittedRows();
-
         final int timestampIndex = metadata.getTimestampIndex();
         this.lastPartitionTimestamp = timestampFloorMethod.floor(partitionTimestampHi);
+        long activePartitionTimestampCeil = timestampCeilMethod.ceil(partitionTimestampHi);
         try {
             o3RowCount += o3MoveUncommitted(timestampIndex);
+            final long transientRowCount = txWriter.transientRowCount;
 
             // we may need to re-use file descriptors when this partition is the "current" one
             // we cannot open file again due to sharing violation
@@ -2593,6 +2586,13 @@ public class TableWriter implements Closeable {
             boolean flattenTimestamp = true;
             int pCount = 0;
             try {
+                // We do not know upfront which partition is going to be last because this is
+                // a single pass over the data. Instead, we will update transient row count in a rolling
+                // manner, assuming the partition marked "last" is the last and then for a new partition
+                // we move prevTransientRowCount into the "fixedRowCount" sum and set new value on the
+                // transientRowCount
+                long prevTransientRowCount = transientRowCount;
+
                 while (srcOoo < srcOooMax) {
                     try {
                         final long srcOooLo = srcOoo;
@@ -2621,17 +2621,19 @@ public class TableWriter implements Closeable {
                         final int partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
                         if (partitionIndex > -1) {
                             if (last) {
-                                srcDataMax = txWriter.transientRowCount;
+                                srcDataMax = transientRowCount;
                             } else {
                                 srcDataMax = getPartitionSizeByIndex(partitionIndex);
                             }
                             srcNameTxn = getPartitionNameTxnByIndex(partitionIndex);
                         } else {
-                            srcDataMax = -1;
+                            srcDataMax = 0;
                             srcNameTxn = -1;
                         }
 
-                        final boolean append = last && (srcDataMax < 0 || o3Timestamp >= maxTimestamp);
+                        final boolean append = last && (srcDataMax == 0 || o3Timestamp >= maxTimestamp);
+                        final long partitionSize = srcDataMax + srcOooHi - srcOooLo + 1;
+
                         LOG.debug().
                                 $("o3 partition task [table=").$(tableName)
                                 .$(", srcOooLo=").$(srcOooLo)
@@ -2645,9 +2647,22 @@ public class TableWriter implements Closeable {
                                 .$(", srcDataMax=").$(srcDataMax)
                                 .$(", maxTimestamp=").$ts(maxTimestamp)
                                 .$(", last=").$(last)
+                                .$(", partitionSize=").$(partitionSize)
                                 .$(", append=").$(append)
                                 .$(", memUsed=").$(Unsafe.getMemUsed())
                                 .I$();
+
+                        if (partitionTimestamp < lastPartitionTimestamp) {
+                            // increment fixedRowCount by number of rows old partition incremented
+                            this.txWriter.fixedRowCount += partitionSize - srcDataMax;
+                        } else if (partitionTimestamp == lastPartitionTimestamp) {
+                            // this is existing "last" partition, we can set the size directly
+                            prevTransientRowCount = partitionSize;
+                        } else {
+                            // this is potentially a new last partition
+                            this.txWriter.fixedRowCount += prevTransientRowCount;
+                            prevTransientRowCount = partitionSize;
+                        }
 
                         pCount++;
                         o3PartitionUpdRemaining.incrementAndGet();
@@ -2706,7 +2721,7 @@ public class TableWriter implements Closeable {
                                         o3TimestampMax,
                                         partitionTimestamp,
                                         srcDataTop,
-                                        Math.max(0, srcDataMax),
+                                        srcDataMax,
                                         isIndexed,
                                         dstFixMem,
                                         dstVarMem,
@@ -2741,6 +2756,11 @@ public class TableWriter implements Closeable {
                         throw e;
                     }
                 }
+
+                // at this point we should know the last partition row count
+                this.txWriter.transientRowCount = prevTransientRowCount;
+                this.partitionTimestampHi = Math.max(this.partitionTimestampHi, o3TimestampMax);
+                this.txWriter.updateMaxTimestamp(Math.max(txWriter.getMaxTimestamp(), o3TimestampMax));
             } finally {
                 // we are stealing work here it is possible we get exception from this method
                 LOG.debug()
@@ -2778,19 +2798,16 @@ public class TableWriter implements Closeable {
             // move append memory to new set of files. Otherwise, we stay on the same set but advance to append position.
             avoidIndexOnCommit = o3ErrorCount.get() == 0;
             if (o3LagRowCount == 0) {
-                this.o3MasterRef = -1;
-                rowActon = ROW_ACTION_SWITCH_PARTITION;
-                // transaction log is either not required or pending
-                activeColumns = columns;
-                activeNullSetters = nullSetters;
+                clearO3();
                 LOG.debug().$("lag segment is empty").$();
             } else {
                 // adjust O3 master ref so that virtual row count becomes equal to value of "o3LagRowCount"
                 this.o3MasterRef = this.masterRef - o3LagRowCount * 2 + 1;
-                LOG.debug().$("adjusted [o3RowCount=").$(getO3RowCount()).I$();
+                LOG.debug().$("adjusted [o3RowCount=").$(getO3RowCount0()).I$();
             }
         }
-        if (!columns.getQuick(0).isOpen() || partitionTimestampHi < txWriter.getMaxTimestamp()) {
+
+        if (!columns.getQuick(0).isOpen() || partitionTimestampHi > activePartitionTimestampCeil) {
             openPartition(txWriter.getMaxTimestamp());
         }
 
@@ -2806,6 +2823,14 @@ public class TableWriter implements Closeable {
             throw e;
         }
         return false;
+    }
+
+    private void clearO3() {
+        this.o3MasterRef = -1; // clears o3 flag, hasO3() will be returning false
+        rowActon = ROW_ACTION_SWITCH_PARTITION;
+        // transaction log is either not required or pending
+        activeColumns = columns;
+        activeNullSetters = nullSetters;
     }
 
     private void o3CommitPartitionAsync(
@@ -3218,36 +3243,9 @@ public class TableWriter implements Closeable {
             long srcDataMax,
             boolean partitionMutates
     ) {
-        LOG.debug().$("o3 partition update [timestampMin=").$ts(timestampMin)
-                .$(", timestampMax=").$ts(timestampMax)
-                .$(", partitionTimestamp=").$ts(partitionTimestamp)
-                .$(", srcOooPartitionLo=").$(srcOooPartitionLo)
-                .$(", srcOooPartitionHi=").$(srcOooPartitionHi)
-                .$(", srcOooMax=").$(srcOooMax)
-                .$(", srcDataMax=").$(srcDataMax)
-                .$(", partitionMutates=").$(partitionMutates)
-                .I$();
-
         this.txWriter.minTimestamp = Math.min(timestampMin, this.txWriter.minTimestamp);
         final long partitionSize = srcDataMax + srcOooPartitionHi - srcOooPartitionLo + 1;
         final long rowDelta = srcOooPartitionHi - srcOooMax;
-        if (partitionTimestamp < lastPartitionTimestamp /* partition was not last */
-                || rowDelta < -1) {                     /* partition was last but it is not last anymore */
-            // Add row count added in this commit to fixed row count
-            // If the partition was last but another added in the last commit
-            // else section will add all transient row count anyway
-            this.txWriter.fixedRowCount += partitionSize - srcDataMax;
-            // when we exit here we need to rollback transientRowCount we've been incrementing
-            // while adding out-of-order data
-        } else {
-            // this is last partition
-            if (partitionTimestamp > lastPartitionTimestamp) {
-                this.txWriter.fixedRowCount += this.txWriter.transientRowCount;
-            }
-            this.txWriter.transientRowCount = partitionSize;
-            this.txWriter.maxTimestamp = Math.max(this.txWriter.maxTimestamp, timestampMax);
-        }
-
         final int partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
         if (partitionTimestamp == lastPartitionTimestamp) {
             if (partitionMutates) {
@@ -3258,6 +3256,19 @@ public class TableWriter implements Closeable {
                 setAppendPosition(partitionSize, false);
             }
         }
+
+        LOG.debug().$("o3 partition update [timestampMin=").$ts(timestampMin)
+                .$(", timestampMax=").$ts(timestampMax)
+                .$(", last=").$(partitionTimestamp == lastPartitionTimestamp)
+                .$(", partitionTimestamp=").$ts(partitionTimestamp)
+                .$(", srcOooPartitionLo=").$(srcOooPartitionLo)
+                .$(", srcOooPartitionHi=").$(srcOooPartitionHi)
+                .$(", srcOooMax=").$(srcOooMax)
+                .$(", srcDataMax=").$(srcDataMax)
+                .$(", partitionMutates=").$(partitionMutates)
+                .$(", lastPartitionTimestamp=").$(lastPartitionTimestamp)
+                .$(", partitionSize=").$(partitionSize)
+                .I$();
 
         if (partitionMutates) {
             final long srcDataTxn = txWriter.getPartitionNameTxnByIndex(partitionIndex);
@@ -3673,7 +3684,7 @@ public class TableWriter implements Closeable {
     }
 
     private void o3TimestampSetter(long timestamp) {
-        o3TimestampMem.putLong128(timestamp, getO3RowCount());
+        o3TimestampMem.putLong128(timestamp, getO3RowCount0());
     }
 
     private void openColumnFiles(CharSequence name, int i, int plen) {
@@ -4116,7 +4127,7 @@ public class TableWriter implements Closeable {
             int symColIndex = denseSymbolMapWriters.remove(writer);
             // Shift all subsequent symbol indexes by 1 back
             while (symColIndex < denseSymbolMapWriters.size()) {
-                SymbolMapWriter  w = denseSymbolMapWriters.getQuick(symColIndex);
+                SymbolMapWriter w = denseSymbolMapWriters.getQuick(symColIndex);
                 w.setSymbolIndexInTxWriter(symColIndex);
                 symColIndex++;
             }
@@ -4449,24 +4460,26 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private boolean hasO3() {
+        return o3MasterRef > -1;
+    }
+
     void rowCancel() {
         if ((masterRef & 1) == 0) {
             return;
         }
 
-        if (o3MasterRef > -1) {
-            if (hasO3()) {
+        if (hasO3()) {
+            final long o3RowCount = getO3RowCount0();
+            if (o3RowCount > 0) {
                 // O3 mode and there are some rows.
                 masterRef--;
-                setO3AppendPosition(getO3RowCount());
+                setO3AppendPosition(o3RowCount);
             } else {
                 // Cancelling first row in o3, reverting to non-o3
                 setO3AppendPosition(0);
                 masterRef--;
-                o3MasterRef = -1;
-                rowActon = ROW_ACTION_SWITCH_PARTITION;
-                activeColumns = columns;
-                activeNullSetters = nullSetters;
+                clearO3();
             }
             return;
         }

@@ -1251,7 +1251,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 240_000_000, // 4 minutes, precision is micro
                 3,
                 true,
-                setOf("2021-01-01", "2021-01-02", "2021-01-01.4", "2021-01-02.5")
+                setOf("2021-01-01.2", "2021-01-01", "2021-01-01.4", "2021-01-02")
         );
     }
 
@@ -1261,7 +1261,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 60_000_000, // 1 minute, precision is micro
                 2,
                 false,
-                setOf("2021-01-01", "2021-01-02", "2021-01-01.5", "2021-01-02.6")
+                setOf("2021-01-01.2", "2021-01-01", "2021-01-01.5", "2021-01-02")
         );
     }
 
@@ -3117,7 +3117,9 @@ public class TextLoaderTest extends AbstractGriffinTest {
             @Override
             public int rmdir(Path name) {
                 rmdirCallCount.getAndIncrement();
-                Assert.assertTrue(expectedPartitionNames.contains(extractLast(name)));
+                if (!expectedPartitionNames.contains(extractLast(name))) {
+                    Assert.fail();
+                }
                 return Files.rmdir(name);
             }
 
@@ -3186,7 +3188,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                         Assert.assertEquals(TextLoadWarning.NONE, textLoader.getWarnings());
                     }
             );
-            Assert.assertEquals(6, rmdirCallCount.get());
+            Assert.assertEquals(4, rmdirCallCount.get());
             Assert.assertTrue((durable && msyncCallCount.get() > 0) || (!durable && msyncCallCount.get() == 0));
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
                 Assert.assertEquals(maxUncommittedRows, reader.getMaxUncommittedRows());
