@@ -26,6 +26,7 @@ import React, {
   CSSProperties,
   forwardRef,
   Ref,
+  useRef,
   useCallback,
   useEffect,
   useState,
@@ -110,6 +111,7 @@ const Schema = ({
   const [quest] = useState(new QuestDB.Client())
   const [loading, setLoading] = useState(false)
   const [loadingError, setLoadingError] = useState<ErrorResult | null>(null)
+  const errorRef = useRef<ErrorResult | null>(null)
   const [tables, setTables] = useState<QuestDB.Table[]>()
   const [opened, setOpened] = useState<string>()
   const [refresh, setRefresh] = useState(Date.now())
@@ -125,8 +127,9 @@ const Schema = ({
       of(true).pipe(delay(1000), startWith(false)),
     ).subscribe(
       ([response, loading]) => {
-        setLoadingError(null)
         if (response && response.type === QuestDB.Type.DQL) {
+          setLoadingError(null)
+          errorRef.current = null
           setTables(response.data)
           setLoading(false)
           setRefresh(Date.now())
@@ -143,10 +146,25 @@ const Schema = ({
   useEffect(() => {
     void fetchTables()
 
-    window.bus.on(BusEvent.MSQ_QUERY_SCHEMA, () => {
+    window.bus.on(BusEvent.MSG_QUERY_SCHEMA, () => {
       void fetchTables()
     })
-  }, [fetchTables])
+
+    window.bus.on(
+      BusEvent.MSG_CONNECTION_ERROR,
+      (_event, error: ErrorResult) => {
+        errorRef.current = error
+        setLoadingError(error)
+      },
+    )
+
+    window.bus.on(BusEvent.MSG_CONNECTION_OK, () => {
+      // The connection has been re-established, as we have an error in memory
+      if (errorRef.current) {
+        void fetchTables()
+      }
+    })
+  }, [errorRef, fetchTables])
 
   return (
     <Wrapper ref={innerRef} {...rest}>

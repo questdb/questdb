@@ -33,6 +33,8 @@ import { selectors } from "store"
 
 import GithubBanner from "./GithubBanner"
 import BuildVersion from "./BuildVersion"
+import ConnectionStatus from "./ConnectionStatus"
+import { BusEvent } from "../../consts"
 
 const Wrapper = styled.div`
   position: absolute;
@@ -84,6 +86,7 @@ const GithubBannerTransition = createGlobalStyle`
 
 const Footer = () => {
   const [showBanner, setShowBanner] = useState(false)
+  const [showBuildVersion, setShowBuildVersion] = useState(true)
   const handleClick = useCallback(() => {
     setShowBanner(false)
   }, [])
@@ -93,6 +96,14 @@ const Footer = () => {
     setTimeout(() => {
       setShowBanner(true)
     }, 2e3)
+
+    window.bus.on(BusEvent.MSG_CONNECTION_ERROR, () => {
+      setShowBuildVersion(false)
+    })
+
+    window.bus.on(BusEvent.MSG_CONNECTION_OK, () => {
+      setShowBuildVersion(true)
+    })
   }, [])
 
   return (
@@ -103,7 +114,8 @@ const Footer = () => {
         </Text>
       </LeftContainer>
       <RightContainer>
-        <BuildVersion />
+        <ConnectionStatus />
+        {showBuildVersion && <BuildVersion />}
         <Link
           color="draculaForeground"
           hoverColor="draculaCyan"
