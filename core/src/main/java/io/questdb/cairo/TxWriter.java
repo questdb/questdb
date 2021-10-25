@@ -179,17 +179,6 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
         }
     }
 
-    private long sumPartitionRowCount() {
-        if (partitionBy == PartitionBy.NONE) return transientRowCount;
-
-        long count = 0;
-        for(int i = 0, n = getPartitionCount(); i < n - 1; i++) {
-            count += getPartitionSizeByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
-        }
-        return count + transientRowCount;
-    }
-
-
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
         this.minTimestamp = minTimestamp;
         this.maxTimestamp = maxTimestamp;
@@ -231,12 +220,13 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
         final long partitionTimestampLo = getPartitionTimestampLo(timestamp);
         int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
         if (index > -1) {
-            int size = attachedPartitions.size();
-            if (index + LONGS_PER_TX_ATTACHED_PARTITION < size) {
-                attachedPartitions.arrayCopy(index + LONGS_PER_TX_ATTACHED_PARTITION, index, size - index - LONGS_PER_TX_ATTACHED_PARTITION);
+            final int size = attachedPartitions.size();
+            final int lim = size - LONGS_PER_TX_ATTACHED_PARTITION;
+            if (index < lim) {
+                attachedPartitions.arrayCopy(index + LONGS_PER_TX_ATTACHED_PARTITION, index, lim - index);
                 attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, index);
             }
-            attachedPartitions.setPos(size - LONGS_PER_TX_ATTACHED_PARTITION);
+            attachedPartitions.setPos(lim);
             partitionTableVersion++;
         }
     }
@@ -379,6 +369,16 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
             offset += Integer.BYTES;
             txMem.putInt(offset, symCount);
         }
+    }
+
+    private long sumPartitionRowCount() {
+        if (partitionBy == PartitionBy.NONE) return transientRowCount;
+
+        long count = 0;
+        for (int i = 0, n = getPartitionCount(); i < n - 1; i++) {
+            count += getPartitionSizeByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+        }
+        return count + transientRowCount;
     }
 
     private int updateAttachedPartitionSizeByIndex(int partitionIndex, long partitionTimestampLo, long partitionSize) {

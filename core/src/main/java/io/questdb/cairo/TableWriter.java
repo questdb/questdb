@@ -3702,13 +3702,14 @@ public class TableWriter implements Closeable {
     }
 
     private void openFirstPartition(long timestamp) {
-        openPartition(repairDataGaps(timestamp));
+        final long ts = repairDataGaps(timestamp);
+        openPartition(ts);
         populateDenseIndexerList();
         setAppendPosition(txWriter.getTransientRowCount(), true);
         if (performRecovery) {
             performRecovery();
         }
-        txWriter.openFirstPartition(timestamp);
+        txWriter.openFirstPartition(ts);
     }
 
     private void openNewColumnFiles(CharSequence name, boolean indexFlag, int indexValueBlockCapacity) {
@@ -4252,7 +4253,7 @@ public class TableWriter implements Closeable {
 
     private long repairDataGaps(final long timestamp) {
         if (txWriter.getMaxTimestamp() != Numbers.LONG_NaN && partitionBy != PartitionBy.NONE) {
-            long actualSize = 0;
+            long fixedRowCount = 0;
             long lastTimestamp = -1;
             long transientRowCount = this.txWriter.getTransientRowCount();
             long maxTimestamp = this.txWriter.getMaxTimestamp();
@@ -4265,7 +4266,7 @@ public class TableWriter implements Closeable {
 
                     long partitionSize = txWriter.getPartitionSizeByPartitionTimestamp(ts);
                     if (partitionSize >= 0 && ff.exists(path.$())) {
-                        actualSize += partitionSize;
+                        fixedRowCount += partitionSize;
                         lastTimestamp = ts;
                     } else {
                         Path other = Path.getThreadLocal2(path.trimTo(p).$());
@@ -4305,10 +4306,11 @@ public class TableWriter implements Closeable {
                             int p = path.length();
                             transientRowCount = txWriter.getPartitionSizeByPartitionTimestamp(lastTimestamp);
 
+
                             // 2. read max timestamp
                             TableUtils.dFile(path.trimTo(p), metadata.getColumnName(metadata.getTimestampIndex()));
                             maxTimestamp = TableUtils.readLongAtOffset(ff, path, tempMem16b, (transientRowCount - 1) * Long.BYTES);
-                            actualSize -= transientRowCount;
+                            fixedRowCount -= transientRowCount;
                             txWriter.removeAttachedPartitions(txWriter.getMaxTimestamp());
                             LOG.info()
                                     .$("updated active partition [name=").$(path.trimTo(p).$())
@@ -4324,14 +4326,14 @@ public class TableWriter implements Closeable {
             }
 
             final long expectedSize = txWriter.readFixedRowCount();
-            if (expectedSize != actualSize || maxTimestamp != this.txWriter.getMaxTimestamp()) {
+            if (expectedSize != fixedRowCount || maxTimestamp != this.txWriter.getMaxTimestamp()) {
                 LOG.info()
                         .$("actual table size has been adjusted [name=`").utf8(tableName).$('`')
                         .$(", expectedFixedSize=").$(expectedSize)
-                        .$(", actualFixedSize=").$(actualSize)
+                        .$(", actualFixedSize=").$(fixedRowCount)
                         .$(']').$();
 
-                txWriter.reset(actualSize, transientRowCount, maxTimestamp);
+                txWriter.reset(fixedRowCount, transientRowCount, maxTimestamp);
                 return maxTimestamp;
             }
         }

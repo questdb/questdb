@@ -59,12 +59,9 @@ public class TableRepairTest extends AbstractGriffinTest {
                 // repair by opening and closing writer
 
                 try (TableWriter w = new TableWriter(configuration, "tst")) {
-
                     Assert.assertTrue(reader.reload());
                     Assert.assertEquals(95040, reader.size());
-
                     Assert.assertEquals(950390000000L, w.getMaxTimestamp());
-
                     TableWriter.Row row = w.newRow(w.getMaxTimestamp());
                     row.putInt(0, 150);
                     row.putDouble(1, 0.67);
