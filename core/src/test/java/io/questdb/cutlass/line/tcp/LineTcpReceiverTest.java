@@ -898,6 +898,32 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTcpSenderManyLinesToForceBufferFlush() throws Exception {
+        int rowCount = 100;
+        maxMeasurementSize = 100;
+        runInContext((receiver) -> {
+            String tableName = "table";
+            send(receiver,  tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, 64)) {
+                    for(int i = 0; i < rowCount; i++) {
+                        lineTcpSender
+                                .metric(tableName)
+                                .tag("tag1", "value 1")
+                                .field("tag2", Chars.repeat("value 2", 10))
+                                .$(0);
+                    }
+                    lineTcpSender.flush();
+                }
+            });
+
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                Assert.assertEquals(rowCount, reader.size());
+            }
+        });
+    }
+
+
+    @Test
     public void testNewPartitionRowCancelledTwice() throws Exception {
         runInContext((receiver) -> {
             send(receiver,  "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
