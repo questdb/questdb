@@ -8,7 +8,7 @@ it("runs a long_sequence query with 2000 rows", function () {
     .within(() => {
       cy.getGridColumn().should("have.text", 1)
     })
-  cy.getGridViewport().scrollTo("bottom", { duration: 5000 })
+  cy.getGridViewport().scrollTo("bottom", { duration: 1000 })
   cy.getGridRow(true).within(() => {
     cy.getGridColumn().should("have.text", 2000)
   })
