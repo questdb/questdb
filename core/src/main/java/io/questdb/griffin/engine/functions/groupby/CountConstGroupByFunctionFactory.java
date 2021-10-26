@@ -31,10 +31,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class CountGroupByFunctionFactory implements FunctionFactory {
+public class CountConstGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "count()";
+        return "count(i)";
     }
 
     @Override
