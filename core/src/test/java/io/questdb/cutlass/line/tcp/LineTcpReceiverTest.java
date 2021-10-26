@@ -834,6 +834,10 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
 
     @Test
     public void testTcpSenderWithNewLineCharsInFieldName() throws Exception {
+        if (engine.getConfiguration().getFilesFacade().isRestrictedFileSystem()) {
+            // Windows (NTFS) cannot crate files with new line in file name.
+            return;
+        }
         runInContext((receiver) -> {
             String tableName = "table";
             send(receiver,  tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
@@ -878,9 +882,13 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
 
     @Test
     public void testTcpSenderWithNewLineInTableName() throws Exception {
+        if (engine.getConfiguration().getFilesFacade().isRestrictedFileSystem()) {
+            // Windows (NTFS) cannot crate files with new line in file name.
+            return;
+        }
         runInContext((receiver) -> {
             String tableName = "ta\nble";
-            send(receiver,  tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
+            send(receiver, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
                 try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
                     lineTcpSender
                             .metric(tableName)
