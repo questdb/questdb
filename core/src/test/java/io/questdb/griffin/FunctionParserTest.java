@@ -356,6 +356,19 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testCountConstUpperCase() throws SqlException {
+        functions.add(new CountConstGroupByFunctionFactory());
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.INT));
+        FunctionParser functionParser = createFunctionParser();
+        Function function = parseFunction("COUNT()", metadata, functionParser);
+        Assert.assertEquals(ColumnType.LONG, function.getType());
+        Assert.assertEquals(
+                "io.questdb.griffin.engine.functions.groupby.CountGroupByFunction",
+                function.getClass().getCanonicalName());
+    }
+
+    @Test
     public void testExplicitConstantBoolean() throws SqlException {
         testConstantPassThru(BooleanConstant.TRUE);
     }
