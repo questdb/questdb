@@ -56,7 +56,7 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
 
     @Override
     public boolean supportsRandomAccess() {
-        return false;
+        return true;
     }
 
     @Override
