@@ -186,12 +186,9 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                                     .$(byteCharSequence.of(recvBufStartOfMeasurement, protoParser.getBufferAddress())).$();
                             goodMeasurement = true;
                         }
-                        protoParser.startNextMeasurement();
-                        recvBufStartOfMeasurement = protoParser.getBufferAddress();
-                        if (recvBufStartOfMeasurement == recvBufPos) {
-                            recvBufPos = recvBufStart;
-                            protoParser.of(recvBufStart);
-                        }
+
+                        startNewMeasurement();
+
                         continue;
                     }
 
@@ -229,16 +226,26 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         }
     }
 
+    private void startNewMeasurement() {
+        protoParser.startNextMeasurement();
+        recvBufStartOfMeasurement = protoParser.getBufferAddress();
+        // we ran out of buffer, move to start and start parsing new data from socket
+        if (recvBufStartOfMeasurement == recvBufPos) {
+            recvBufPos = recvBufStart;
+            protoParser.of(recvBufStart);
+        }
+    }
+
     protected boolean read() {
         int bufferRemaining = (int) (recvBufEnd - recvBufPos);
         final int orig = bufferRemaining;
         if (bufferRemaining > 0 && !peerDisconnected) {
-            int nRead = nf.recv(fd, recvBufPos, bufferRemaining);
-            if (nRead > 0) {
-                recvBufPos += nRead;
-                bufferRemaining -= nRead;
+            int bytesRead = nf.recv(fd, recvBufPos, bufferRemaining);
+            if (bytesRead > 0) {
+                recvBufPos += bytesRead;
+                bufferRemaining -= bytesRead;
             } else {
-                peerDisconnected = nRead < 0;
+                peerDisconnected = bytesRead < 0;
             }
             return bufferRemaining < orig;
         }
@@ -248,6 +255,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     protected void resetParser() {
         protoParser.of(recvBufStart);
         goodMeasurement = true;
+        recvBufPos = recvBufStart;
         recvBufStartOfMeasurement = recvBufStart;
     }
 

@@ -36,7 +36,6 @@ import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
-import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 public abstract class LineUdpInsertTest extends AbstractCairoTest {
@@ -103,9 +102,9 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                     }
                     Os.sleep(250L); // allow reader to hit the readout
                 }
-                if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
-                    Assert.fail();
-                }
+
+                waitForData.await();
+
                 assertReader(tableName, expected, expectedExtraStringColumns);
             }
         });
