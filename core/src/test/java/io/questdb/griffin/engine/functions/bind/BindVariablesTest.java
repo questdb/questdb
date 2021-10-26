@@ -685,13 +685,13 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         bindVariableService.setStr("str", "abcd");
         bindVariableService.setInt("start", 1);
 
-        Function func = expr("substr(:str, :start)")
+        Function func = expr("right(:str, :start)")
                 .withFunction(new RightFunctionFactory())
                 .$();
 
         func.init(null, sqlExecutionContext);
 
-        TestUtils.assertEquals("bcd", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("d", func.getStr(builder.getRecord()));
     }
 
     @Test
@@ -700,13 +700,13 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         bindVariableService.setInt(0, 1);
         bindVariableService.setStr(1, "abcd");
 
-        Function func = expr("substr($2, $1)")
+        Function func = expr("right($2, $1)")
                 .withFunction(new RightFunctionFactory())
                 .$();
 
         func.init(null, sqlExecutionContext);
 
-        TestUtils.assertEquals("bcd", func.getStr(builder.getRecord()));
+        TestUtils.assertEquals("d", func.getStr(builder.getRecord()));
     }
 
     @Test

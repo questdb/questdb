@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -33,6 +34,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -55,7 +57,7 @@ public class LeftFunctionFactory implements FunctionFactory {
             if (count != Numbers.INT_NaN) {
                 return new LeftStrConstCountFunction(strFunc, count);
             } else {
-                return NullConstant.NULL;
+                return StrConstant.NULL;
             }
         }
         return new LeftStrFunction(strFunc, countFunc);
@@ -107,10 +109,11 @@ public class LeftFunctionFactory implements FunctionFactory {
         @Override
         public int getStrLen(Record rec) {
             int count = this.countFunc.getInt(rec);
-            if (count != Numbers.INT_NaN) {
-                return getPos(strFunc.getStrLen(rec), count);
+            int len = strFunc.getStrLen(rec);
+            if (len != TableUtils.NULL_LEN && count != Numbers.INT_NaN) {
+                return getPos(len, count);
             }
-            return -1;
+            return TableUtils.NULL_LEN;
         }
 
         @Nullable
@@ -171,7 +174,8 @@ public class LeftFunctionFactory implements FunctionFactory {
 
         @Override
         public int getStrLen(Record rec) {
-            return getPos(strFunc.getStrLen(rec));
+            int len = strFunc.getStrLen(rec);
+            return len != TableUtils.NULL_LEN ? getPos(len) : TableUtils.NULL_LEN;
         }
 
         @Nullable

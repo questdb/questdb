@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -32,7 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -55,7 +56,7 @@ public class RightFunctionFactory implements FunctionFactory {
             if (count != Numbers.INT_NaN) {
                 return new RightStrConstCountFunction(strFunc, count);
             } else {
-                return NullConstant.NULL;
+                return StrConstant.NULL;
             }
         }
         return new RightStrFunction(strFunc, countFunc);
@@ -109,9 +110,9 @@ public class RightFunctionFactory implements FunctionFactory {
             int count = this.countFunc.getInt(rec);
             if (count != Numbers.INT_NaN) {
                 final int len = strFunc.getStrLen(rec);
-                return len - getPos(len, count);
+                return len - (len == TableUtils.NULL_LEN ? 0 : getPos(len, count));
             }
-            return -1;
+            return TableUtils.NULL_LEN;
         }
 
         @Nullable
@@ -173,7 +174,7 @@ public class RightFunctionFactory implements FunctionFactory {
         @Override
         public int getStrLen(Record rec) {
             final int len = strFunc.getStrLen(rec);
-            final int pos = getPos(len);
+            final int pos = len == TableUtils.NULL_LEN ? 0 : getPos(len);
             return len - pos;
         }
 
