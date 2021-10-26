@@ -20,7 +20,7 @@
     "start:prod": "cross-env NODE_ENV=production webpack-dev-server --progress",
     "analyze-bundle": "cross-env ANALYZE=true NODE_ENV=production webpack-cli --display-reasons",
     "prepare": "cd .. && husky install ui/.husky",
-    "test:cypress": "cypress run",
+    "test:cypress": "cypress run --config video=false",
     "test:cypress:dev": "cypress open"
   },
   "dependencies": {
@@ -126,6 +126,9 @@
   "lint-staged": {
     "**/**/*.{js.jsx,js,es6,jsx,ts,tsx,md,yml}": [
       "prettier --config ./prettier.config.js --write"
+    ],
+    "!(cypress)/**/**/*.{js.jsx,js,es6,jsx,ts,tsx,css,scss,hbs}": [
+      "npm run test:cypress"
     ]
   },
   "husky": {
