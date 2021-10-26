@@ -8,16 +8,32 @@
 
 ## Local development
 
-Make sure that QuestDB is running, please check the instructions [here](../README.md)
+Make sure that QuestDB is running, please check the instructions
+[here](../README.md)
 
 1. Install the dependencies with `npm install`
 2. Start the development web server with `npm start`
 
-The web console should now be accessible at [localhost:9999](http://localhost:9999)
+The web console should now be accessible at
+[localhost:9999](http://localhost:9999)
+
+## Testing
+
+There is a pre-commit hook that runs a Cypress test suite looking for possible
+regressions. Make sure you have the development web server opened for the task
+to run properly.
+
+If you are just commiting small changes that are unlikely to break anything
+(copy change, styling updates), you can skip tests by running
+`git commit -a --no-verify`.
+
+**Note:** In this scenario an automated Prettier formatter won't be run against
+staged files, so make sure they are in order before commiting.
 
 ## Building the artifacts
 
 Run the command:
+
 ```
 npm run build
 ```
