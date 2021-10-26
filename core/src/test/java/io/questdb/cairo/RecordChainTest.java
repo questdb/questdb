@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -115,9 +115,9 @@ public class RecordChainTest extends AbstractCairoTest {
     public void testSkipAndRefill() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             GenericRecordMetadata metadata = new GenericRecordMetadata();
-            metadata.add(new TableColumnMetadata("x", ColumnType.LONG, null));
-            metadata.add(new TableColumnMetadata("y", ColumnType.INT, null));
-            metadata.add(new TableColumnMetadata("z", ColumnType.INT, null));
+            metadata.add(new TableColumnMetadata("x", 1, ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("y", 2, ColumnType.INT));
+            metadata.add(new TableColumnMetadata("z", 3, ColumnType.INT));
 
             ListColumnFilter filter = new ListColumnFilter();
             filter.add(1);

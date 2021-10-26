@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -42,10 +42,10 @@ import java.util.concurrent.locks.LockSupport;
 public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
 
     private final static ReceiverFactory LINUX_FACTORY =
-            (configuration, engine, workerPool, localPool, workScheduler1, functionFactoryCache, metrics) -> new LinuxMMLineUdpReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, localPool, functionFactoryCache, metrics) -> new LinuxMMLineUdpReceiver(configuration, engine, workerPool);
 
     private final static ReceiverFactory GENERIC_FACTORY =
-            (configuration, engine, workerPool, localPool, workScheduler1, functionFactoryCache, metrics) -> new LineUdpReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, localPool, functionFactoryCache, metrics) -> new LineUdpReceiver(configuration, engine, workerPool);
 
     @Test
     public void testGenericCannotBindSocket() throws Exception {
@@ -206,7 +206,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
     private void assertConstructorFail(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) {
         try (CairoEngine engine = new CairoEngine(configuration)) {
             try {
-                factory.create(receiverCfg, engine, null, true, null, null, metrics);
+                factory.create(receiverCfg, engine, null, true, null, metrics);
                 Assert.fail();
             } catch (NetworkError ignore) {
             }
@@ -240,7 +240,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
 
 
-                try (AbstractLineProtoUdpReceiver receiver = factory.create(receiverCfg, engine, null, false, null, null, metrics)) {
+                try (AbstractLineProtoUdpReceiver receiver = factory.create(receiverCfg, engine, null, false, null, metrics)) {
 
                     // create table
 

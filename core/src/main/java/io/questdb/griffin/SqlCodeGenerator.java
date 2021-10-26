@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -399,6 +399,7 @@ public class SqlCodeGenerator implements Mutable {
                     metadata.add(
                             slaveAlias,
                             m.getName(),
+                            m.getHash(),
                             ColumnType.STRING,
                             false,
                             0,
@@ -419,6 +420,7 @@ public class SqlCodeGenerator implements Mutable {
                     metadata.add(
                             slaveAlias,
                             slaveMetadata.getColumnName(i),
+                            slaveMetadata.getColumnHash(i),
                             type,
                             slaveMetadata.isColumnIndexed(i),
                             slaveMetadata.getIndexValueBlockCapacity(i),
@@ -442,6 +444,7 @@ public class SqlCodeGenerator implements Mutable {
                 metadata.add(
                         slaveAlias,
                         slaveMetadata.getColumnName(index),
+                        slaveMetadata.getColumnHash(index),
                         type,
                         slaveMetadata.isColumnIndexed(i),
                         slaveMetadata.getIndexValueBlockCapacity(i),
@@ -1761,6 +1764,7 @@ public class SqlCodeGenerator implements Mutable {
 
                 deferredAnalyticMetadata.extendAndSet(i, new TableColumnMetadata(
                         Chars.toString(qc.getAlias()),
+                        0, // transient column hash is 0
                         analyticFunction.getType(),
                         false,
                         0,
@@ -1859,6 +1863,7 @@ public class SqlCodeGenerator implements Mutable {
                 selectMetadata.add(
                         new TableColumnMetadata(
                                 Chars.toString(queryColumn.getAlias()),
+                                metadata.getColumnHash(index),
                                 metadata.getColumnType(index),
                                 metadata.isColumnIndexed(index),
                                 metadata.getIndexValueBlockCapacity(index),
@@ -1969,7 +1974,7 @@ public class SqlCodeGenerator implements Mutable {
                 if (columnExpr.type == FUNCTION && columnExpr.paramCount == 0 && isCountKeyword(columnExpr.token)) {
                     // check if count() was not aliased, if it was, we need to generate new metadata, bummer
                     final RecordMetadata metadata = isCountKeyword(columnName) ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA :
-                            new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(columnName), ColumnType.LONG, null));
+                            new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(columnName), 0, ColumnType.LONG));
                     return new CountRecordCursorFactory(metadata, generateSubQuery(model, executionContext));
                 }
             }
@@ -2046,6 +2051,7 @@ public class SqlCodeGenerator implements Mutable {
                                 indexInThis,
                                 new TableColumnMetadata(
                                         Chars.toString(columns.getQuick(indexInThis).getName())
+                                        , 0
                                         , type
                                         , false
                                         , 0
@@ -2058,6 +2064,7 @@ public class SqlCodeGenerator implements Mutable {
                                 indexInThis,
                                 new TableColumnMetadata(
                                         Chars.toString(columns.getQuick(indexInThis).getName()),
+                                        0,
                                         type,
                                         null
                                 )
@@ -2075,6 +2082,7 @@ public class SqlCodeGenerator implements Mutable {
                     meta.add(indexInThis,
                             new TableColumnMetadata(
                                     Chars.toString(columns.getQuick(indexInThis).getName()),
+                                    0,
                                     vaf.getType(),
                                     null
                             )
@@ -2226,6 +2234,7 @@ public class SqlCodeGenerator implements Mutable {
                     virtualMetadata.add(
                             new TableColumnMetadata(
                                     Chars.toString(column.getAlias()),
+                                    configuration.getRandom().nextLong(),
                                     function.getType(),
                                     false,
                                     0,
@@ -2237,6 +2246,7 @@ public class SqlCodeGenerator implements Mutable {
                     virtualMetadata.add(
                             new TableColumnMetadata(
                                     Chars.toString(column.getAlias()),
+                                    configuration.getRandom().nextLong(),
                                     function.getType(),
                                     function.getMetadata()
                             )
@@ -2267,6 +2277,7 @@ public class SqlCodeGenerator implements Mutable {
                         virtualMetadata.add(
                                 new TableColumnMetadata(
                                         Chars.toString(qc.getAlias()),
+                                        0,
                                         timestampFunction.getType(),
                                         timestampFunction.getMetadata()
                                 )
@@ -2368,15 +2379,16 @@ public class SqlCodeGenerator implements Mutable {
                         int type = readerMeta.getColumnType(columnIndex);
                         int typeSize = ColumnType.sizeOf(type);
 
-                        if (framingSupported && (typeSize < Byte.BYTES || typeSize > Double.BYTES)) {
-                            // we don't frame non-primitive types yet
-                            framingSupported = false;
-                        }
+//                        if (framingSupported && (typeSize < Byte.BYTES || typeSize > Double.BYTES)) {
+//                             we don't frame non-primitive types yet
+//                            framingSupported = false;
+//                        }
                         columnIndexes.add(columnIndex);
                         columnSizes.add((Numbers.msb(typeSize)));
 
                         myMeta.add(new TableColumnMetadata(
                                 Chars.toString(topDownColumns.getQuick(i).getName()),
+                                readerMeta.getColumnHash(columnIndex),
                                 type,
                                 readerMeta.isColumnIndexed(columnIndex),
                                 readerMeta.getIndexValueBlockCapacity(columnIndex),
@@ -2393,6 +2405,7 @@ public class SqlCodeGenerator implements Mutable {
                     if (readerTimestampIndex != -1 && myMeta.getTimestampIndex() == -1 && contextTimestampRequired) {
                         myMeta.add(new TableColumnMetadata(
                                 readerMeta.getColumnName(readerTimestampIndex),
+                                readerMeta.getColumnHash(readerTimestampIndex),
                                 readerMeta.getColumnType(readerTimestampIndex),
                                 readerMeta.getMetadata(readerTimestampIndex)
                         ));
@@ -2414,7 +2427,7 @@ public class SqlCodeGenerator implements Mutable {
             final int latestByColumnCount = latestBy.size();
 
             if (latestByColumnCount > 0) {
-                // validate latest by against current reader
+                // validate the latest by against current reader
                 // first check if column is valid
                 for (int i = 0; i < latestByColumnCount; i++) {
                     final int index = myMeta.getColumnIndexQuiet(latestBy.getQuick(i).token);
@@ -2726,7 +2739,16 @@ public class SqlCodeGenerator implements Mutable {
                 }
 
                 model.setWhereClause(intrinsicModel.filter);
-                return new DataFrameRecordCursorFactory(myMeta, dfcFactory, new DataFrameRowCursorFactory(), false, null, framingSupported, columnIndexes, columnSizes);
+                return new DataFrameRecordCursorFactory(
+                        myMeta,
+                        dfcFactory,
+                        new DataFrameRowCursorFactory(),
+                        false,
+                        null,
+                        framingSupported,
+                        columnIndexes,
+                        columnSizes
+                );
             }
 
             // no where clause
@@ -2735,15 +2757,15 @@ public class SqlCodeGenerator implements Mutable {
                 // construct new metadata, which is a copy of what we constructed just above, but
                 // in the interest of isolating problems we will only affect this factory
 
-                return new TableReaderRecordCursorFactory(
+                return new DataFrameRecordCursorFactory(
                         myMeta,
-                        engine,
-                        tableName,
-                        model.getTableId(),
-                        model.getTableVersion(),
+                        new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
+                        new DataFrameRowCursorFactory(),
+                        false,
+                        null,
+                        framingSupported,
                         columnIndexes,
-                        columnSizes,
-                        framingSupported
+                        columnSizes
                 );
             }
 
@@ -2905,7 +2927,7 @@ public class SqlCodeGenerator implements Mutable {
         keyTypes.clear();
         for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
             // Don't use tagOf(columnType) to compare the types.
-            // Key types have to much exactly except SYMBOL and STRING special case
+            // Key types have too much exactly except SYMBOL and STRING special case
             int columnTypeA = slaveMetadata.getColumnType(listColumnFilterA.getColumnIndexFactored(k));
             int columnTypeB = masterMetadata.getColumnType(listColumnFilterB.getColumnIndexFactored(k));
             if (columnTypeB != columnTypeA && !(ColumnType.isSymbolOrString(columnTypeB) && ColumnType.isSymbolOrString(columnTypeA))) {

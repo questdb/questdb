@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,6 +32,11 @@ public class MCSequence extends AbstractMSequence {
 
     public MCSequence(int cycle, WaitStrategy waitStrategy) {
         super(cycle, waitStrategy);
+    }
+
+    public MCSequence(long value, int cycle) {
+        this(cycle);
+        this.value = value;
     }
 
     public <T> void consumeAll(RingQueue<T> queue, QueueConsumer<T> consumer) {

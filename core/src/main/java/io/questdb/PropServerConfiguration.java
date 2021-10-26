@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -354,6 +354,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int binaryEncodingMaxLength;
     private final long writerDataIndexKeyAppendPageSize;
     private final long writerDataIndexValueAppendPageSize;
+    private long symbolCacheWaitUsBeforeReload;
 
     public PropServerConfiguration(
             String root,
@@ -726,6 +727,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpWriterWorkerPoolHaltOnError = getBoolean(properties, env, "line.tcp.writer.halt.on.error", false);
                 this.lineTcpWriterWorkerYieldThreshold = getLong(properties, env, "line.tcp.writer.worker.yield.threshold", 10);
                 this.lineTcpWriterWorkerSleepThreshold = getLong(properties, env, "line.tcp.writer.worker.sleep.threshold", 10000);
+                this.symbolCacheWaitUsBeforeReload = getLong(properties, env, "line.tcp.symbol.cache.wait.us.before.reload", 500_000);
 
                 int ilpTcpWorkerCount;
                 if (cpuAvailable < 9) {
@@ -2233,6 +2235,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
+
+        @Override
+        public long getSymbolCacheWaitUsBeforeReload() {
+            return symbolCacheWaitUsBeforeReload;
+        }
+
         @Override
         public String getAuthDbPath() {
             return lineTcpAuthDbPath;

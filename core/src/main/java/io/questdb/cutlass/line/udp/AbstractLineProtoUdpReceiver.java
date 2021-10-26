@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -73,7 +73,11 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
             this.commitRate = configuration.getCommitRate();
 
             if (configuration.getReceiveBufferSize() != -1 && nf.setRcvBuf(fd, configuration.getReceiveBufferSize()) != 0) {
-                LOG.error().$("cannot set receive buffer size [fd=").$(fd).$(", size=").$(configuration.getReceiveBufferSize()).$(']').$();
+                LOG.error()
+                        .$("could not set receive buffer size [fd=").$(fd)
+                        .$(", size=").$(configuration.getReceiveBufferSize())
+                        .$(", errno=").$(configuration.getNetworkFacade().errno())
+                        .I$();
             }
 
             lexer = new LineUdpLexer(configuration.getMsgBufferSize());

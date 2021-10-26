@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
@@ -54,7 +55,7 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
         return lpr;
     }
 
-    protected static LineUdpSender createLineProtoSender() {
+    protected static AbstractLineSender createLineProtoSender() {
         return new LineUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 1024, 1);
     }
 
@@ -79,7 +80,7 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                                      String targetColumnName,
                                      int columnType,
                                      String expected,
-                                     Consumer<LineUdpSender> senderConsumer,
+                                     Consumer<AbstractLineSender> senderConsumer,
                                      String... expectedExtraStringColumns) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -96,7 +97,7 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                         }
                     }
                     receiver.start();
-                    try (LineUdpSender sender = createLineProtoSender()) {
+                    try (AbstractLineSender sender = createLineProtoSender()) {
                         senderConsumer.accept(sender);
                         sender.flush();
                     }

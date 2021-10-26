@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -301,7 +301,7 @@ public class JsonLexer implements Mutable, Closeable {
         }
 
         if (len > 0) {
-            Vect.memcpy(lo, cache + cacheSize, len);
+            Vect.memcpy(cache + cacheSize, lo, len);
             cacheSize += len;
         }
     }
@@ -312,7 +312,7 @@ public class JsonLexer implements Mutable, Closeable {
         }
         long ptr = Unsafe.malloc(n, MemoryTag.NATIVE_DEFAULT);
         if (cacheCapacity > 0) {
-            Vect.memcpy(cache, ptr, cacheSize);
+            Vect.memcpy(ptr, cache, cacheSize);
             Unsafe.free(cache, cacheCapacity, MemoryTag.NATIVE_DEFAULT);
         }
         cacheCapacity = n;

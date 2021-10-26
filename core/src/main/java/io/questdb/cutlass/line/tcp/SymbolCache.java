@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,59 +30,86 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjIntHashMap;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
 class SymbolCache implements Closeable {
-    private final ObjIntHashMap<CharSequence> indexBySym = new ObjIntHashMap<>(256, 0.5, SymbolTable.VALUE_NOT_FOUND);
+    private final ObjIntHashMap<CharSequence> symbolValueToKeyMap = new ObjIntHashMap<>(
+            256,
+            0.5,
+            SymbolTable.VALUE_NOT_FOUND
+    );
     private final MemoryMR txMem = Vm.getMRInstance();
-    private final SymbolMapReaderImpl symMapReader = new SymbolMapReaderImpl();
+    private final SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl();
+    private final MicrosecondClock clock;
     private long transientSymCountOffset;
+    private long lastSymbolReaderReloadTimestamp;
+    private final long waitUsBeforeReload;
 
-    SymbolCache() {
+    SymbolCache(LineTcpReceiverConfiguration configuration) {
+        this.clock = configuration.getMicrosecondClock();
+        this.waitUsBeforeReload = configuration.getSymbolCacheWaitUsBeforeReload();
     }
 
     @Override
     public void close() {
-        symMapReader.close();
-        indexBySym.clear();
+        symbolMapReader.close();
+        symbolValueToKeyMap.clear();
         txMem.close();
     }
 
-    int getNCached() {
-        return indexBySym.size();
+    int getCacheValueCount() {
+        return symbolValueToKeyMap.size();
     }
 
-    int getSymIndex(CharSequence symValue) {
-        int symIndex = indexBySym.get(symValue);
-
-        if (SymbolTable.VALUE_NOT_FOUND != symIndex) {
-            return symIndex;
+    int getSymbolKey(CharSequence symbolValue) {
+        final int index = symbolValueToKeyMap.keyIndex(symbolValue);
+        if (index < 0) {
+            return symbolValueToKeyMap.valueAt(index);
         }
 
-        int symCount = txMem.getInt(transientSymCountOffset);
-        symMapReader.updateSymbolCount(symCount);
-        symIndex = symMapReader.keyOf(symValue);
+        final int symbolValueCount = txMem.getInt(transientSymCountOffset);
+        final long ticks;
 
-        if (SymbolTable.VALUE_NOT_FOUND != symIndex) {
-            indexBySym.put(symValue.toString(), symIndex);
+        if (
+                symbolValueCount > symbolMapReader.size()
+                        && (ticks = clock.getTicks()) - lastSymbolReaderReloadTimestamp > waitUsBeforeReload
+        ) {
+            symbolMapReader.updateSymbolCount(symbolValueCount);
+            lastSymbolReaderReloadTimestamp = ticks;
         }
 
-        return symIndex;
+        final int symbolKey = symbolMapReader.keyOf(symbolValue);
+
+        if (SymbolTable.VALUE_NOT_FOUND != symbolKey) {
+            symbolValueToKeyMap.putAt(index, Chars.toString(symbolValue), symbolKey);
+        }
+
+        return symbolKey;
     }
 
-    void of(CairoConfiguration configuration, Path path, CharSequence name, int symIndex) {
+    void of(CairoConfiguration configuration, Path path, CharSequence columnName, int symbolIndexInTxFile) {
         FilesFacade ff = configuration.getFilesFacade();
-        transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symIndex) + Integer.BYTES;
+        transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symbolIndexInTxFile);
         final int plen = path.length();
-        txMem.of(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), transientSymCountOffset, transientSymCountOffset, MemoryTag.MMAP_INDEX_READER);
-        int symCount = txMem.getInt(transientSymCountOffset - Integer.BYTES);
+        txMem.of(
+                ff,
+                path.concat(TableUtils.TXN_FILE_NAME).$(),
+                transientSymCountOffset,
+                // we will be reading INT value at `transientSymCountOffset`
+                // must ensure there is mapped memory
+                transientSymCountOffset + 4,
+                MemoryTag.MMAP_INDEX_READER
+        );
+        int symCount = txMem.getInt(transientSymCountOffset);
         path.trimTo(plen);
-        symMapReader.of(configuration, path, name, symCount);
-        indexBySym.clear(symCount);
+        symbolMapReader.of(configuration, path, columnName, symCount);
+        symbolValueToKeyMap.clear(symCount);
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -72,6 +72,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
                 columnMetadata.add(
                         new TableColumnMetadata(
                                 Chars.toString(name),
+                                TableUtils.getColumnHash(metaMem, i),
                                 TableUtils.getColumnType(metaMem, i),
                                 TableUtils.isColumnIndexed(metaMem, i),
                                 TableUtils.getIndexBlockCapacity(metaMem, i),
@@ -86,13 +87,6 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             throw e;
         }
         return this;
-    }
-
-    public static void freeTransitionIndex(long address) {
-        if (address == 0) {
-            return;
-        }
-        Unsafe.free(address, Unsafe.getUnsafe().getInt(address), MemoryTag.NATIVE_DEFAULT);
     }
 
     public void applyTransitionIndex(long pTransitionIndex) {
@@ -201,47 +195,9 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
         transitionMeta.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
         try (MemoryMR metaMem = transitionMeta) {
-
             tmpValidationMap.clear();
             TableUtils.validate(ff, metaMem, tmpValidationMap, ColumnType.VERSION);
-
-            int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-            int n = Math.max(this.columnCount, columnCount);
-            final long pTransitionIndex;
-            final int size = n * 16;
-
-            long index = pTransitionIndex = Unsafe.calloc(size, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.getUnsafe().putInt(index, size);
-            Unsafe.getUnsafe().putInt(index + 4, columnCount);
-            index += 8;
-
-            // index structure is
-            // [copy from, copy to] int tuples, each of which is index into original column metadata
-            // the number of these tuples is DOUBLE of maximum of old and new column count.
-            // Tuples are separated into two areas, one is immutable, which drives how metadata should be moved,
-            // the other is the state of moving algo. Moving algo will start with copy of immutable area and will
-            // continue to zero out tuple values in mutable area when metadata is moved. Mutable area is
-
-            // "copy from" == 0 indicates that column is newly added, similarly
-            // "copy to" == 0 indicates that old column has been deleted
-            //
-
-            long offset = TableUtils.getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence name = metaMem.getStr(offset);
-                offset += Vm.getStorageLength(name);
-                int oldPosition = columnNameIndexMap.get(name);
-                // write primary (immutable) index
-                if (oldPosition > -1
-                        && TableUtils.getColumnType(metaMem, i) == TableUtils.getColumnType(this.metaMem, oldPosition)
-                        && TableUtils.isColumnIndexed(metaMem, i) == TableUtils.isColumnIndexed(this.metaMem, oldPosition)) {
-                    Unsafe.getUnsafe().putInt(index + i * 8L, oldPosition + 1);
-                    Unsafe.getUnsafe().putInt(index + oldPosition * 8L + 4, i + 1);
-                } else {
-                    Unsafe.getUnsafe().putLong(index + i * 8L, 0);
-                }
-            }
-            return pTransitionIndex;
+            return TableUtils.createTransitionIndex(metaMem, this.metaMem, this.columnCount, this.columnNameIndexMap);
         }
     }
 
@@ -284,6 +240,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         assert name != null;
         return new TableColumnMetadata(
                 Chars.toString(name),
+                TableUtils.getColumnHash(metaMem, index),
                 TableUtils.getColumnType(metaMem, index),
                 TableUtils.isColumnIndexed(metaMem, index),
                 TableUtils.getIndexBlockCapacity(metaMem, index),

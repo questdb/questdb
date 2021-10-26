@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -216,7 +216,11 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                     }
                 }
             } catch (CairoException ex) {
-                LOG.error().$('[').$(fd).$("] could not process line data [table=").$(protoParser.getMeasurementName()).$(", msg=").$(ex.getFlyweightMessage()).I$();
+                LOG.error().
+                        $('[').$(fd).$("] could not process line data [table=").$(protoParser.getMeasurementName())
+                        .$(", msg=").$(ex.getFlyweightMessage())
+                        .$(", errno=").$(ex.getErrno())
+                        .I$();
                 return IOContextResult.NEEDS_DISCONNECT;
             } catch (Throwable ex) {
                 LOG.error().$('[').$(fd).$("] could not process line data [table=").$(protoParser.getMeasurementName()).$(", ex=").$(ex).I$();

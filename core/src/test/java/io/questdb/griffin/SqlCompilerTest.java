@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,16 +27,17 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -82,11 +83,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "), cast(a as SYMBOL)";
 
         assertCast(expectedData, expectedMeta, sql);
-    }
-
-    @Before
-    public void setUp3() {
-        SharedRandom.RANDOM.set(new Rnd());
     }
 
     @Test

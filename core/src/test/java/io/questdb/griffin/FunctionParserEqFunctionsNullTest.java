@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -108,8 +108,8 @@ public class FunctionParserEqFunctionsNullTest extends BaseFunctionFactoryTest {
             for (int col1Type : EQUIVALENT_NULL_TYPES) {
 
                 final GenericRecordMetadata metadata = new GenericRecordMetadata();
-                metadata.add(new TableColumnMetadata("col0", col0Type, null));
-                metadata.add(new TableColumnMetadata("col1", col1Type, null));
+                metadata.add(new TableColumnMetadata("col0", 1, col0Type));
+                metadata.add(new TableColumnMetadata("col1", 2, col1Type));
 
                 Collections.shuffle(functions);
 

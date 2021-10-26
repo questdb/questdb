@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -55,7 +55,14 @@ public class TableWriteBenchmark {
 
     public static void main(String[] args) throws RunnerException {
         try (CairoEngine engine = new CairoEngine(configuration)) {
-            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1, null).with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
+            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                    .with(
+                            AllowAllCairoSecurityContext.INSTANCE,
+                            null,
+                            null,
+                            -1,
+                            null
+                    );
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
                 compiler.compile("create table if not exists test1(f long) ", sqlExecutionContext);
                 compiler.compile("create table if not exists test2(f timestamp) timestamp (f)", sqlExecutionContext);

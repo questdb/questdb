@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -68,7 +68,7 @@ public class TelemetryTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine, messageBus, null);
+                    SqlCompiler compiler = new SqlCompiler(engine, null);
                     TelemetryJob ignored = new TelemetryJob(engine);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
             ) {
@@ -130,7 +130,7 @@ public class TelemetryTest extends AbstractCairoTest {
        TestUtils.assertMemoryLeak(() -> {
            try (
                    CairoEngine engine = new CairoEngine(configuration);
-                   SqlCompiler compiler = new SqlCompiler(engine, messageBus, null);
+                   SqlCompiler compiler = new SqlCompiler(engine, null);
                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                compiler.compile(
                        "CREATE TABLE " + TelemetryJob.configTableName + " (id long256, enabled boolean)",
@@ -190,7 +190,7 @@ public class TelemetryTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine, messageBus, null);
+                    SqlCompiler compiler = new SqlCompiler(engine, null);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                 refVersion.set("1.0");
                 TelemetryJob telemetryJob = new TelemetryJob(engine, null);

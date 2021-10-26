@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,6 +37,7 @@ public class TableWriterMetadata extends BaseRecordMetadata {
     private final int id;
     private int maxUncommittedRows;
     private long commitLag;
+    private final int metaFileSize;
 
     public TableWriterMetadata(FilesFacade ff, MemoryMR metaMem) {
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
@@ -59,6 +60,7 @@ public class TableWriterMetadata extends BaseRecordMetadata {
             columnMetadata.add(
                     new TableColumnMetadata(
                             Chars.toString(name),
+                            TableUtils.getColumnHash(metaMem, i),
                             type,
                             TableUtils.isColumnIndexed(metaMem, i),
                             TableUtils.getIndexBlockCapacity(metaMem, i),
@@ -71,18 +73,20 @@ public class TableWriterMetadata extends BaseRecordMetadata {
             }
             offset += Vm.getStorageLength(name);
         }
+        metaFileSize = (int)offset;
     }
 
     public int getSymbolMapCount() {
         return symbolMapCount;
     }
 
-    void addColumn(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity) {
+    void addColumn(CharSequence name, long hash, int type, boolean indexFlag, int indexValueBlockCapacity) {
         String str = name.toString();
         columnNameIndexMap.put(str, columnMetadata.size());
         columnMetadata.add(
                 new TableColumnMetadata(
                         str,
+                        hash,
                         type,
                         indexFlag,
                         indexValueBlockCapacity,
@@ -152,5 +156,9 @@ public class TableWriterMetadata extends BaseRecordMetadata {
 
     public void setCommitLag(long micros) {
         this.commitLag = micros;
+    }
+
+    public int getFileDataSize() {
+        return metaFileSize;
     }
 }

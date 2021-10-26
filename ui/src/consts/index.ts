@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,6 +28,8 @@ export enum BusEvent {
   MSG_EDITOR_EXECUTE_ALT = "editor.execute.alt",
   MSG_EDITOR_FOCUS = "editor.focus",
   MSG_EDITOR_SET = "editor.set",
+  MSG_EDITOR_INSERT_COLUMN = "editor.insert.column",
+  MSG_EDITOR_INSERT_QUERY = "editor.insert.query",
   MSG_QUERY_CANCEL = "query.in.cancel",
   MSG_QUERY_DATASET = "query.out.dataset",
   MSG_QUERY_ERROR = "query.out.error",

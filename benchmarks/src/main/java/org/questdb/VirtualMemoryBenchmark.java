@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -58,9 +58,14 @@ public class VirtualMemoryBenchmark {
 
     @Setup(Level.Iteration)
     public void reset() {
-        mem1.jumpTo(0);
-        mem2.jumpTo(0);
-        mem3.jumpTo(0);
+        mem1.clear();
+        mem2.clear();
+        mem3.clear();
+    }
+
+    @Benchmark
+    public CharSequence testBaseline() {
+        return rnd.nextChars(rnd.nextInt() % 4);
     }
 
     //    @Benchmark
@@ -71,11 +76,6 @@ public class VirtualMemoryBenchmark {
             mem2.putStr(o, cs);
             o += cs.length() * 2L + 4;
         }
-    }
-
-    @Benchmark
-    public CharSequence testBaseline() {
-        return rnd.nextChars(rnd.nextInt() % 4);
     }
 
     //    @Benchmark

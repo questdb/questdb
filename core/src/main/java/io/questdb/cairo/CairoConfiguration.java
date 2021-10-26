@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,12 +30,15 @@ import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.NanosecondClock;
 import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface CairoConfiguration {
+
+    ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
     boolean enableTestFactories();
 
@@ -158,6 +161,17 @@ public interface CairoConfiguration {
     int getO3PurgeQueueCapacity();
 
     int getParallelIndexThreshold();
+
+    default Rnd getRandom() {
+        Rnd rnd = RANDOM.get();
+        if (rnd == null) {
+            RANDOM.set(rnd = new Rnd(
+                    getMillisecondClock().getTicks(),
+                    getMicrosecondClock().getTicks())
+            );
+        }
+        return rnd;
+    }
 
     int getReaderPoolMaxSegments();
 

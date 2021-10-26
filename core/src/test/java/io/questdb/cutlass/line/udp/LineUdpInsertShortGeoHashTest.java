@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -84,9 +84,7 @@ public class LineUdpInsertShortGeoHashTest extends LineUdpInsertGeoHashTest {
                 ColumnType.getGeoHashTypeWithBits(14),
                 "geohash\ttimestamp\n" +
                         "01001110110000\t1970-01-01T00:00:01.000000Z\n",
-                sender -> {
-                    sender.metric(tableName).field(targetColumnName, "9v1s8hm7wpkssv1h").$(1_000_000_000);
-                }
+                sender -> sender.metric(tableName).field(targetColumnName, "9v1s8hm7wpkssv1h").$(1_000_000_000)
         );
     }
 
@@ -113,9 +111,7 @@ public class LineUdpInsertShortGeoHashTest extends LineUdpInsertGeoHashTest {
                 ColumnType.getGeoHashTypeWithBits(9),
                 "geohash\ttimestamp\n" +
                         "\t1970-01-01T00:00:01.000000Z\n",
-                sender -> {
-                    sender.metric(tableName).field(targetColumnName, "sp-").$(1_000_000_000);
-                }
+                sender -> sender.metric(tableName).field(targetColumnName, "sp-").$(1_000_000_000)
         );
     }
 

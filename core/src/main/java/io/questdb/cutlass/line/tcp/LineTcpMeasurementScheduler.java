@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Telemetry;
 import io.questdb.cairo.*;
-import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
@@ -83,6 +82,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private int nLoadCheckCycles = 0;
     private int nRebalances = 0;
     private LineTcpReceiver.SchedulerListener listener;
+    private final LineTcpReceiverConfiguration configuration;
 
     LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
@@ -94,6 +94,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         this.engine = engine;
         this.securityContext = lineConfiguration.getCairoSecurityContext();
         this.cairoConfiguration = engine.getConfiguration();
+        this.configuration = lineConfiguration;
         this.milliClock = cairoConfiguration.getMillisecondClock();
         this.commitMode = cairoConfiguration.getCommitMode();
 
@@ -148,7 +149,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
     @Override
     public void close() {
-        // Both the writer and the net worker pools must have been closed so that their respective cleaners have run
+        // Both the writer and the network reader worker pools must have been closed so that their respective cleaners have run
         if (null != pubSeq) {
             pubSeq = null;
             tableUpdateDetailsLock.writeLock().lock();
@@ -384,11 +385,15 @@ class LineTcpMeasurementScheduler implements Closeable {
             tableUpdateDetails = startNewMeasurementEvent(netIoJob, protoParser);
         } catch (EntryUnavailableException ex) {
             // Table writer is locked
-            LOG.info().$("could not get table writer [tableName=").$(protoParser.getMeasurementName()).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
+            LOG.info().$("could not get table writer [tableName=").$(protoParser.getMeasurementName()).$(", ex=").$(ex.getFlyweightMessage()).I$();
             return true;
         } catch (CairoException ex) {
             // Table could not be created
-            LOG.info().$("could not create table [tableName=").$(protoParser.getMeasurementName()).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
+            LOG.info()
+                    .$("could not create table [tableName=").$(protoParser.getMeasurementName())
+                    .$(", ex=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
             return false;
         }
         if (null != tableUpdateDetails) {
@@ -487,7 +492,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             // so that writing thread will create the column
                             // Note that writing thread will be responsible to convert it from utf8
                             // to utf16. This should happen rarely
-                            Vect.memcpy(entity.getName().getLo(), bufPos, colNameLen);
+                            Vect.memcpy(bufPos, entity.getName().getLo(), colNameLen);
                         } else {
                             throw CairoException.instance(0).put("queue buffer overflow");
                         }
@@ -506,15 +511,15 @@ class LineTcpMeasurementScheduler implements Closeable {
                                 floatingCharSink.of(bufPos, bufPos + 2L * l);
                                 int symIndex;
                                 // value is UTF8 encoded potentially
-                                CharSequence columnName = entity.getValue();
+                                CharSequence columnValue = entity.getValue();
                                 if (protoParser.hasNonAsciiChars()) {
                                     if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
                                         throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
                                     }
-                                    columnName = floatingCharSink;
+                                    columnValue = floatingCharSink;
                                 }
 
-                                symIndex = tableUpdateDetails.getSymbolIndex(localDetails, colIndex, columnName);
+                                symIndex = tableUpdateDetails.getSymbolIndex(localDetails, colIndex, columnValue);
                                 if (symIndex != SymbolTable.VALUE_NOT_FOUND) {
                                     // We know the symbol int value
                                     // Encode the int
@@ -656,7 +661,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         void processMeasurementEvent(WriterJob job) {
-            Row row = null;
+            TableWriter.Row row = null;
             try {
                 TableWriter writer = tableUpdateDetails.getWriter();
                 long bufPos = bufLo;
@@ -818,13 +823,40 @@ class LineTcpMeasurementScheduler implements Closeable {
                             byte b = Unsafe.getUnsafe().getByte(bufPos);
                             bufPos += Byte.BYTES;
                             final int colType = writer.getMetadata().getColumnType(colIndex);
-                            if (ColumnType.isBoolean(colType) || ColumnType.isLong(colType)) {
-                                row.putBool(colIndex, b == 1);
-                            } else {
-                                throw CairoException.instance(0)
-                                        .put("cast error for line protocol boolean [columnIndex=").put(colIndex)
-                                        .put(", columnType=").put(ColumnType.nameOf(colType))
-                                        .put(']');
+                            switch (ColumnType.tagOf(colType)) {
+                                case ColumnType.BOOLEAN:
+                                    row.putBool(colIndex, b == 1);
+                                    break;
+
+                                case ColumnType.BYTE:
+                                    row.putByte(colIndex, b);
+                                    break;
+
+                                case ColumnType.SHORT:
+                                    row.putShort(colIndex, b);
+                                    break;
+
+                                case ColumnType.INT:
+                                    row.putInt(colIndex, b);
+                                    break;
+
+                                case ColumnType.LONG:
+                                    row.putLong(colIndex, b);
+                                    break;
+
+                                case ColumnType.FLOAT:
+                                    row.putFloat(colIndex, b);
+                                    break;
+
+                                case ColumnType.DOUBLE:
+                                    row.putDouble(colIndex, b);
+                                    break;
+
+                                default:
+                                    throw CairoException.instance(0)
+                                            .put("cast error for line protocol boolean [columnIndex=").put(colIndex)
+                                            .put(", columnType=").put(ColumnType.nameOf(colType))
+                                            .put(']');
                             }
                             break;
                         }
@@ -1107,7 +1139,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         symCache = unusedSymbolCaches.get(lastUnusedSymbolCacheIndex);
                         unusedSymbolCaches.remove(lastUnusedSymbolCacheIndex);
                     } else {
-                        symCache = new SymbolCache();
+                        symCache = new SymbolCache(configuration);
                     }
                     int symIndex = resolveSymbolIndex(reader.getMetadata(), colIndex);
                     symCache.of(cairoConfiguration, path, reader.getMetadata().getColumnName(colIndex), symIndex);
@@ -1193,7 +1225,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 if (null == symCache) {
                     symCache = addSymbolCache(colIndex);
                 }
-                return symCache.getSymIndex(symValue);
+                return symCache.getSymbolKey(symValue);
             }
 
             private int resolveSymbolIndex(TableReaderMetadata metadata, int colIndex) {
@@ -1551,6 +1583,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                 return ColumnType.TIMESTAMP;
             }
             return DEFAULT_COLUMN_TYPES[protoParser.getEntity(columnIndex).getType()];
+        }
+
+        @Override
+        public long getColumnHash(int columnIndex) {
+            return cairoConfiguration.getRandom().nextLong();
         }
 
         @Override

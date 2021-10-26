@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,16 +39,12 @@ public class TxReader implements Closeable {
     protected static final int PARTITION_SIZE_OFFSET = 1;
     protected static final int PARTITION_NAME_TX_OFFSET = 2;
     protected static final int PARTITION_DATA_TX_OFFSET = 3;
-
-    protected final FilesFacade ff;
-    protected final int rootLen;
     protected final LongList attachedPartitions = new LongList();
     private final Timestamps.TimestampFloorMethod timestampFloorMethod;
-    protected Path path;
     protected long minTimestamp;
     protected long maxTimestamp;
     protected long txn;
-    protected int symbolsCount;
+    protected int symbolColumnCount;
     protected long dataVersion;
     protected long structureVersion;
     protected long fixedRowCount;
@@ -58,13 +54,9 @@ public class TxReader implements Closeable {
     protected int attachedPartitionsSize = 0;
     private MemoryMR roTxMem;
 
-    public TxReader(FilesFacade ff, Path path, int partitionBy) {
-        this.ff = ff;
-        this.path = new Path(path.length() + 10);
-        this.path.put(path);
-        this.rootLen = path.length();
+    public TxReader(FilesFacade ff, @Transient Path path, int partitionBy) {
         try {
-            roTxMem = openTxnFile(this.ff, this.path, rootLen);
+            roTxMem = openTxnFile(ff, path);
             this.timestampFloorMethod = partitionBy != PartitionBy.NONE ? getPartitionFloor(partitionBy) : null;
             this.partitionBy = partitionBy;
         } catch (Throwable e) {
@@ -80,7 +72,6 @@ public class TxReader implements Closeable {
     @Override
     public void close() {
         roTxMem = Misc.free(roTxMem);
-        path = Misc.free(path);
     }
 
     public long getDataVersion() {
@@ -168,7 +159,7 @@ public class TxReader implements Closeable {
     }
 
     public long getTxEofOffset() {
-        return getTxMemSize(symbolsCount, attachedPartitions.size());
+        return getTxMemSize(symbolColumnCount, attachedPartitions.size());
     }
 
     public long getTxn() {
@@ -214,13 +205,13 @@ public class TxReader implements Closeable {
         this.maxTimestamp = roTxMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
         this.dataVersion = roTxMem.getLong(TX_OFFSET_DATA_VERSION);
         this.structureVersion = roTxMem.getLong(TX_OFFSET_STRUCT_VERSION);
-        final long prevSymbolCount = this.symbolsCount;
-        this.symbolsCount = roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
-        if (prevSymbolCount != symbolsCount) {
-            roTxMem.growToFileSize();
-        }
+        final long prevSymbolCount = this.symbolColumnCount;
+        this.symbolColumnCount = roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
         final long prevPartitionTableVersion = this.partitionTableVersion;
         this.partitionTableVersion = roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
+        if (prevSymbolCount != symbolColumnCount) {
+            roTxMem.growToFileSize();
+        }
         loadAttachedPartitions(prevPartitionTableVersion);
     }
 
@@ -229,10 +220,10 @@ public class TxReader implements Closeable {
     }
 
     private void copyAttachedPartitionsFromTx(int txAttachedPartitionsSize, int max) {
-        roTxMem.extend(getPartitionTableIndexOffset(symbolsCount, txAttachedPartitionsSize));
+        roTxMem.extend(getPartitionTableIndexOffset(symbolColumnCount, txAttachedPartitionsSize));
         attachedPartitions.setPos(txAttachedPartitionsSize);
         for (int i = max; i < txAttachedPartitionsSize; i++) {
-            attachedPartitions.setQuick(i, roTxMem.getLong(getPartitionTableIndexOffset(symbolsCount, i)));
+            attachedPartitions.setQuick(i, roTxMem.getLong(getPartitionTableIndexOffset(symbolColumnCount, i)));
         }
         attachedPartitionsSize = txAttachedPartitionsSize;
     }
@@ -260,6 +251,10 @@ public class TxReader implements Closeable {
         return timestampFloorMethod != null && timestamp != Numbers.LONG_NaN ? timestampFloorMethod.floor(timestamp) : Long.MIN_VALUE;
     }
 
+    long getRawMemory() {
+        return roTxMem.getPageAddress(0);
+    }
+
     protected void initPartitionAt(int index, long partitionTimestampLo, long partitionSize) {
         attachedPartitions.setQuick(index + PARTITION_TS_OFFSET, partitionTimestampLo);
         attachedPartitions.setQuick(index + PARTITION_SIZE_OFFSET, partitionSize);
@@ -269,7 +264,7 @@ public class TxReader implements Closeable {
 
     private void loadAttachedPartitions(long prevPartitionTableVersion) {
         if (partitionBy != PartitionBy.NONE) {
-            int txAttachedPartitionsSize = roTxMem.getInt(getPartitionTableSizeOffset(symbolsCount)) / Long.BYTES;
+            int txAttachedPartitionsSize = roTxMem.getInt(getPartitionTableSizeOffset(symbolColumnCount)) / Long.BYTES;
             if (txAttachedPartitionsSize > 0) {
                 if (prevPartitionTableVersion != partitionTableVersion) {
                     attachedPartitions.clear();
@@ -291,15 +286,11 @@ public class TxReader implements Closeable {
         }
     }
 
-    protected MemoryMR openTxnFile(FilesFacade ff, Path path, int rootLen) {
-        try {
-            if (this.ff.exists(this.path.concat(TXN_FILE_NAME).$())) {
-                return Vm.getMRInstance(ff, path, ff.length(path), MemoryTag.MMAP_DEFAULT);
-            }
-            throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(this.path);
-        } finally {
-            this.path.trimTo(rootLen);
+    protected MemoryMR openTxnFile(FilesFacade ff, Path path) {
+        if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
+            return Vm.getMRInstance(ff, path, ff.length(path), MemoryTag.MMAP_DEFAULT);
         }
+        throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
     }
 
     void readRowCounts() {

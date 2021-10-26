@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,11 +28,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkError;
 
-public class LineTcpSender extends LineUdpSender {
-    private static final Log LOG = LogFactory.getLog(LineUdpSender.class);
+public class LineTcpSender extends AbstractLineSender {
+    private static final Log LOG = LogFactory.getLog(LineTcpSender.class);
 
     public LineTcpSender(int sendToIPv4Address, int sendToPort, int bufferCapacity) {
-        super(0, sendToIPv4Address, sendToPort, bufferCapacity, 0);
+        super(0, sendToIPv4Address, sendToPort, bufferCapacity, 0, LOG);
     }
 
     @Override
