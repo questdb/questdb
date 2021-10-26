@@ -961,7 +961,7 @@ public class SqlCodeGenerator implements Mutable {
         final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
         final boolean indexed = metadata.isColumnIndexed(latestByIndex);
 
-        if (!ColumnType.isSymbol(metadata.getColumnType(latestByIndex))) {
+        if (listColumnFilterA.size() > 1 || !ColumnType.isSymbol(metadata.getColumnType(latestByIndex))) {
             return new LatestByAllFilteredRecordCursorFactory(
                     metadata,
                     configuration,
@@ -2501,7 +2501,8 @@ public class SqlCodeGenerator implements Mutable {
                         readerTimestampIndex,
                         functionParser,
                         myMeta,
-                        executionContext
+                        executionContext,
+                        listColumnFilterA.size()
                 );
 
                 // intrinsic parser can collapse where clause when removing parts it can replace

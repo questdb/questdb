@@ -159,7 +159,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testBindVariableInIndexLookup() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (deviceName SYMBOL capacity 1000 index, time TIMESTAMP, slot SYMBOL, port SYMBOL, downStream DOUBLE, upStream DOUBLE) timestamp(time) partition by DAY", sqlExecutionContext);
-            compiler.compile("create table src as (select rnd_symbol(15000, 4,4,0) sym, timestamp_sequence(0, 100000) ts, rnd_double() val from long_sequence(5000000))", sqlExecutionContext);
+            compiler.compile("create table src as (select rnd_symbol(15000, 4,4,0) sym, timestamp_sequence(0, 100000) ts, rnd_double() val from long_sequence(5000))", sqlExecutionContext);
             compiler.compile("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src", sqlExecutionContext);
             try (
                     RecordCursorFactory factory = compiler.compile("select distinct deviceName from alcatel_traffic_tmp", sqlExecutionContext).getRecordCursorFactory();
@@ -4252,6 +4252,42 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     sink,
                     "cust_id\tbalance_ccy\tbalance\ttimestamp\n" +
                             "c1\tEUR\t782.0\t2021-09-14T17:35:04.000000Z\n"
+            );
+        });
+    }
+
+    @Test
+    public void testLatestBySeveralColumnsAndEqFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab(" +
+                    "    id symbol index, " +
+                    "    name symbol index, " +
+                    "    value double, " +
+                    "    ts timestamp" +
+                    ") timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            executeInsert("insert into tab  values ('d1', 'c1', 101.1, '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-05T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.4, '2021-10-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.1, '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.2, '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.3, '2021-10-05T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.4, '2021-10-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.5, '2021-10-05T15:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.1, '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.2, '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.3, '2021-10-05T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.4, '2021-10-05T14:31:35.878Z')");
+
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "tab latest by id, name where id = 'd1'",
+                    sink,
+                    "id\tname\tvalue\tts\n" +
+                            "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
+                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n"
             );
         });
     }

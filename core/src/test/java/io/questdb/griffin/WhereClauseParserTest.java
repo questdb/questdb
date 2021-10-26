@@ -1718,12 +1718,30 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     private IntrinsicModel modelOf(CharSequence seq, String preferredColumn) throws SqlException {
         queryModel.clear();
-        return e.extract(column -> column, compiler.testParseExpression(seq, queryModel), metadata, preferredColumn, metadata.getTimestampIndex(), functionParser, metadata, sqlExecutionContext);
+        return e.extract(
+                column -> column,
+                compiler.testParseExpression(seq, queryModel),
+                metadata,
+                preferredColumn,
+                metadata.getTimestampIndex(),
+                functionParser,
+                metadata,
+                sqlExecutionContext,
+                0);
     }
 
     private IntrinsicModel noTimestampModelOf(CharSequence seq) throws SqlException {
         queryModel.clear();
-        return e.extract(column -> column, compiler.testParseExpression(seq, queryModel), noTimestampMetadata, null, noTimestampMetadata.getTimestampIndex(), functionParser, metadata, sqlExecutionContext);
+        return e.extract(
+                column -> column,
+                compiler.testParseExpression(seq, queryModel),
+                noTimestampMetadata,
+                null,
+                noTimestampMetadata.getTimestampIndex(),
+                functionParser,
+                metadata,
+                sqlExecutionContext,
+                0);
     }
 
     private IntrinsicModel runWhereCompareToModelTest(String where, String expected) throws SqlException {
@@ -1797,7 +1815,16 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     private IntrinsicModel unindexedModelOf(CharSequence seq, String preferredColumn) throws SqlException {
         queryModel.clear();
-        return e.extract(column -> column, compiler.testParseExpression(seq, queryModel), unindexedMetadata, preferredColumn, unindexedMetadata.getTimestampIndex(), functionParser, metadata, sqlExecutionContext);
+        return e.extract(
+                column -> column,
+                compiler.testParseExpression(seq, queryModel),
+                unindexedMetadata,
+                preferredColumn,
+                unindexedMetadata.getTimestampIndex(),
+                functionParser,
+                metadata,
+                sqlExecutionContext,
+                0);
     }
 
     @FunctionalInterface

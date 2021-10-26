@@ -199,10 +199,9 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
     @Test
     public void testNotEquals2Symbols() throws Exception {
         final String expected = "k\tprice\tts\n";
-
         assertQuery(
                 expected,
-                "select sym k, price, ts from x where sym != 'HBC' and sym != 'AAA'",
+                "select sym k, price, ts from x where sym != 'DXR' and sym != 'HBC' and sym != 'ABB'",
                 "create table x (\n" +
                         "    sym symbol cache index,\n" +
                         "    price double,\n" +
@@ -214,9 +213,7 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
                         "    from long_sequence(10)) timestamp (ts)",
                 expected,
-                false,
-                true,
-                true
+                false
         );
     }
 
