@@ -97,10 +97,10 @@ final class WhereClauseParser implements Mutable {
                                   RecordMetadata m,
                                   FunctionParser functionParser,
                                   SqlExecutionContext executionContext,
-                                  int numColsInFilter) throws SqlException {
+                                  boolean canUseIndex) throws SqlException {
         checkNodeValid(node);
-        return analyzeEquals0(translator, model, node, node.lhs, node.rhs, m, functionParser, executionContext, numColsInFilter) ||
-                analyzeEquals0(translator, model, node, node.rhs, node.lhs, m, functionParser, executionContext, numColsInFilter);
+        return analyzeEquals0(translator, model, node, node.lhs, node.rhs, m, functionParser, executionContext, canUseIndex) ||
+                analyzeEquals0(translator, model, node, node.rhs, node.lhs, m, functionParser, executionContext, canUseIndex);
     }
 
     private boolean analyzeEquals0(AliasTranslator translator,
@@ -111,7 +111,7 @@ final class WhereClauseParser implements Mutable {
                                    RecordMetadata m,
                                    FunctionParser functionParser,
                                    SqlExecutionContext executionContext,
-                                   int numColsInFilter) throws SqlException {
+                                   boolean canUseIndex) throws SqlException {
         if (nodesEqual(a, b)) {
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
@@ -145,7 +145,7 @@ final class WhereClauseParser implements Mutable {
                     case ColumnType.INT:
                         final boolean preferred = Chars.equalsIgnoreCaseNc(preferredKeyColumn, column);
                         final boolean indexed = m.isColumnIndexed(index);
-                        if (numColsInFilter < 2 && (preferred || (indexed && preferredKeyColumn == null))) {
+                        if (canUseIndex && (preferred || (indexed && preferredKeyColumn == null))) {
                             CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
                             if (Chars.equalsIgnoreCaseNc(model.keyColumn, column)) {
                                 // compute overlap of values
@@ -736,10 +736,10 @@ final class WhereClauseParser implements Mutable {
                                      IntrinsicModel model,
                                      ExpressionNode node,
                                      RecordMetadata m,
-                                     int numColsInFilter) throws SqlException {
+                                     boolean canUseIndex) throws SqlException {
         checkNodeValid(node);
-        return analyzeNotEquals0(translator, model, node, node.lhs, node.rhs, m, numColsInFilter)
-                || analyzeNotEquals0(translator, model, node, node.rhs, node.lhs, m, numColsInFilter);
+        return analyzeNotEquals0(translator, model, node, node.lhs, node.rhs, m, canUseIndex)
+                || analyzeNotEquals0(translator, model, node, node.rhs, node.lhs, m, canUseIndex);
     }
 
     private boolean analyzeNotEquals0(AliasTranslator translator,
@@ -748,7 +748,7 @@ final class WhereClauseParser implements Mutable {
                                       ExpressionNode a,
                                       ExpressionNode b,
                                       RecordMetadata m,
-                                      int numColsInFilter) throws SqlException {
+                                      boolean canUseIndex) throws SqlException {
         if (Chars.equals(a.token, b.token)) {
             model.intrinsicValue = IntrinsicModel.FALSE;
             return true;
@@ -778,7 +778,7 @@ final class WhereClauseParser implements Mutable {
                         if (m.isColumnIndexed(index)) {
                             final boolean preferred = Chars.equalsIgnoreCaseNc(preferredKeyColumn, column);
                             final boolean indexed = m.isColumnIndexed(index);
-                            if (numColsInFilter < 2 && indexed && preferredKeyColumn == null) {
+                            if (canUseIndex && indexed && preferredKeyColumn == null) {
                                 CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
                                 if (Chars.equalsIgnoreCaseNc(model.keyColumn, column)) {
                                     if (model.keyExcludedValues.contains(value)) {
@@ -1054,7 +1054,7 @@ final class WhereClauseParser implements Mutable {
             FunctionParser functionParser,
             RecordMetadata metadata,
             SqlExecutionContext executionContext,
-            int numColsInFilter
+            boolean canUseIndex
     ) throws SqlException {
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.preferredKeyColumn = preferredKeyColumn;
@@ -1072,7 +1072,7 @@ final class WhereClauseParser implements Mutable {
                 functionParser,
                 metadata,
                 executionContext,
-                numColsInFilter)) {
+                canUseIndex)) {
             return model;
         }
         ExpressionNode root = node;
@@ -1088,7 +1088,7 @@ final class WhereClauseParser implements Mutable {
                             functionParser,
                             metadata,
                             executionContext,
-                            numColsInFilter)) {
+                            canUseIndex)) {
                         stack.push(node.rhs);
                     }
                     node = removeAndIntrinsics(
@@ -1099,7 +1099,7 @@ final class WhereClauseParser implements Mutable {
                             functionParser,
                             metadata,
                             executionContext,
-                            numColsInFilter) ? null : node.lhs;
+                            canUseIndex) ? null : node.lhs;
                 } else {
                     node = stack.poll();
                 }
@@ -1334,7 +1334,7 @@ final class WhereClauseParser implements Mutable {
                                         FunctionParser functionParser,
                                         RecordMetadata metadata,
                                         SqlExecutionContext executionContext,
-                                        int numColsInFilter) throws SqlException {
+                                        boolean canUseIndex) throws SqlException {
         switch (intrinsicOps.get(node.token)) {
             case INTRINSIC_OP_IN:
                 return analyzeIn(translator, model, node, m, functionParser, executionContext);
@@ -1347,9 +1347,9 @@ final class WhereClauseParser implements Mutable {
             case INTRINSIC_OP_LESS_EQ:
                 return analyzeLess(model, node, true, functionParser, metadata, executionContext);
             case INTRINSIC_OP_EQUAL:
-                return analyzeEquals(translator, model, node, m, functionParser, executionContext, numColsInFilter);
+                return analyzeEquals(translator, model, node, m, functionParser, executionContext, canUseIndex);
             case INTRINSIC_OP_NOT_EQ:
-                return analyzeNotEquals(translator, model, node, m, numColsInFilter);
+                return analyzeNotEquals(translator, model, node, m, canUseIndex);
             case INTRINSIC_OP_NOT:
                 return (isInKeyword(node.rhs.token) && analyzeNotIn(translator, model, node, m, functionParser, metadata, executionContext))
                         || (isBetweenKeyword(node.rhs.token) && analyzeNotBetween(translator, model, node, m, functionParser, metadata, executionContext));

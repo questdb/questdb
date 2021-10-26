@@ -2449,6 +2449,7 @@ public class SqlCodeGenerator implements Mutable {
 
             listColumnFilterA.clear();
             final int latestByColumnCount = latestBy.size();
+            final boolean canUseIndex = latestByColumnCount == 1;
 
             if (latestByColumnCount > 0) {
                 // validate the latest by against current reader
@@ -2484,7 +2485,7 @@ public class SqlCodeGenerator implements Mutable {
 
                 CharSequence preferredKeyColumn = null;
 
-                if (listColumnFilterA.size() == 1) {
+                if (canUseIndex) {
                     final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
 
                     if (ColumnType.isSymbol(myMeta.getColumnType(latestByIndex))) {
@@ -2502,7 +2503,7 @@ public class SqlCodeGenerator implements Mutable {
                         functionParser,
                         myMeta,
                         executionContext,
-                        listColumnFilterA.size()
+                        canUseIndex
                 );
 
                 // intrinsic parser can collapse where clause when removing parts it can replace
@@ -2794,7 +2795,7 @@ public class SqlCodeGenerator implements Mutable {
                 );
             }
 
-            if (latestByColumnCount == 1 && myMeta.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(0))) {
+            if (canUseIndex && myMeta.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(0))) {
                 return new LatestByAllIndexedFilteredRecordCursorFactory(
                         configuration,
                         myMeta,
