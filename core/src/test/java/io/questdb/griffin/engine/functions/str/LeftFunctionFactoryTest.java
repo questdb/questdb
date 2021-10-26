@@ -55,6 +55,29 @@ public class LeftFunctionFactoryTest extends AbstractGriffinTest {
     public void testConstNeg() throws Exception {
         assertQuery(
                 "k\tleft\n" +
+                        "JWCPSWHYRXPEHNRX\tJWCPSWHYRXPEHNR\n" +
+                        "SXUXIBBTGPGWFFYU\tSXUXIBBTGPGWFFY\n" +
+                        "YYQEHBHFOWLPDXYSBEO\tYYQEHBHFOWLPDXYSBE\n" +
+                        "JSHRUEDRQQUL\tJSHRUEDRQQU\n" +
+                        "\t\n" +
+                        "GETJRSZSRYRFBVTMHGOO\tGETJRSZSRYRFBVTMHGO\n" +
+                        "VDZJMYICCXZOUIC\tVDZJMYICCXZOUI\n" +
+                        "KGHVUVSDOTSEDYYCTGQO\tKGHVUVSDOTSEDYYCTGQ\n" +
+                        "\t\n" +
+                        "WCKYLSUWDSWUGSH\tWCKYLSUWDSWUGS\n",
+                "select k, left(k,-1) from x",
+                "create table x as (select rnd_str(10,20,1) k from long_sequence(10))",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testConstNegLarge() throws Exception {
+        assertQuery(
+                "k\tleft\n" +
                         "JWCPSWHYRXPEHNRX\t\n" +
                         "SXUXIBBTGPGWFFYU\t\n" +
                         "YYQEHBHFOWLPDXYSBEO\t\n" +
@@ -65,7 +88,7 @@ public class LeftFunctionFactoryTest extends AbstractGriffinTest {
                         "KGHVUVSDOTSEDYYCTGQO\t\n" +
                         "\t\n" +
                         "WCKYLSUWDSWUGSH\t\n",
-                "select k, left(k,-1) from x",
+                "select k, left(k,-40) from x",
                 "create table x as (select rnd_str(10,20,1) k from long_sequence(10))",
                 null,
                 true,
@@ -127,7 +150,7 @@ public class LeftFunctionFactoryTest extends AbstractGriffinTest {
                         "JWCPSWHYRXPEHNRX\t5\tJWCPS\n" +
                         "\tNaN\t\n" +
                         "IBBTGPGWFFYUDEY\t15\tIBBTGPGWFFYUDEY\n" +
-                        "BHFOWLPDXY\t-1\t\n" +
+                        "BHFOWLPDXY\t-1\tBHFOWLPDX\n" +
                         "UOJSHRUEDRQQULO\t9\tUOJSHRUED\n" +
                         "\t6\t\n" +
                         "SZSRYRFBVTMHGOOZ\t8\tSZSRYRFB\n" +

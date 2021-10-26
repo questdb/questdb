@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -193,7 +192,7 @@ public class LeftFunctionFactory implements FunctionFactory {
     }
 
     private static int getPos(int len, int count) {
-        return Math.max(0, Math.min(len, count));
+        return count > 0 ? Math.max(0, Math.min(len, count)) : Math.max(0, len + count);
     }
 
 }

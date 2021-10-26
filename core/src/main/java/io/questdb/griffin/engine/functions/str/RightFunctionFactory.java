@@ -62,6 +62,10 @@ public class RightFunctionFactory implements FunctionFactory {
         return new RightStrFunction(strFunc, countFunc);
     }
 
+    private static int getPos(int len, int count) {
+        return count > 0 ? Math.min(len, Math.max(0, len - count)) : Math.min(len, -count);
+    }
+
     private static class RightStrFunction extends StrFunction implements BinaryFunction {
 
         private final StringSink sink = new StringSink();
@@ -167,15 +171,15 @@ public class RightFunctionFactory implements FunctionFactory {
             }
         }
 
-        private int getPos(int len) {
-            return RightFunctionFactory.getPos(len, count);
-        }
-
         @Override
         public int getStrLen(Record rec) {
             final int len = strFunc.getStrLen(rec);
             final int pos = len == TableUtils.NULL_LEN ? 0 : getPos(len);
             return len - pos;
+        }
+
+        private int getPos(int len) {
+            return RightFunctionFactory.getPos(len, count);
         }
 
         @Nullable
@@ -191,9 +195,4 @@ public class RightFunctionFactory implements FunctionFactory {
             return null;
         }
     }
-
-    private static int getPos(int len, int count) {
-        return Math.min(len, Math.max(0, len - count));
-    }
-
 }
