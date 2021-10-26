@@ -171,8 +171,6 @@ public final class TableUtils {
             mem.putLong(structure.getCommitLag());
             mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
-            final Rnd rnd = configuration.getRandom();
-
             for (int i = 0; i < count; i++) {
                 mem.putInt(structure.getColumnType(i));
                 long flags = 0;
@@ -281,54 +279,6 @@ public final class TableUtils {
         return path.concat(columnName).put(FILE_SUFFIX_D).$();
     }
 
-    public static long createTransitionIndex(
-            MemoryR masterMeta,
-            MemoryR slaveMeta,
-            int slaveColumnCount,
-            LowerCaseCharSequenceIntHashMap slaveColumnNameIndexMap
-    ) {
-        int masterColumnCount = masterMeta.getInt(META_OFFSET_COUNT);
-        int n = Math.max(slaveColumnCount, masterColumnCount);
-        final long pTransitionIndex;
-        final int size = n * 16;
-
-        long index = pTransitionIndex = Unsafe.calloc(size, MemoryTag.NATIVE_DEFAULT);
-        Unsafe.getUnsafe().putInt(index, size);
-        Unsafe.getUnsafe().putInt(index + 4, masterColumnCount);
-        index += 8;
-
-        // index structure is
-        // [copy from, copy to] int tuples, each of which is index into original column metadata
-        // the number of these tuples is DOUBLE of maximum of old and new column count.
-        // Tuples are separated into two areas, one is immutable, which drives how metadata should be moved,
-        // the other is the state of moving algo. Moving algo will start with copy of immutable area and will
-        // continue to zero out tuple values in mutable area when metadata is moved. Mutable area is
-
-        // "copy from" == 0 indicates that column is newly added, similarly
-        // "copy to" == 0 indicates that old column has been deleted
-        //
-
-        long offset = getColumnNameOffset(masterColumnCount);
-        for (int i = 0; i < masterColumnCount; i++) {
-            CharSequence name = masterMeta.getStr(offset);
-            offset += Vm.getStorageLength(name);
-            int oldPosition = slaveColumnNameIndexMap.get(name);
-            // write primary (immutable) index
-            if (
-                    oldPosition > -1
-                            && getColumnType(masterMeta, i) == getColumnType(slaveMeta, oldPosition)
-                            && isColumnIndexed(masterMeta, i) == isColumnIndexed(slaveMeta, oldPosition)
-//                            && getColumnHash(masterMeta, i) == getColumnHash(slaveMeta, oldPosition)
-            ) {
-                Unsafe.getUnsafe().putInt(index + i * 8L, oldPosition + 1);
-                Unsafe.getUnsafe().putInt(index + oldPosition * 8L + 4, i + 1);
-            } else {
-                Unsafe.getUnsafe().putLong(index + i * 8L, 0);
-            }
-        }
-        return pTransitionIndex;
-    }
-
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {
         return exists(ff, path, root, name, 0, name.length());
     }
@@ -424,12 +374,6 @@ public final class TableUtils {
 
     public static LPSZ iFile(Path path, CharSequence columnName) {
         return path.concat(columnName).put(FILE_SUFFIX_I).$();
-    }
-
-    public static long getTxMemorySize(long txMem) {
-        final int symbolsCount = Unsafe.getUnsafe().getInt(txMem + TX_OFFSET_MAP_WRITER_COUNT);
-        final int partitionCount = Unsafe.getUnsafe().getInt(txMem + getPartitionTableSizeOffset(symbolsCount)) / 8;
-        return getPartitionTableIndexOffset(symbolsCount, partitionCount);
     }
 
     public static boolean isValidColumnName(CharSequence seq) {
@@ -715,10 +659,6 @@ public final class TableUtils {
         txMem.putLong(TX_OFFSET_DATA_VERSION, dataVersion);
         // partition table version
         txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, partitionTableVersion);
-
-        txMem.putLong(TX_OFFSET_TRANSACTION_LOG_TXN, Long.MIN_VALUE);
-        txMem.putLong(TX_OFFSET_TRANSACTION_LOG_ROW_COUNT, 0);
-        txMem.putLong(TX_OFFSET_TRANSACTION_LOG_USER_COUNT, 0);
 
         txMem.putInt(TX_OFFSET_MAP_WRITER_COUNT, symbolMapCount);
         for (int i = 0; i < symbolMapCount; i++) {

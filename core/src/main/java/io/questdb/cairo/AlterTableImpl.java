@@ -462,6 +462,11 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
         }
 
         @Override
+        public int encodeSurrogate(char c, CharSequence in, int pos, int hi) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public char[] getDoubleDigitsBuffer() {
             throw new UnsupportedOperationException();
         }

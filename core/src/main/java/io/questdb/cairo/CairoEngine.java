@@ -467,57 +467,6 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public void tick() {
-        final long cursor = tableWriterCmdSubSeq.next();
-        if (cursor > -1) {
-            TableWriterTask cmd = tableWriterCmdQueue.get(cursor);
-            switch (cmd.getType()) {
-                case TableWriterTask.TSK_SLAVE_SYNC:
-
-                    final long dst = cmd.getInstance();
-                    final long dstIP = cmd.getIp();
-                    final long tableId = cmd.getTableId();
-
-                    LOG.info()
-                            .$("received replication SYNC cmd [tableName=").$(cmd.getTableName())
-                            .$(", tableId=").$(cmd.getTableId())
-                            .$(", src=").$(cmd.getInstance())
-                            .$(", srcIP=").$ip(cmd.getIp())
-                            .$(", cursor=").$(cursor)
-                            .I$();
-
-                    try (TableWriter writer = writerPool.get(cmd.getTableName(), "slave sync")) {
-                        final TableSyncModel syncModel = writer.replHandleSyncCmd(cmd);
-                        // release command queue slot not to hold both queues
-                        tableWriterCmdSubSeq.done(cursor);
-                        if (syncModel != null) {
-                            writer.replPublishSyncEvent0(syncModel, tableId, dst, dstIP);
-                        }
-                    } catch (EntryUnavailableException e) {
-                        // ignore command, writer is busy
-                        // it will tick on its way back to pool or earlier
-                        tableWriterCmdSubSeq.done(cursor);
-                    } catch (Throwable e) {
-                        tableWriterCmdSubSeq.done(cursor);
-                        if (e instanceof Sinkable) {
-                            LOG.error()
-                                    .$("could not create table writer [tableName=").$(cmd.getTableName())
-                                    .$(", tableId=").$(cmd.getTableId())
-                                    .$(", ex=`").$((Sinkable) e).$('`')
-                                    .I$();
-                        } else {
-                            LOG.error()
-                                    .$("could not create table writer [tableName=").$(cmd.getTableName())
-                                    .$(", tableId=").$(cmd.getTableId())
-                                    .$(", ex=`").$(e).$('`')
-                                    .I$();
-                        }
-                    }
-
-            }
-        }
-    }
-
     public void unlock(
             CairoSecurityContext securityContext,
             CharSequence tableName,

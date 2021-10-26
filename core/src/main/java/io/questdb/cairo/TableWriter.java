@@ -26,8 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
-import io.questdb.cairo.sql.*;
-import io.questdb.cairo.vm.MemoryFCRImpl;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
@@ -774,18 +776,6 @@ public class TableWriter implements Closeable {
         return txWriter.getRawMemory();
     }
 
-    public long getRawMetaMemory() {
-        return metaMem.getPageAddress(0);
-    }
-
-    public long getRawMetaMemorySize() {
-        return metadata.getFileDataSize();
-    }
-
-    public long getRawTxnMemory() {
-        return txFile.getRawMemory();
-    }
-
     public long getStructureVersion() {
         return txWriter.getStructureVersion();
     }
@@ -875,6 +865,30 @@ public class TableWriter implements Closeable {
 
     public void o3BumpErrorCount() {
         o3ErrorCount.incrementAndGet();
+    }
+
+    public long partitionNameToTimestamp(CharSequence partitionName) {
+        if (partitionDirFmt == null) {
+            throw CairoException.instance(0).put("table is not partitioned");
+        }
+        try {
+            return partitionDirFmt.parse(partitionName, null);
+        } catch (NumericException e) {
+            final CairoException ee = CairoException.instance(0);
+            switch (partitionBy) {
+                case PartitionBy.DAY:
+                    ee.put("'YYYY-MM-DD'");
+                    break;
+                case PartitionBy.MONTH:
+                    ee.put("'YYYY-MM'");
+                    break;
+                default:
+                    ee.put("'YYYY'");
+                    break;
+            }
+            ee.put(" expected");
+            throw ee;
+        }
     }
 
     public void removeColumn(CharSequence name) {
@@ -1295,6 +1309,67 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void processAlterTableEvent(TableWriterTask cmd, long cursor, Sequence sequence, boolean acceptStructureChange) {
+        final long instance = cmd.getInstance();
+        final long tableId = cmd.getTableId();
+        alterTableStatement.deserialize(cmd);
+        LOG.info()
+                .$("received ALTER TABLE cmd [tableName=").$(tableName)
+                .$(", tableId=").$(tableId)
+                .$(", src=").$(instance)
+                .I$();
+        CharSequence error = null;
+        try {
+            alterTableStatement.apply(this, acceptStructureChange);
+        } catch (TableStructureChangesException ex) {
+            LOG.info()
+                    .$("did not ALTER TABLE cmd, table structure change is not allowed atm [tableName=").$(tableName)
+                    .$(", tableId=").$(tableId)
+                    .$(", src=").$(instance)
+                    .I$();
+            error = "ALTER TABLE cannot change table structure while Writer is busy";
+        } catch (SqlException ex) {
+            error = ex.getFlyweightMessage();
+        } catch (Throwable ex) {
+            error = ex.getMessage();
+        } finally {
+            sequence.done(cursor);
+        }
+        replAlterTableEvent0(tableId, instance, error);
+    }
+
+    private void replAlterTableEvent0(long tableId, long instance, CharSequence error) {
+        final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
+        while (true) {
+            if (pubCursor > -1) {
+                final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
+                event.of(TableWriterTask.TSK_ALTER_TABLE, tableId, tableName);
+                if (error != null) {
+                    event.putStr(error);
+                } else {
+                    event.putInt(0);
+                }
+                event.setInstance(instance);
+                LogRecord lg = LOG.debug()
+                        .$("published alter table complete event [table=").$(tableName)
+                        .$(",tableId=").$(tableId)
+                        .$(",instance=").$(instance);
+                if (error != null) {
+                    lg.$(",error=").$(error);
+                }
+                lg.I$();
+                messageBus.getTableWriterEventPubSeq().done(pubCursor);
+                return;
+            } else if (pubCursor == -1) {
+                LOG.error()
+                        .$("cannot publish alter table complete event [table=").$(tableName)
+                        .$(",tableId=").$(tableId)
+                        .$(",instance=").$(instance)
+                        .I$();
+            }
+        }
+    }
+
     public void rollback() {
         checkDistressed();
         if (o3InError || inTransaction()) {
@@ -1311,7 +1386,7 @@ public class TableWriter implements Closeable {
                 configureAppendPosition();
                 o3InError = false;
                 LOG.info().$("tx rollback complete [name=").$(tableName).$(']').$();
-                processCommandQueue();
+                processCommandQueue(false);
             } catch (Throwable e) {
                 LOG.error().$("could not perform rollback [name=").$(tableName).$(", msg=").$(e.getMessage()).$(']').$();
                 distressed = true;
@@ -1370,10 +1445,6 @@ public class TableWriter implements Closeable {
     public long size() {
         // This is uncommitted row count
         return txWriter.getRowCount() + (hasO3() ? getO3RowCount() : 0L);
-    }
-
-    public void tick() {
-        processCommandQueue();
     }
 
     public void tick() {
@@ -1713,7 +1784,7 @@ public class TableWriter implements Closeable {
             if (fileSize < partitionSize * typeSize) {
                 throw CairoException.instance(0)
                         .put("Column file row count does not match timestamp file row count. ")
-                                .put("Partition files inconsistent [file=")
+                        .put("Partition files inconsistent [file=")
                         .put(path)
                         .put(",expectedSize=")
                         .put(partitionSize * typeSize)
@@ -1739,7 +1810,7 @@ public class TableWriter implements Closeable {
             if (fileSize < partitionSize << ColumnType.pow2SizeOf(columnType)) {
                 throw CairoException.instance(0)
                         .put("Column file row count does not match timestamp file row count. ")
-                                .put("Partition files inconsistent [file=")
+                        .put("Partition files inconsistent [file=")
                         .put(path)
                         .put(",expectedSize=")
                         .put(partitionSize << ColumnType.pow2SizeOf(columnType))
@@ -3341,7 +3412,7 @@ public class TableWriter implements Closeable {
                     int errno;
                     if ((errno = ff.rmdir(other)) == 0) {
                         LOG.info()
-                                        .$("purged [path=").$(other)
+                                .$("purged [path=").$(other)
                                 .$(", readerTxn=").$(readerTxn)
                                 .$(", readerTxnCount=").$(readerTxnCount)
                                 .$(']').$();
@@ -4560,112 +4631,6 @@ public class TableWriter implements Closeable {
         txWriter.transientRowCount--;
     }
 
-    private void rowAppend(ObjList<Runnable> activeNullSetters) {
-        if ((masterRef & 1) != 0) {
-            for (int i = 0; i < columnCount; i++) {
-                if (rowValueIsNotNull.getQuick(i) < masterRef) {
-                    activeNullSetters.getQuick(i).run();
-                }
-            }
-            masterRef++;
-        }
-    }
-
-    void rowCancel() {
-        if ((masterRef & 1) == 0) {
-            return;
-        }
-
-        if (o3MasterRef > -1) {
-            if (hasO3()) {
-                // O3 mode and there are some rows.
-                masterRef--;
-                setO3AppendPosition(getO3RowCount());
-            } else {
-                // Cancelling first row in o3, reverting back to non-o3
-                setO3AppendPosition(0);
-                masterRef--;
-                o3MasterRef = -1;
-                rowActon = ROW_ACTION_SWITCH_PARTITION;
-            }
-            return;
-        }
-
-        long dirtyMaxTimestamp = txFile.getMaxTimestamp();
-        long dirtyTransientRowCount = txFile.getTransientRowCount();
-        long rollbackToMaxTimestamp = txFile.cancelToMaxTimestamp();
-        long rollbackToTransientRowCount = txFile.cancelToTransientRowCount();
-
-        // dirty timestamp should be 1 because newRow() increments it
-        if (dirtyTransientRowCount == 1) {
-            if (partitionBy != PartitionBy.NONE) {
-                // we have to undo creation of partition
-                closeActivePartition(false);
-                if (removeDirOnCancelRow) {
-                    try {
-                        setStateForTimestamp(path, dirtyMaxTimestamp, false);
-                        int errno;
-                        if ((errno = ff.rmdir(path.$())) != 0) {
-                            throw CairoException.instance(errno).put("Cannot remove directory: ").put(path);
-                        }
-                        removeDirOnCancelRow = false;
-                    } finally {
-                        path.trimTo(rootLen);
-                    }
-                }
-
-                // open old partition
-                if (rollbackToMaxTimestamp > Long.MIN_VALUE) {
-                    try {
-                        openPartition(rollbackToMaxTimestamp);
-                        setAppendPosition(rollbackToTransientRowCount, false);
-                    } catch (Throwable e) {
-                        freeColumns(false);
-                        throw e;
-                    }
-                } else {
-                    rowActon = ROW_ACTION_OPEN_PARTITION;
-                }
-
-                // undo counts
-                removeDirOnCancelRow = true;
-                txFile.cancelRow();
-            } else {
-                txFile.cancelRow();
-                // we only have one partition, jump to start on every column
-                for (int i = 0; i < columnCount; i++) {
-                    getPrimaryColumn(i).jumpTo(0L);
-                    MemoryMA mem = getSecondaryColumn(i);
-                    if (mem != null) {
-                        mem.jumpTo(0L);
-                        mem.putLong(0L);
-                    }
-                }
-            }
-        } else {
-            txFile.cancelRow();
-            // we are staying within same partition, prepare append positions for row count
-            boolean rowChanged = metadata.getTimestampIndex() >= 0; // adding new row already writes timestamp
-            if (!rowChanged) {
-                // verify if any of the columns have been changed
-                // if not - we don't have to do
-                for (int i = 0; i < columnCount; i++) {
-                    if (rowValueIsNotNull.getQuick(i) == masterRef) {
-                        rowChanged = true;
-                        break;
-                    }
-                }
-            }
-
-            // is no column has been changed we take easy option and do nothing
-            if (rowChanged) {
-                setAppendPosition(dirtyTransientRowCount - 1, false);
-            }
-        }
-        rowValueIsNotNull.fill(0, columnCount, --masterRef);
-        txFile.transientRowCount--;
-    }
-
     private void runFragile(FragileCode fragile, CharSequence columnName, CairoException e) {
         try {
             fragile.run(columnName);
@@ -5029,19 +4994,9 @@ public class TableWriter implements Closeable {
     static class TimestampValueRecord implements Record {
         private long value;
 
-        void putSymIndex(int columnIndex, int symIndex);
-
-        void putTimestamp(int columnIndex, long value);
-
-        void putTimestamp(int columnIndex, CharSequence value);
-
-        void putGeoStr(int columnIndex, CharSequence value);
-    }
-
-    private class RowImpl implements Row {
         @Override
-        public void append() {
-            rowAppend(activeNullSetters);
+        public long getTimestamp(int col) {
+            return value;
         }
 
         public void setTimestamp(long value) {

@@ -919,19 +919,6 @@ public class ImportIODispatcherTest {
                 });
     }
 
-    private void setupSql(CairoEngine engine) {
-        compiler = new SqlCompiler(engine);
-        BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService,
-                        null,
-                        -1,
-                        null);
-        bindVariableService.clear();
-    }
-
     private void testImportWithWrongTimestampSpecified() throws Exception {
         final int parallelCount = 2;
         final int insertCount = 9;
