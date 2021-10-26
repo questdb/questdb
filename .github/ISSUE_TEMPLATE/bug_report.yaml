@@ -1,55 +1,56 @@
-name: 🐞 Bug report
+name: Bug report
 description: Create a bug report to help us improve QuestDB
-title: "[Bug]: "
-labels: [kind/bug, ]
-assignees: 
-- 
+labels: [bug]
 body:
 - type: markdown
   attributes:
     value: |
-      Thanks for taking the time to fill out this bug report! Please fill the form in English!
-- type: checkboxes
-  attributes:
-    label: Is there an existing issue for this?
-    description: Please search to see if an issue already exists for the bug you encountered.
-    options:
-    - label: I have searched the existing issues
-      required: true
+      Thanks for taking the time to fill out a bug report!
 - type: textarea
   attributes:
-    label: Current Behavior
+    label: Describe the bug
     description: A concise description of what you're experiencing.
+- type: textarea
+  attributes:
+    label: To reproduce
+    description: Steps to reproduce this behavior.
     placeholder: |
-      When I do <X>, <Y> happens and I see the error message attached below:
-      ```...```
+      1. Go to '...'
+      2. Click on '....'
+      3. Run this SQL '....'
+      4. See error
   validations:
-    required: true
+    required: false
 - type: textarea
   attributes:
     label: Expected Behavior
     description: A concise description of what you expected to happen.
-    placeholder: When I do <X>, <Z> should happen instead.
   validations:
     required: false
 
 - type: textarea
   attributes:
-    label: Steps To Reproduce
-    description: Steps to reproduce the behavior.
-    placeholder: |
-      1. In this environment...
-      2. With this config...
-      3. Run '...'
-      4. See error...
+    label: Environment
+    description: |
+      Provide details about your environment if applicable, for example:
+        - **QuestDB version**: 6.0.9
+        - **OS**: Ubuntu 20.04
+        - **Browser**: Firefox 93.0 (64-bit)
+
+    value: |
+        - **QuestDB version**:
+        - **OS**:
+        - **Browser**:
     render: markdown
   validations:
     required: false
 
 - type: textarea
   attributes:
-    label: Anything else?
+    label: Additional context
     description: |
-      Links? References? Anything that will give us more context about the issue you are encountering!
+      Add screenshots, links, or details that provide context about the issue.
+      
+      Tip: You can attach images or log files by clicking this area to highlight it and then dragging files in.
   validations:
     required: false
