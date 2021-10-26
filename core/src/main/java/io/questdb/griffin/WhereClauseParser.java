@@ -778,7 +778,7 @@ final class WhereClauseParser implements Mutable {
                         if (m.isColumnIndexed(index)) {
                             final boolean preferred = Chars.equalsIgnoreCaseNc(preferredKeyColumn, column);
                             final boolean indexed = m.isColumnIndexed(index);
-                            if (canUseIndex && indexed && preferredKeyColumn == null) {
+                            if (canUseIndex && (preferred || (indexed && preferredKeyColumn == null))) {
                                 CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
                                 if (Chars.equalsIgnoreCaseNc(model.keyColumn, column)) {
                                     if (model.keyExcludedValues.contains(value)) {
