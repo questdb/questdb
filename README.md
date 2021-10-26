@@ -62,7 +62,7 @@ The [QuestDB downloads page](https://questdb.io/get-questdb/) provides direct
 downloads for binaries and has details for other installation and deployment
 methods.
 
-### Connecting to QuestDB
+### Connect to QuestDB
 
 You can interact with QuestDB using the following interfaces:
 
@@ -95,34 +95,28 @@ The following table shows query execution time of a billion rows run on a
 | `SELECT tag, sum(double) FROM 1bn`                           | 0.179 secs |
 | `SELECT tag, sum(double) FROM 1bn WHERE timestamp in '2019'` | 0.05 secs  |
 
-## Documentation & resources
+## Resources
 
-- [The QuestDB documentation](https://questdb.io/docs/introduction/) describes
-  how to run and configure QuestDB with technical references.
-- [Our Slack workspace](https://slack.questdb.io) is a great place for technical
-  discussions and to meet other users. :wave:
-- [GitHub discussions](https://github.com/questdb/questdb/discussions) is where
-  our users share ideas for features, ask questions, and show what they've
-  built.
-- [GitHub issues](https://github.com/questdb/questdb/issues) are for bug
-  reports.
-- [Our project roadmap](https://github.com/questdb/questdb/projects) contains
-  our backlog and a list of tasks for upcoming releases.
-- [Tutorials written by our community](https://questdb.io/tutorial/) members
-  show what's possible with QuestDB.
-- [QuestDB on Stack Overflow](https://stackoverflow.com/questions/tagged/questdb)
-  has common troubleshooting solutions.
+### 📚 Read the docs
 
-### Deployment
+- [QuestDB documentation:](https://questdb.io/docs/introduction/) understand how to run and configure QuestDB.
+- [Tutorials:](https://questdb.io/tutorial/) learn what's possible with QuestDB step by step.
+- [Product roadmap:](https://github.com/questdb/questdb/projects) check out our plan for upcoming releases.
 
-- [An AWS AMI](https://questdb.io/docs/guides/aws-official-ami) is provided via
-  the AWS marketplace.
-- [The Docker deployment](https://questdb.io/docs/get-started/docker) guide
-  shows how to start using the official Docker image.
-- [DigitalOcean](https://questdb.io/docs/guides/digitalocean) droplets can be
-  launched as 1-Click applications on the DigitalOcean marketplace.
-- [Basic Kubernetes](https://questdb.io/docs/guides/kubernetes) documentation
-  describes how to get started using the official Helm chart.
+### ❓ Get support
+
+- [Community Slack:](https://slack.questdb.io) join technical discussions, ask questions, and meet other users!
+- [GitHub issues:](https://github.com/questdb/questdb/issues) report bugs or issues with QuestDB.
+- [GitHub discussions:](https://github.com/questdb/questdb/discussions) propose new features or show what you've built.
+- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) look for common troubleshooting solutions.
+
+### 🚢 Deploy QuestDB
+
+- [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
+- [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)
+- [Official Docker image](https://questdb.io/docs/get-started/docker)
+- [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean)
+- [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)
 
 ## Contribute
 
@@ -139,8 +133,8 @@ with contributing:
 - [Create a fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
   of QuestDB and submit a pull request with your proposed changes.
 
-As a sign of our gratitude, we'll send contributors some of our QuestDB swag
-such as stickers and t-shirts! :star2:
+✨ As a sign of our gratitude, we also send **QuestDB swag** to our contributors.
+[Claim your swag here.](https://questdb.io/community)
 
 A big thanks goes to the following wonderful people who have contributed to
 QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
