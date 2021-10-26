@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,9 +33,14 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 
 public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
+
+    private static final Log LOG = LogFactory.getLog("dump-memory-usage");
 
     @Override
     public String getSignature() {
@@ -49,22 +54,20 @@ public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
                                 CairoConfiguration configuration,
                                 SqlExecutionContext sqlExecutionContext
     ) {
-        return new DumpMemoryUsage();
+        return new DumpMemoryUsageFunction();
     }
 
-    private static class DumpMemoryUsage extends BooleanFunction {
-        private static final Log LOG = LogFactory.getLog(DumpMemoryUsage.class);
-
+    private static class DumpMemoryUsageFunction extends BooleanFunction {
         @Override
         public boolean getBool(Record rec) {
-            LogRecord record = LOG.info().$("memory usage [TOTAL=").$(Unsafe.getMemUsed());
+            final LogRecord record = LOG.advisory();
+
+            record.$("\n\tTOTAL: ").$(Unsafe.getMemUsed());
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
-                final long memUsedByTag = Unsafe.getMemUsedByTag(i);
-                if (memUsedByTag > 0) {
-                    record = record.$(", ").$(MemoryTag.nameOf(i)).$("=").$(memUsedByTag);
-                }
+                record.$('\n').$('\t').$(MemoryTag.nameOf(i)).$(": ").$(Unsafe.getMemUsedByTag(i));
             }
-            record.I$();
+            record.$('\n');
+            record.$();
             return true;
         }
     }

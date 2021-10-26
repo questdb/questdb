@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -288,7 +288,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             modelOf("invalidTimestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "dangling expression");
+            TestUtils.assertContains(e.getFlyweightMessage(), "unclosed quoted string?");
         }
     }
 

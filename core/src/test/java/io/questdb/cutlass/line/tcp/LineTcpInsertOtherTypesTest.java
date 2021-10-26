@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,30 +35,36 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
 
     @Test
     public void testInsertTimestampTableExists() throws Exception {
-        // no literal representation for timestamp, only longs can be inserted
         assertType(ColumnType.TIMESTAMP,
                 "value\ttimestamp\n" +
                         "1970-01-19T21:02:13.921000Z\t1970-01-01T00:00:01.000000Z\n" +
-                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:07.000000Z\n" +
-                        "\t1970-01-01T00:00:08.000000Z\n" +
-                        "\t1970-01-01T00:00:09.000000Z\n" +
-                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:10.000000Z\n" +
-                        "294247-01-10T04:00:54.775807Z\t1970-01-01T00:00:11.000000Z\n",
+                        "1970-01-19T21:02:13.921000Z\t1970-01-01T00:00:02.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:08.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:09.000000Z\n" +
+                        "\t1970-01-01T00:00:10.000000Z\n" +
+                        "\t1970-01-01T00:00:11.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:12.000000Z\n" +
+                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:13.000000Z\n" +
+                        "294247-01-10T04:00:54.775807Z\t1970-01-01T00:00:14.000000Z\n",
                 new CharSequence[]{
                         "1630933921000i", // valid
+                        "1630933921000t", // valid
                         "1630933921000", // discarded bad type double
                         "\"1970-01-01T00:00:05.000000Z\"", // discarded bad type string
                         "1970-01-01T00:\"00:05.00\"0000Z", // discarded bad type symbol
                         "\"1970-01-01T00:00:05.000000Z", // discarded bad string value
                         "1970-01-01T00:00:05.000000Z\"", // discarded bad string value
                         "0i", // valid
+                        "0t", // valid
                         "-9223372036854775808i", // valid NaN, same as null
                         "", // valid null
                         "-0i", // valid
+                        "-0t", // valid
                         "9223372036854775807i", // valid
                         "NaN", // discarded bad type symbol
                         "null", // discarded bad type symbol
-                        "1970-01-01T00:00:05.000000Z" // discarded bad type symbol
+                        "1970-01-01T00:00:05.000000Z", // discarded bad type symbol
+                        "t", // discarded bad type boolean
                 });
     }
 
@@ -87,7 +93,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "9223372036854775807i", // valid
                         "NaN", // discarded bad type symbol
                         "null", // discarded bad type symbol
-                        "1970-01-01T00:00:05.000000Z" // discarded bad type symbol
+                        "1970-01-01T00:00:05.000000Z", // discarded bad type symbol
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -125,6 +132,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "-100", // discarded bad type double
                         "null", // discarded bad type symbol
                         "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -162,6 +170,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "-100", // discarded bad type double
                         "null", // discarded bad type symbol
                         "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -177,7 +186,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "2147483647\t1970-01-01T00:00:07.000000Z\n" +
                         "-2147483647\t1970-01-01T00:00:08.000000Z\n" +
                         "NaN\t1970-01-01T00:00:11.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:19.000000Z\n",
+                        "1\t1970-01-01T00:00:14.000000Z\n" +
+                        "0\t1970-01-01T00:00:15.000000Z\n" +
+                        "NaN\t1970-01-01T00:00:21.000000Z\n",
                 new CharSequence[]{
                         "0i", // valid
                         "100i", // valid
@@ -189,15 +200,18 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "-2147483647i", // valid
                         "0", // discarded bad type double
                         "100", // discarded bad type double
-                        "-2147483648i", // discarded out of range
+                        "-2147483648i", // valid NaN same as null
                         "-2147483648", // discarded out of range
                         "null", // discarded bad type symbol
+                        "true", // valid, true casts down to 1
+                        "false", // valid, true casts down to 0
                         "-0", // discarded bad type double
                         "-100", // discarded bad type double
                         "2147483647", // discarded bad type double
                         "-2147483647", // discarded bad type double
                         "NaN", // discarded bad type symbol
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -213,7 +227,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "2147483647\t1970-01-01T00:00:07.000000Z\n" +
                         "-2147483647\t1970-01-01T00:00:08.000000Z\n" +
                         "-2147483648\t1970-01-01T00:00:11.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:19.000000Z\n",
+                        "NaN\t1970-01-01T00:00:19.000000Z\n" +
+                        "1\t1970-01-01T00:00:21.000000Z\n" +
+                        "0\t1970-01-01T00:00:22.000000Z\n",
                 new CharSequence[]{
                         "0i", // valid
                         "100i", // valid
@@ -233,7 +249,10 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "2147483647", // discarded bad type double
                         "-2147483647", // discarded bad type double
                         "NaN", // discarded bad type symbol
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
+                        "true", // valid, true casts down to 1
+                        "false", // valid, true casts down to 0
                 });
     }
 
@@ -248,7 +267,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "32767\t1970-01-01T00:00:05.000000Z\n" +
                         "-32767\t1970-01-01T00:00:06.000000Z\n" +
                         "0\t1970-01-01T00:00:08.000000Z\n" +
-                        "0\t1970-01-01T00:00:19.000000Z\n",
+                        "0\t1970-01-01T00:00:19.000000Z\n" +
+                        "1\t1970-01-01T00:00:21.000000Z\n" +
+                        "0\t1970-01-01T00:00:22.000000Z\n",
                 new CharSequence[]{
                         "0i", // valid
                         "100i", // valid
@@ -268,7 +289,10 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "100", // discarded bad type double
                         "-0", // discarded bad type double
                         "NaN", // discarded bad type symbol
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
+                        "true", // valid, true casts down to 1
+                        "false", // valid, true casts down to 0
                 });
     }
 
@@ -283,7 +307,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "-32767\t1970-01-01T00:00:06.000000Z\n" +
                         "-2147483648\t1970-01-01T00:00:08.000000Z\n" +
                         "2147483648\t1970-01-01T00:00:09.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:15.000000Z\n",
+                        "NaN\t1970-01-01T00:00:15.000000Z\n" +
+                        "1\t1970-01-01T00:00:17.000000Z\n" +
+                        "0\t1970-01-01T00:00:18.000000Z\n",
                 new CharSequence[]{
                         "0i", // valid, taken as long, no way to make a short
                         "100i", // valid
@@ -299,7 +325,10 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "100", // discarded bad type double
                         "-0", // discarded bad type double
                         "NaN", // discarded bad type symbol
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
+                        "true", // valid, true casts down to 1
+                        "false", // valid, true casts down to 0
                 });
     }
 
@@ -313,7 +342,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "-100\t1970-01-01T00:00:04.000000Z\n" +
                         "127\t1970-01-01T00:00:05.000000Z\n" +
                         "-128\t1970-01-01T00:00:06.000000Z\n" +
-                        "0\t1970-01-01T00:00:14.000000Z\n",
+                        "0\t1970-01-01T00:00:14.000000Z\n" +
+                        "1\t1970-01-01T00:00:16.000000Z\n" +
+                        "0\t1970-01-01T00:00:17.000000Z\n",
                 new CharSequence[]{
                         "0i", // valid
                         "100i", // valid
@@ -328,7 +359,10 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "100", // discarded bad type double
                         "-0", // discarded bad type double
                         "NaN", // discarded bad type symbol
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
+                        "true", // valid, true casts down to 1
+                        "false", // valid, true casts down to 0
                 });
     }
 
@@ -342,7 +376,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "127\t1970-01-01T00:00:05.000000Z\n" +
                         "-2147483648\t1970-01-01T00:00:06.000000Z\n" +
                         "-127\t1970-01-01T00:00:07.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:13.000000Z\n",
+                        "NaN\t1970-01-01T00:00:13.000000Z\n" +
+                        "1\t1970-01-01T00:00:15.000000Z\n" +
+                        "0\t1970-01-01T00:00:16.000000Z\n",
                 new CharSequence[]{
                         "0i", // valid, taken as long, no way to make a short
                         "100i", // valid
@@ -356,7 +392,10 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "100", // discarded bad type double
                         "-0", // discarded bad type double
                         "NaN", // discarded bad type symbol
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
+                        "true", // valid, true casts down to 1
+                        "false", // valid, true casts down to 0
                 });
     }
 
@@ -378,6 +417,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "null", // discarded bad type symbol
                         "\"N\"", // valid
                         "0", // discarded bad type double
+                        "0t", // discarded bad type timestamp
                         "1970-01-01T00:00:05.000000Z" // discarded bad type symbol
                 });
     }
@@ -397,7 +437,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "0x1234i", // actual long256
                         "0x1234", // discarded bad type double
                         "0x00", // discarded bad type double
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -416,6 +457,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "\"null\"", // discarded bad type string
                         "120i", // discarded bad type long
                         "0x1234", // discarded bad type double
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -448,6 +490,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "F", // valid
                         "", // valid null, equals false
                         "e", // valid
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -479,6 +522,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "F", // valid
                         "", // valid null, equals false
                         "e", // discarded bad type symbol
+                        "0t", // discarded bad type timestamp
                 });
     }
 
@@ -495,7 +539,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "A\t1970-01-01T00:00:07.000000Z\n" +
                         "@plant2\t1970-01-01T00:00:08.000000Z\n" +
                         "@plant\t1970-01-01T00:00:09.000000Z\n" +
-                        "\t1970-01-01T00:00:11.000000Z\n",
+                        "\"@plant\"\t1970-01-01T00:00:10.000000Z\n" +
+                        "\t1970-01-01T00:00:11.000000Z\n" +
+                        "\"abcd\t1970-01-01T00:00:12.000000Z\n" ,
                 new CharSequence[]{
                         "e", // valid
                         "xxx", // valid
@@ -506,8 +552,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "A", // valid
                         "@plant2", // valid
                         "@plant", // valid
-                        "\"@plant\"", // discarded bad type string
-                        "" // valid null
+                        "\"@plant\"", // valid
+                        "", // valid null,
+                        "\"abcd", //valid symbol
                 });
     }
 
@@ -546,10 +593,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "e\t1970-01-01T00:00:01.000000Z\n" +
                         "xxx\t1970-01-01T00:00:02.000000Z\n" +
                         "paff\t1970-01-01T00:00:03.000000Z\n" +
-                        "tt\"tt\t1970-01-01T00:00:08.000000Z\n" +
-                        "tt\\\"tt\t1970-01-01T00:00:11.000000Z\n" +
-                        "tt\\\"tt\\\" \\\n" +
-                        " =, ,=\\\"\t1970-01-01T00:00:12.000000Z\n" +
+                        "tt\"tt\t1970-01-01T00:00:11.000000Z\n" +
+                        "tt\"tt\" \n" +
+                        " =, ,=\"\t1970-01-01T00:00:12.000000Z\n" +
                         "\t1970-01-01T00:00:15.000000Z\n",
                 new CharSequence[]{
                         "\"e\"", // valid
@@ -559,7 +605,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "paff\"", // discarded bad value
                         "null", // discarded bad type symbol
                         "yyy", // discarded bad type symbol
-                        "\"tt\"tt\"", // valid
+                        "\"tt\"tt\"", // discarded bad value
                         "tt\"tt\"", // discarded bad value
                         "\"tt\"tt", // discarded bad value
                         "\"tt\\\"tt\"", // valid
@@ -576,10 +622,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "e\t1970-01-01T00:00:01.000000Z\n" +
                         "xxx\t1970-01-01T00:00:02.000000Z\n" +
                         "paff\t1970-01-01T00:00:03.000000Z\n" +
-                        "tt\"tt\t1970-01-01T00:00:08.000000Z\n" +
-                        "tt\\\"tt\t1970-01-01T00:00:11.000000Z\n" +
-                        "tt\\\"tt\\\" \\\n" +
-                        " =, ,=\\\"\t1970-01-01T00:00:12.000000Z\n" +
+                        "tt\"tt\t1970-01-01T00:00:11.000000Z\n" +
+                        "tt\"tt\" \n" +
+                        " =, ,=\"\t1970-01-01T00:00:12.000000Z\n" +
                         "\t1970-01-01T00:00:15.000000Z\n",
                 new CharSequence[]{
                         "\"e\"", // valid
@@ -589,7 +634,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "paff\"", // discarded bad value
                         "null", // discarded bad type symbol
                         "yyy", // discarded bad type symbol
-                        "\"tt\"tt\"", // valid
+                        "\"tt\"tt\"", // discarded bad value
                         "tt\"tt\"", // discarded bad value
                         "\"tt\"tt", // discarded bad value
                         "\"tt\\\"tt\"", // valid
@@ -620,7 +665,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "123.0\t1970-01-01T00:00:16.000000Z\n" +
                         "-123.0\t1970-01-01T00:00:17.000000Z\n" +
                         "NaN\t1970-01-01T00:00:18.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:19.000000Z\n",
+                        "NaN\t1970-01-01T00:00:19.000000Z\n" +
+                        "1.0\t1970-01-01T00:00:21.000000Z\n" +
+                        "0.0\t1970-01-01T00:00:22.000000Z\n",
                 new CharSequence[]{
                         "1.6x", // discarded bad type symbol
                         "1.7976931348623157E308", // valid
@@ -640,7 +687,10 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "123", // valid
                         "-123", // valid
                         "NaN", // valid null
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
+                        "true", // valid, true casts down to 1.0
+                        "false", // valid, true casts down to 0.0
                 });
     }
 
@@ -663,7 +713,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "123.0\t1970-01-01T00:00:16.000000Z\n" +
                         "-123.0\t1970-01-01T00:00:17.000000Z\n" +
                         "NaN\t1970-01-01T00:00:18.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:19.000000Z\n",
+                        "NaN\t1970-01-01T00:00:19.000000Z\n" +
+                        "1.0\t1970-01-01T00:00:21.000000Z\n" +
+                        "0.0\t1970-01-01T00:00:22.000000Z\n",
                 new CharSequence[]{
                         "1.7976931348623156E308", // valid
                         "0.425667788123", // valid
@@ -683,7 +735,10 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "123", // valid
                         "-123", // valid
                         "NaN", // valid null
-                        "" // valid null
+                        "", // valid null
+                        "0t", // discarded bad type timestamp
+                        "true", // valid, true casts down to 1.0
+                        "false", // valid, true casts down to 0.0
                 });
     }
 
@@ -706,7 +761,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "-123.0000\t1970-01-01T00:00:14.000000Z\n" +
                         "NaN\t1970-01-01T00:00:15.000000Z\n" +
                         "NaN\t1970-01-01T00:00:16.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:17.000000Z\n",
+                        "NaN\t1970-01-01T00:00:17.000000Z\n" +
+                        "1.0000\t1970-01-01T00:00:20.000000Z\n" +
+                        "0.0000\t1970-01-01T00:00:21.000000Z\n",
                 new CharSequence[]{
                         "0.425667788123", // valid
                         "3.14159265358979323846", // valid
@@ -725,7 +782,10 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "NaN", // valid null
                         "", // valid null
                         "NaN", // valid null
-                        "1.6x" // discarded bad type symbol
+                        "1.6x", // discarded bad type symbol
+                        "0t", // discarded bad type timestamp
+                        "true", // valid, true casts down to 1.0
+                        "false", // valid, true casts down to 0.0
                 });
     }
 
@@ -746,7 +806,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "123.0\t1970-01-01T00:00:13.000000Z\n" +
                         "-123.0\t1970-01-01T00:00:14.000000Z\n" +
                         "NaN\t1970-01-01T00:00:15.000000Z\n" +
-                        "NaN\t1970-01-01T00:00:16.000000Z\n",
+                        "NaN\t1970-01-01T00:00:16.000000Z\n" +
+                        "1.0\t1970-01-01T00:00:19.000000Z\n" +
+                        "0.0\t1970-01-01T00:00:20.000000Z\n",
                 new CharSequence[]{
                         "0.425667788123", // valid, but interpreted as double, cannot make float columns
                         "3.14159265358979323846", // valid
@@ -764,7 +826,10 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "-123", // valid
                         "NaN", // valid null
                         "", // valid null
-                        "1.6x" // discarded bad type symbol
+                        "1.6x", // discarded bad type symbol
+                        "0t", // discarded bad type timestamp
+                        "true", // valid, true casts down to 1.0
+                        "false", // valid, true casts down to 0.0
                 });
     }
 
@@ -783,8 +848,8 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
             long ts = 0L;
             for (int i = 0; i < values.length; i++) {
                 sink.put(table)
-                        .put(' ').put(targetColumnName).put('=').put(values[i])
-                        .put(' ').put(ts += 1000000000)
+                        .put(columnType == ColumnType.SYMBOL ? ',' : ' ').put(targetColumnName).put('=').put(values[i])
+                        .put(columnType == ColumnType.SYMBOL ? "  " : " ").put(ts += 1000000000)
                         .put('\n');
             }
             recvBuffer = sink.toString();

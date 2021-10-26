@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TableBlockWriter.TableBlockWriterTaskHolder;
 import io.questdb.mp.*;
 import io.questdb.std.Misc;
 import io.questdb.tasks.*;
@@ -89,18 +88,6 @@ public interface MessageBus extends Closeable {
     RingQueue<O3PurgeTask> getO3PurgeQueue();
 
     MCSequence getO3PurgeSubSeq();
-
-    default Sequence getTableBlockWriterPubSeq() {
-        return null;
-    }
-
-    default RingQueue<TableBlockWriterTaskHolder> getTableBlockWriterQueue() {
-        return null;
-    }
-
-    default Sequence getTableBlockWriterSubSeq() {
-        return null;
-    }
 
     MPSequence getTableWriterCommandPubSeq();
 

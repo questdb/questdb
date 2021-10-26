@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -84,7 +84,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
         this.path = new Path();
-        this.path.of(configuration.getRoot()).concat(tableName);
+        this.path.of(configuration.getRoot()).concat(this.tableName);
         this.rootLen = path.length();
         try {
             this.metadata = openMetaFile();
@@ -95,7 +95,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             path.trimTo(rootLen);
             LOG.debug()
                     .$("open [id=").$(metadata.getId())
-                    .$(", table=").utf8(tableName)
+                    .$(", table=").$(this.tableName)
                     .I$();
             this.txFile = new TxReader(ff, path, partitionBy);
             path.trimTo(rootLen);

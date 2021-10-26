@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,14 +44,11 @@ public class TxReader implements Closeable {
     protected long minTimestamp;
     protected long maxTimestamp;
     protected long txn;
-    protected int symbolsCount;
+    protected int symbolColumnCount;
     protected long dataVersion;
     protected long structureVersion;
     protected long fixedRowCount;
     protected long transientRowCount;
-    protected long transactionLogTxn;
-    protected long transactionLogRowCount;
-    protected long transactionLogUserCount;
     protected int partitionBy;
     protected long partitionTableVersion;
     protected int attachedPartitionsSize = 0;
@@ -162,7 +159,7 @@ public class TxReader implements Closeable {
     }
 
     public long getTxEofOffset() {
-        return getTxMemSize(symbolsCount, attachedPartitions.size());
+        return getTxMemSize(symbolColumnCount, attachedPartitions.size());
     }
 
     public long getTxn() {
@@ -208,14 +205,11 @@ public class TxReader implements Closeable {
         this.maxTimestamp = roTxMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
         this.dataVersion = roTxMem.getLong(TX_OFFSET_DATA_VERSION);
         this.structureVersion = roTxMem.getLong(TX_OFFSET_STRUCT_VERSION);
-        final long prevSymbolCount = this.symbolsCount;
-        this.symbolsCount = roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
+        final long prevSymbolCount = this.symbolColumnCount;
+        this.symbolColumnCount = roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
         final long prevPartitionTableVersion = this.partitionTableVersion;
         this.partitionTableVersion = roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
-        this.transactionLogTxn = roTxMem.getLong(TX_OFFSET_TRANSACTION_LOG_TXN);
-        this.transactionLogRowCount = roTxMem.getLong(TX_OFFSET_TRANSACTION_LOG_ROW_COUNT);
-        this.transactionLogUserCount = roTxMem.getLong(TX_OFFSET_TRANSACTION_LOG_USER_COUNT);
-        if (prevSymbolCount != symbolsCount) {
+        if (prevSymbolCount != symbolColumnCount) {
             roTxMem.growToFileSize();
         }
         loadAttachedPartitions(prevPartitionTableVersion);
@@ -226,10 +220,10 @@ public class TxReader implements Closeable {
     }
 
     private void copyAttachedPartitionsFromTx(int txAttachedPartitionsSize, int max) {
-        roTxMem.extend(getPartitionTableIndexOffset(symbolsCount, txAttachedPartitionsSize));
+        roTxMem.extend(getPartitionTableIndexOffset(symbolColumnCount, txAttachedPartitionsSize));
         attachedPartitions.setPos(txAttachedPartitionsSize);
         for (int i = max; i < txAttachedPartitionsSize; i++) {
-            attachedPartitions.setQuick(i, roTxMem.getLong(getPartitionTableIndexOffset(symbolsCount, i)));
+            attachedPartitions.setQuick(i, roTxMem.getLong(getPartitionTableIndexOffset(symbolColumnCount, i)));
         }
         attachedPartitionsSize = txAttachedPartitionsSize;
     }
@@ -270,7 +264,7 @@ public class TxReader implements Closeable {
 
     private void loadAttachedPartitions(long prevPartitionTableVersion) {
         if (partitionBy != PartitionBy.NONE) {
-            int txAttachedPartitionsSize = roTxMem.getInt(getPartitionTableSizeOffset(symbolsCount)) / Long.BYTES;
+            int txAttachedPartitionsSize = roTxMem.getInt(getPartitionTableSizeOffset(symbolColumnCount)) / Long.BYTES;
             if (txAttachedPartitionsSize > 0) {
                 if (prevPartitionTableVersion != partitionTableVersion) {
                     attachedPartitions.clear();
@@ -302,6 +296,5 @@ public class TxReader implements Closeable {
     void readRowCounts() {
         this.transientRowCount = roTxMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
         this.fixedRowCount = roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
-        this.transactionLogRowCount = roTxMem.getLong(TX_OFFSET_TRANSACTION_LOG_ROW_COUNT);
     }
 }

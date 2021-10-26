@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,8 @@
 
 package org.questdb;
 
-import io.questdb.cutlass.line.LineProtoSender;
+import io.questdb.cutlass.line.AbstractLineSender;
+import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.network.Net;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -39,7 +40,7 @@ public class LineUDPSenderMain {
 
         final Rnd rnd = new Rnd();
         long start = System.nanoTime();
-        try (LineProtoSender sender = new LineProtoSender(0, Net.parseIPv4(hostIPv4), port, bufferCapacity, ttl)) {
+        try (LineUdpSender sender = new LineUdpSender(0, Net.parseIPv4(hostIPv4), port, bufferCapacity, ttl)) {
             for (int i = 0; i < count; i++) {
                 sender.metric("weather").tag("location", "london").tag("by", "quest").field("temp", rnd.nextPositiveLong()).field("ok", rnd.nextPositiveInt()).$(Os.currentTimeMicros() * 1000);
             }

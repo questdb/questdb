@@ -1,3 +1,27 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 import React, { MouseEvent, ReactNode, useCallback } from "react"
 import styled from "styled-components"
 import { Rocket } from "@styled-icons/boxicons-regular/Rocket"
@@ -14,6 +38,7 @@ import {
   TransitionDuration,
 } from "components"
 import { color } from "utils"
+import { BusEvent } from "../../../consts"
 
 type Props = Readonly<{
   className?: string
@@ -115,12 +140,15 @@ const Row = ({
   tooltip,
   type,
 }: Props) => {
-  const handleClick = useCallback(
+  const handlePlusButtonClick = useCallback(
     (event: MouseEvent) => {
       event.stopPropagation()
-      window.bus.trigger("editor.insert.column", name)
+      window.bus.trigger(
+        BusEvent.MSG_EDITOR_INSERT_COLUMN,
+        kind === "table" ? `'${name}'` : name,
+      )
     },
-    [name],
+    [name, kind],
   )
 
   return (
@@ -160,7 +188,7 @@ const Row = ({
           </Type>
         )}
 
-        <PlusButton onClick={handleClick} size="sm" tooltip={tooltip}>
+        <PlusButton onClick={handlePlusButtonClick} size="sm" tooltip={tooltip}>
           <CodeSSlash size="16px" />
           <span>Add</span>
         </PlusButton>

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,10 @@
 
 package org.questdb;
 
-import io.questdb.cutlass.line.CachedCharSequence;
-import io.questdb.cutlass.line.CharSequenceCache;
-import io.questdb.cutlass.line.LineProtoLexer;
-import io.questdb.cutlass.line.LineProtoParser;
+import io.questdb.cutlass.line.udp.CachedCharSequence;
+import io.questdb.cutlass.line.udp.CharSequenceCache;
+import io.questdb.cutlass.line.udp.LineUdpLexer;
+import io.questdb.cutlass.line.udp.LineUdpParser;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.openjdk.jmh.annotations.*;
@@ -43,7 +43,7 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class CutlassLexerTest {
 
-    private final static LineProtoLexer lpLexer = new LineProtoLexer(4096);
+    private final static LineUdpLexer lpLexer = new LineUdpLexer(4096);
     private static final byte[] bytes = "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n".getBytes();
     private static final long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
 
@@ -76,7 +76,7 @@ public class CutlassLexerTest {
     }
 
     static {
-        lpLexer.withParser(new LineProtoParser() {
+        lpLexer.withParser(new LineUdpParser() {
             @Override
             public void onError(int position, int state, int code) {
 

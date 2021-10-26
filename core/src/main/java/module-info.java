@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ open module io.questdb {
     requires transitive jdk.unsupported;
     requires static org.jetbrains.annotations;
     requires static java.sql;
+    requires static java.management;
 
     uses io.questdb.griffin.FunctionFactory;
 
@@ -542,6 +543,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetKeywordsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.TableMetadataCursorFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory,
 //                  concat()
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
             // replace()

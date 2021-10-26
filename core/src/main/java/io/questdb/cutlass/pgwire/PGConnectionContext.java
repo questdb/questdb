@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1483,7 +1483,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource, Al
         if (Chars.utf8Decode(lo, hi, e)) {
             queryText = characterStore.toImmutable();
 
-            info().$("parse [q=").utf8(queryText).$(']').$();
+            info().$("parse [fd=").$(fd).$(", q=").utf8(queryText).I$();
             compileQuery(compiler);
             return;
         }
@@ -2282,8 +2282,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource, Al
                 .$(']').$();
 
         Vect.memcpy(
-                recvBuffer + readOffsetBeforeParse,
-                recvBuffer,
+                recvBuffer, recvBuffer + readOffsetBeforeParse,
                 len
         );
         recvBufferWriteOffset = len;

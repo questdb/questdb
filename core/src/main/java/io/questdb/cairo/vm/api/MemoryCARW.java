@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -46,7 +46,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         if (len > 0) {
             long addr = appendAddressFor(len + Long.BYTES);
             Unsafe.getUnsafe().putLong(addr, len);
-            Vect.memcpy(from, addr + Long.BYTES, len);
+            Vect.memcpy(addr + Long.BYTES, from, len);
             return getAppendOffset();
         }
         return putNullBin();
@@ -59,7 +59,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
     @Override
     default void putBlockOfBytes(long from, long len) {
-        Vect.memcpy(from, appendAddressFor(len), len);
+        Vect.memcpy(appendAddressFor(len), from, len);
     }
 
     default void putBool(boolean value) {

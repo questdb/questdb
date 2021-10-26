@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,7 +33,6 @@ import java.io.Closeable;
 
 public class TableWriterTask implements Closeable {
     public static final int TSK_SLAVE_SYNC = 1;
-    public static final int TSK_ALTER_TABLE = 2;
     private int type;
     private long tableId;
     private String tableName;
@@ -78,25 +77,14 @@ public class TableWriterTask implements Closeable {
         }
         long p = this.data;
         Unsafe.getUnsafe().putLong(p, txMemSize);
-        Vect.memcpy(txMem, p + 8, txMemSize);
+        Vect.memcpy(p + 8, txMem, txMemSize);
         Unsafe.getUnsafe().putLong(p + txMemSize + 8, metaMemSize);
-        Vect.memcpy(metaMem, p + txMemSize + 16, metaMemSize);
+        Vect.memcpy(p + txMemSize + 16, metaMem, metaMemSize);
         this.type = TSK_SLAVE_SYNC;
         this.tableId = tableId;
         this.tableName = tableName;
         this.ip = slaveIP;
         this.sequence = sequence;
-    }
-
-    public void of(
-            int type,
-            long tableId,
-            String tableName
-    ) {
-        this.tableId = tableId;
-        this.tableName = tableName;
-        this.type = type;
-        this.appendPtr = data;
     }
 
     public long getAppendOffset() {
@@ -147,7 +135,7 @@ public class TableWriterTask implements Closeable {
         return type;
     }
 
-    public void putStr(CharSequence value) {
+    public void put(CharSequence value) {
         int len = value.length();
         ensureCapacity(len * 2 + 4);
         Unsafe.getUnsafe().putInt(appendPtr, len);
@@ -155,24 +143,18 @@ public class TableWriterTask implements Closeable {
         appendPtr += len * 2L + 4;
     }
 
-    public void putLong(byte c) {
+    public void put(byte c) {
         ensureCapacity(1);
         Unsafe.getUnsafe().putByte(appendPtr++, c);
     }
 
-    public void putInt(int value) {
+    public void put(int value) {
         ensureCapacity(4);
         Unsafe.getUnsafe().putInt(appendPtr, value);
         appendPtr += 4;
     }
 
-    public void putShort(short value) {
-        ensureCapacity(2);
-        Unsafe.getUnsafe().putShort(appendPtr, value);
-        appendPtr += 2;
-    }
-
-    public void putLong(long value) {
+    public void put(long value) {
         ensureCapacity(8);
         Unsafe.getUnsafe().putLong(appendPtr, value);
         appendPtr += 8;

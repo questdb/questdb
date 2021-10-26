@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,9 +27,9 @@ package io.questdb;
 import io.questdb.cairo.*;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.json.JsonException;
-import io.questdb.cutlass.line.tcp.LineTcpServer;
-import io.questdb.cutlass.line.udp.LineProtoReceiver;
-import io.questdb.cutlass.line.udp.LinuxMMLineProtoReceiver;
+import io.questdb.cutlass.line.tcp.LineTcpReceiver;
+import io.questdb.cutlass.line.udp.LineUdpReceiver;
+import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
@@ -183,13 +183,13 @@ public class ServerMain {
 
             if (configuration.getLineUdpReceiverConfiguration().isEnabled()) {
                 if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
-                    instancesToClean.add(new LinuxMMLineProtoReceiver(
+                    instancesToClean.add(new LinuxMMLineUdpReceiver(
                             configuration.getLineUdpReceiverConfiguration(),
                             cairoEngine,
                             workerPool
                     ));
                 } else {
-                    instancesToClean.add(new LineProtoReceiver(
+                    instancesToClean.add(new LineUdpReceiver(
                             configuration.getLineUdpReceiverConfiguration(),
                             cairoEngine,
                             workerPool
@@ -197,7 +197,7 @@ public class ServerMain {
                 }
             }
 
-            instancesToClean.add(LineTcpServer.create(
+            instancesToClean.add(LineTcpReceiver.create(
                     configuration.getLineTcpReceiverConfiguration(),
                     workerPool,
                     log,

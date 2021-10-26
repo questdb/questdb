@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,10 +35,11 @@ import io.questdb.std.*;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.SingleCharCharSequence;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-public class SymbolMapWriter implements Closeable {
+public class SymbolMapWriter implements Closeable, SymbolCountProvider {
     public static final int HEADER_SIZE = 64;
     public static final int HEADER_CAPACITY = 0;
     public static final int HEADER_CACHE_ENABLED = 4;
@@ -50,23 +51,24 @@ public class SymbolMapWriter implements Closeable {
     private final CharSequenceIntHashMap cache;
     private final DirectCharSequence tmpSymbol;
     private final int maxHash;
-    private final TransientSymbolCountChangeHandler transientSymbolCountChangeHandler;
+    private final SymbolValueCountCollector valueCountCollector;
     private boolean nullValue = false;
+    private int symbolIndexInTxWriter;
 
     public SymbolMapWriter(
             CairoConfiguration configuration,
             Path path,
             CharSequence name,
             int symbolCount,
-            TransientSymbolCountChangeHandler transientSymbolCountChangeHandler
+            int symbolIndexInTxWriter,
+            @NotNull SymbolValueCountCollector valueCountCollector
     ) {
-        this.transientSymbolCountChangeHandler = transientSymbolCountChangeHandler;
         final int plen = path.length();
         try {
             final FilesFacade ff = configuration.getFilesFacade();
             final long mapPageSize = configuration.getMiscAppendPageSize();
 
-            // this constructor does not create index. Index must exist
+            // this constructor does not create index. Index must exist,
             // and we use "offset" file to store "header"
             offsetFileName(path.trimTo(plen), name);
             if (!ff.exists(path)) {
@@ -116,6 +118,8 @@ public class SymbolMapWriter implements Closeable {
             }
 
             tmpSymbol = new DirectCharSequence();
+            this.symbolIndexInTxWriter = symbolIndexInTxWriter;
+            this.valueCountCollector = valueCountCollector;
             LOG.debug()
                     .$("open [name=").$(path.trimTo(plen).concat(name).$())
                     .$(", fd=").$(this.offsetMem.getFd())
@@ -246,10 +250,14 @@ public class SymbolMapWriter implements Closeable {
         indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
         offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
         jumpCharMemToSymbolCount(symbolCount);
-        transientSymbolCountChangeHandler.handleTransientSymbolCountChange(symbolCount);
+        valueCountCollector.collectValueCount(symbolIndexInTxWriter, symbolCount);
         if (cache != null) {
             cache.clear();
         }
+    }
+
+    public void setSymbolIndexInTxWriter(int symbolIndexInTxWriter) {
+        this.symbolIndexInTxWriter = symbolIndexInTxWriter;
     }
 
     public void updateCacheFlag(boolean flag) {
@@ -303,8 +311,8 @@ public class SymbolMapWriter implements Closeable {
         long offsetOffset = offsetMem.getAppendOffset() - Long.BYTES;
         offsetMem.putLong(charMem.putStr(symbol));
         indexWriter.add(hash, offsetOffset);
-        int symIndex = offsetToKey(offsetOffset);
-        transientSymbolCountChangeHandler.handleTransientSymbolCountChange(symIndex + 1);
+        final int symIndex = offsetToKey(offsetOffset);
+        valueCountCollector.collectValueCount(symbolIndexInTxWriter, symIndex + 1);
         return symIndex;
     }
 
@@ -315,9 +323,5 @@ public class SymbolMapWriter implements Closeable {
         if (cache != null) {
             cache.clear();
         }
-    }
-
-    public interface TransientSymbolCountChangeHandler {
-        void handleTransientSymbolCountChange(int symbolCount);
     }
 }

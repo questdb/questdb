@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -112,6 +112,24 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 "a || all(b)",
                 2,
                 "unexpected operator"
+        );
+    }
+
+    @Test
+    public void testUnquotedRegexFail() {
+        assertFail(
+                "s ~ '.*TDF",
+                4,
+                "unclosed quoted string?"
+        );
+    }
+
+    @Test
+    public void testUnquotedStrFail() {
+        assertFail(
+                "s ~ 'TDF",
+                4,
+                "unclosed quoted string?"
         );
     }
 

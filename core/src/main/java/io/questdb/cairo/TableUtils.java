@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,6 +39,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 public final class TableUtils {
     public static final int TABLE_EXISTS = 0;
@@ -75,6 +76,8 @@ public final class TableUtils {
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long TX_OFFSET_MIN_TIMESTAMP = 24;
     public static final long TX_OFFSET_MAX_TIMESTAMP = 32;
+    public static final long META_COLUMN_DATA_SIZE = 32;
+    public static final long TX_OFFSET_MAP_WRITER_COUNT = 128;
     static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
@@ -82,10 +85,6 @@ public final class TableUtils {
     static final long TX_OFFSET_TXN = 0;
     static final long TX_OFFSET_DATA_VERSION = 48;
     static final long TX_OFFSET_PARTITION_TABLE_VERSION = 56;
-    static final long TX_OFFSET_TRANSACTION_LOG_TXN = 72;
-    static final long TX_OFFSET_TRANSACTION_LOG_ROW_COUNT = 80;
-    static final long TX_OFFSET_TRANSACTION_LOG_USER_COUNT = 88;
-    static final long TX_OFFSET_MAP_WRITER_COUNT = 128;
     /**
      * TXN file structure
      * struct {
@@ -108,7 +107,6 @@ public final class TableUtils {
     // INT - symbol map count, this is a variable part of transaction file
     // below this offset we will have INT values for symbol map size
     static final long META_OFFSET_PARTITION_BY = 4;
-    public static final long META_COLUMN_DATA_SIZE = 32;
     static final int META_FLAG_BIT_INDEXED = 1;
     static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
     static final String TODO_FILE_NAME = "_todo_";
@@ -188,7 +186,7 @@ public final class TableUtils {
 
                 mem.putLong(flags);
                 mem.putInt(structure.getIndexBlockCapacity(i));
-                mem.putLong(rnd.nextLong());
+                mem.putLong(structure.getColumnHash(i));
                 // reserved
                 mem.skip(8);
             }
@@ -228,6 +226,55 @@ public final class TableUtils {
                 ff.close(dirFd);
             }
         }
+    }
+
+    public static long createTransitionIndex(
+            MemoryR masterMeta,
+            MemoryR slaveMeta,
+            int slaveColumnCount,
+            LowerCaseCharSequenceIntHashMap slaveColumnNameIndexMap
+    ) {
+        int masterColumnCount = masterMeta.getInt(META_OFFSET_COUNT);
+        int n = Math.max(slaveColumnCount, masterColumnCount);
+        final long pTransitionIndex;
+        final int size = n * 16;
+
+        long index = pTransitionIndex = Unsafe.calloc(size, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.getUnsafe().putInt(index, size);
+        Unsafe.getUnsafe().putInt(index + 4, masterColumnCount);
+        index += 8;
+
+        // index structure is
+        // [copy from, copy to] int tuples, each of which is index into original column metadata
+        // the number of these tuples is DOUBLE of maximum of old and new column count.
+        // Tuples are separated into two areas, one is immutable, which drives how metadata should be moved,
+        // the other is the state of moving algo. Moving algo will start with copy of immutable area and will
+        // continue to zero out tuple values in mutable area when metadata is moved. Mutable area is
+
+        // "copy from" == 0 indicates that column is newly added, similarly
+        // "copy to" == 0 indicates that old column has been deleted
+        //
+
+        long offset = getColumnNameOffset(masterColumnCount);
+        for (int i = 0; i < masterColumnCount; i++) {
+            CharSequence name = masterMeta.getStr(offset);
+            offset += Vm.getStorageLength(name);
+            int oldPosition = slaveColumnNameIndexMap.get(name);
+            // write primary (immutable) index
+            boolean hashMatch = true;
+            if (
+                    oldPosition > -1
+                            && getColumnType(masterMeta, i) == getColumnType(slaveMeta, oldPosition)
+                            && isColumnIndexed(masterMeta, i) == isColumnIndexed(slaveMeta, oldPosition)
+                            && (hashMatch = (getColumnHash(masterMeta, i) == getColumnHash(slaveMeta, oldPosition)))
+            ) {
+                Unsafe.getUnsafe().putInt(index + i * 8L, oldPosition + 1);
+                Unsafe.getUnsafe().putInt(index + oldPosition * 8L + 4, i + 1);
+            } else {
+                Unsafe.getUnsafe().putLong(index + i * 8L, hashMatch ? 0 : -1);
+            }
+        }
+        return pTransitionIndex;
     }
 
     public static LPSZ dFile(Path path, CharSequence columnName) {
@@ -367,6 +414,12 @@ public final class TableUtils {
 
     public static long getTxMemSize(int symbolWriterCount, int attachedPartitionsSize) {
         return getPartitionTableIndexOffset(symbolWriterCount, attachedPartitionsSize);
+    }
+
+    public static long getTxMemorySize(long txMem) {
+        final int symbolsCount = Unsafe.getUnsafe().getInt(txMem + TX_OFFSET_MAP_WRITER_COUNT);
+        final int partitionCount = Unsafe.getUnsafe().getInt(txMem + getPartitionTableSizeOffset(symbolsCount)) / 8;
+        return getPartitionTableIndexOffset(symbolsCount, partitionCount);
     }
 
     public static LPSZ iFile(Path path, CharSequence columnName) {
@@ -588,7 +641,7 @@ public final class TableUtils {
         }
     }
 
-    public static long readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
+    public static int readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
         if (ff.read(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
             throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
         }
@@ -604,7 +657,17 @@ public final class TableUtils {
         }
     }
 
-    public static long readLongOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
+    public static long readLongOrFail(FilesFacade ff, long fd, long offset, long tempMem8b) {
+        return readLongOrFail(
+                ff,
+                fd,
+                offset,
+                tempMem8b,
+                null
+        );
+    }
+
+    public static long readLongOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, @Nullable Path path) {
         if (ff.read(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
             if (path != null) {
                 throw CairoException.instance(ff.errno()).put("could not read long [path=").put(path).put(", fd=").put(fd).put(", offset=").put(offset);
@@ -859,13 +922,9 @@ public final class TableUtils {
         topFile(path, columnName);
         long fd = openRW(ff, path, LOG);
         try {
-            //noinspection SuspiciousNameCombination
-            Unsafe.getUnsafe().putLong(tempBuf, columnTop);
             try {
                 allocateDiskSpace(ff, fd, Long.BYTES);
-                if (ff.write(fd, tempBuf, Long.BYTES, 0) != Long.BYTES) {
-                    throw CairoException.instance(ff.errno()).put("could not write top file [path=").put(path).put(']');
-                }
+                writeLongOrFail(ff, fd, 0, columnTop, tempBuf, path);
             } catch (Throwable e) {
                 ff.close(fd);
                 fd = -1;
@@ -876,15 +935,32 @@ public final class TableUtils {
             }
         } finally {
             if (fd != -1) {
-                ff.close(fd);
+                Vm.bestEffortClose(ff, LOG, fd, true, Long.BYTES);
             }
+        }
+    }
+
+    public static void writeIntOrFail(FilesFacade ff, long fd, long offset, int value, long tempMem8b, Path path) {
+        Unsafe.getUnsafe().putInt(tempMem8b, value);
+        if (ff.write(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
+            throw CairoException.instance(ff.errno())
+                    .put("could not write 8 bytes [path=").put(path)
+                    .put(", fd=").put(fd)
+                    .put(", offset=").put(offset)
+                    .put(", value=").put(value)
+                    .put(']');
         }
     }
 
     public static void writeLongOrFail(FilesFacade ff, long fd, long offset, long value, long tempMem8b, Path path) {
         Unsafe.getUnsafe().putLong(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
-            throw CairoException.instance(ff.errno()).put("Cannot write: ").put(path);
+            throw CairoException.instance(ff.errno())
+                    .put("could not write 8 bytes [path=").put(path)
+                    .put(", fd=").put(fd)
+                    .put(", offset=").put(offset)
+                    .put(", value=").put(value)
+                    .put(']');
         }
     }
 

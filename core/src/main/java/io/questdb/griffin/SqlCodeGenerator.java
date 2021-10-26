@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -2234,7 +2234,7 @@ public class SqlCodeGenerator implements Mutable {
                     virtualMetadata.add(
                             new TableColumnMetadata(
                                     Chars.toString(column.getAlias()),
-                                    0,
+                                    configuration.getRandom().nextLong(),
                                     function.getType(),
                                     false,
                                     0,
@@ -2246,7 +2246,7 @@ public class SqlCodeGenerator implements Mutable {
                     virtualMetadata.add(
                             new TableColumnMetadata(
                                     Chars.toString(column.getAlias()),
-                                    0,
+                                    configuration.getRandom().nextLong(),
                                     function.getType(),
                                     function.getMetadata()
                             )
@@ -2379,10 +2379,10 @@ public class SqlCodeGenerator implements Mutable {
                         int type = readerMeta.getColumnType(columnIndex);
                         int typeSize = ColumnType.sizeOf(type);
 
-                        if (framingSupported && (typeSize < Byte.BYTES || typeSize > Double.BYTES)) {
-                            // we don't frame non-primitive types yet
-                            framingSupported = false;
-                        }
+//                        if (framingSupported && (typeSize < Byte.BYTES || typeSize > Double.BYTES)) {
+//                             we don't frame non-primitive types yet
+//                            framingSupported = false;
+//                        }
                         columnIndexes.add(columnIndex);
                         columnSizes.add((Numbers.msb(typeSize)));
 
@@ -2739,7 +2739,16 @@ public class SqlCodeGenerator implements Mutable {
                 }
 
                 model.setWhereClause(intrinsicModel.filter);
-                return new DataFrameRecordCursorFactory(myMeta, dfcFactory, new DataFrameRowCursorFactory(), false, null, framingSupported, columnIndexes, columnSizes);
+                return new DataFrameRecordCursorFactory(
+                        myMeta,
+                        dfcFactory,
+                        new DataFrameRowCursorFactory(),
+                        false,
+                        null,
+                        framingSupported,
+                        columnIndexes,
+                        columnSizes
+                );
             }
 
             // no where clause
@@ -2748,15 +2757,15 @@ public class SqlCodeGenerator implements Mutable {
                 // construct new metadata, which is a copy of what we constructed just above, but
                 // in the interest of isolating problems we will only affect this factory
 
-                return new TableReaderRecordCursorFactory(
+                return new DataFrameRecordCursorFactory(
                         myMeta,
-                        engine,
-                        tableName,
-                        model.getTableId(),
-                        model.getTableVersion(),
+                        new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
+                        new DataFrameRowCursorFactory(),
+                        false,
+                        null,
+                        framingSupported,
                         columnIndexes,
-                        columnSizes,
-                        framingSupported
+                        columnSizes
                 );
             }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
-import io.questdb.cutlass.line.tcp.NewLineProtoParser.ParseResult;
+import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOContext;
@@ -47,7 +47,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private final LineTcpMeasurementScheduler scheduler;
     private final MillisecondClock milliClock;
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
-    private final NewLineProtoParser protoParser = new NewLineProtoParser();
+    private final LineTcpParser protoParser = new LineTcpParser();
     private final FloatingDirectCharSink charSink = new FloatingDirectCharSink();
     protected long fd;
     protected IODispatcher<LineTcpConnectionContext> dispatcher;
@@ -123,7 +123,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         if (recvBufStartOfMeasurement > recvBufStart) {
             final long len = recvBufPos - recvBufStartOfMeasurement;
             if (len > 0) {
-                Vect.memcpy(recvBufStartOfMeasurement, recvBufStart, len);
+                Vect.memmove(recvBufStart, recvBufStartOfMeasurement, len); // Use memmove, there may be an overlap
                 final long shl = recvBufStartOfMeasurement - recvBufStart;
                 protoParser.shl(shl);
                 this.recvBufStartOfMeasurement -= shl;
@@ -216,10 +216,14 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                     }
                 }
             } catch (CairoException ex) {
-                LOG.error().$('[').$(fd).$("] could not process line data [msg=").$(ex.getFlyweightMessage()).I$();
+                LOG.error().
+                        $('[').$(fd).$("] could not process line data [table=").$(protoParser.getMeasurementName())
+                        .$(", msg=").$(ex.getFlyweightMessage())
+                        .$(", errno=").$(ex.getErrno())
+                        .I$();
                 return IOContextResult.NEEDS_DISCONNECT;
             } catch (Throwable ex) {
-                LOG.error().$('[').$(fd).$("] could not process line data [ex=").$(ex).I$();
+                LOG.error().$('[').$(fd).$("] could not process line data [table=").$(protoParser.getMeasurementName()).$(", ex=").$(ex).I$();
                 return IOContextResult.NEEDS_DISCONNECT;
             }
         }

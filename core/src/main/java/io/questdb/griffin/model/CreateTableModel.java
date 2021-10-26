@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private static final int COLUMN_FLAG_INDEXED = 2;
     private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
     private final LongList columnBits = new LongList();
+    private final LongList columnHashes = new LongList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     private ExpressionNode name;
@@ -49,13 +50,14 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private CreateTableModel() {
     }
 
-    public boolean addColumn(CharSequence name, int type, int symbolCapacity) {
+    public boolean addColumn(CharSequence name, int type, int symbolCapacity, long columnHash) {
         if (columnNameIndexMap.put(name, columnNames.size())) {
             columnNames.add(Chars.toString(name));
             columnBits.add(
                     Numbers.encodeLowHighInts(type, symbolCapacity),
                     Numbers.encodeLowHighInts(COLUMN_FLAG_CACHED, 0)
             );
+            columnHashes.add(columnHash);
             return true;
         }
         return false;
@@ -78,6 +80,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     }
 
     @Override
+    public long getColumnHash(int columnIndex) {
+        return columnHashes.get(columnIndex);
+    }
+
+    @Override
     public void clear() {
         columnCastModels.clear();
         queryModel = null;
@@ -86,6 +93,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         name = null;
         columnBits.clear();
         columnNames.clear();
+        columnHashes.clear();
         columnNameIndexMap.clear();
         ignoreIfExists = false;
     }

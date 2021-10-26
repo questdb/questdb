@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,23 +27,15 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
-import io.questdb.log.Log;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
-import io.questdb.std.Unsafe;
-import io.questdb.std.str.LPSZ;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
-public final class TxWriter extends TxReader implements Closeable {
-    private final FilesFacade ff;
+public final class TxWriter extends TxReader implements Closeable, SymbolValueCountCollector {
     private long prevTransientRowCount;
-    private long prevRowCount;
     private int attachedPositionDirtyIndex;
     private int txPartitionCount;
     private long prevMaxTimestamp;
@@ -52,29 +44,19 @@ public final class TxWriter extends TxReader implements Closeable {
 
     public TxWriter(FilesFacade ff, @Transient Path path, int partitionBy) {
         super(ff, path, partitionBy);
-        this.ff = ff;
         try {
             readUnchecked();
         } catch (Throwable e) {
-            close();
+            // Do not truncate in case the file cannot be read
+            txMem.close(false);
+            txMem = null;
+            super.close();
             throw e;
         }
     }
 
     public void append() {
         transientRowCount++;
-    }
-
-    public void appendBlock(long timestampLo, long timestampHi, long nRowsAdded) {
-        if (timestampLo < maxTimestamp) {
-            throw CairoException.instance(ff.errno()).put("cannot insert rows out of order");
-        }
-
-        if (txPartitionCount == 0) {
-            txPartitionCount = 1;
-        }
-        this.maxTimestamp = timestampHi;
-        this.transientRowCount += nRowsAdded;
     }
 
     public void beginPartitionSizeUpdate() {
@@ -88,7 +70,7 @@ public final class TxWriter extends TxReader implements Closeable {
         }
     }
 
-    public void bumpStructureVersion(ObjList<SymbolMapWriter> denseSymbolMapWriters) {
+    public void bumpStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
         txMem.putLong(TX_OFFSET_TXN, ++txn);
         Unsafe.getUnsafe().storeFence();
 
@@ -105,7 +87,7 @@ public final class TxWriter extends TxReader implements Closeable {
             // Save full attached partition list
             attachedPositionDirtyIndex = 0;
             saveAttachedPartitionsToTx(count);
-            symbolsCount = count;
+            symbolColumnCount = count;
         }
 
         Unsafe.getUnsafe().storeFence();
@@ -113,12 +95,13 @@ public final class TxWriter extends TxReader implements Closeable {
     }
 
     public void cancelRow() {
-        if (transientRowCount == 0 && txPartitionCount > 1) {
+        if (transientRowCount == 1 && txPartitionCount > 1) {
             // we have to undo creation of partition
             txPartitionCount--;
             fixedRowCount -= prevTransientRowCount;
-            transientRowCount = prevTransientRowCount;
+            transientRowCount = prevTransientRowCount + 1; // When row cancel finishes 1 is subtracted. Add 1 to compensate.
             attachedPartitions.setPos(attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION);
+            prevTransientRowCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
         }
 
         maxTimestamp = prevMaxTimestamp;
@@ -160,7 +143,12 @@ public final class TxWriter extends TxReader implements Closeable {
         throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
     }
 
-    public void commit(int commitMode, ObjList<SymbolMapWriter> denseSymbolMapWriters) {
+    @Override
+    public void collectValueCount(int symbolIndexInTxWriter, int count) {
+        writeTransientSymbolCount(symbolIndexInTxWriter, count);
+    }
+
+    public void commit(int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
         txMem.putLong(TX_OFFSET_TXN, ++txn);
         Unsafe.getUnsafe().storeFence();
 
@@ -169,42 +157,20 @@ public final class TxWriter extends TxReader implements Closeable {
         txMem.putLong(TX_OFFSET_MIN_TIMESTAMP, minTimestamp);
         txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, maxTimestamp);
         txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, this.partitionTableVersion);
-        txMem.putLong(TX_OFFSET_TRANSACTION_LOG_TXN, transactionLogTxn);
-        if (transactionLogTxn != Long.MIN_VALUE) {
-            transactionLogRowCount += ((transientRowCount + fixedRowCount) - prevRowCount);
-            prevRowCount = transientRowCount + fixedRowCount;
-        }
-        txMem.putLong(TX_OFFSET_TRANSACTION_LOG_ROW_COUNT, transactionLogRowCount);
-
         // store symbol counts
-        storeSymbolCounts(denseSymbolMapWriters);
+        storeSymbolCounts(symbolCountProviders);
 
         // store attached partitions
-        symbolsCount = denseSymbolMapWriters.size();
+        symbolColumnCount = symbolCountProviders.size();
         txPartitionCount = 1;
-        saveAttachedPartitionsToTx(symbolsCount);
+        saveAttachedPartitionsToTx(symbolColumnCount);
 
         Unsafe.getUnsafe().storeFence();
         txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
         if (commitMode != CommitMode.NOSYNC) {
             txMem.sync(commitMode == CommitMode.ASYNC);
         }
-
         prevTransientRowCount = transientRowCount;
-    }
-
-    public void copyTo(LPSZ file, Log log) {
-        long fd = TableUtils.openRW(ff, file, log);
-        try {
-            long len = txMem.getAppendOffset();
-            if (ff.write(fd, txMem.getPageAddress(0), txMem.getAppendOffset(), 0) != len) {
-                throw CairoException.instance(ff.errno())
-                        .put("could not write [file=").put(file)
-                        .put(", len=").put(len).put(']');
-            }
-        } finally {
-            ff.close(fd);
-        }
     }
 
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
@@ -237,10 +203,6 @@ public final class TxWriter extends TxReader implements Closeable {
 
     public boolean isActivePartition(long timestamp) {
         return getPartitionTimestampLo(maxTimestamp) == timestamp;
-    }
-
-    public void newBlock() {
-        prevMaxTimestamp = maxTimestamp;
     }
 
     public void openFirstPartition(long timestamp) {
@@ -286,7 +248,7 @@ public final class TxWriter extends TxReader implements Closeable {
     public void reset() {
         resetTxn(
                 txMem,
-                symbolsCount,
+                symbolColumnCount,
                 txMem.getLong(TX_OFFSET_TXN) + 1,
                 txMem.getLong(TX_OFFSET_DATA_VERSION) + 1,
                 txMem.getLong(TX_OFFSET_PARTITION_TABLE_VERSION) + 1);
@@ -304,12 +266,6 @@ public final class TxWriter extends TxReader implements Closeable {
         if (prevMinTimestamp == Long.MAX_VALUE) {
             prevMinTimestamp = minTimestamp;
         }
-    }
-
-    public void setTransactionLogTxn(long transactionLogTxn) {
-        this.transactionLogTxn = transactionLogTxn;
-        this.prevRowCount = transientRowCount + fixedRowCount;
-        this.transactionLogRowCount = 0;
     }
 
     public void switchPartitions(long timestamp) {
@@ -339,7 +295,7 @@ public final class TxWriter extends TxReader implements Closeable {
         txPartitionCount = 1;
         attachedPositionDirtyIndex = 0;
         attachedPartitions.clear();
-        resetTxn(txMem, symbolsCount, txn, ++dataVersion, ++partitionTableVersion);
+        resetTxn(txMem, symbolColumnCount, txn, ++dataVersion, ++partitionTableVersion);
     }
 
     public void updateMaxTimestamp(long timestamp) {
@@ -395,9 +351,9 @@ public final class TxWriter extends TxReader implements Closeable {
         transientRowCount = committedTransientRowCount;
     }
 
-    private void saveAttachedPartitionsToTx(int symCount) {
+    private void saveAttachedPartitionsToTx(int symbolColumnCount) {
         final int size = attachedPartitions.size();
-        final long partitionTableOffset = getPartitionTableSizeOffset(symCount);
+        final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount);
         txMem.putInt(partitionTableOffset, size * Long.BYTES);
         if (maxTimestamp != Long.MIN_VALUE) {
             for (int i = attachedPositionDirtyIndex; i < size; i++) {
@@ -407,10 +363,10 @@ public final class TxWriter extends TxReader implements Closeable {
         }
     }
 
-    private void storeSymbolCounts(ObjList<SymbolMapWriter> denseSymbolMapWriters) {
-        for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+    private void storeSymbolCounts(ObjList<? extends SymbolCountProvider> symbolCountProviders) {
+        for (int i = 0, n = symbolCountProviders.size(); i < n; i++) {
             long offset = getSymbolWriterIndexOffset(i);
-            int symCount = denseSymbolMapWriters.getQuick(i).getSymbolCount();
+            int symCount = symbolCountProviders.getQuick(i).getSymbolCount();
             txMem.putInt(offset, symCount);
             offset += Integer.BYTES;
             txMem.putInt(offset, symCount);

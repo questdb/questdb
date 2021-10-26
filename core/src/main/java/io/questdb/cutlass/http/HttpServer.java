@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,7 +28,6 @@ import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
-import io.questdb.cairo.TableBlockWriter.TableBlockWriterJob;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
@@ -184,7 +183,6 @@ public class HttpServer implements Closeable {
         // jobs that help parallel execution of queries
         workerPool.assign(new ColumnIndexerJob(cairoEngine.getMessageBus()));
         workerPool.assign(new GroupByJob(cairoEngine.getMessageBus()));
-        workerPool.assign(new TableBlockWriterJob(cairoEngine.getMessageBus()));
         workerPool.assign(new LatestByAllIndexedJob(cairoEngine.getMessageBus()));
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.*;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
@@ -46,12 +45,11 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
     private final Function geoByteNullNonConstFunction =
             createGeoValueFunction(ColumnType.getGeoHashTypeWithBits(1), GeoHashes.BYTE_NULL, false);
 
-    private ObjList<Function> args;
+    private static final ObjList<Function> args = new ObjList<>(2);
 
     @Before
     public void setUp3() {
-        SharedRandom.RANDOM.set(new Rnd());
-        args = new ObjList<>(2);
+        args.clear();
     }
 
     @Test

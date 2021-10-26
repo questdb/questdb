@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -219,6 +219,30 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
             this.len = 0;
             return concat(str);
         }
+    }
+
+    public Path of(Path other) {
+        return of((LPSZ) other);
+    }
+
+    public Path of(LPSZ other) {
+        // This is different from of(CharSequence str) because
+        // another Path is already UTF8 encoded and cannot be treated as CharSequence.
+        // Copy binary array representation instead of trying to UTF8 encode it
+        int len = other.length();
+        if (this.ptr == 0) {
+            this.ptr = Unsafe.malloc(len + 1, MemoryTag.NATIVE_DEFAULT);
+            this.capacity = len;
+        } else if (this.capacity < len) {
+            extend(len);
+        }
+
+        if (len > 0) {
+            Unsafe.getUnsafe().copyMemory(other.address(), this.ptr, len);
+        }
+        this.len = len;
+        this.wptr = this.ptr + this.len;
+        return this;
     }
 
     private void checkClosed() {

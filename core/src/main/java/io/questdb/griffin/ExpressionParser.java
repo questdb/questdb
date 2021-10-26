@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.*;
 
@@ -666,6 +665,9 @@ class ExpressionParser {
                                 }
                             }
                             if (prevBranch != BRANCH_DOT && nonLiteralBranches.excludes(prevBranch)) {
+                                if (SqlKeywords.isQuote(tok)) {
+                                    throw SqlException.$(position, "unclosed quoted string?");
+                                }
                                 opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, position));
                                 break;
                             } else {

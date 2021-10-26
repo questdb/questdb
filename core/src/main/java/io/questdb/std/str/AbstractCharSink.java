@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -86,6 +86,35 @@ public abstract class AbstractCharSink implements CharSink {
             }
         }
         put(Misc.EOL);
+    }
+
+    @Override
+    public int encodeSurrogate(char c, CharSequence in, int pos, int hi) {
+        int dword;
+        if (Character.isHighSurrogate(c)) {
+            if (hi - pos < 1) {
+                put('?');
+                return pos;
+            } else {
+                char c2 = in.charAt(pos++);
+                if (Character.isLowSurrogate(c2)) {
+                    dword = Character.toCodePoint(c, c2);
+                } else {
+                    put('?');
+                    return pos;
+                }
+            }
+        } else if (Character.isLowSurrogate(c)) {
+            put('?');
+            return pos;
+        } else {
+            dword = c;
+        }
+        put((char) (240 | dword >> 18)).
+                put((char) (128 | dword >> 12 & 63)).
+                put((char) (128 | dword >> 6 & 63)).
+                put((char) (128 | dword & 63));
+        return pos;
     }
 
     private void put(Throwable throwable, StackTraceElement[] enclosingTrace, String caption, String prefix, Set<Throwable> dejaVu) {

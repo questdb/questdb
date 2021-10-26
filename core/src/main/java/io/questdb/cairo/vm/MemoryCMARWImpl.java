@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -271,7 +271,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                     memoryTag);
         } catch (Throwable e) {
             appendAddress = pageAddress + previousSize;
-            close();
+            close(false);
             throw e;
         }
         size = newSize;
@@ -305,7 +305,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             this.pageAddress = TableUtils.mapRW(ff, fd, size, memoryTag);
             this.lim = pageAddress + size;
         } catch (Throwable e) {
-            close();
+            close(false);
             throw e;
         }
     }

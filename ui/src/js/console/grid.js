@@ -1,3 +1,27 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 import $ from "jquery"
 
 import * as qdb from "./globals"
@@ -172,7 +196,7 @@ $.fn.grid = function (msgBus) {
       renderViewportNoCompute()
       return
     }
-    $.get("/exec", { query, limit: lo + "," + hi, nm: true }).done(f)
+    $.get("/exec", { query, limit: lo + 1 + "," + hi, nm: true }).done(f)
   }
 
   function loadPagesDelayed(p1, p2) {
@@ -360,7 +384,7 @@ $.fn.grid = function (msgBus) {
         }
       }
     }
-  } 
+  }
 
   function computeColumnWidths() {
     colMax = []
@@ -369,7 +393,7 @@ $.fn.grid = function (msgBus) {
     for (i = 0; i < columns.length; i++) {
       var c = columns[i]
       var col = $('<div class="qg-header qg-w' + i + '">' + c.name + "</div>")
-        .on('click', function (e) {
+        .on("click", function (e) {
           bus.trigger("editor.insert.column", e.target.innerHTML)
         })
         .appendTo(header)
