@@ -198,10 +198,13 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
 
     @Test
     public void testNotEquals2Symbols() throws Exception {
-        final String expected = "k\tprice\tts\n";
+        final String expected = "k\tprice\tts\n" +
+                "DXR\t0.08486964232560668\t1970-01-03T00:06:00.000000Z\n" +
+                "DXR\t0.0843832076262595\t1970-01-03T00:12:00.000000Z\n";
+
         assertQuery(
-                expected,
-                "select sym k, price, ts from x where sym != 'DXR' and sym != 'HBC' and sym != 'ABB'",
+                "k\tprice\tts\n",
+                "select sym k, price, ts from x where sym != 'HBC' and sym != 'ABB'",
                 "create table x (\n" +
                         "    sym symbol cache index,\n" +
                         "    price double,\n" +
@@ -212,8 +215,7 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
                         "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                false
+                expected
         );
     }
 
