@@ -686,7 +686,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         bindVariableService.setInt("start", 1);
 
         Function func = expr("substr(:str, :start)")
-                .withFunction(new SubStrFunctionFactory())
+                .withFunction(new RightFunctionFactory())
                 .$();
 
         func.init(null, sqlExecutionContext);
@@ -701,7 +701,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         bindVariableService.setStr(1, "abcd");
 
         Function func = expr("substr($2, $1)")
-                .withFunction(new SubStrFunctionFactory())
+                .withFunction(new RightFunctionFactory())
                 .$();
 
         func.init(null, sqlExecutionContext);
