@@ -1151,9 +1151,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testNotEqualPreferredColumn() throws Exception {
         IntrinsicModel m = modelOf("sym = null and sym != null and ex != 'blah'", "ex");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
-        assertFilter(m, "'blah'ex!=nullsym!=nullsym=andand");
+        assertFilter(m, "nullsym!=nullsym=and");
+        Assert.assertEquals("ex", m.keyColumn.toString());
         Assert.assertEquals("[]", m.keyValues.toString());
         Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[blah]", m.keyExcludedValues.toString());
+        Assert.assertEquals("[37]", m.keyExcludedValuePositions.toString());
     }
 
     @Test
