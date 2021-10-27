@@ -43,7 +43,6 @@ public class Worker extends Thread {
     private final boolean haltOnError;
     private final int workerId;
     private volatile int running = 0;
-    private volatile int fence;
     private final long yieldThreshold;
     private final long sleepThreshold;
 
@@ -106,7 +105,7 @@ public class Worker extends Thread {
 
                     boolean useful = false;
                     for (int i = 0; i < n; i++) {
-                        loadFence();
+                        Unsafe.getUnsafe().loadFence();
                         try {
                             try {
                                 useful |= jobs.get(i).run(workerId);
@@ -114,7 +113,7 @@ public class Worker extends Thread {
                                 onError(i, e);
                             }
                         } finally {
-                            storeFence();
+                            Unsafe.getUnsafe().storeFence();
                         }
                     }
 
@@ -163,28 +162,20 @@ public class Worker extends Thread {
         }
     }
 
-    @SuppressWarnings("UnusedReturnValue")
-    private int loadFence() {
-        return fence;
-    }
-
     private void setupJobs() {
         if (running == 1) {
             for (int i = 0; i < jobs.size(); i++) {
-                loadFence();
+                Unsafe.getUnsafe().loadFence();
                 try {
                     Job job = jobs.get(i);
                     if (job instanceof EagerThreadSetup) {
                         ((EagerThreadSetup) job).setup();
                     }
                 } finally {
-                    storeFence();
+                    Unsafe.getUnsafe().storeFence();
                 }
             }
         }
     }
 
-    private void storeFence() {
-        fence = 1;
-    }
 }

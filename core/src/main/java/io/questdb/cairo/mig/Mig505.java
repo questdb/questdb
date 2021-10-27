@@ -24,17 +24,28 @@
 
 package io.questdb.cairo.mig;
 
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
+import io.questdb.cairo.TableUtils;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.Path;
 
-class MigrationActions {
-    public static final long META_OFFSET_COLUMN_TYPES_606 = 128;
-    public static final long META_COLUMN_DATA_SIZE_606 = 16;
-    public static final long TX_OFFSET_MAP_WRITER_COUNT_505 = 72;
+import static io.questdb.cairo.TableUtils.META_OFFSET_TABLE_ID;
 
-    public static final Log LOG = LogFactory.getLog(MigrationActions.class);
+final class Mig505 {
+    static void migrate(MigrationContext migrationContext) {
+        MigrationActions.LOG.info().$("assigning table ID [table=").$(migrationContext.getTablePath()).I$();
+        final long mem = migrationContext.getTempMemory(8);
+        final FilesFacade ff = migrationContext.getFf();
+        final Path path = migrationContext.getTablePath();
+        final long fd = migrationContext.getMetadataFd();
 
-    public static long prefixedBlockOffset(long prefix, long index, long blockSize) {
-        return prefix + index * blockSize;
+        MigrationActions.LOG.info().$("setting table id in [path=").$(path).I$();
+        TableUtils.writeIntOrFail(
+                ff,
+                fd,
+                META_OFFSET_TABLE_ID,
+                migrationContext.getNextTableId(),
+                mem,
+                path
+        );
     }
 }
