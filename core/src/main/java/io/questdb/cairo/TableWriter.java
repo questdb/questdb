@@ -4285,7 +4285,7 @@ public class TableWriter implements Closeable {
                                 LOG.info().$("restored [path=").$(path).$(']').$();
                             }
                         } else {
-                            LOG.info().$("missing partition [name=").$(path.trimTo(p).$()).$(']').$();
+                            LOG.debug().$("missing partition [name=").$(path.trimTo(p).$()).$(']').$();
                         }
                     }
                 }

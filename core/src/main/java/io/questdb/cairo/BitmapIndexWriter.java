@@ -190,7 +190,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                 }
             } else {
                 kFdUnassigned = false;
-                this.keyMem.of(ff, keyFd, null, pageSize, MemoryTag.MMAP_INDEX_WRITER);
+                this.keyMem.of(ff, keyFd, null, ff.length(keyFd), MemoryTag.MMAP_INDEX_WRITER);
             }
             long keyMemSize = this.keyMem.getAppendOffset();
             // check if key file header is present
@@ -218,6 +218,8 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                 throw CairoException.instance(0).put("Sequence mismatch [fd=").put(keyFd).put(']');
             }
 
+            this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
+
             if (init) {
                 if (ff.truncate(valueFd, 0)) {
                     vFdUnassigned = false;
@@ -228,13 +230,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                 }
             } else {
                 vFdUnassigned = false;
-                this.valueMem.of(ff, valueFd, null, pageSize, MemoryTag.MMAP_INDEX_WRITER);
-            }
-            this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
-
-            if (this.valueMem.getAppendOffset() < this.valueMemSize) {
-                LOG.error().$("incorrect file size [corrupt] [fd=").$(valueFd).$(", expected=").$(this.valueMemSize).$(']').$();
-                throw CairoException.instance(0).put("Incorrect file size [fd=").put(valueFd).put(']');
+                this.valueMem.of(ff, valueFd, null, this.valueMemSize, MemoryTag.MMAP_INDEX_WRITER);
             }
 
             // block value count is always a power of two
