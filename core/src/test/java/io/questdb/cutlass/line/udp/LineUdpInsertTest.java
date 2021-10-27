@@ -56,7 +56,7 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
     }
 
     protected static AbstractLineSender createLineProtoSender() {
-        return new LineUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 1024, 1);
+        return new LineUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 80, 1);
     }
 
     protected static void assertReader(String tableName, String expected) {

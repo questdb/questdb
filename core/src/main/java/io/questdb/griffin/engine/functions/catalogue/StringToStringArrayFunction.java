@@ -33,6 +33,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 class StringToStringArrayFunction extends StrArrayFunction {
     private static final int BRANCH_BEFORE_ITEM = 0;
@@ -158,7 +159,7 @@ class StringToStringArrayFunction extends StrArrayFunction {
         throw SqlException.$(position, "array must start with '{'");
     }
 
-    private void commit(CharSequence type, int stringStartIndex, int stringEndIndex, StringSink sink) {
+    private void commit(@NotNull CharSequence type, int stringStartIndex, int stringEndIndex, StringSink sink) {
         sink.put(type, stringStartIndex, stringEndIndex + 1);
         items.add(Chars.toString(sink));
         sink.clear();
