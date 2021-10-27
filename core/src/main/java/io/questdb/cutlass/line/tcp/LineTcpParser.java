@@ -430,7 +430,7 @@ public class LineTcpParser implements Closeable {
     private boolean expectTableName(byte endOfEntityByte, long bufHi) {
         tagsComplete = endOfEntityByte == (byte) ' ';
         if (endOfEntityByte == (byte) ',' || tagsComplete) {
-            measurementName.of(entityLo, bufAt);
+            measurementName.of(entityLo, bufAt - nEscapedChars);
             entityHandler = entityNameHandler;
             return true;
         }

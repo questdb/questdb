@@ -54,4 +54,14 @@ public class LineTcpSender extends AbstractLineSender {
             throw NetworkError.instance(nf.errno()).put("send error");
         }
     }
+
+    @Override
+    public void flush() {
+        sendAll();
+    }
+
+    @Override
+    protected void send00() {
+        sendAll();
+    }
 }
