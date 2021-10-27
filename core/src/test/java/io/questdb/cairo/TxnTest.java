@@ -67,7 +67,6 @@ public class TxnTest extends AbstractCairoTest {
                     }
                 }
 
-
                 try (Path path = new Path()) {
                     path.of(configuration.getRoot()).concat(tableName);
                     int testPartitionCount = 3000;
@@ -77,6 +76,7 @@ public class TxnTest extends AbstractCairoTest {
                             txWriter.updatePartitionSizeByTimestamp(i * Timestamps.DAY_MICROS, i + 1);
                         }
                         txWriter.updateMaxTimestamp(testPartitionCount * Timestamps.DAY_MICROS + 1);
+                        txWriter.finishPartitionSizeUpdate();
                         txWriter.commit(CommitMode.SYNC, new ObjList<>());
                     }
 
@@ -108,5 +108,4 @@ public class TxnTest extends AbstractCairoTest {
             });
         });
     }
-
 }

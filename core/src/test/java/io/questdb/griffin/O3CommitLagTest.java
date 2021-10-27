@@ -297,6 +297,16 @@ public class O3CommitLagTest extends AbstractO3Test {
         });
     }
 
+    private void assertXY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+        TestUtils.assertEquals(sink, sink2);
+
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from x", sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from y", sink2);
+        TestUtils.assertEquals(sink, sink2);
+    }
+
     private void insertUncommitted(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
@@ -374,7 +384,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         }
 
         long start = IntervalUtils.parseFloorPartialDate("2021-04-27T08:00:00");
-        long[] testCounts = new long[] { 2 * 1024 * 1024, 16 * 8 * 1024 * 5, 2_000_000 };
+        long[] testCounts = new long[]{2 * 1024 * 1024, 16 * 8 * 1024 * 5, 2_000_000};
         for (int c = 0; c < testCounts.length; c++) {
             long idCount = testCounts[c];
 
@@ -544,9 +554,7 @@ public class O3CommitLagTest extends AbstractO3Test {
             writer.commit();
         }
 
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-        TestUtils.assertEquals(sink, sink2);
+        assertXY(compiler, sqlExecutionContext);
     }
 
     private void testCommitLagEndingAtPartitionBoundaryPlus1WithRollback0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
@@ -609,6 +617,10 @@ public class O3CommitLagTest extends AbstractO3Test {
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=185 or i>=200", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+        TestUtils.assertEquals(sink, sink2);
+
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (select * from x where i<=185 or i>=200)", sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from y", sink2);
         TestUtils.assertEquals(sink, sink2);
     }
 
@@ -729,9 +741,7 @@ public class O3CommitLagTest extends AbstractO3Test {
             writer.commit();
         }
 
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-        TestUtils.assertEquals(sink, sink2);
+        assertXY(compiler, sqlExecutionContext);
     }
 
     private void testCommitLagStaggeringPartitionsWithRollback0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -843,9 +853,7 @@ public class O3CommitLagTest extends AbstractO3Test {
             writer.commit();
         }
 
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-        TestUtils.assertEquals(sink2, sink);
+        assertXY(compiler, sqlExecutionContext);
     }
 
     private void testCommitLagWithLargeO3(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -892,9 +900,7 @@ public class O3CommitLagTest extends AbstractO3Test {
             writer.commit();
         }
 
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-        TestUtils.assertEquals(sink, sink2);
+        assertXY(compiler, sqlExecutionContext);
     }
 
     private void testCommitLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -940,10 +946,7 @@ public class O3CommitLagTest extends AbstractO3Test {
 
             writer.commit();
         }
-
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-        TestUtils.assertEquals(sink, sink2);
+        assertXY(compiler, sqlExecutionContext);
     }
 
     private void testCommitLagWithinPartitionWithRollback(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -1000,6 +1003,10 @@ public class O3CommitLagTest extends AbstractO3Test {
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=375 or i>380", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+        TestUtils.assertEquals(sink, sink2);
+
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (select * from x where i<=375 or i>380)", sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from y", sink2);
         TestUtils.assertEquals(sink, sink2);
     }
 
@@ -1088,9 +1095,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         }
         LOG.info().$("committed final state with ").$(nCommitsWithLag).$(" commits with lag").$();
 
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-        TestUtils.assertEquals(sink2, sink);
+        assertXY(compiler, sqlExecutionContext);
     }
 
     private void testLargeLagWithRowLimit(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -1135,9 +1140,7 @@ public class O3CommitLagTest extends AbstractO3Test {
             TestUtils.assertEquals(sink, sink2);
             writer.commit();
         }
-        TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from y", sink2);
-        TestUtils.assertEquals(sink, sink2);
+        assertXY(compiler, sqlExecutionContext);
     }
 
     private void testLargeLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -1183,10 +1186,7 @@ public class O3CommitLagTest extends AbstractO3Test {
 
             writer.commit();
         }
-
-        TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from y", sink2);
-        TestUtils.assertEquals(sink, sink2);
+        assertXY(compiler, sqlExecutionContext);
     }
 
     private void testNoLag0(
@@ -1237,9 +1237,7 @@ public class O3CommitLagTest extends AbstractO3Test {
             writer.commit();
         }
 
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-        TestUtils.assertEquals(sink, sink2);
+        assertXY(compiler, sqlExecutionContext);
     }
 
     private void testNoLagEndingAtPartitionBoundary(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -1286,10 +1284,7 @@ public class O3CommitLagTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             writer.commit();
         }
-
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-        TestUtils.assertEquals(sink, sink2);
+        assertXY(compiler, sqlExecutionContext);
     }
 
     private void testNoLagWithRollback(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -1346,6 +1341,10 @@ public class O3CommitLagTest extends AbstractO3Test {
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=375 or i>380", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+        TestUtils.assertEquals(sink, sink2);
+
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (select * from x where i<=375 or i>380)", sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from y", sink2);
         TestUtils.assertEquals(sink, sink2);
     }
 }

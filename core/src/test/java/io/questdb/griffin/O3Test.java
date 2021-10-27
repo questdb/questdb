@@ -171,31 +171,6 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testColumnTopMoveUncommittedLastPartContended() throws Exception {
-        executeWithPool(0, O3Test::testColumnTopMoveUncommittedLastPart0);
-    }
-
-    @Test
-    public void testColumnTopMoveUncommittedContended() throws Exception {
-        executeWithPool(0, O3Test::testColumnTopMoveUncommitted0);
-    }
-
-    @Test
-    public void testColumnTopMoveUncommittedParallel() throws Exception {
-        executeWithPool(4, O3Test::testColumnTopMoveUncommitted0);
-    }
-
-    @Test
-    public void testColumnTopMoveUncommittedLastPartParallel() throws Exception {
-        executeWithPool(4, O3Test::testColumnTopMoveUncommittedLastPart0);
-    }
-
-    @Test
-    public void testColumnTopMoveUncommittedLastPart() throws Exception {
-        executeVanilla(O3Test::testColumnTopMoveUncommittedLastPart0);
-    }
-
-    @Test
     public void testColumnTopLastDataOOODataParallel() throws Exception {
         executeWithPool(4, O3Test::testColumnTopLastDataOOOData0);
     }
@@ -292,7 +267,7 @@ public class O3Test extends AbstractO3Test {
 
     @Test
     public void testColumnTopMidMergeBlankGeoHash() throws Exception {
-        executeVanilla(O3Test::testColumnTopMidMergeBlankColumnGeohash0);
+        executeVanilla(O3Test::testColumnTopMidMergeBlankColumnGeoHash0);
     }
 
     @Test
@@ -313,6 +288,31 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testColumnTopMidOOODataParallel() throws Exception {
         executeWithPool(4, O3Test::testColumnTopMidOOOData0);
+    }
+
+    @Test
+    public void testColumnTopMoveUncommittedContended() throws Exception {
+        executeWithPool(0, O3Test::testColumnTopMoveUncommitted0);
+    }
+
+    @Test
+    public void testColumnTopMoveUncommittedLastPart() throws Exception {
+        executeVanilla(O3Test::testColumnTopMoveUncommittedLastPart0);
+    }
+
+    @Test
+    public void testColumnTopMoveUncommittedLastPartContended() throws Exception {
+        executeWithPool(0, O3Test::testColumnTopMoveUncommittedLastPart0);
+    }
+
+    @Test
+    public void testColumnTopMoveUncommittedLastPartParallel() throws Exception {
+        executeWithPool(4, O3Test::testColumnTopMoveUncommittedLastPart0);
+    }
+
+    @Test
+    public void testColumnTopMoveUncommittedParallel() throws Exception {
+        executeWithPool(4, O3Test::testColumnTopMoveUncommitted0);
     }
 
     @Test
@@ -339,6 +339,22 @@ public class O3Test extends AbstractO3Test {
                     sqlExecutionContext
             );
 
+            TestUtils.printSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "select count() from x",
+                    sink2
+            );
+
+            TestUtils.printSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "select max(ts) from x",
+                    sink
+            );
+
+            final String expectedMaxTimestamp = Chars.toString(sink);
+
             // to_timestamp produces NULL because values does not match the pattern
             try {
                 TestUtils.insert(compiler, sqlExecutionContext, "insert into x values(0, 'abc', to_timestamp('2019-08-15T16:03:06.595', 'yyyy-MM-dd:HH:mm:ss.SSSUUU'))");
@@ -346,6 +362,17 @@ public class O3Test extends AbstractO3Test {
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "timestamps before 1970-01-01 are not allowed for O3");
             }
+
+            assertXCount(
+                    compiler,
+                    sqlExecutionContext
+            );
+
+            assertMaxTimestamp(
+                    engine,
+                    sqlExecutionContext,
+                    expectedMaxTimestamp
+            );
         });
     }
 
@@ -1076,6 +1103,13 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext
         );
+
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
+        );
     }
 
     private static void testSendDuplicates(
@@ -1201,6 +1235,12 @@ public class O3Test extends AbstractO3Test {
                 "x"
         );
 
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
+        );
 
         assertO3DataCursors(
                 engine,
@@ -1212,6 +1252,13 @@ public class O3Test extends AbstractO3Test {
                 "x order by i,sym,amt"
         );
 
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from z"
+        );
+
         assertO3DataCursors(
                 engine,
                 compiler,
@@ -1220,6 +1267,13 @@ public class O3Test extends AbstractO3Test {
                 "w order by i,sym,amt",
                 "insert into x select * from append3",
                 "x order by i,sym,amt"
+        );
+
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from w"
         );
     }
 
@@ -1294,6 +1348,13 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
+        );
     }
 
     private static void testAppendOrderStability(
@@ -1470,6 +1531,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testVanillaCommitLag0(
@@ -1576,6 +1638,13 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
+        );
     }
 
     private static void testLagOverflowBySize0(
@@ -1665,6 +1734,13 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
+        );
     }
 
     private static void testVanillaCommitLagSinglePartition0(
@@ -1738,6 +1814,13 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
+        );
     }
 
     private static void testPartitionedOOMergeOO0(
@@ -1893,6 +1976,13 @@ public class O3Test extends AbstractO3Test {
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
         testXAndIndex(engine, compiler, sqlExecutionContext, expected);
+
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
+        );
     }
 
     private static void testRepeatedIngest0(
@@ -2243,6 +2333,13 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
+        );
     }
 
     private static void testPartitionedOOMerge0(
@@ -2348,6 +2445,12 @@ public class O3Test extends AbstractO3Test {
 
         testXAndIndex(engine, compiler, sqlExecutionContext, expected);
 
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
+        );
     }
 
     private static void testOooFollowedByAnotherOOO0(
@@ -2453,6 +2556,13 @@ public class O3Test extends AbstractO3Test {
         TestUtils.assertEquals(expected, sink);
 
         testXAndIndex(engine, compiler, sqlExecutionContext, expected);
+
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
+        );
     }
 
     private static void testPartitionedOODataOOCollapsed0(
@@ -2527,6 +2637,13 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
+        );
     }
 
     private static void testPartitionedOOData0(
@@ -2629,6 +2746,13 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 expected
+        );
+
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
         );
     }
 
@@ -2742,6 +2866,7 @@ public class O3Test extends AbstractO3Test {
                 "/o3/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt"
         );
         assertIndexConsistency(compiler, sqlExecutionContext);
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedDataOOIntoLastIndexSearchBug0(
@@ -2854,6 +2979,13 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 expected
+        );
+
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
         );
     }
 
@@ -2968,6 +3100,13 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 expected
         );
+
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
+        );
     }
 
     private static void testPartitionedDataMergeData0(
@@ -3048,6 +3187,7 @@ public class O3Test extends AbstractO3Test {
         AbstractO3Test.assertSqlResultAgainstFile(compiler, sqlExecutionContext,
                 filteredColumnSelect + " where sym = 'googl'",
                 "/o3/testPartitionedDataMergeData_Index.txt");
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedDataMergeEnd0(
@@ -3119,6 +3259,13 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "/o3/testPartitionedDataMergeEnd_Index.txt"
         );
+
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
+        );
     }
 
     private static void testPartitionedDataOOData0(
@@ -3189,6 +3336,13 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
+        );
     }
 
     private static void testPartitionedDataAppendOODataNotNullStrTail0(
@@ -3259,6 +3413,13 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
+        );
     }
 
     private static void testPartitionedDataAppendOODataIndexed0(
@@ -3327,6 +3488,13 @@ public class O3Test extends AbstractO3Test {
                 "y where sym = 'googl' order by ts",
                 "insert into x select * from append",
                 "x where sym = 'googl'"
+        );
+
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
         );
     }
 
@@ -3466,6 +3634,9 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (x union all append)", sink2);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select max(ts) from (x union all append)", sink);
+        final String expectedMaxTimestamp = Chars.toString(sink);
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
         assertSqlResultAgainstFile(
@@ -3473,6 +3644,13 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "x",
                 "/o3/testColumnTopLastDataOOOData.txt"
+        );
+        assertXCount(compiler, sqlExecutionContext);
+
+        assertMaxTimestamp(
+                engine,
+                sqlExecutionContext,
+                expectedMaxTimestamp
         );
     }
 
@@ -3641,6 +3819,13 @@ public class O3Test extends AbstractO3Test {
                 sink,
                 expected
         );
+
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
+        );
     }
 
     private static void testColumnTopMoveUncommitted0(
@@ -3808,6 +3993,13 @@ public class O3Test extends AbstractO3Test {
                 sink,
                 expected
         );
+
+        assertMaxTimestamp(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from y"
+        );
     }
 
     private static void testColumnTopLastDataMergeData0(
@@ -3946,6 +4138,10 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (x union all append)", sink2);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select max(ts) from (x union all append)", sink);
+        final String expectedMaxTimestamp = Chars.toString(sink);
+
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
         assertSqlResultAgainstFile(
@@ -3953,6 +4149,13 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "x",
                 "/o3/testColumnTopLastDataMergeData.txt"
+        );
+        assertXCount(compiler, sqlExecutionContext);
+
+        assertMaxTimestamp(
+                engine,
+                sqlExecutionContext,
+                expectedMaxTimestamp
         );
     }
 
@@ -4078,6 +4281,9 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (x union all append)", sink2);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select max(ts) from (x union all append)", sink);
+        final String expectedMaxTimestamp = Chars.toString(sink);
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
         assertSqlResultAgainstFile(
@@ -4085,6 +4291,13 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "x",
                 "/o3/testColumnTopMidDataMergeData.txt"
+        );
+        assertXCount(compiler, sqlExecutionContext);
+
+        assertMaxTimestamp(
+                engine,
+                sqlExecutionContext,
+                expectedMaxTimestamp
         );
     }
 
@@ -4262,6 +4475,11 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (x union all append2)", sink2);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select max(ts) from (x union all append2)", sink);
+
+        final String expectedMaxTimestamp = Chars.toString(sink);
+
         // straight append
         compiler.compile("insert into x select * from append2", sqlExecutionContext);
 
@@ -4270,6 +4488,13 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "x",
                 "/o3/testColumnTopLastDataMerge2DataStep2.txt"
+        );
+        assertXCount(compiler, sqlExecutionContext);
+
+        assertMaxTimestamp(
+                engine,
+                sqlExecutionContext,
+                expectedMaxTimestamp
         );
     }
 
@@ -4400,6 +4625,11 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (x union all append)", sink2);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select max(ts) from (x union all append)", sink);
+
+        final String expectedMaxTimestamp = Chars.toString(sink);
+
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
         assertSqlResultAgainstFile(
@@ -4408,6 +4638,8 @@ public class O3Test extends AbstractO3Test {
                 "select i,sym,amt,timestamp,b,c,d,e,f,g,ik,j,ts,l,m,n,t,v,v1,v2,v3,v4,v5,v6,v7,v8,v10,v11,v12,v9 from x",
                 "/o3/testColumnTopLastOOOPrefix.txt"
         );
+        assertXCount(compiler, sqlExecutionContext);
+        assertMaxTimestamp(engine, sqlExecutionContext, expectedMaxTimestamp);
     }
 
     private static void testColumnTopLastOOOData0(
@@ -4531,6 +4763,9 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (x union all append)", sink2);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select max(ts) from (x union all append)", sink);
+        final String expectedMaxTimestamp = Chars.toString(sink);
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
         assertSqlResultAgainstFile(
@@ -4538,6 +4773,13 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "x",
                 "/o3/testColumnTopLastOOOData.txt"
+        );
+        assertXCount(compiler, sqlExecutionContext);
+
+        assertMaxTimestamp(
+                engine,
+                sqlExecutionContext,
+                expectedMaxTimestamp
         );
     }
 
@@ -4662,6 +4904,9 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (x union all append)", sink2);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select max(ts) from (x union all append)", sink);
+        final String expectedMaxTimestamp = Chars.toString(sink);
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
         assertSqlResultAgainstFile(
@@ -4669,6 +4914,13 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "x",
                 "/o3/testColumnTopMidOOOData.txt"
+        );
+        assertXCount(compiler, sqlExecutionContext);
+
+        assertMaxTimestamp(
+                engine,
+                sqlExecutionContext,
+                expectedMaxTimestamp
         );
     }
 
@@ -4781,6 +5033,16 @@ public class O3Test extends AbstractO3Test {
                 "insert into x select * from append2",
                 "x"
         );
+
+        TestUtils.printSql(
+                compiler,
+                executionContext,
+                "select count() from y2",
+                sink2
+        );
+
+        assertXCount(compiler, executionContext);
+        assertMaxTimestamp(engine, compiler, executionContext, "select max(ts) from y2");
     }
 
     private static void testColumnTopMidAppendBlankColumn0(
@@ -4883,6 +5145,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, executionContext);
+        assertXCountY(compiler, executionContext);
     }
 
     private static void testColumnTopLastAppendBlankColumn0(
@@ -4981,6 +5244,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, executionContext);
+        assertXCountY(compiler, executionContext);
     }
 
     private static void testColumnTopMidMergeBlankColumn0(
@@ -5082,9 +5346,10 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, executionContext);
+        assertXCountY(compiler, executionContext);
     }
 
-    private static void testColumnTopMidMergeBlankColumnGeohash0(
+    private static void testColumnTopMidMergeBlankColumnGeoHash0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext executionContext
@@ -5137,6 +5402,7 @@ public class O3Test extends AbstractO3Test {
                 "insert into x select * from append",
                 "x"
         );
+        assertXCountY(compiler, executionContext);
     }
 
     private static void testColumnTopNewPartitionMiddleOfTable0(
@@ -5261,6 +5527,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testColumnTopMidAppendColumn0(
@@ -5395,6 +5662,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testOOOTouchesNotLastPartition0(
@@ -5471,6 +5739,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testOOOTouchesNotLastPartitionTop0(
@@ -5549,6 +5818,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testColumnTopLastAppendColumn0(
@@ -5683,6 +5953,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedDataOODataPbOOData0(
@@ -5782,6 +6053,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "/o3/testPartitionedDataOODataPbOOData_Index.txt"
         );
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedDataOODataPbOODataDropColumn0(
@@ -5898,6 +6170,15 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "z"
         );
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "select count() from z",
+                sink2
+        );
+        assertXCount(compiler, sqlExecutionContext);
+        assertMaxTimestamp(engine, compiler, sqlExecutionContext, "select max(ts) from z");
     }
 
     private static void testAppendToLastPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -6007,5 +6288,6 @@ public class O3Test extends AbstractO3Test {
                 "insert into x select * from append",
                 "x"
         );
+        assertXCountY(compiler, sqlExecutionContext);
     }
 }

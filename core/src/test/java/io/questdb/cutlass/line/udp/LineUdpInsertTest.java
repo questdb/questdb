@@ -103,9 +103,11 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                     }
                     Os.sleep(250L); // allow reader to hit the readout
                 }
+
                 if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
                     Assert.fail();
                 }
+
                 assertReader(tableName, expected, expectedExtraStringColumns);
             }
         });

@@ -1237,8 +1237,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             }
             waitForIOCompletion();
             rebalanceNLoadCheckCycles = scheduler.getNLoadCheckCycles();
-            rebalanceNRebalances = scheduler.getNRebalances();
-            rebalanceLoadByThread = scheduler.getLoadByThread();
+            rebalanceNRebalances = scheduler.getReshuffleCount();
+            rebalanceLoadByThread = scheduler.getLoadByWriterThread();
             closeContext();
             LOG.info().$("Completed ")
                     .$(nTotalUpdates)

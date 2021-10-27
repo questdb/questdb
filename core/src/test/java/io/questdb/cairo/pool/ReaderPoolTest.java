@@ -656,7 +656,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
 
-            for (int k = 0; k < 10000; k++) {
+            for (int k = 0; k < 10; k++) {
                 // allocate 32 readers to get to the start race at edge of next entry
                 int n = 64;
                 TableReader[] readers = new TableReader[n];

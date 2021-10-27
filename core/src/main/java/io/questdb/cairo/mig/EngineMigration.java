@@ -218,12 +218,13 @@ public class EngineMigration {
     }
 
     static {
-        MIGRATIONS.put(417, MigrationActions::mig505);
+        MIGRATIONS.put(417, Mig505::migrate);
         // there is no tagged version with _meta 418, this is something unreleased
-        MIGRATIONS.put(418, MigrationActions::rebuildTransactionFile);
-        MIGRATIONS.put(419, MigrationActions::mig600);
-        MIGRATIONS.put(420, MigrationActions::mig605);
-        MIGRATIONS.put(422, MigrationActions::mig607);
-        MIGRATIONS.put(423, MigrationActions::mig608);
+        MIGRATIONS.put(418, Mig506::migrate);
+        MIGRATIONS.put(419, Mig600::migrate);
+        MIGRATIONS.put(420, Mig605::migrate);
+        MIGRATIONS.put(422, Mig607::migrate);
+        MIGRATIONS.put(423, Mig608::migrate);
+        MIGRATIONS.put(424, Mig609::migrate);
     }
 }
