@@ -47,7 +47,6 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.util.Arrays;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReadWriteLock;
 
 import static io.questdb.network.IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATION;
@@ -339,7 +338,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         this.listener = listener;
     }
 
-    private @NotNull TableUpdateDetails startNewMeasurementEvent(NetworkIOJob netIoJob, LineTcpParser protoParser) {
+    private TableUpdateDetails startNewMeasurementEvent(NetworkIOJob netIoJob, LineTcpParser protoParser) {
         final TableUpdateDetails tableUpdateDetails = netIoJob.getTableUpdateDetails(protoParser.getMeasurementName());
         if (null != tableUpdateDetails) {
             return tableUpdateDetails;
@@ -347,7 +346,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         return startNewMeasurementEvent0(netIoJob, protoParser);
     }
 
-    private @NotNull TableUpdateDetails startNewMeasurementEvent0(NetworkIOJob netIoJob, LineTcpParser protoParser) {
+    private TableUpdateDetails startNewMeasurementEvent0(NetworkIOJob netIoJob, LineTcpParser protoParser) {
         TableUpdateDetails tableUpdateDetails;
         tableUpdateDetailsLock.writeLock().lock();
         try {
@@ -399,22 +398,24 @@ class LineTcpMeasurementScheduler implements Closeable {
             return false;
         }
 
-        long seq = getNextPublisherEventSequence();
-        if (seq >= 0) {
-            try {
-                LineTcpMeasurementEvent event = queue.get(seq);
-                event.threadId = INCOMPLETE_EVENT_ID;
-                TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.startNewMeasurementEvent(netIoJob.getWorkerId());
-                event.createMeasurementEvent(tableUpdateDetails, localDetails, protoParser, charSink);
-                return false;
-            } finally {
-                pubSeq.done(seq);
-                if (++tableUpdateDetails.eventsProcessedSinceReshuffle > processedEventCountBeforeReshuffle) {
-                    if (tableUpdateDetailsLock.writeLock().tryLock()) {
-                        try {
-                            reshuffleTablesAcrossWriterThreads();
-                        } finally {
-                            tableUpdateDetailsLock.writeLock().unlock();
+        if (null != tableUpdateDetails) {
+            long seq = getNextPublisherEventSequence();
+            if (seq >= 0) {
+                try {
+                    LineTcpMeasurementEvent event = queue.get(seq);
+                    event.threadId = INCOMPLETE_EVENT_ID;
+                    TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.startNewMeasurementEvent(netIoJob.getWorkerId());
+                    event.createMeasurementEvent(tableUpdateDetails, localDetails, protoParser, charSink);
+                    return false;
+                } finally {
+                    pubSeq.done(seq);
+                    if (++tableUpdateDetails.eventsProcessedSinceReshuffle > processedEventCountBeforeReshuffle) {
+                        if (tableUpdateDetailsLock.writeLock().tryLock()) {
+                            try {
+                                reshuffleTablesAcrossWriterThreads();
+                            } finally {
+                                tableUpdateDetailsLock.writeLock().unlock();
+                            }
                         }
                     }
                 }
@@ -996,7 +997,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         private boolean assignedToJob = false;
         private long lastMeasurementMillis = Long.MAX_VALUE;
         private long lastCommitMillis;
-        private final AtomicInteger networkIOOwnerCount = new AtomicInteger(0);
+        private int networkIOOwnerCount = 0;
 
         private TableUpdateDetails(String tableName, int writerThreadId, NetworkIOJob[] netIoJobs) {
             this.tableName = tableName;
@@ -1424,7 +1425,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         @Override
         public void addTableUpdateDetails(TableUpdateDetails tableUpdateDetails) {
             localTableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
-            tableUpdateDetails.networkIOOwnerCount.incrementAndGet();
+            tableUpdateDetails.networkIOOwnerCount++;
             LOG.info()
                     .$("network IO thread using table [workerId=").$(workerId)
                     .$(", tableName=").$(tableUpdateDetails.tableName)
@@ -1486,7 +1487,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 if (millis - tableUpdateDetails.lastMeasurementMillis >= writerIdleTimeout) {
                     tableUpdateDetailsLock.writeLock().lock();
                     try {
-                        if (tableUpdateDetails.networkIOOwnerCount.decrementAndGet() == 0) {
+                        if (tableUpdateDetails.networkIOOwnerCount == 1) {
                             final long seq = getNextPublisherEventSequence();
                             if (seq > -1) {
                                 LineTcpMeasurementEvent event = queue.get(seq);
@@ -1543,6 +1544,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         private void removeTableUpdateDetails(TableUpdateDetails tableUpdateDetails) {
             localTableUpdateDetailsByTableName.remove(tableUpdateDetails.tableName);
+            tableUpdateDetails.networkIOOwnerCount--;
             tableUpdateDetails.localDetailsArray[workerId].clear();
             LOG.info()
                     .$("network IO thread released table [workerId=").$(workerId)
