@@ -136,7 +136,7 @@ public class ServerMain {
 
         LogFactory.configureFromSystemProperties(workerPool);
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration());
-        workerPool.assign(cairoEngine.getWriterMaintenanceJob());
+        workerPool.assign(cairoEngine.getEngineMaintenanceJob());
         instancesToClean.add(cairoEngine);
 
         if (!configuration.getCairoConfiguration().getTelemetryConfiguration().getDisableCompletely()) {

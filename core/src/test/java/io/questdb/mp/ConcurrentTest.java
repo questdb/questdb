@@ -425,6 +425,41 @@ public class ConcurrentTest {
         Assert.assertEquals(threads * iterations, doneCount.get());
     }
 
+    @Test
+    public void testFanOutAddRemoveClears() {
+        int cycle = 1024;
+        SPSequence pubSeq = new SPSequence(cycle);
+        FanOut fout = new FanOut();
+        pubSeq.then(fout).then(pubSeq);
+
+        int threads = 2;
+        CyclicBarrier start = new CyclicBarrier(threads);
+        SOCountDownLatch latch = new SOCountDownLatch(threads);
+        int iterations = 30;
+        AtomicInteger doneCount = new AtomicInteger();
+        for(int i = 0; i < threads; i++) {
+            new Thread(() -> {
+                try {
+                    start.await();
+                    SCSequence consumer = new SCSequence();
+                    for(int j = 0; j < iterations; j++) {
+                        FanOut fout2 = fout.and(consumer);
+                        fout2.remove(consumer);
+                        consumer.clear();
+                    }
+                    doneCount.addAndGet(iterations);
+                } catch (InterruptedException | BrokenBarrierException e) {
+                    e.printStackTrace();
+                } finally {
+                    latch.countDown();
+                }
+            }).start();
+        }
+
+        latch.await();
+        Assert.assertEquals(threads * iterations, doneCount.get());
+    }
+
     static void publishEOE(RingQueue<Event> queue, Sequence sequence) {
         long cursor = sequence.nextBully();
         queue.get(cursor).value = Integer.MIN_VALUE;

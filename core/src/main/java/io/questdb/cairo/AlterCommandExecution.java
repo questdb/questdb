@@ -126,7 +126,9 @@ public class AlterCommandExecution {
     }
 
     public static void stopCommandWait(CairoEngine engine, AlterTableExecutionContext requestContext) {
-        engine.getMessageBus().getTableWriterEventFanOut().remove(requestContext.getWriterEventConsumeSequence());
+        SCSequence writerEventConsumeSequence = requestContext.getWriterEventConsumeSequence();
+        engine.getMessageBus().getTableWriterEventFanOut().remove(writerEventConsumeSequence);
+        writerEventConsumeSequence.clear();
     }
 
     public static void setUpWait(CairoEngine engine, AlterTableExecutionContext requestContext) {
@@ -164,7 +166,7 @@ public class AlterCommandExecution {
             if (seq < 0) {
                 // Queue is empty, check if the execution blocked for too long
                 if (System.currentTimeMillis() - start > maxWaitTimeoutMilli) {
-                    return SqlException.$(queryTableNamePosition, "Timeout expired on waiting for the ALTER TABLE execution result.");
+                    return SqlException.$(queryTableNamePosition, "Timeout expired on waiting for the ALTER TABLE execution result");
                 }
                 LockSupport.parkNanos(100);
                 continue;
@@ -172,6 +174,11 @@ public class AlterCommandExecution {
 
             TableWriterTask event = tableWriterEventQueue.get(seq);
             if (event.getInstance() != commandId || event.getType() != TableWriterTask.TSK_ALTER_TABLE) {
+                requestContext.info()
+                        .$("writer command response received and ignored [instance=").$(event.getInstance())
+                        .$(",type=").$(event.getType())
+                        .$(",expectedInstance=").$(commandId)
+                        .I$();
                 tableWriterEventSeq.done(seq);
                 LockSupport.parkNanos(100);
                 continue;
@@ -189,7 +196,7 @@ public class AlterCommandExecution {
                 );
             }
             tableWriterEventSeq.done(seq);
-            requestContext.info().$("writer command response received").$();
+            requestContext.info().$("writer command response received [instance=").$(commandId).I$();
             return result;
         }
     }

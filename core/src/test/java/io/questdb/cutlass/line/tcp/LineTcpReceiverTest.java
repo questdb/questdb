@@ -177,6 +177,8 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
         }
     };
     private final AlterTableExecutionContext requestContext = new AlterTableExecutionContext() {
+        private final SCSequence scSequence  = new SCSequence();
+
         @Override
         public LogRecord debug() {
             return LOG.debug();
@@ -194,7 +196,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
 
         @Override
         public SCSequence getWriterEventConsumeSequence() {
-            return new SCSequence();
+            return scSequence;
         }
     };
     private Path path;
@@ -1033,7 +1035,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                     "6C\t333\t1970-01-01T00:25:31.817902Z\tNaN\t\n" +
                     "6B\t55\t1970-01-01T00:27:11.817902Z\tNaN\tPower\n" +
                     "6B\t22\t1970-01-01T00:27:11.817902Z\tNaN\t\n" +
-                    "6A\t4\t1970-01-01T00:43:51.819999Z\ttNaN\tPower\n" +
+                    "6A\t4\t1970-01-01T00:43:51.819999Z\tNaN\tPower\n" +
                     "6A\t1\t1970-01-01T00:43:51.819999Z\tNaN\t\n";
             assertTable(expected, "plug");
         });
@@ -1059,6 +1061,35 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                     "ALTER TABLE plug DROP PARTITION LIST '1970-01-01'");
 
             Assert.assertNull(exception);
+            String expected = "room\twatts\ttimestamp\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\n" +
+                    "6C\t333\t1970-03-03T00:00:00.000000Z\n";
+            assertTable(expected, "plug");
+        });
+    }
+
+    @Test
+    public void testAlterCommandSequenceReleased() throws Exception {
+        long day1 = 0;
+        long day2 = IntervalUtils.parseFloorPartialDate("1970-02-02") * 1000;
+        long day3 = IntervalUtils.parseFloorPartialDate("1970-03-03") * 1000;
+        runInContext((server) -> {
+            String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
+            send(server, lineData, "plug", WAIT_ENGINE_TABLE_RELEASE);
+            lineData = "plug,room=6B watts=\"22\" " + day2 + "\n";
+//                    + "plug,room=6C watts=\"333\" " + day3 + "\n";
+
+            for(int i = 0; i < 10; i++) {
+                SqlException exception = sendWithAlterStatement(
+                        server,
+                        lineData,
+                        "plug",
+                        WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                        false,
+                        "ALTER TABLE plug add column col" + i + " int");
+                Assert.assertNull(exception);
+//                send(server, lineData, "plug");
+            }
             String expected = "room\twatts\ttimestamp\n" +
                     "6B\t22\t1970-02-02T00:00:00.000000Z\n" +
                     "6C\t333\t1970-03-03T00:00:00.000000Z\n";
@@ -1139,6 +1170,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
             path = new Path(4096);
             try (LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine)) {
                 sharedWorkerPool.assignCleaner(Path.CLEANER);
+                sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
                 sharedWorkerPool.start(LOG);
                 try {
                     r.run(receiver);
@@ -1212,13 +1244,15 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
         }
         SOCountDownLatch releaseLatch = new SOCountDownLatch(countDownCount);
         CyclicBarrier startBarrier = new CyclicBarrier(2);
-        AlterCommandExecution.setUpWait(engine, requestContext);
 
         if (alterTableCommand != null && wait != WAIT_NO_WAIT) {
             new Thread(() -> {
+                boolean wated = false;
                 // Wait in parallel thead
                 try {
                     startBarrier.await();
+                    wated = true;
+                    LOG.info().$("Busy waiting for writer ASYNC event").$();
                     sqlException = AlterCommandExecution.waitWriterEvent(
                             engine,
                             alterCommandId,
@@ -1231,6 +1265,11 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                 } finally {
                     // exit this method if alter executed
                     releaseLatch.countDown();
+                    if (wated) {
+                        LOG.info().$("Stopped waiting for writer ASYNC event").$();
+                        // If subscribed to global writer event queue, unsubscribe here
+                        AlterCommandExecution.stopCommandWait(engine, requestContext);
+                    }
                 }
             }).start();
         }
@@ -1309,6 +1348,9 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
     }
 
     private long executeSqlOnce(String sql) throws SqlException {
+        // Subscribe local writer even queue to the global engine writer response queue
+        AlterCommandExecution.setUpWait(engine, requestContext);
+        LOG.info().$("Started waiting for writer ASYNC event").$();
         try (SqlCompiler compiler = new SqlCompiler(engine);
              SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                      .with(

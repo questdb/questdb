@@ -229,16 +229,16 @@ public class TableSyncModel implements Mutable, Sinkable {
 
     public void toBinary(TableWriterTask sink) {
         sink.putInt(tableAction);
-        sink.putLong(dataVersion);
-        sink.putLong(maxTimestamp);
+        sink.put(dataVersion);
+        sink.put(maxTimestamp);
 
         int n = columnTops.size();
         sink.putInt(n); // column top count
         if (n > 0) {
             for (int i = 0; i < n; i += SLOTS_PER_COLUMN_TOP) {
-                sink.putLong(columnTops.getQuick(i)); // partition timestamp
+                sink.put(columnTops.getQuick(i)); // partition timestamp
                 sink.putInt((int) columnTops.getQuick(i + 1)); // column index
-                sink.putLong(columnTops.getQuick(i + 2)); // column top
+                sink.put(columnTops.getQuick(i + 2)); // column top
             }
         }
 
@@ -246,9 +246,9 @@ public class TableSyncModel implements Mutable, Sinkable {
         sink.putInt(n);
         if (n > 0) {
             for (int i = 0; i < n; i += SLOTS_PER_VAR_COLUMN_SIZE) {
-                sink.putLong(varColumnSizes.getQuick(i)); // partition timestamp
+                sink.put(varColumnSizes.getQuick(i)); // partition timestamp
                 sink.putInt((int) varColumnSizes.getQuick(i + 1)); // column index
-                sink.putLong(varColumnSizes.getQuick(i + 2)); // column top
+                sink.put(varColumnSizes.getQuick(i + 2)); // column top
             }
         }
 
@@ -256,11 +256,11 @@ public class TableSyncModel implements Mutable, Sinkable {
         sink.putInt(n); // partition count
         for (int i = 0; i < n; i += SLOTS_PER_PARTITION) {
             sink.putInt((int) partitions.getQuick(i)); // action
-            sink.putLong(partitions.getQuick(i + 1)); // partition timestamp
-            sink.putLong(partitions.getQuick(i + 2)); // start row
-            sink.putLong(partitions.getQuick(i + 3)); // row count
-            sink.putLong(partitions.getQuick(i + 4)); // name txn (suffix for partition name)
-            sink.putLong(partitions.getQuick(i + 5)); // data txn
+            sink.put(partitions.getQuick(i + 1)); // partition timestamp
+            sink.put(partitions.getQuick(i + 2)); // start row
+            sink.put(partitions.getQuick(i + 3)); // row count
+            sink.put(partitions.getQuick(i + 4)); // name txn (suffix for partition name)
+            sink.put(partitions.getQuick(i + 5)); // data txn
         }
 
         n = addedColumnMetadata.size();
@@ -269,7 +269,7 @@ public class TableSyncModel implements Mutable, Sinkable {
             final TableColumnMetadata metadata = addedColumnMetadata.getQuick(i);
             sink.putStr(metadata.getName());
             sink.putInt(metadata.getType()); // column type
-            sink.putLong(metadata.getHash());
+            sink.put(metadata.getHash());
             sink.putByte((byte) (metadata.isIndexed() ? 0 : 1)); // column indexed flag
             sink.putInt(metadata.getIndexValueBlockCapacity());
         }
@@ -278,7 +278,7 @@ public class TableSyncModel implements Mutable, Sinkable {
         sink.putInt(n); // column metadata shuffle index - drives rearrangement of existing columns on the slave
         for (int i = 0; i < n; i += SLOTS_PER_COLUMN_META_INDEX) {
             sink.putInt((int) columnMetaIndex.getQuick(i)); // action
-            sink.putLong(columnMetaIndex.getQuick(i + 1)); // (int,int) pair on where (from,to) column needs to move
+            sink.put(columnMetaIndex.getQuick(i + 1)); // (int,int) pair on where (from,to) column needs to move
         }
     }
 

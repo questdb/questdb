@@ -158,7 +158,7 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
         event.putInt(tableNamePosition);
         event.putInt(longList.size());
         for(int i = 0, n = longList.size(); i < n; i++) {
-            event.putLong(longList.getQuick(i));
+            event.put(longList.getQuick(i));
         }
 
         event.putInt(objCharList.size());

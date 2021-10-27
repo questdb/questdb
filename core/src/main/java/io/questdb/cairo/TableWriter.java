@@ -185,6 +185,7 @@ public class TableWriter implements Closeable {
     private int rowActon = ROW_ACTION_OPEN_PARTITION;
     private final AlterTableImpl alterTableStatement = new AlterTableImpl();
     private boolean isTicking;
+    private long lastAlterCmdId = -1;
 
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
@@ -1290,20 +1291,24 @@ public class TableWriter implements Closeable {
         return model;
     }
 
-    public void replPublishSyncEvent(TableWriterTask cmd, long cursor, Sequence sequence) {
-        final long dst = cmd.getInstance();
-        final long dstIP = cmd.getIp();
-        final long tableId = cmd.getTableId();
-        LOG.info()
-                .$("received replication SYNC cmd [tableName=").$(tableName)
-                .$(", tableId=").$(tableId)
-                .$(", src=").$(dst)
-                .$(", srcIP=").$ip(dstIP)
-                .I$();
+    private void replPublishSyncEvent(TableWriterTask cmd, long cursor, Sequence sequence) {
+        long dst = cmd.getInstance();
+        long dstIP = cmd.getIp();
+        long tableId = cmd.getTableId();
+        TableSyncModel syncModel;
 
-        final TableSyncModel syncModel = replHandleSyncCmd(cmd);
-        // release command queue slot not to hold both queues
-        sequence.done(cursor);
+        try {
+            LOG.info()
+                    .$("received replication SYNC cmd [tableName=").$(tableName)
+                    .$(", tableId=").$(tableId)
+                    .$(", src=").$(dst)
+                    .$(", srcIP=").$ip(dstIP)
+                    .I$();
+            syncModel = replHandleSyncCmd(cmd);
+        } finally {
+            // release command queue slot not to hold queues
+            sequence.done(cursor);
+        }
         if (syncModel != null) {
             replPublishSyncEvent0(syncModel, tableId, dst, dstIP);
         }
@@ -1312,20 +1317,35 @@ public class TableWriter implements Closeable {
     private void processAlterTableEvent(TableWriterTask cmd, long cursor, Sequence sequence, boolean acceptStructureChange) {
         final long instance = cmd.getInstance();
         final long tableId = cmd.getTableId();
-        alterTableStatement.deserialize(cmd);
-        LOG.info()
-                .$("received ALTER TABLE cmd [tableName=").$(tableName)
-                .$(", tableId=").$(tableId)
-                .$(", src=").$(instance)
-                .I$();
+
         CharSequence error = null;
         try {
-            alterTableStatement.apply(this, acceptStructureChange);
+            LOG.info()
+                    .$("received ASYNC ALTER TABLE cmd [tableName=").$(tableName)
+                    .$(",tableId=").$(tableId)
+                    .$(",instance=").$(instance)
+                    .I$();
+            if (instance == 6) {
+                int i = 0;
+            }
+            // Check that it's not a dup due to global / local queue jumps
+            if (lastAlterCmdId < instance) {
+                alterTableStatement.deserialize(cmd);
+                alterTableStatement.apply(this, acceptStructureChange);
+                lastAlterCmdId = instance;
+            } else {
+                LOG.error()
+                        .$("ASYNC ALTER TABLE cmd is out of sequence and will be ignored [tableName=").$(tableName)
+                        .$(",tableId=").$(tableId)
+                        .$(",instance=").$(instance)
+                        .I$();
+                error = "stale ALTER TABLE command received and will be ignored";
+            }
         } catch (TableStructureChangesException ex) {
             LOG.info()
-                    .$("did not ALTER TABLE cmd, table structure change is not allowed atm [tableName=").$(tableName)
-                    .$(", tableId=").$(tableId)
-                    .$(", src=").$(instance)
+                    .$("cannot complete ASYNC ALTER TABLE cmd, table structure change is not allowed atm [tableName=").$(tableName)
+                    .$(",tableId=").$(tableId)
+                    .$(",src=").$(instance)
                     .I$();
             error = "ALTER TABLE cannot change table structure while Writer is busy";
         } catch (SqlException ex) {
@@ -1340,33 +1360,30 @@ public class TableWriter implements Closeable {
 
     private void replAlterTableEvent0(long tableId, long instance, CharSequence error) {
         final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
-        while (true) {
-            if (pubCursor > -1) {
-                final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
-                event.of(TableWriterTask.TSK_ALTER_TABLE, tableId, tableName);
-                if (error != null) {
-                    event.putStr(error);
-                } else {
-                    event.putInt(0);
-                }
-                event.setInstance(instance);
-                LogRecord lg = LOG.debug()
-                        .$("published alter table complete event [table=").$(tableName)
-                        .$(",tableId=").$(tableId)
-                        .$(",instance=").$(instance);
-                if (error != null) {
-                    lg.$(",error=").$(error);
-                }
-                lg.I$();
-                messageBus.getTableWriterEventPubSeq().done(pubCursor);
-                return;
-            } else if (pubCursor == -1) {
-                LOG.error()
-                        .$("cannot publish alter table complete event [table=").$(tableName)
-                        .$(",tableId=").$(tableId)
-                        .$(",instance=").$(instance)
-                        .I$();
+        if (pubCursor > -1) {
+            final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
+            event.of(TableWriterTask.TSK_ALTER_TABLE, tableId, tableName);
+            if (error != null) {
+                event.putStr(error);
+            } else {
+                event.putInt(0);
             }
+            event.setInstance(instance);
+            messageBus.getTableWriterEventPubSeq().done(pubCursor);
+            LogRecord lg = LOG.info()
+                    .$("published alter table complete event [table=").$(tableName)
+                    .$(",tableId=").$(tableId)
+                    .$(",instance=").$(instance);
+            if (error != null) {
+                lg.$(",error=").$(error);
+            }
+            lg.I$();
+        } else if (pubCursor == -1) {
+            LOG.error()
+                    .$("cannot publish alter table complete event [table=").$(tableName)
+                    .$(",tableId=").$(tableId)
+                    .$(",instance=").$(instance)
+                    .I$();
         }
     }
 
@@ -3173,6 +3190,7 @@ public class TableWriter implements Closeable {
             final long columnTop = columnTops.getQuick(colIndex);
 
             if (columnTop > 0) {
+                //noinspection SuspiciousNameCombination
                 LOG.debug()
                         .$("move uncommitted [columnTop=").$(columnTop)
                         .$(", columnIndex=").$(colIndex)
@@ -3909,24 +3927,28 @@ public class TableWriter implements Closeable {
     }
 
     private void processCommandQueue(boolean acceptStructureChange) {
-        final long cursor = commandSubSeq.next();
-        if (cursor > -1) {
-            final TableWriterTask cmd = messageBus.getTableWriterCommandQueue().get(cursor);
-            if (cmd.getTableId() == getMetadata().getId()) {
-                switch (cmd.getType()) {
-                    case TableWriterTask.TSK_SLAVE_SYNC:
-                        replPublishSyncEvent(cmd, cursor, commandSubSeq);
-                        break;
-                    case TableWriterTask.TSK_ALTER_TABLE:
-                        processAlterTableEvent(cmd, cursor, commandSubSeq, acceptStructureChange);
-                        break;
-                    default:
-                        commandSubSeq.done(cursor);
-                        break;
-                }
-            } else {
-                commandSubSeq.done(cursor);
+        long cursor;
+        while ((cursor = commandSubSeq.next()) > -1) {
+            TableWriterTask cmd = messageBus.getTableWriterCommandQueue().get(cursor);
+            processCommandQueue(cmd, commandSubSeq, cursor, acceptStructureChange);
+        }
+    }
+
+    public void processCommandQueue(TableWriterTask cmd, Sequence commandSubSeq, long cursor, boolean acceptStructureChange) {
+        if (cmd.getTableId() == getMetadata().getId()) {
+            switch (cmd.getType()) {
+                case TableWriterTask.TSK_SLAVE_SYNC:
+                    replPublishSyncEvent(cmd, cursor, commandSubSeq);
+                    break;
+                case TableWriterTask.TSK_ALTER_TABLE:
+                    processAlterTableEvent(cmd, cursor, commandSubSeq, acceptStructureChange);
+                    break;
+                default:
+                    commandSubSeq.done(cursor);
+                    break;
             }
+        } else {
+            commandSubSeq.done(cursor);
         }
     }
 
