@@ -361,7 +361,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", 1, ColumnType.INT));
         FunctionParser functionParser = createFunctionParser();
-        Function function = parseFunction("COUNT()", metadata, functionParser);
+        Function function = parseFunction("COUNT(INT constant)", metadata, functionParser);
         Assert.assertEquals(ColumnType.LONG, function.getType());
         Assert.assertEquals(
                 "io.questdb.griffin.engine.functions.groupby.CountGroupByFunction",
