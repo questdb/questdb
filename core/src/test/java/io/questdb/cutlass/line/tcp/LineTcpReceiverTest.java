@@ -1020,6 +1020,35 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCrossingSymbolBoundary() throws Exception {
+        String tableName = "punk";
+        int count = 2100;
+        int startSymbolCount = 2040;
+        int writeIterations = 4;
+        runInContext((receiver) -> {
+            int symbolCount = startSymbolCount;
+            for(int it = 0; it < writeIterations; it++) {
+                final int iteration = it;
+                final int maxIds = symbolCount++;
+                send(receiver, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
+                    try (LineTcpSender sender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                        for (int i = 0; i < count; i++) {
+                            String id = String.valueOf(i % maxIds);
+                            sender.metric(tableName)
+                                    .tag("id", id)
+                                    .$((iteration * count + i) * 10_000_000L);
+                        }
+                        sender.flush();
+                    }
+                });
+            }
+        });
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            Assert.assertEquals(count * writeIterations, reader.size());
+        }
+    }
+
     private void assertTable(CharSequence expected, CharSequence tableName) {
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
             assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
@@ -1028,7 +1057,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
 
     @FunctionalInterface
     private interface LineTcpServerAwareContext {
-        void run(LineTcpReceiver receiver);
+        void run(LineTcpReceiver receiver) throws InterruptedException;
     }
 
     private void runInContext(LineTcpServerAwareContext r) throws Exception {
