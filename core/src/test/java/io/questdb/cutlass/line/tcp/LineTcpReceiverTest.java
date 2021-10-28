@@ -1057,7 +1057,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
 
     @FunctionalInterface
     private interface LineTcpServerAwareContext {
-        void run(LineTcpReceiver receiver) throws InterruptedException;
+        void run(LineTcpReceiver receiver);
     }
 
     private void runInContext(LineTcpServerAwareContext r) throws Exception {
