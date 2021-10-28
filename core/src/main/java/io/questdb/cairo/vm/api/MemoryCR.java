@@ -50,22 +50,27 @@ public interface MemoryCR extends MemoryC, MemoryR {
     }
 
     default byte getByte(long offset) {
+        assert addressOf(offset + Byte.BYTES) > 0;
         return Unsafe.getUnsafe().getByte(addressOf(offset));
     }
 
     default double getDouble(long offset) {
+        assert addressOf(offset + Double.BYTES) > 0;
         return Unsafe.getUnsafe().getDouble(addressOf(offset));
     }
 
     default float getFloat(long offset) {
+        assert addressOf(offset + Float.BYTES) > 0;
         return Unsafe.getUnsafe().getFloat(addressOf(offset));
     }
 
     default int getInt(long offset) {
+        assert addressOf(offset + Integer.BYTES) > 0;
         return Unsafe.getUnsafe().getInt(addressOf(offset));
     }
 
     default long getLong(long offset) {
+        assert addressOf(offset + Long.BYTES) > 0;
         return Unsafe.getUnsafe().getLong(addressOf(offset));
     }
 
@@ -88,6 +93,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
     }
 
     default char getChar(long offset) {
+        assert addressOf(offset + Character.BYTES) > 0;
         return Unsafe.getUnsafe().getChar(addressOf(offset));
     }
 

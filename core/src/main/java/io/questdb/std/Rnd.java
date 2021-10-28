@@ -146,12 +146,12 @@ public class Rnd {
 
     public int nextPositiveInt() {
         int n = (int) nextLong();
-        return n > 0 ? n : -n;
+        return n > 0 ? n : (n == Integer.MIN_VALUE ? Integer.MAX_VALUE : -n);
     }
 
     public long nextPositiveLong() {
         long l = nextLong();
-        return l > 0 ? l : -l;
+        return l > 0 ? l : (l == Long.MIN_VALUE ? Long.MAX_VALUE : -l);
     }
 
     public short nextShort() {
