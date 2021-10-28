@@ -122,6 +122,7 @@ const Schema = ({
   }, [])
 
   const fetchTables = useCallback(() => {
+    setLoading(true)
     combineLatest(
       from(quest.showTables()).pipe(startWith(null)),
       of(true).pipe(delay(1000), startWith(false)),
@@ -131,14 +132,16 @@ const Schema = ({
           setLoadingError(null)
           errorRef.current = null
           setTables(response.data)
-          setLoading(false)
           setRefresh(Date.now())
         } else {
-          setLoading(loading)
+          setLoading(false)
         }
       },
       (error) => {
         setLoadingError(error)
+      },
+      () => {
+        setLoading(false)
       },
     )
   }, [quest])
