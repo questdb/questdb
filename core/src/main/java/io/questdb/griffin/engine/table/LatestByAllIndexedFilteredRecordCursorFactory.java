@@ -38,8 +38,8 @@ public class LatestByAllIndexedFilteredRecordCursorFactory extends AbstractTreeS
     protected final DirectLongList prefixes;
 
     public LatestByAllIndexedFilteredRecordCursorFactory(
-            @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
+            @NotNull CairoConfiguration configuration,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             @Nullable Function filter,
