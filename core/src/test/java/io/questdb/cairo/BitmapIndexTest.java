@@ -344,6 +344,72 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBeyondPageSize() throws Exception {
+
+        // value count for single pass, there are two passes
+        final int N = 2_000_000;
+        final int K = 1000;
+
+        TestUtils.assertMemoryLeak(() -> {
+            // values array holds
+            IntList values = new IntList(N + N);
+            values.setPos(N + N);
+
+            final Rnd rnd = new Rnd();
+            create(configuration, path.trimTo(plen), "x", 1024);
+
+            long expectedSum = 0;
+
+            // current random value distribution ensures we have all K keys
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", 0)) {
+                try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
+                    for (int i = 0; i < N; i++) {
+                        final int k = rnd.nextInt(K);
+                        writer.add(k, i);
+                        expectedSum += i;
+                    }
+                }
+
+                // reopen indexer and add more values
+                try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
+                    for (int i = 0; i < N; i++) {
+                        final int k = rnd.nextInt(K);
+                        writer.add(k, i + N);
+                        expectedSum += i + N;
+                    }
+                }
+
+                // current random value distribution ensures we have all K keys
+                reader.updateKeyCount();
+                Assert.assertEquals(K, reader.getKeyCount());
+
+                // compute sum of all values
+                long sum = 0;
+                for (int i = 0; i < K; i++) {
+                    RowCursor cursor = reader.getCursor(true, i, Long.MIN_VALUE, Long.MAX_VALUE);
+                    while (cursor.hasNext()) {
+                        sum += cursor.next();
+                    }
+                }
+
+                Assert.assertEquals(expectedSum, sum);
+            }
+
+            // test branch new reader
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", 0)) {
+                long sum = 0;
+                for (int i = 0; i < K; i++) {
+                    RowCursor cursor = reader.getCursor(true, i, Long.MIN_VALUE, Long.MAX_VALUE);
+                    while (cursor.hasNext()) {
+                        sum += cursor.next();
+                    }
+                }
+                Assert.assertEquals(expectedSum, sum);
+            }
+        });
+    }
+
+    @Test
     public void testConcurrentWriterAndBackwardReadBreadth() throws Exception {
         testConcurrentBackwardRW(10000000, 1024);
     }
@@ -712,7 +778,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             ) {
                 // change sequence but not sequence check
                 long seq = mem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
-                mem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE,22);
+                mem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, 22);
 
                 try {
                     reader.getCursor(true, 10, 0, Long.MAX_VALUE);
