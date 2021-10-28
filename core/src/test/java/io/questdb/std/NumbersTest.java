@@ -76,6 +76,7 @@ public class NumbersTest {
     @Ignore("FIX this broken test")
     @Test
     public void testLong256() {
+        // assumption: tok should equal tokAgain, i.e. same representation decoding/encoding
         CharSequence tok = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
         Long256Constant long256a = new Long256Constant(Numbers.parseLong256(tok, tok.length(), new Long256Impl()));
         long256a.getLong256(null, sink);

@@ -6513,20 +6513,27 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             executeInsert("insert into tab values (false, 14817, 8260188555232587029, 0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9, 'Z', 'BANANA', '_(*y*)_', '1970-01-01T00:00:08.000000Z')");
             executeInsert("insert into tab values (true, 24814, 7759636733976435003, 0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e, 'J', 'ORANGE', '123', '1970-01-01T00:00:09.000000Z')");
             executeInsert("insert into tab values (false, 24814, 6404066507400987550, 0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086, 'W', 'BANANA', '123', '1970-01-01T00:00:10.000000Z')");
+            executeInsert("insert into tab values (false, 24814, 6404066507400987550, 0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086, 'W', 'BANANA', '123', '1970-01-02T00:00:01.000000Z')");
 
             // TODO: fix long256, see NumbersTest.testLong256
 
             expectSqlResult(
                     "boolean\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "true\t24814\t7759636733976435003\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
-                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-01T00:00:10.000000Z\n",
+                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
                     "tab latest by boolean", ts);
+
+            expectSqlResult(
+                    "boolean\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
+                            "true\t24814\t7759636733976435003\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
+                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
+                    "tab timestamp(ts) latest by boolean", "ts");
 
             expectSqlResult(
                     "boolean\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "false\t14333\t8260188555232587029\t0x9c022fa261bdede7000000009199af5c422a8855e9d7bfd27ee65ec7b6e3bc3a\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
                             "false\t14817\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
-                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-01T00:00:10.000000Z\n",
+                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
                     "tab latest by int", ts);
 
             expectSqlResult(
@@ -6534,7 +6541,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "true\t24814\t3614738589890112276\t0x9c022fa261bdede7000000009199af5c422a8855e9d7bfd27ee65ec7b6e3bc3a\tJ\t\tXoXoX\t1970-01-01T00:00:04.000000Z\n" +
                             "false\t14817\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "true\t24814\t7759636733976435003\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
-                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-01T00:00:10.000000Z\n",
+                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
                     "tab latest by long", ts);
 
             expectSqlResult(
@@ -6542,7 +6549,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "false\t14333\t8260188555232587029\t0x9c022fa261bdede7000000009199af5c422a8855e9d7bfd27ee65ec7b6e3bc3a\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
                             "false\t14817\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "true\t24814\t7759636733976435003\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
-                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-01T00:00:10.000000Z\n",
+                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
                     "tab latest by long256", ts);
 
             expectSqlResult(
@@ -6552,7 +6559,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "false\t14817\t6404066507400987550\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tM\t\t123\t1970-01-01T00:00:06.000000Z\n" +
                             "false\t14817\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "true\t24814\t7759636733976435003\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
-                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-01T00:00:10.000000Z\n",
+                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
                     "tab latest by char", ts);
 
             expectSqlResult(
@@ -6560,14 +6567,14 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "false\t14817\t6404066507400987550\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tM\t\t123\t1970-01-01T00:00:06.000000Z\n" +
                             "false\t14333\t8260188555232587029\t0x9c022fa261bdede7000000009199af5c422a8855e9d7bfd27ee65ec7b6e3bc3a\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
                             "true\t24814\t7759636733976435003\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
-                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-01T00:00:10.000000Z\n",
+                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
                     "tab latest by string", ts);
 
             expectSqlResult(
                     "boolean\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "true\t24814\t3614738589890112276\t0x9c022fa261bdede7000000009199af5c422a8855e9d7bfd27ee65ec7b6e3bc3a\tJ\t\tXoXoX\t1970-01-01T00:00:04.000000Z\n" +
                             "false\t14817\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
-                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-01T00:00:10.000000Z\n",
+                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
                     "tab latest by symbol", ts);
         });
     }
@@ -6597,6 +6604,76 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             executeInsert("insert into tab values ('d2', 'c1', 201.2, '2021-10-05T12:31:35.878Z')");
             executeInsert("insert into tab values ('d2', 'c1', 201.3, '2021-10-05T13:31:35.878Z')");
             executeInsert("insert into tab values ('d2', 'c1', 201.4, '2021-10-05T14:31:35.878Z')");
+
+            executeInsert("insert into tab values ('d2', 'c2', 401.1, '2021-10-06T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-06T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-06T15:31:35.878Z')");
+
+            // TODO: this is broken, the expected result order for "select * from tab" in the presence
+            //  of repeated timestamps needs to be predefined and consistent, one of two alternatives
+            //  as follows (verify this):
+            //
+            // most recent insert for a given timestamp first:
+            //
+            // "d2\tc1\t201.10000000000002\t2021-10-05T11:31:35.878000Z\n" +
+            // "d1\tc2\t102.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
+            // "d1\tc1\t101.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
+            // "d2\tc1\t201.20000000000002\t2021-10-05T12:31:35.878000Z\n" +
+            // "d1\tc2\t102.2\t2021-10-05T12:31:35.878000Z\n" +
+            // "d1\tc1\t101.2\t2021-10-05T12:31:35.878000Z\n" +
+            // "d2\tc1\t201.3\t2021-10-05T13:31:35.878000Z\n" +
+            // "d1\tc2\t102.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
+            // "d1\tc1\t101.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
+            // "d2\tc1\t201.4\t2021-10-05T14:31:35.878000Z\n" +
+            // "d1\tc2\t102.4\t2021-10-05T14:31:35.878000Z\n" +
+            // "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
+            // "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n" +
+            // "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n" +
+            // "d2\tc1\t401.20000000000005\t2021-10-06T12:31:35.878000Z\n" +
+            // "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n"
+            //
+            // or, least recent insert for a given timestamp first:
+            //
+            // "d1\tc1\t101.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
+            // "d1\tc2\t102.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
+            // "d2\tc1\t201.10000000000002\t2021-10-05T11:31:35.878000Z\n" +
+            // "d1\tc1\t101.2\t2021-10-05T12:31:35.878000Z\n" +
+            // "d1\tc2\t102.2\t2021-10-05T12:31:35.878000Z\n" +
+            // "d2\tc1\t201.20000000000002\t2021-10-05T12:31:35.878000Z\n" +
+            // "d1\tc1\t101.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
+            // "d1\tc2\t102.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
+            // "d2\tc1\t201.3\t2021-10-05T13:31:35.878000Z\n" +
+            // "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
+            // "d1\tc2\t102.4\t2021-10-05T14:31:35.878000Z\n" +
+            // "d2\tc1\t201.4\t2021-10-05T14:31:35.878000Z\n" +
+            // "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n" +
+            // "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n" +
+            // "d2\tc1\t401.20000000000005\t2021-10-06T12:31:35.878000Z\n" +
+            // "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n"
+            //
+            // TODO: ^ ^ in the assertSql that follows, we see the 1st timestamp's
+            //  (2021-10-05T11:31:35.878000Z) values in most recent insert first order,
+            //  while subsequent timestamps feature least recent insert first order,
+            //  is there a reason?
+            assertSql(
+                    "tab",
+                    "id\tname\tvalue\tts\n" +
+                            "d2\tc1\t201.10000000000002\t2021-10-05T11:31:35.878000Z\n" +
+                            "d1\tc2\t102.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
+                            "d1\tc1\t101.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
+                            "d1\tc1\t101.2\t2021-10-05T12:31:35.878000Z\n" +
+                            "d1\tc2\t102.2\t2021-10-05T12:31:35.878000Z\n" +
+                            "d2\tc1\t201.20000000000002\t2021-10-05T12:31:35.878000Z\n" +
+                            "d1\tc1\t101.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
+                            "d1\tc2\t102.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
+                            "d2\tc1\t201.3\t2021-10-05T13:31:35.878000Z\n" +
+                            "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
+                            "d1\tc2\t102.4\t2021-10-05T14:31:35.878000Z\n" +
+                            "d2\tc1\t201.4\t2021-10-05T14:31:35.878000Z\n" +
+                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n" +
+                            "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n" +
+                            "d2\tc1\t401.20000000000005\t2021-10-06T12:31:35.878000Z\n" +
+                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
 
 //            assertSql(
 //                    "tab latest by id, name where id = 'd1'",

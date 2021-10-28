@@ -898,8 +898,7 @@ public class SqlCodeGenerator implements Mutable {
                     Misc.free(master);
                     Misc.free(slave);
                     throw th;
-                }
-                finally {
+                } finally {
                     executionContext.popTimestampRequiredFlag();
                 }
 
@@ -2459,9 +2458,13 @@ public class SqlCodeGenerator implements Mutable {
                         throw SqlException.invalidColumn(latestBy.getQuick(i).position, latestBy.getQuick(i).token);
                     }
 
-                    // not all types are valid
+                    // latest by can be of 1 or more columns, which are treated as a composite key into
+                    // the table. with this key unique entries are found and only the last composite value
+                    // is returned. Thus not all types are appropriate for keys
                     int columnType = myMeta.getColumnType(index);
                     switch (ColumnType.tagOf(columnType)) {
+                        // not supported case ColumnType.SHORT:
+                        // TODO: FunctionParser L440 add case for ShortConstant, at present that breaks many tests
                         case ColumnType.BOOLEAN:
                         case ColumnType.CHAR:
                         case ColumnType.INT:
@@ -2565,7 +2568,7 @@ public class SqlCodeGenerator implements Mutable {
                 final boolean intervalHitsOnlyOnePartition;
                 if (intrinsicModel.hasIntervalFilters()) {
                     RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
-                    dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion(),  intervalModel, readerTimestampIndex);
+                    dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion(), intervalModel, readerTimestampIndex);
                     intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
                 } else {
                     dfcFactory = new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion());
