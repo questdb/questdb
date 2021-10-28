@@ -4464,7 +4464,7 @@ public class IODispatcherTest {
             // check if we have one record
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=select+*+from+xx+latest+by+ts&count=true HTTP/1.1\r\n" +
+                    "GET /query?query=select+*+from+xx+latest+by+value&count=true HTTP/1.1\r\n" +
                             "Host: localhost:9000\r\n" +
                             "Connection: keep-alive\r\n" +
                             "Accept: */*\r\n" +
@@ -4483,8 +4483,8 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "b1\r\n" +
-                            "{\"query\":\"select * from xx latest by ts\",\"columns\":[{\"name\":\"value\",\"type\":\"LONG256\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[\"\",\"1970-01-01T00:00:00.000000Z\"]],\"count\":1}\r\n" +
+                            "b4\r\n" +
+                            "{\"query\":\"select * from xx latest by value\",\"columns\":[{\"name\":\"value\",\"type\":\"LONG256\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[\"\",\"1970-01-01T00:00:00.000000Z\"]],\"count\":1}\r\n" +
                             "00\r\n" +
                             "\r\n",
                     1,

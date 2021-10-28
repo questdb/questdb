@@ -2070,18 +2070,18 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "), index(s) timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
-                try {
-                    assertQuery("time\tuuid\thash\n",
-                            "select * from x latest by s where geo8 within(make_geohash(lon, lat, 40), #z3, #vegg)",
-                            "ts",
-                            true,
-                            true,
-                            true
-                    );
-                } catch (SqlException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash const function expected");
-                }
-        });
+                    try {
+                        assertQuery("time\tuuid\thash\n",
+                                "select * from x latest by s where geo8 within(make_geohash(lon, lat, 40), #z3, #vegg)",
+                                "ts",
+                                true,
+                                true,
+                                true
+                        );
+                    } catch (SqlException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash const function expected");
+                    }
+                });
     }
 
 
@@ -2416,6 +2416,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     );
                 });
     }
+
     @Test
     public void testLatestByAllIndexedGeoHashRnd1c() throws Exception {
         assertMemoryLeak(
@@ -2530,6 +2531,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 sqlExecutionContext
         );
     }
+
     private void createRndGeoHashTable() throws SqlException {
         compiler.compile(
                 "create table x as (" +
@@ -4163,28 +4165,15 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByTimestampInclusion() throws Exception {
         assertQuery("ts\tmarket_type\tavg\n" +
-                        "1970-01-01T00:00:00.000000Z\taaa\t0.49992728629932576\n" +
-                        "1970-01-01T00:00:00.000000Z\tbbb\t0.500285563758478\n" +
-                        "1970-01-01T00:00:01.000000Z\taaa\t0.500040169925671\n" +
-                        "1970-01-01T00:00:01.000000Z\tbbb\t0.5008686113849173\n" +
-                        "1970-01-01T00:00:02.000000Z\taaa\t0.49977074601999855\n" +
-                        "1970-01-01T00:00:02.000000Z\tbbb\t0.4999258418217269\n" +
-                        "1970-01-01T00:00:03.000000Z\taaa\t0.5003595019568708\n" +
-                        "1970-01-01T00:00:03.000000Z\tbbb\t0.5002857992170555\n" +
-                        "1970-01-01T00:00:04.000000Z\tbbb\t0.4997116251279621\n" +
-                        "1970-01-01T00:00:04.000000Z\taaa\t0.5006208473770267\n" +
-                        "1970-01-01T00:00:05.000000Z\tbbb\t0.49988619432529985\n" +
-                        "1970-01-01T00:00:05.000000Z\taaa\t0.5002852550150528\n" +
-                        "1970-01-01T00:00:06.000000Z\taaa\t0.4998229395659802\n" +
-                        "1970-01-01T00:00:06.000000Z\tbbb\t0.4997012831335711\n" +
-                        "1970-01-01T00:00:07.000000Z\tbbb\t0.49945806525231845\n" +
-                        "1970-01-01T00:00:07.000000Z\taaa\t0.4995901449794158\n" +
-                        "1970-01-01T00:00:08.000000Z\taaa\t0.5002616949495469\n" +
-                        "1970-01-01T00:00:08.000000Z\tbbb\t0.5005399447758458\n" +
-                        "1970-01-01T00:00:09.000000Z\taaa\t0.5003054203632804\n" +
-                        "1970-01-01T00:00:09.000000Z\tbbb\t0.500094369884023\n",
-                "select ts, market_type, avg(bid_price) FROM market_updates LATEST BY ts, market_type SAMPLE BY 1s",
-                "create table market_updates as (select rnd_symbol('aaa','bbb') market_type, rnd_double() bid_price, timestamp_sequence(0,1) ts from long_sequence(10000000)" +
+                        "1970-01-01T00:00:09.999996Z\taaa\t0.02110922811597793\n" +
+                        "1970-01-01T00:00:09.999996Z\tbbb\t0.344021345830156\n",
+                "select ts, market_type, avg(bid_price) FROM market_updates LATEST BY market_type SAMPLE BY 1s",
+                "create table market_updates as (" +
+                        "select " +
+                        "rnd_symbol('aaa','bbb') market_type, " +
+                        "rnd_double() bid_price, " +
+                        "timestamp_sequence(0,1) ts " +
+                        "from long_sequence(10000000)" +
                         ") timestamp(ts)",
                 "ts",
                 false,
@@ -4252,42 +4241,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     sink,
                     "cust_id\tbalance_ccy\tbalance\ttimestamp\n" +
                             "c1\tEUR\t782.0\t2021-09-14T17:35:04.000000Z\n"
-            );
-        });
-    }
-
-    @Test
-    public void testLatestBySeveralColumnsAndEqFilter() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table tab(" +
-                    "    id symbol index, " +
-                    "    name symbol index, " +
-                    "    value double, " +
-                    "    ts timestamp" +
-                    ") timestamp(ts) partition by DAY", sqlExecutionContext);
-
-            executeInsert("insert into tab  values ('d1', 'c1', 101.1, '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.4, '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.1, '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.2, '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.3, '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.4, '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.5, '2021-10-05T15:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.1, '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.2, '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.3, '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.4, '2021-10-05T14:31:35.878Z')");
-
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "tab latest by id, name where id = 'd1'",
-                    sink,
-                    "id\tname\tvalue\tts\n" +
-                            "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
-                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n"
             );
         });
     }
@@ -6436,6 +6389,255 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true
         );
     }
+
+    @Test
+    public void testLatestByUnsupportedColumnTypes() throws Exception {
+        // unsupported: [BYTE, DATE, TIMESTAMP, SHORT, FLOAT, DOUBLE, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY]
+        CharSequence createTableDDL = "create table comprehensive as (" +
+                "    select" +
+                "        rnd_byte(2,50) byte, " +
+                "        rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 2) date, " +
+                "        rnd_timestamp(to_timestamp('2020', 'yyyy'), to_timestamp('2021', 'yyyy'), 2) timestamp, " +
+                "        rnd_short() short, " +
+                "        rnd_float(2) float, " +
+                "        rnd_double(2) double, " +
+                "        rnd_geohash(5) gbyte, " +
+                "        rnd_geohash(15) gshort, " +
+                "        rnd_geohash(30) gint, " +
+                "        rnd_geohash(60) glong, " +
+                "        rnd_bin(10, 20, 2) binary, " +
+                "        timestamp_sequence(0, 1000000000) ts" +
+                "    from long_sequence(10)" +
+                ") timestamp(ts) partition by DAY";
+        CharSequence expectedTail = "invalid type, only [BOOLEAN, INT, LONG, LONG256, CHAR, STRING, SYMBOL] are supported in LATEST BY";
+        assertFailure(
+                "comprehensive latest by byte",
+                createTableDDL,
+                24,
+                "byte (BYTE): " + expectedTail);
+        for (String[] nameType : new String[][]{
+                {"date", "DATE"},
+                {"timestamp", "TIMESTAMP"},
+                {"short", "SHORT"},
+                {"float", "FLOAT"},
+                {"double", "DOUBLE"},
+                {"gbyte", "GEOHASH(1c)"},
+                {"gshort", "GEOHASH(3c)"},
+                {"gint", "GEOHASH(6c)"},
+                {"glong", "GEOHASH(12c)"},
+                {"binary", "BINARY"},
+                {"ts", "TIMESTAMP"}}) {
+            assertFailure(
+                    "comprehensive latest by " + nameType[0],
+                    null,
+                    24,
+                    String.format("%s (%s): %s", nameType[0], nameType[1], expectedTail));
+        }
+    }
+
+    @Test
+    public void testLatestBySupportedColumnTypes0() throws Exception {
+        testLatestBySupportedColumnTypes(
+                "create table tab (" +
+                        "    boolean boolean, " +
+                        "    int int, " +
+                        "    long long, " +
+                        "    long256 long256, " +
+                        "    char char, " +
+                        "    string string, " +
+                        "    symbol symbol, " +
+                        "    ts timestamp" +
+                        ")",
+                null);
+    }
+
+    @Test
+    public void testLatestBySupportedColumnTypes1() throws Exception {
+        testLatestBySupportedColumnTypes(
+                "create table tab (" +
+                        "    boolean boolean, " +
+                        "    int int, " +
+                        "    long long, " +
+                        "    long256 long256, " +
+                        "    char char, " +
+                        "    string string, " +
+                        "    symbol symbol, " +
+                        "    ts timestamp" +
+                        ") timestamp(ts) partition by DAY",
+                "ts");
+    }
+
+    @Test
+    public void testLatestBySupportedColumnTypes2() throws Exception {
+        testLatestBySupportedColumnTypes(
+                "create table tab (" +
+                        "    boolean boolean, " +
+                        "    int int, " +
+                        "    long long, " +
+                        "    long256 long256, " +
+                        "    char char, " +
+                        "    string string, " +
+                        "    symbol symbol index, " +
+                        "    ts timestamp" +
+                        ")",
+                null);
+    }
+
+    @Test
+    public void testLatestBySupportedColumnTypes3() throws Exception {
+        testLatestBySupportedColumnTypes(
+                "create table tab (" +
+                        "    boolean boolean, " +
+                        "    int int, " +
+                        "    long long, " +
+                        "    long256 long256, " +
+                        "    char char, " +
+                        "    string string, " +
+                        "    symbol symbol index, " +
+                        "    ts timestamp" +
+                        ") timestamp(ts) partition by DAY",
+                "ts");
+    }
+
+    private void testLatestBySupportedColumnTypes(CharSequence ddl, CharSequence ts) throws Exception {
+        assertMemoryLeak(() -> {
+            // supported: [BOOLEAN, CHAR, INT, LONG, LONG256, STRING, SYMBOL]
+            compiler.compile(ddl, sqlExecutionContext);
+            executeInsert("insert into tab values (false, 24814, 8260188555232587029, 0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7, 'J', 'ORANGE', '123', '1970-01-01T00:00:01.000000Z')");
+            executeInsert("insert into tab values (true, 14817, 8260188555232587029, 0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9, 'A', 'COCO', 'XoXoX', '1970-01-01T00:00:02.000000Z')");
+            executeInsert("insert into tab values (true, 14817, 3614738589890112276, 0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e, 'Q', null, 'XoXoX', '1970-01-01T00:00:03.000000Z')");
+            executeInsert("insert into tab values (true, 24814, 3614738589890112276, 0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7, 'J', null, 'XoXoX', '1970-01-01T00:00:04.000000Z')");
+            executeInsert("insert into tab values (true, 24814, 8260188555232587029, 0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9, 'Q', 'BANANA', '_(*y*)_', '1970-01-01T00:00:05.000000Z')");
+            executeInsert("insert into tab values (false, 14817, 6404066507400987550, 0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e, 'M', null, '123', '1970-01-01T00:00:06.000000Z')");
+            executeInsert("insert into tab values (false, 14333, 8260188555232587029, 0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7, 'J', 'COCO', '123', '1970-01-01T00:00:07.000000Z')");
+            executeInsert("insert into tab values (false, 14817, 8260188555232587029, 0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9, 'Z', 'BANANA', '_(*y*)_', '1970-01-01T00:00:08.000000Z')");
+            executeInsert("insert into tab values (true, 24814, 7759636733976435003, 0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e, 'J', 'ORANGE', '123', '1970-01-01T00:00:09.000000Z')");
+            executeInsert("insert into tab values (false, 24814, 6404066507400987550, 0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086, 'W', 'BANANA', '123', '1970-01-01T00:00:10.000000Z')");
+
+            // TODO: fix long256, see NumbersTest.testLong256
+
+            expectSqlResult(
+                    "boolean\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
+                            "true\t24814\t7759636733976435003\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
+                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-01T00:00:10.000000Z\n",
+                    "tab latest by boolean", ts);
+
+            expectSqlResult(
+                    "boolean\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
+                            "false\t14333\t8260188555232587029\t0x9c022fa261bdede7000000009199af5c422a8855e9d7bfd27ee65ec7b6e3bc3a\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
+                            "false\t14817\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
+                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-01T00:00:10.000000Z\n",
+                    "tab latest by int", ts);
+
+            expectSqlResult(
+                    "boolean\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
+                            "true\t24814\t3614738589890112276\t0x9c022fa261bdede7000000009199af5c422a8855e9d7bfd27ee65ec7b6e3bc3a\tJ\t\tXoXoX\t1970-01-01T00:00:04.000000Z\n" +
+                            "false\t14817\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
+                            "true\t24814\t7759636733976435003\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
+                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-01T00:00:10.000000Z\n",
+                    "tab latest by long", ts);
+
+            expectSqlResult(
+                    "boolean\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
+                            "false\t14333\t8260188555232587029\t0x9c022fa261bdede7000000009199af5c422a8855e9d7bfd27ee65ec7b6e3bc3a\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
+                            "false\t14817\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
+                            "true\t24814\t7759636733976435003\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
+                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-01T00:00:10.000000Z\n",
+                    "tab latest by long256", ts);
+
+            expectSqlResult(
+                    "boolean\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
+                            "true\t14817\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tA\tCOCO\tXoXoX\t1970-01-01T00:00:02.000000Z\n" +
+                            "true\t24814\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tQ\tBANANA\t_(*y*)_\t1970-01-01T00:00:05.000000Z\n" +
+                            "false\t14817\t6404066507400987550\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tM\t\t123\t1970-01-01T00:00:06.000000Z\n" +
+                            "false\t14817\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
+                            "true\t24814\t7759636733976435003\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
+                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-01T00:00:10.000000Z\n",
+                    "tab latest by char", ts);
+
+            expectSqlResult(
+                    "boolean\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
+                            "false\t14817\t6404066507400987550\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tM\t\t123\t1970-01-01T00:00:06.000000Z\n" +
+                            "false\t14333\t8260188555232587029\t0x9c022fa261bdede7000000009199af5c422a8855e9d7bfd27ee65ec7b6e3bc3a\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
+                            "true\t24814\t7759636733976435003\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
+                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-01T00:00:10.000000Z\n",
+                    "tab latest by string", ts);
+
+            expectSqlResult(
+                    "boolean\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
+                            "true\t24814\t3614738589890112276\t0x9c022fa261bdede7000000009199af5c422a8855e9d7bfd27ee65ec7b6e3bc3a\tJ\t\tXoXoX\t1970-01-01T00:00:04.000000Z\n" +
+                            "false\t14817\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
+                            "false\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-01T00:00:10.000000Z\n",
+                    "tab latest by symbol", ts);
+        });
+    }
+
+    @Test
+    public void testLatestByMultiColumnPlusFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab(" +
+                    "    id symbol index, " +
+                    "    name symbol index, " +
+                    "    value double, " +
+                    "    ts timestamp" +
+                    ") timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            executeInsert("insert into tab  values ('d1', 'c1', 101.1, '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-05T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.4, '2021-10-05T14:31:35.878Z')");
+
+            executeInsert("insert into tab values ('d1', 'c2', 102.1, '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.2, '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.3, '2021-10-05T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.4, '2021-10-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.5, '2021-10-05T15:31:35.878Z')");
+
+            executeInsert("insert into tab values ('d2', 'c1', 201.1, '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.2, '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.3, '2021-10-05T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.4, '2021-10-05T14:31:35.878Z')");
+
+//            assertSql(
+//                    "tab latest by id, name where id = 'd1'",
+//                    "id\tname\tvalue\tts\n" +
+//                            "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
+//                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n");
+//            assertSql(
+//                    "tab latest by id, name where name = 'c1'",
+//                    "id\tname\tvalue\tts\n" +
+//                            "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
+//                            "d2\tc1\t201.4\t2021-10-05T14:31:35.878000Z\n");
+//            assertSql(
+//                    "tab latest by id where name = 'c1'",
+//                    "id\tname\tvalue\tts\n" +
+//                            "d2\tc1\t201.4\t2021-10-05T14:31:35.878000Z\n");
+//            assertSql(
+//                    "tab latest by id where name = 'c1'",
+//                    "id\tname\tvalue\tts\n" +
+//                            "d2\tc1\t201.4\t2021-10-05T14:31:35.878000Z\n");
+//            assertSql(
+//                    "tab latest by id where name = 'c2'",
+//                    "id\tname\tvalue\tts\n" +
+//                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n");
+//            assertSql(
+//                    "tab latest by name where id = 'd1'",
+//                    "id\tname\tvalue\tts\n" +
+//                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n");
+        });
+    }
+
+    private void expectSqlResult(CharSequence expected, CharSequence query, CharSequence ts) throws SqlException {
+        printSqlResult(expected, query, ts,
+                null,
+                null,
+                true,
+                true,
+                true,
+                false,
+                null);
+    }
+
 
     private void executeInsertStatement(double d) throws SqlException {
         String ddl = "insert into x (ds) values (" + d + ")";

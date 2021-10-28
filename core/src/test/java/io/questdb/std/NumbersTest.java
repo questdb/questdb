@@ -24,10 +24,12 @@
 
 package io.questdb.std;
 
+import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Random;
@@ -69,6 +71,16 @@ public class NumbersTest {
         sink.clear();
         Numbers.appendLong256(0, 0, 0, 0, sink);
         TestUtils.assertEquals("0x00", sink);
+    }
+
+    @Ignore("FIX this broken test")
+    @Test
+    public void testLong256() {
+        CharSequence tok = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
+        Long256Constant long256a = new Long256Constant(Numbers.parseLong256(tok, tok.length(), new Long256Impl()));
+        long256a.getLong256(null, sink);
+        CharSequence tokAgain = sink.toString();
+        Assert.assertEquals(tok, tokAgain);
     }
 
     @Test
