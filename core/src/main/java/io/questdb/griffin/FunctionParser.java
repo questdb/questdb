@@ -66,6 +66,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
     private final FunctionFactoryCache functionFactoryCache;
     private final IntList undefinedVariables = new IntList();
+    private final Long256Impl long256Sink = new Long256Impl();
     private RecordMetadata metadata;
     private SqlCodeGenerator sqlCodeGenerator;
     private SqlExecutionContext sqlExecutionContext;
@@ -500,10 +501,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             }
         }
 
-        if (len > 3 && tok.charAt(0) == '0' && (tok.charAt(1) | 32) == 'x') {
+        if (Long256Util.isValidString(tok, len)) {
             try {
-                return new Long256Constant(Numbers.parseLong256(tok, len, new Long256Impl())); // TODO: recycle
-            } catch (Exception ex) { // TODO: correct exception
+                long256Sink.setAll(0L, 0L, 0L, 0L); // clear
+                Long256FromCharSequenceDecoder.decode(tok, 2, len, long256Sink);
+                return new Long256Constant(long256Sink);
+            } catch (NumericException ignored) {
             }
         }
 

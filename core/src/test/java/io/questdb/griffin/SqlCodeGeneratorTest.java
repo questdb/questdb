@@ -6517,68 +6517,65 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             executeInsert("insert into tab values (true, cast(24814 as short), 24814, 7759636733976435003, 0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e, 'J', 'ORANGE', '123', '1970-01-01T00:00:09.000000Z')");
             executeInsert("insert into tab values (false, cast(24814 as short), 24814, 6404066507400987550, 0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086, 'W', 'BANANA', '123', '1970-01-01T00:00:10.000000Z')");
             executeInsert("insert into tab values (false, cast(24814 as short), 24814, 6404066507400987550, 0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086, 'W', 'BANANA', '123', '1970-01-02T00:00:01.000000Z')");
-
-            // TODO: fix long256, see NumbersTest.testLong256
-
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
-                            "true\t24814\t24814\t7759636733976435003\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
-                            "false\t24814\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
+                            "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
+                            "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
                     "tab latest by boolean", ts);
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
-                            "false\t14333\t14333\t8260188555232587029\t0x9c022fa261bdede7000000009199af5c422a8855e9d7bfd27ee65ec7b6e3bc3a\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
-                            "false\t14817\t14817\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
-                            "false\t24814\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
+                            "false\t14333\t14333\t8260188555232587029\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
+                            "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
+                            "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
                     "tab timestamp(ts) latest by short", "ts");
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
-                            "false\t14333\t14333\t8260188555232587029\t0x9c022fa261bdede7000000009199af5c422a8855e9d7bfd27ee65ec7b6e3bc3a\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
-                            "false\t14817\t14817\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
-                            "false\t24814\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
+                            "false\t14333\t14333\t8260188555232587029\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
+                            "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
+                            "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
                     "tab latest by int", ts);
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
-                            "true\t24814\t24814\t3614738589890112276\t0x9c022fa261bdede7000000009199af5c422a8855e9d7bfd27ee65ec7b6e3bc3a\tJ\t\tXoXoX\t1970-01-01T00:00:04.000000Z\n" +
-                            "false\t14817\t14817\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
-                            "true\t24814\t24814\t7759636733976435003\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
-                            "false\t24814\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
+                            "true\t24814\t24814\t3614738589890112276\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\t\tXoXoX\t1970-01-01T00:00:04.000000Z\n" +
+                            "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
+                            "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
+                            "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
                     "tab latest by long", ts);
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
-                            "false\t14333\t14333\t8260188555232587029\t0x9c022fa261bdede7000000009199af5c422a8855e9d7bfd27ee65ec7b6e3bc3a\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
-                            "false\t14817\t14817\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
-                            "true\t24814\t24814\t7759636733976435003\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
-                            "false\t24814\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
+                            "false\t14333\t14333\t8260188555232587029\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
+                            "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
+                            "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
+                            "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
                     "tab latest by long256", ts);
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
-                            "true\t14817\t14817\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tA\tCOCO\tXoXoX\t1970-01-01T00:00:02.000000Z\n" +
-                            "true\t24814\t24814\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tQ\tBANANA\t_(*y*)_\t1970-01-01T00:00:05.000000Z\n" +
-                            "false\t14817\t14817\t6404066507400987550\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tM\t\t123\t1970-01-01T00:00:06.000000Z\n" +
-                            "false\t14817\t14817\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
-                            "true\t24814\t24814\t7759636733976435003\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
-                            "false\t24814\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
+                            "true\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tA\tCOCO\tXoXoX\t1970-01-01T00:00:02.000000Z\n" +
+                            "true\t24814\t24814\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tQ\tBANANA\t_(*y*)_\t1970-01-01T00:00:05.000000Z\n" +
+                            "false\t14817\t14817\t6404066507400987550\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tM\t\t123\t1970-01-01T00:00:06.000000Z\n" +
+                            "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
+                            "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
+                            "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
                     "tab latest by char", ts);
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
-                            "false\t14817\t14817\t6404066507400987550\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tM\t\t123\t1970-01-01T00:00:06.000000Z\n" +
-                            "false\t14333\t14333\t8260188555232587029\t0x9c022fa261bdede7000000009199af5c422a8855e9d7bfd27ee65ec7b6e3bc3a\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
-                            "true\t24814\t24814\t7759636733976435003\t0x4e89d27e7ee5104e00000000495a30aa3990fb6012dac1d3386129f34be87b5e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
-                            "false\t24814\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
+                            "false\t14817\t14817\t6404066507400987550\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tM\t\t123\t1970-01-01T00:00:06.000000Z\n" +
+                            "false\t14333\t14333\t8260188555232587029\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
+                            "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
+                            "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
                     "tab latest by string", ts);
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
-                            "true\t24814\t24814\t3614738589890112276\t0x9c022fa261bdede7000000009199af5c422a8855e9d7bfd27ee65ec7b6e3bc3a\tJ\t\tXoXoX\t1970-01-01T00:00:04.000000Z\n" +
-                            "false\t14817\t14817\t8260188555232587029\t0xc109ac68336ea0c900000000a5b9a15590c6042566c5a1cd4e1c798ce76392e6\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
-                            "false\t24814\t24814\t6404066507400987550\t0x91627fc790e2808600000000b83e6733dda84f010e21add48b04de5aad1f110f\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
+                            "true\t24814\t24814\t3614738589890112276\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\t\tXoXoX\t1970-01-01T00:00:04.000000Z\n" +
+                            "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
+                            "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
                     "tab latest by symbol", ts);
         });
     }

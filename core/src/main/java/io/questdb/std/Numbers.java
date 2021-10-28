@@ -1019,10 +1019,10 @@ public final class Numbers {
                     b = parseHexLong(text, 18, Math.min(len, 34));
                 }
                 if (len > 34) {
-                    c = parseHexLong(text, 34, Math.min(len, 42));
+                    c = parseHexLong(text, 34, Math.min(len, 50));
                 }
-                if (len > 42) {
-                    d = parseHexLong(text, 42, Math.min(len, 66));
+                if (len > 50) {
+                    d = parseHexLong(text, 50, Math.min(len, 66));
                 }
                 long256.setAll(a, b, c, d);
                 return long256;

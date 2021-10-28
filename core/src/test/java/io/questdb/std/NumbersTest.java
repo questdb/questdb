@@ -73,15 +73,37 @@ public class NumbersTest {
         TestUtils.assertEquals("0x00", sink);
     }
 
-    @Ignore("FIX this broken test")
     @Test
-    public void testLong256() {
+    public void testLong256() throws NumericException {
         // assumption: tok should equal tokAgain, i.e. same representation decoding/encoding
         CharSequence tok = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
-        Long256Constant long256a = new Long256Constant(Numbers.parseLong256(tok, tok.length(), new Long256Impl()));
-        long256a.getLong256(null, sink);
+        Long256Impl long256 = new Long256Impl();
+        long256.setAll(0L, 0L, 0L, 0L); // clear
+        Long256FromCharSequenceDecoder.decode(tok, 2, tok.length(), long256);
+        Long256Constant long256b = new Long256Constant(long256);
+        sink.clear();
+        long256b.getLong256(null, sink);
         CharSequence tokAgain = sink.toString();
         Assert.assertEquals(tok, tokAgain);
+    }
+
+    @Test
+    public void testLong256equality() throws NumericException {
+        CharSequence tok = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
+        Long256Impl long256a = new Long256Impl();
+        Numbers.parseLong256(tok, tok.length(), long256a);
+
+        long256a.toSink(sink);
+        CharSequence tokLong256a = sink.toString();
+
+        Long256Impl long256b = new Long256Impl();
+        Long256FromCharSequenceDecoder.decode(tok, 2, tok.length(), long256b);
+        sink.clear();
+        long256b.toSink(sink);
+        CharSequence tokLong256b = sink.toString();
+        Assert.assertEquals(tokLong256a, tokLong256b);
+
+        Assert.assertEquals(tok, tokLong256b);
     }
 
     @Test
