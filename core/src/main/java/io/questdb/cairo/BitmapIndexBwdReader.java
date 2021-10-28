@@ -93,12 +93,11 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
         protected long minValue;
         protected long next;
         private long valueBlockOffset;
-        private final IndexFrame indexFrame = new IndexFrame();
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
 
         @Override
         public IndexFrame getNext() {
-            // See BitmapIndexFwdReader if needs implementing
+            // See BitmapIndexFwdReader if it needs implementing
             throw new UnsupportedOperationException();
         }
 
@@ -138,8 +137,8 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
         }
 
         private void jumpToPreviousValueBlock() {
-            // we don't need to extend valueMem because we going from farthest block back to start of file
-            // to closes, e.g. valueBlockOffset is decreasing.
+            // we don't need to extend valueMem because we're going from the farthest block back to start of file
+            // to closest, e.g. valueBlockOffset is decreasing.
             valueBlockOffset = getPreviousBlock(valueBlockOffset);
         }
 
