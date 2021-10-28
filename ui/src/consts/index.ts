@@ -38,7 +38,9 @@ export enum BusEvent {
   MSG_QUERY_FIND_N_EXEC = "query.build.execute",
   MSG_QUERY_OK = "query.out.ok",
   MSG_QUERY_RUNNING = "query.out.running",
-  MSQ_QUERY_SCHEMA = "query.out.schema",
+  MSG_QUERY_SCHEMA = "query.out.schema",
+  MSG_CONNECTION_OK = "query.connection.ok",
+  MSG_CONNECTION_ERROR = "query.connection.error",
   REACT_READY = "react.ready",
 }
 
