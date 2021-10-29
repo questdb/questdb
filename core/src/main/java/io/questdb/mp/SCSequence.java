@@ -51,14 +51,32 @@ public class SCSequence extends AbstractSSequence {
         return this.value;
     }
 
-    public void clear() {
-        setBarrier(OpenBarrier.INSTANCE);
-//        this.value = Long.MAX_VALUE;
-    }
-
     @Override
     public long current() {
         return value;
+    }
+
+    public void clear() {
+        setBarrier(OpenBarrier.INSTANCE);
+    }
+
+    public <T> boolean consumeAll(RingQueue<T> queue, QueueConsumer<T> consumer) {
+        long cursor = next();
+        if (cursor < 0) {
+            return false;
+        }
+
+        do {
+            if (cursor > -1) {
+                final long available = available();
+                while (cursor < available) {
+                    consumer.consume(queue.get(cursor++));
+                }
+                done(available - 1);
+            }
+        } while ((cursor = next()) != -1);
+
+        return true;
     }
 
     @Override
@@ -80,24 +98,5 @@ public class SCSequence extends AbstractSSequence {
     private long next0(long next) {
         cache = barrier.availableIndex(next);
         return next > cache ? -1 : next;
-    }
-
-    public <T> boolean consumeAll(RingQueue<T> queue, QueueConsumer<T> consumer) {
-        long cursor = next();
-        if (cursor < 0) {
-            return false;
-        }
-
-        do {
-            if (cursor > -1) {
-                final long available = available();
-                while (cursor < available) {
-                    consumer.consume(queue.get(cursor++));
-                }
-                done(available - 1);
-            }
-        } while ((cursor = next()) != -1);
-
-        return true;
     }
 }
