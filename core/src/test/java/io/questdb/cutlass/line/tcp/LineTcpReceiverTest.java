@@ -1245,27 +1245,27 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
         SOCountDownLatch releaseLatch = new SOCountDownLatch(countDownCount);
         CyclicBarrier startBarrier = new CyclicBarrier(2);
 
-        if (alterTableCommand != null && wait != WAIT_NO_WAIT) {
+        if (alterTableCommand != null && (wait & WAIT_ALTER_TABLE_RELEASE) != 0) {
             new Thread(() -> {
-                boolean wated = false;
+                boolean waited = false;
                 // Wait in parallel thead
                 try {
                     startBarrier.await();
-                    wated = true;
-                    LOG.info().$("Busy waiting for writer ASYNC event").$();
+                    waited = true;
+                    LOG.info().$("Busy waiting for writer ASYNC event ").$(alterCommandId).$();
                     sqlException = AlterCommandExecution.waitWriterEvent(
                             engine,
                             alterCommandId,
                             requestContext,
-                            1000_0000,  // 1s
+                            10_000_000,  // 1s
                             -1
                     );
-                } catch (BrokenBarrierException | InterruptedException e) {
-                    e.printStackTrace();
+                } catch (Throwable e) {
+                    LOG.error().$(e).$();
                 } finally {
                     // exit this method if alter executed
                     releaseLatch.countDown();
-                    if (wated) {
+                    if (waited) {
                         LOG.info().$("Stopped waiting for writer ASYNC event").$();
                         // If subscribed to global writer event queue, unsubscribe here
                         AlterCommandExecution.stopCommandWait(engine, requestContext);
@@ -1281,13 +1281,15 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                         if (factoryType == PoolListener.SRC_WRITER) {
                             switch (event) {
                                 case PoolListener.EV_RETURN:
+                                    LOG.info().$("EV_RETURN ").$(name).$();
                                     releaseLatch.countDown();
                                     break;
                                 case PoolListener.EV_GET:
+                                    LOG.info().$("EV_GET ").$(name).$();
                                     if (alterTableCommand != null) {
                                         try {
                                             // Execute ALTER in parallel thread
-                                            alterCommandId = executeSqlOnce(alterTableCommand);
+                                            alterCommandId = executeAlterSql(alterTableCommand);
                                             startBarrier.await();
                                         } catch (BrokenBarrierException | InterruptedException e) {
                                             e.printStackTrace();
@@ -1347,7 +1349,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
         return null;
     }
 
-    private long executeSqlOnce(String sql) throws SqlException {
+    private long executeAlterSql(String sql) throws SqlException {
         // Subscribe local writer even queue to the global engine writer response queue
         AlterCommandExecution.setUpWait(engine, requestContext);
         LOG.info().$("Started waiting for writer ASYNC event").$();
@@ -1361,6 +1363,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                              null)) {
             CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
             AlterStatement alterStatement = cc.getAlterStatement();
+            assert alterStatement != null;
 
             return AlterCommandExecution.executeAlterCommandNoWait(engine,
                     alterStatement,

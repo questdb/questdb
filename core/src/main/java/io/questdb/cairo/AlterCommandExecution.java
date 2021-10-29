@@ -164,6 +164,11 @@ public class AlterCommandExecution {
         while (true) {
             long seq = tableWriterEventSeq.next();
             if (seq < 0) {
+                if (seq < -1) {
+                    requestContext.info()
+                            .$("async command wait sequence returned -2")
+                            .I$();
+                }
                 // Queue is empty, check if the execution blocked for too long
                 if (System.currentTimeMillis() - start > maxWaitTimeoutMilli) {
                     return SqlException.$(queryTableNamePosition, "Timeout expired on waiting for the ALTER TABLE execution result");

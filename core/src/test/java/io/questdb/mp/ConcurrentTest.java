@@ -26,6 +26,7 @@ package io.questdb.mp;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.LongList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
@@ -36,6 +37,7 @@ import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 
 public class ConcurrentTest {
@@ -458,6 +460,135 @@ public class ConcurrentTest {
 
         latch.await();
         Assert.assertEquals(threads * iterations, doneCount.get());
+    }
+
+    private static class LongMsg {
+        public volatile long correlationId;
+    }
+
+    @Test
+    public void testFanOutPingPong() {
+        final int threads = 2;
+        final int cycle = threads + 1;
+        final int iterations = 30;
+
+        // Requests inbox
+        RingQueue<LongMsg> requests = new RingQueue<>(() -> new LongMsg(), cycle);
+        MPSequence requestSeq = new MPSequence(cycle);
+        MCSequence requestProcessorSeq = new MCSequence(cycle);
+//        FanOut requestFanOut = new FanOut();
+//        requestSeq.then(requestFanOut).then(requestSeq);
+
+//        // Request inbox hook for processor
+//        requestFanOut.and(requestProcessorSeq);
+        requestSeq.then(requestProcessorSeq).then(requestSeq);
+
+        // Response outbox
+        RingQueue<LongMsg> responses = new RingQueue<>(() -> new LongMsg(), cycle);
+        MPSequence responseSeq = new MPSequence(cycle);
+        FanOut responseFanOut = new FanOut();
+        responseSeq.then(responseFanOut).then(responseSeq);
+
+        CyclicBarrier start = new CyclicBarrier(threads);
+        SOCountDownLatch latch = new SOCountDownLatch(threads + 1);
+        AtomicLong doneCount = new AtomicLong();
+        AtomicLong idGen = new AtomicLong();
+
+        // Processor
+        new Thread(() -> {
+            try {
+                int i = 0;
+                LongList received = new LongList();
+                while(i < threads * iterations) {
+                    long seq = requestProcessorSeq.next();
+                    if (seq > -1) {
+                        // Get next request
+                        LongMsg msg = requests.get(seq);
+                        long requestId = msg.correlationId;
+                        requestProcessorSeq.done(seq);
+                        if (received.getLast() == requestId) {
+                            int doe = 0;
+                        }
+                        received.add(seq);
+                        received.add(requestId);
+                        System.out.println("ping received " + requestId);
+
+                        long resp;
+                        while ((resp = responseSeq.next()) < 0) {
+                            LockSupport.parkNanos(10);
+                        }
+                        responses.get(resp).correlationId = requestId;
+                        responseSeq.done(resp);
+
+
+                        System.out.println("pong sent " + requestId);
+                        i++;
+                    } else {
+                        LockSupport.parkNanos(10);
+                    }
+                }
+                doneCount.incrementAndGet();
+            } catch (Throwable e) {
+
+            }
+            finally {
+                latch.countDown();
+            }
+        }).start();
+
+        MCSequence[] localSeq = new MCSequence[threads];
+        for(int th = 0; th < threads; th++) {
+            MCSequence localResp = new MCSequence(cycle);
+            // Put local response sequence into response FanOut
+            responseFanOut.and(localResp);
+            localSeq[th] = localResp;
+        }
+
+        // Request threads
+        for(int th = 0; th < threads; th++) {
+            final MCSequence localResp = localSeq[th];
+            final int threadId = th;
+            new Thread(() -> {
+                try {
+                    start.await();
+                    for (int i = 0; i < iterations; i++) {
+
+                        // Send next request
+                        long requestId = idGen.incrementAndGet();
+                        long reqSeq;
+                        while ((reqSeq = requestSeq.next()) < 0) {
+                            LockSupport.parkNanos(10);
+                        }
+                        requests.get(reqSeq).correlationId = requestId;
+                        requestSeq.done(reqSeq);
+                        System.out.println(threadId + ", ping sent " + requestId);
+
+                        // Wait for response
+                        long responseId, respCursor;
+                        do {
+                            while ((respCursor = localResp.nextBully()) < 0) {
+                                LockSupport.parkNanos(10);
+                            }
+                            responseId = responses.get(respCursor).correlationId;
+                            localResp.done(respCursor);
+                        } while (responseId != requestId);
+
+                        System.out.println(threadId + ", pong received " + requestId);
+                    }
+//
+//                    // Remove local response sequence from response FanOut
+//                    responseFanOut.remove(localResp);
+//                    doneCount.incrementAndGet();
+                } catch (BrokenBarrierException | InterruptedException e) {
+                    e.printStackTrace();
+                } finally {
+                    latch.countDown();
+                }
+            }).start();
+        }
+
+        latch.await();
+        Assert.assertEquals(threads + 1, doneCount.get());
     }
 
     static void publishEOE(RingQueue<Event> queue, Sequence sequence) {
