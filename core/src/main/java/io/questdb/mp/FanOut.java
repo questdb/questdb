@@ -83,7 +83,13 @@ public class FanOut implements Barrier {
                 _new.waitStrategies.add(barrier.getWaitStrategy());
             }
             _new.setupWaitStrategy();
-        } while (!Unsafe.getUnsafe().compareAndSwapObject(this, HOLDER, holder, _new));
+            if (Unsafe.getUnsafe().compareAndSwapObject(this, HOLDER, h, _new)) {
+                break;
+            }
+        } while (true);
+
+        Unsafe.getUnsafe().storeFence();
+
         return this;
     }
 
@@ -125,6 +131,9 @@ public class FanOut implements Barrier {
     }
 
     public void remove(Barrier barrier) {
+
+        Unsafe.getUnsafe().storeFence();
+
         Holder _new;
         do {
             Holder h = this.holder;
@@ -153,8 +162,10 @@ public class FanOut implements Barrier {
                 _new.waitStrategies.addAll(h.waitStrategies);
             }
             _new.setupWaitStrategy();
-
-        } while (!Unsafe.getUnsafe().compareAndSwapObject(this, HOLDER, holder, _new));
+            if (Unsafe.getUnsafe().compareAndSwapObject(this, HOLDER, h, _new)) {
+                break;
+            }
+        } while (true);
     }
 
     private static class Holder {

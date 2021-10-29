@@ -27,6 +27,7 @@ package io.questdb.mp;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
@@ -100,13 +101,14 @@ public class ConcurrentTest {
     }
 
     @Test
-    public void testFanOutPingPong() {
+    public void testFanOutPingPongStableSequences() {
         final int threads = 2;
         final int iterations = 30;
+        final int cycle = Numbers.ceilPow2(threads * iterations);
 
         // Requests inbox
-        RingQueue<LongMsg> pingQueue = new RingQueue<>(LongMsg::new, threads);
-        MPSequence pingPubSeq = new MPSequence(threads);
+        RingQueue<LongMsg> pingQueue = new RingQueue<>(LongMsg::new, cycle);
+        MPSequence pingPubSeq = new MPSequence(cycle);
         FanOut pingSubFo = new FanOut();
         pingPubSeq.then(pingSubFo).then(pingPubSeq);
 
@@ -115,7 +117,7 @@ public class ConcurrentTest {
         pingSubFo.and(pingSubSeq);
 
         // Response outbox
-        RingQueue<LongMsg> responses = new RingQueue<>(LongMsg::new, threads);
+        RingQueue<LongMsg> pongQueue = new RingQueue<>(LongMsg::new, cycle);
         SPSequence pongPubSeq = new SPSequence(threads);
         FanOut pongSubFo = new FanOut();
         pongPubSeq.then(pongSubFo).then(pongPubSeq);
@@ -140,15 +142,137 @@ public class ConcurrentTest {
 
                         pingPong.add(pingCursor);
 
-                        LOG.info().$("ping received ").$(requestId).$();
+                        System.out.println("* ping " + requestId);
 
                         long pongCursor;
                         while ((pongCursor = pongPubSeq.next()) < 0) {
                             LockSupport.parkNanos(10);
                         }
-                        responses.get(pongCursor).correlationId = requestId;
+                        pongQueue.get(pongCursor).correlationId = requestId;
                         pongPubSeq.done(pongCursor);
                         pingPong.add(pongCursor);
+
+                        System.out.println("* pong " + requestId);
+                        i++;
+                    } else {
+                        LockSupport.parkNanos(10);
+                    }
+                }
+                doneCount.incrementAndGet();
+            } finally {
+                latch.countDown();
+            }
+        }).start();
+
+        final SCSequence[] sequences = new SCSequence[threads];
+        for (int i = 0; i < threads; i++) {
+            SCSequence pongSubSeq = new SCSequence();
+            pongSubFo.and(pongSubSeq);
+            sequences[i] = pongSubSeq;
+        }
+
+        // Request threads
+        for (int th = 0; th < threads; th++) {
+            final int threadId = th;
+            new Thread(() -> {
+                final LongList pingPong = new LongList();
+                try {
+                    start.await();
+
+                    final SCSequence pongSubSeq = sequences[threadId];
+
+                    for (int i = 0; i < iterations; i++) {
+                        // Put local response sequence into response FanOut
+                        System.out.println("thread:" + threadId + ", added at " + pingPubSeq.value);
+
+                        // Send next request
+                        long requestId = idGen.incrementAndGet();
+                        long pingCursor;
+                        while ((pingCursor = pingPubSeq.next()) < 0) {
+                            LockSupport.parkNanos(10);
+                        }
+                        pingQueue.get(pingCursor).correlationId = requestId;
+                        pingPubSeq.done(pingCursor);
+                        pingPong.add(pingCursor);
+
+                        System.out.println("thread:" + threadId + ", ask: " + requestId);
+
+                        // Wait for response
+                        long responseId, pongCursor;
+                        do {
+                            while ((pongCursor = pongSubSeq.next()) < 0) {
+                                LockSupport.parkNanos(10);
+                            }
+                            pingPong.add(pongCursor);
+                            responseId = pongQueue.get(pongCursor).correlationId;
+                            pongSubSeq.done(pongCursor);
+                            pingPong.add(pongCursor);
+                            System.out.println("thread:" + threadId + ", ping: " + responseId + ", expected: " + requestId);
+                        } while (responseId != requestId);
+
+                        System.out.println("thread " + threadId + ", pong " + requestId);
+                        // Remove local response sequence from response FanOut
+                    }
+                    pongSubFo.remove(pongSubSeq);
+                    doneCount.incrementAndGet();
+                } catch (BrokenBarrierException | InterruptedException e) {
+                    e.printStackTrace();
+                } finally {
+                    latch.countDown();
+                }
+            }).start();
+        }
+
+        latch.await();
+        Assert.assertEquals(threads + 1, doneCount.get());
+    }
+
+    @Test
+    public void testFanOutPingPong() {
+        final int threads = 2;
+        final int iterations = 30;
+
+        // Requests inbox
+        final RingQueue<LongMsg> pingQueue = new RingQueue<>(LongMsg::new, threads);
+        final MPSequence pingPubSeq = new MPSequence(threads);
+        final FanOut pingSubFo = new FanOut();
+        pingPubSeq.then(pingSubFo).then(pingPubSeq);
+
+        // Request inbox hook for processor
+        final SCSequence pingSubSeq = new SCSequence();
+        pingSubFo.and(pingSubSeq);
+
+        // Response outbox
+        final RingQueue<LongMsg> pongQueue = new RingQueue<>(LongMsg::new, threads);
+        final SPSequence pongPubSeq = new SPSequence(threads);
+        final FanOut pongSubFo = new FanOut();
+        pongPubSeq.then(pongSubFo).then(pongPubSeq);
+
+        CyclicBarrier start = new CyclicBarrier(threads);
+        SOCountDownLatch latch = new SOCountDownLatch(threads + 1);
+        AtomicLong doneCount = new AtomicLong();
+        AtomicLong idGen = new AtomicLong();
+
+        // Processor
+        new Thread(() -> {
+            try {
+                int i = 0;
+                while(i < threads * iterations) {
+                    long seq = pingSubSeq.next();
+                    if (seq > -1) {
+                        // Get next request
+                        LongMsg msg = pingQueue.get(seq);
+                        long requestId = msg.correlationId;
+                        pingSubSeq.done(seq);
+
+                        LOG.info().$("ping received ").$(requestId).$();
+
+                        long resp;
+                        while ((resp = pongPubSeq.next()) < 0) {
+                            LockSupport.parkNanos(10);
+                        }
+                        pongQueue.get(resp).correlationId = requestId;
+                        pongPubSeq.done(resp);
 
                         LOG.info().$("pong sent ").$(requestId).$();
                         i++;
@@ -163,52 +287,41 @@ public class ConcurrentTest {
         }).start();
 
         // Request threads
-        for (int th = 0; th < threads; th++) {
+        for(int th = 0; th < threads; th++) {
             final int threadId = th;
             new Thread(() -> {
-                final LongList pingPong = new LongList();
                 try {
-                    SCSequence pongSubSeq = new SCSequence();
+                    SCSequence localResp = new SCSequence();
                     start.await();
-                    long expectedPongCursor = 0;
                     for (int i = 0; i < iterations; i++) {
                         // Put local response sequence into response FanOut
-                        pongSubFo.and(pongSubSeq);
+                        pongSubFo.and(localResp);
 
                         // Send next request
                         long requestId = idGen.incrementAndGet();
-                        long pingCursor;
-                        while ((pingCursor = pingPubSeq.next()) < 0) {
+                        long reqSeq;
+                        while ((reqSeq = pingPubSeq.next()) < 0) {
                             LockSupport.parkNanos(10);
                         }
-                        pingQueue.get(pingCursor).correlationId = requestId;
-                        pingPubSeq.done(pingCursor);
-                        pingPong.add(pingCursor);
-
+                        pingQueue.get(reqSeq).correlationId = requestId;
+                        pingPubSeq.done(reqSeq);
                         LOG.info().$(threadId).$(", ping sent ").$(requestId).$();
 
                         // Wait for response
-                        long responseId, pongCursor;
+                        long responseId, respCursor;
                         do {
-                            while ((pongCursor = pongSubSeq.next()) < 0) {
+                            while ((respCursor = localResp.next()) < 0) {
                                 LockSupport.parkNanos(10);
                             }
-                            pingPong.add(pongCursor);
-                            if (pongCursor != expectedPongCursor) {
-                                System.out.println("oops");
-                            }
-                            expectedPongCursor = pongCursor + 1;
-                            responseId = responses.get(pongCursor).correlationId;
-                            pongSubSeq.done(pongCursor);
-                            pingPong.add(pongCursor);
+                            responseId = pongQueue.get(respCursor).correlationId;
+                            localResp.done(respCursor);
                         } while (responseId != requestId);
 
                         LOG.info().$(threadId).$(", pong received ").$(requestId).$();
 
                         // Remove local response sequence from response FanOut
-                        pongSubFo.remove(pongSubSeq);
-                        pongSubSeq.clear();
-                        System.out.println("removed");
+                        pongSubFo.remove(localResp);
+                        localResp.clear();
                     }
                     doneCount.incrementAndGet();
                 } catch (BrokenBarrierException | InterruptedException e) {
