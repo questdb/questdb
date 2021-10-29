@@ -92,7 +92,8 @@ export type QueryResult<T extends Record<string, any>> =
   | DdlResult
 
 export type Table = {
-  table: string
+  name: string
+  partitionBy: string
 }
 
 export type Column = {
@@ -268,17 +269,17 @@ export class Client {
   }
 
   async showTables(): Promise<QueryResult<Table>> {
-    const response = await this.query<Table>("SHOW TABLES;")
+    const response = await this.query<Table>("tables();")
 
     if (response.type === Type.DQL) {
       return {
         ...response,
         data: response.data.slice().sort((a, b) => {
-          if (a.table > b.table) {
+          if (a.name > b.name) {
             return 1
           }
 
-          if (a.table < b.table) {
+          if (a.name < b.name) {
             return -1
           }
 
