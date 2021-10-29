@@ -501,13 +501,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             }
         }
 
-        if (Long256Util.isValidString(tok, len)) {
-            try {
-                long256Sink.setAll(0L, 0L, 0L, 0L); // clear
-                Long256FromCharSequenceDecoder.decode(tok, 2, len, long256Sink);
-                return new Long256Constant(long256Sink);
-            } catch (NumericException ignored) {
-            }
+        // long256
+        long256Sink.clear();
+        if (Numbers.extractLong256(tok, len, long256Sink)) {
+            return new Long256Constant(long256Sink); // values are copied from this sink
         }
 
         throw SqlException.position(position).put("invalid constant: ").put(tok);

@@ -49,26 +49,7 @@ public class CastSymbolToLong256FunctionFactory implements FunctionFactory {
         if (value == null) {
             return;
         }
-        final int len = value.length();
-        if (Long256Util.isValidString(value, len)) {
-            try {
-                final long a = Numbers.parseHexLong(value, 2, Math.min(len, 18));
-                long b = 0;
-                long c = 0;
-                long d = 0;
-                if (len > 18) {
-                    b = Numbers.parseHexLong(value, 18, Math.min(len, 34));
-                }
-                if (len > 34) {
-                    c = Numbers.parseHexLong(value, 34, Math.min(len, 42));
-                }
-                if (len > 42) {
-                    d = Numbers.parseHexLong(value, 42, Math.min(len, 66));
-                }
-                Numbers.appendLong256(a, b, c, d, sink);
-            } catch (NumericException ignored) {
-            }
-        }
+        Numbers.appendLong256(value, sink);
     }
 
     private static class Func extends Long256Function implements UnaryFunction {

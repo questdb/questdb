@@ -66,6 +66,7 @@ public final class Numbers {
     private static final LongHexAppender[] longHexAppenderPad64 = new LongHexAppender[Long.SIZE + 1];
     private static final int[] N_5_BITS = new int[]{0, 3, 5, 7, 10, 12, 14, 17, 19, 21, 24, 26, 28, 31, 33, 35, 38, 40, 42, 45, 47, 49, 52, 54, 56, 59, 61};
     private static final int EXP_SHIFT = SIGNIFICAND_WIDTH - 1;
+    private final static ThreadLocal<Long256Impl> long256Builder = new ThreadLocal<>(Long256Impl::new);
     static final long EXP_ONE = ((long) EXP_BIAS) << EXP_SHIFT; // exponent of 1.0
     private static final long FRACT_HOB = (1L << EXP_SHIFT); // assumed High-Order bit
     private static final int[] insignificantDigitsNumber = new int[]{0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 9, 9, 10, 10, 10, 11, 11, 11, 12, 12, 12, 12, 13, 13, 13, 14, 14, 14, 15, 15, 15, 15, 16, 16, 16, 17, 17, 17, 18, 18, 18, 19};
@@ -413,22 +414,34 @@ public final class Numbers {
         }
     }
 
+    public static void appendLong256(CharSequence value, CharSink sink) {
+        Long256Impl long256 = getThreadLocalLong256Builder();
+        if (extractLong256(value, value.length(), long256)) {
+            appendLong256(
+                    long256.getLong0(),
+                    long256.getLong1(),
+                    long256.getLong2(),
+                    long256.getLong3(),
+                    sink);
+        }
+    }
+
     public static void appendLong256(long a, long b, long c, long d, CharSink sink) {
         if (a == Numbers.LONG_NaN && b == Numbers.LONG_NaN && c == Numbers.LONG_NaN && d == Numbers.LONG_NaN) {
             return;
         }
         sink.put("0x");
-        if (d != 0) {
+        if (d != 0L) {
             appendLong256Four(a, b, c, d, sink);
             return;
         }
 
-        if (c != 0) {
+        if (c != 0L) {
             appendLong256Three(a, b, c, sink);
             return;
         }
 
-        if (b != 0) {
+        if (b != 0L) {
             appendLong256Two(a, b, sink);
             return;
         }
@@ -994,6 +1007,21 @@ public final class Numbers {
         return parseLong0(sequence, p, lim);
     }
 
+    public static boolean probeLong256(CharSequence value) {
+        return extractLong256(value, value.length(), getThreadLocalLong256Builder());
+    }
+
+    public static boolean extractLong256(CharSequence value, int len, Long256Acceptor acceptor) {
+        if (Long256Util.isValidString(value, len)) {
+            try {
+                Long256FromCharSequenceDecoder.decode(value, 2, len, acceptor);
+                return true;
+            } catch (NumericException ignored) {
+            }
+        }
+        return false;
+    }
+
     public static long spreadBits(long v) {
         v = (v | (v << 16)) & 0X0000FFFF0000FFFFL;
         v = (v | (v << 8)) & 0X00FF00FF00FF00FFL;
@@ -1009,27 +1037,7 @@ public final class Numbers {
 
     @NotNull
     public static Long256Impl parseLong256(CharSequence text, int len, Long256Impl long256) {
-        if (Long256Util.isValidString(text, len)) {
-            try {
-                final long a = parseHexLong(text, 2, Math.min(len, 18));
-                long b = 0;
-                long c = 0;
-                long d = 0;
-                if (len > 18) {
-                    b = parseHexLong(text, 18, Math.min(len, 34));
-                }
-                if (len > 34) {
-                    c = parseHexLong(text, 34, Math.min(len, 50));
-                }
-                if (len > 50) {
-                    d = parseHexLong(text, 50, Math.min(len, 66));
-                }
-                long256.setAll(a, b, c, d);
-                return long256;
-            } catch (NumericException ignored) {
-            }
-        }
-        return Long256Impl.NULL_LONG256;
+        return extractLong256(text, len, long256) ? long256 : Long256Impl.NULL_LONG256;
     }
 
     public static long parseLongQuiet(CharSequence sequence) {
@@ -1242,6 +1250,12 @@ public final class Numbers {
         long signMask = valueBits & Numbers.SIGN_BIT_MASK;
         double absValue = Double.longBitsToDouble(valueBits & ~Numbers.SIGN_BIT_MASK);
         return Double.longBitsToDouble(Double.doubleToRawLongBits(roundUp00PosScale(absValue, scale)) | signMask);
+    }
+
+    private static Long256Impl getThreadLocalLong256Builder() {
+        Long256Impl b = long256Builder.get();
+        b.clear();
+        return b;
     }
 
     private static void appendLongHex4(CharSink sink, long value) {

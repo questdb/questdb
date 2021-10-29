@@ -85,6 +85,11 @@ public class Long256Impl implements Long256, Sinkable, Long256Acceptor {
     }
 
     @Override
+    public void clear() {
+        setAll(0L, 0L, 0L, 0L);
+    }
+
+    @Override
     public void setAll(long l0, long l1, long l2, long l3) {
         this.l0 = l0;
         this.l1 = l1;

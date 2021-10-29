@@ -1105,9 +1105,6 @@ public class SqlCodeGenerator implements Mutable {
                     prefixes
             );
         } else {
-
-            // TODO: latest by id where name = 'c1' ?? should it filter also by id?, index + 1 ??
-
             return new LatestByAllFilteredRecordCursorFactory(
                     metadata,
                     configuration,
@@ -2461,15 +2458,11 @@ public class SqlCodeGenerator implements Mutable {
                         throw SqlException.invalidColumn(latestBy.getQuick(i).position, latestBy.getQuick(i).token);
                     }
 
-                    // latest by can be of 1 or more columns, which are treated as a composite key into
-                    // the table. with this key unique entries are found and only the last composite value
-                    // by time is returned. not all types are appropriate for keys
                     int columnType = myMeta.getColumnType(index);
                     switch (ColumnType.tagOf(columnType)) {
                         case ColumnType.BOOLEAN:
                         case ColumnType.CHAR:
-                        case ColumnType.SHORT: // TODO: FunctionParser L440 add case for ShortConstant, or literal
-                                               //       representation for short, to avoid having to use a cast
+                        case ColumnType.SHORT:
                         case ColumnType.INT:
                         case ColumnType.LONG:
                         case ColumnType.LONG256:
@@ -2479,7 +2472,7 @@ public class SqlCodeGenerator implements Mutable {
                             // keyTypes are types of columns we collect 'latest by' for
                             keyTypes.add(columnType);
                             // columnFilterA are indexes of columns we collect 'latest by' for
-                            listColumnFilterA.add(index + 1); // TODO: WHY +1, aren't we filtering by the column's as tracked by metadata?!
+                            listColumnFilterA.add(index + 1);
                             break;
 
                         default:
@@ -2507,7 +2500,7 @@ public class SqlCodeGenerator implements Mutable {
 
             model.setWhereClause(withinExtracted);
 
-            if (withinExtracted != null) { // has where clause
+            if (withinExtracted != null) {
 
                 CharSequence preferredKeyColumn = null;
 
