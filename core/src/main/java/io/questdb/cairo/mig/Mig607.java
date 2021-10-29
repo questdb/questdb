@@ -42,6 +42,8 @@ final class Mig607 {
 
 
         path.trimTo(plen).concat(META_FILE_NAME).$();
+        long metaFileSize;
+        long txFileSize;
         try (MemoryMARW metaMem = migrationContext.getRwMemory()) {
             metaMem.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_DEFAULT);
             final int columnCount = metaMem.getInt(0);
@@ -143,7 +145,30 @@ final class Mig607 {
                         denseSymbolCount++;
                     }
                 }
+                txFileSize = txMem.getAppendOffset();
             }
+            metaFileSize = metaMem.getAppendOffset();
+        }
+
+        // This migration when written originally used implementation of MemoryMARW which truncated files to size on close
+        // MemoryMARW now truncate to page size. To test old migrations here we simulate the migration as it is originally released
+        // So trim TX and META files to their sizes
+        path.trimTo(plen).concat(META_FILE_NAME).$();
+        trimFile(ff, path, metaFileSize);
+
+        path.trimTo(plen).concat(TXN_FILE_NAME).$();
+        trimFile(ff, path, txFileSize);
+    }
+
+    private static void trimFile(FilesFacade ff, Path path, long size) {
+        long fd = TableUtils.openFileRWOrFail(ff, path);
+        if (!ff.truncate(fd, size)) {
+            // This should never happens on migration but better to be on safe side anyway
+            throw CairoException.instance(ff.errno()).put("Cannot trim to size [file=").put(path).put(']');
+        }
+        if (!ff.close(fd)) {
+            // This should never happens on migration but better to be on safe side anyway
+            throw CairoException.instance(ff.errno()).put("Cannot close [file=").put(path).put(']');
         }
     }
 

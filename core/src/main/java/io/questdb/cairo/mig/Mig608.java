@@ -85,7 +85,7 @@ final class Mig608 {
             o = offset + thatMetaColumnDataSize * (columnCount - 1);
             long o2 = offset + thisMetaColumnDataSize * (columnCount - 1);
             final Rnd rnd = SharedRandom.getRandom(migrationContext.getConfiguration());
-            while (o > offset) {
+            while (o >= offset) {
                 rwMem.putInt(o2, rwMem.getInt(o)); // type
                 rwMem.putLong(o2 + 4, rwMem.getInt(o + 4)); // flags
                 rwMem.putInt(o2 + 12, rwMem.getInt(o + 12)); // index block capacity
@@ -93,6 +93,7 @@ final class Mig608 {
                 o -= thatMetaColumnDataSize;
                 o2 -= thisMetaColumnDataSize;
             }
+            rwMem.jumpTo(newNameOffset + nameSegmentLen);
         }
 
         // update _txn file
@@ -119,6 +120,7 @@ final class Mig608 {
             long thatSize = thatTxOffsetMapWriterCount + 4 + symbolCount * 8L + 4L + partitionTableSize;
             long thisSize = thisTxOffsetMapWriterCount + 4 + symbolCount * 8L + 4L + partitionTableSize;
             txMem.extend(thisSize);
+            txMem.jumpTo(thisSize);
             Vect.memmove(txMem.addressOf(thisTxOffsetMapWriterCount), txMem.addressOf(thatTxOffsetMapWriterCount), thatSize - thatTxOffsetMapWriterCount);
 
             // zero out reserved area
