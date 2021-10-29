@@ -51,6 +51,11 @@ public class SCSequence extends AbstractSSequence {
         return this.value;
     }
 
+    public void clear() {
+        setBarrier(OpenBarrier.INSTANCE);
+//        this.value = Long.MAX_VALUE;
+    }
+
     @Override
     public long current() {
         return value;
