@@ -6705,10 +6705,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     "tab latest by id where name = 'c1'",
                     "id\tname\tvalue\tts\n" +
                             "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
+            // TODO: broken
 //            assertSql(
 //                    "tab latest by id where name = 'c2'",
 //                    "id\tname\tvalue\tts\n" +
 //                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n");
+            // TODO: broken
 //            assertSql(
 //                    "tab latest by name where id = 'd1'",
 //                    "id\tname\tvalue\tts\n");
