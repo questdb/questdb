@@ -35,6 +35,7 @@ public class RingQueue<T> implements Closeable {
 
     @SuppressWarnings("unchecked")
     public RingQueue(ObjectFactory<T> factory, int cycle) {
+        assert cycle < 3 || cycle == (cycle / 2) * 2;
         this.mask = cycle - 1;
         this.buf = (T[]) new Object[cycle];
 
