@@ -37,8 +37,10 @@ import java.util.Arrays;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 public class ConcurrentTest {
@@ -291,11 +293,11 @@ public class ConcurrentTest {
             final int threadId = th;
             new Thread(() -> {
                 try {
-                    SCSequence localResp = new SCSequence();
+                    SCSequence pongSubSeq = new SCSequence();
                     start.await();
                     for (int i = 0; i < iterations; i++) {
                         // Put local response sequence into response FanOut
-                        pongSubFo.and(localResp);
+                        pongSubFo.and(pongSubSeq);
 
                         // Send next request
                         long requestId = idGen.incrementAndGet();
@@ -310,18 +312,18 @@ public class ConcurrentTest {
                         // Wait for response
                         long responseId, respCursor;
                         do {
-                            while ((respCursor = localResp.next()) < 0) {
+                            while ((respCursor = pongSubSeq.next()) < 0) {
                                 LockSupport.parkNanos(10);
                             }
                             responseId = pongQueue.get(respCursor).correlationId;
-                            localResp.done(respCursor);
+                            pongSubSeq.done(respCursor);
                         } while (responseId != requestId);
 
                         LOG.info().$(threadId).$(", pong received ").$(requestId).$();
 
                         // Remove local response sequence from response FanOut
-                        pongSubFo.remove(localResp);
-                        localResp.clear();
+                        pongSubFo.remove(pongSubSeq);
+                        pongSubSeq.clear();
                     }
                     doneCount.incrementAndGet();
                 } catch (BrokenBarrierException | InterruptedException e) {
@@ -334,6 +336,97 @@ public class ConcurrentTest {
 
         latch.await();
         Assert.assertEquals(threads + 1, doneCount.get());
+    }
+
+    @Test
+    public void testFanOutDoesNotProcessQueueFromStart() {
+        // Main thread is going to publish K events
+        // and then give green light to the relay thread,
+        // which should not be processing first K-1 events
+        //
+        // There is also a generic consumer thread that's processing
+        // all messages
+
+        final RingQueue<LongMsg> queue = new RingQueue<LongMsg>(LongMsg::new, 64);
+        final SPSequence pubSeq = new SPSequence(queue.getCycle());
+        final FanOut subFo = new FanOut();
+        pubSeq.then(subFo).then(pubSeq);
+
+        final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
+        int N = 20;
+        int K = 12;
+
+        // The relay sequence is created by publisher to
+        // make test deterministic. To pass this sequence to
+        // the relay thread we use the atomic reference and countdown latch
+        final AtomicReference<SCSequence> relaySubSeq = new AtomicReference<>();
+        final SOCountDownLatch relayLatch = new SOCountDownLatch(1);
+
+        // this barrier is to make sure threads are ready before publisher starts
+        final SOCountDownLatch threadsRunBarrier = new SOCountDownLatch(2);
+
+        new Thread(() -> {
+            final SCSequence subSeq = new SCSequence();
+            subFo.and(subSeq);
+
+            // thread is ready to consume
+            threadsRunBarrier.countDown();
+
+            int count = N;
+            while (count > 0) {
+                long cursor = subSeq.nextBully();
+                subSeq.done(cursor);
+                count--;
+            }
+            subFo.remove(subSeq);
+            haltLatch.countDown();
+        }).start();
+
+        // indicator showing relay thread did not process messages before K
+        final AtomicBoolean relayThreadSuccess = new AtomicBoolean();
+
+        new Thread(() -> {
+
+            // thread is ready to wait :)
+            threadsRunBarrier.countDown();
+
+            relayLatch.await();
+
+            final SCSequence subSeq = relaySubSeq.get();
+            int count = N - K;
+            boolean success = true;
+            while (count > 0) {
+                long cursor = subSeq.nextBully();
+                if (success) {
+                    success = queue.get(cursor).correlationId >= K;
+                }
+                subSeq.done(cursor);
+                count--;
+            }
+            relayThreadSuccess.set(success);
+            subFo.remove(subSeq);
+            haltLatch.countDown();
+        }).start();
+
+        // wait for threads to get ready
+        threadsRunBarrier.await();
+
+        // publish
+        for (int i = 0; i < N; i++) {
+            if (i == K) {
+                final SCSequence sub = new SCSequence();
+                subFo.and(sub);
+                relaySubSeq.set(sub);
+                relayLatch.countDown();
+            }
+
+            long cursor = pubSeq.nextBully();
+            queue.get(cursor).correlationId = i;
+            pubSeq.done(cursor);
+        }
+
+        haltLatch.await();
+        Assert.assertTrue(relayThreadSuccess.get());
     }
 
     /**

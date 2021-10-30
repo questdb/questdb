@@ -54,11 +54,6 @@ public class FanOut implements Barrier {
         return new FanOut().and(barrier);
     }
 
-    public <T extends Barrier> T addAndGet(T sequence) {
-        and(sequence);
-        return sequence;
-    }
-
     public FanOut and(Barrier barrier) {
         Holder _new;
         boolean barrierNotSetUp = true;
@@ -70,9 +65,13 @@ public class FanOut implements Barrier {
             if (h.barriers.indexOf(barrier) > -1) {
                 return this;
             }
-            if (barrierNotSetUp && this.barrier != null) {
-                barrier.root().setBarrier(this.barrier);
-                barrierNotSetUp = false;
+
+            if (this.barrier != null) {
+                if (barrierNotSetUp) {
+                    barrier.root().setBarrier(this.barrier);
+                    barrierNotSetUp = false;
+                }
+                barrier.setCurrent(this.barrier.current());
             }
             _new = new Holder();
             _new.barriers.addAll(h.barriers);
@@ -99,9 +98,9 @@ public class FanOut implements Barrier {
     @Override
     public long availableIndex(final long lo) {
         long l = Long.MAX_VALUE;
-        ObjList<Barrier> sequences = holder.barriers;
-        for (int i = 0, n = sequences.size(); i < n; i++) {
-            l = Math.min(l, sequences.getQuick(i).availableIndex(lo));
+        ObjList<Barrier> barriers = holder.barriers;
+        for (int i = 0, n = barriers.size(); i < n; i++) {
+            l = Math.min(l, barriers.getQuick(i).availableIndex(lo));
         }
         return l;
     }
@@ -121,6 +120,14 @@ public class FanOut implements Barrier {
         ObjList<Barrier> barriers = holder.barriers;
         for (int i = 0, n = barriers.size(); i < n; i++) {
             barriers.getQuick(i).root().setBarrier(barrier);
+        }
+    }
+
+    @Override
+    public void setCurrent(long value) {
+        ObjList<Barrier> barriers = holder.barriers;
+        for (int i = 0, n = barriers.size(); i < n; i++) {
+            barriers.getQuick(i).setCurrent(value);
         }
     }
 

@@ -76,7 +76,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         this.nf = configuration.getNetworkFacade();
 
         this.interestQueue = new RingQueue<>(IOEvent::new, configuration.getInterestQueueCapacity());
-        this.interestPubSeq = new MPSequence(interestQueue.getCapacity());
+        this.interestPubSeq = new MPSequence(interestQueue.getCycle());
         this.interestSubSeq = new SCSequence();
         this.interestPubSeq.then(this.interestSubSeq).then(this.interestPubSeq);
 
@@ -86,7 +86,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         this.ioEventPubSeq.then(this.ioEventSubSeq).then(this.ioEventPubSeq);
 
         this.disconnectQueue = new RingQueue<>(IOEvent::new, configuration.getIOQueueCapacity());
-        this.disconnectPubSeq = new MPSequence(disconnectQueue.getCapacity());
+        this.disconnectPubSeq = new MPSequence(disconnectQueue.getCycle());
         this.disconnectSubSeq = new SCSequence();
         this.disconnectPubSeq.then(this.disconnectSubSeq).then(this.disconnectPubSeq);
 

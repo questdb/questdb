@@ -30,9 +30,9 @@ public class SCSequence extends AbstractSSequence {
         super(waitStrategy);
     }
 
-    public SCSequence(long index, WaitStrategy waitStrategy) {
+    public SCSequence(long value, WaitStrategy waitStrategy) {
         super(waitStrategy);
-        this.value = index;
+        setCurrent(value);
     }
 
     public SCSequence() {
@@ -49,6 +49,13 @@ public class SCSequence extends AbstractSSequence {
     @Override
     public long availableIndex(long lo) {
         return this.value;
+    }
+
+    @Override
+    // The method is final is because we call it from
+    // the constructor.
+    public final void setCurrent(long value) {
+        this.value = value;
     }
 
     @Override

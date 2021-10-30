@@ -276,7 +276,7 @@ public class LogFactoryTest {
 
         RingQueue<LogRecordSink> queue = new RingQueue<>(() -> new LogRecordSink(1024), 1024);
 
-        SPSequence pubSeq = new SPSequence(queue.getCapacity());
+        SPSequence pubSeq = new SPSequence(queue.getCycle());
         SCSequence subSeq = new SCSequence();
         pubSeq.then(subSeq).then(pubSeq);
 

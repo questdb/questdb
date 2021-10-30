@@ -59,7 +59,7 @@ public class RingQueue<T> implements Closeable {
         return buf[(int) (cursor & mask)];
     }
 
-    public int getCapacity() {
+    public int getCycle() {
         return buf.length;
     }
 }
