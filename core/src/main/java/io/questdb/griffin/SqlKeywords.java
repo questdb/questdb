@@ -266,11 +266,7 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'e';
     }
 
-    public static boolean isCastFunction(CharSequence tok, GenericLexer lexer) {
-        return isCastKeyword(tok) && lexer.peek().charAt(0) == '(';
-    }
-
-    private static boolean isCastKeyword(CharSequence tok) {
+    public static boolean isCastKeyword(CharSequence tok) {
         if (tok.length() != 4) {
             return false;
         }

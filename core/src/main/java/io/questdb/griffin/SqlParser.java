@@ -438,7 +438,7 @@ public final class SqlParser {
             tok = tok(lexer, "'index' or 'cast'");
             if (isIndexKeyword(tok)) {
                 parseCreateTableIndexDef(lexer, model);
-            } else if (isCastFunction(tok, lexer)) {
+            } else if (isCastKeyword(tok)) {
                 parseCreateTableCastDef(lexer, model);
             } else {
                 throw errUnexpected(lexer, tok);

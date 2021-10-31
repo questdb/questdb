@@ -511,7 +511,18 @@ class ExpressionParser {
                         break;
                     case 'c':
                     case 'C':
-                        if (SqlKeywords.isCastFunction(tok, lexer)) {
+                        if (SqlKeywords.isCastKeyword(tok)) {
+                            CharSequence caseTok = GenericLexer.immutableOf(tok);
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok == null || tok.charAt(0) != '(') {
+                                lexer.backTo(position + 4, caseTok);
+                                tok = caseTok;
+                                processDefaultBranch = true;
+                                break;
+                            }
+
+                            lexer.backTo(position + 4, caseTok);
+                            tok = caseTok;
                             if (prevBranch != BRANCH_DOT_DEREFERENCE) {
                                 castBraceCountStack.push(-1);
                                 thisBranch = BRANCH_OPERATOR;

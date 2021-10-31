@@ -2172,7 +2172,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         try {
             assertCreateTableAsSelect(
                     "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"t\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}",
-                    "create table Y as (select * from X), cast(b as DOUBLE) timestamp(t)",
+                    "create table Y as (select * from X), cast (b as DOUBLE) timestamp(t)",
                     new Fiddler() {
                         int state = 0;
 
@@ -2193,7 +2193,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     });
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals(42, e.getPosition());
+            Assert.assertEquals(43, e.getPosition());
             TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column: b");
         }
     }

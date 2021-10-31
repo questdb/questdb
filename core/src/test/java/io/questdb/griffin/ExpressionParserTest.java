@@ -100,7 +100,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
                     Numbers.encodeLowHighShorts((short) 0, (short) (5 * (tok.length() - 1))),
                     ExpressionParser.extractGeoHashSuffix(0, tok));
         }
-        for (String tok : new String[]{"#/x", "#/1x", "#/x1", "#/xx", "#/-1", }) {
+        for (String tok : new String[]{"#/x", "#/1x", "#/x1", "#/xx", "#/-1",}) {
             Assert.assertThrows("[0] invalid bits size for GEOHASH constant",
                     SqlException.class, () -> ExpressionParser.extractGeoHashSuffix(0, tok));
         }
@@ -436,6 +436,15 @@ public class ExpressionParserTest extends AbstractCairoTest {
                         " then 'th2'" +
                         " else 0" +
                         " end + 1)");
+    }
+
+    @Test
+    public void testCaseWithDanglingCast() {
+        assertFail(
+                "case (cast 1 as int))",
+                11,
+                "dangling expression"
+        );
     }
 
     @Test
@@ -1120,6 +1129,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         x("i0.1e+3<90100case", "case when i < 0.1e+3 then 90 else 100 end");
 
     }
+
     private void assertFail(String content, int pos, String contains) {
         try {
             compiler.testParseExpression(content, rpnBuilder);

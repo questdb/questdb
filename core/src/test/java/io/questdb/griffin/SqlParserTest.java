@@ -1330,7 +1330,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableMisplacedCastDef() throws Exception {
         assertSyntaxError(
-                "create table tab (a int, b long), cast(a as double)",
+                "create table tab (a int, b long), cast (a as double)",
                 34,
                 "cast is only supported"
         );
