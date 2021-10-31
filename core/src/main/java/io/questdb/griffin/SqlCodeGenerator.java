@@ -1003,7 +1003,7 @@ public class SqlCodeGenerator implements Mutable {
                 // 1. resolve each value of the list to "int"
                 // 2. get first row in index for each value (stream)
 
-                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(latestByIndex);
+                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(latestByIndex));
                 final RowCursorFactory rcf;
                 if (nKeyValues == 1) {
                     final CharSequence symbolValue = intrinsicModel.keyValues.get(0);
@@ -1011,9 +1011,9 @@ public class SqlCodeGenerator implements Mutable {
 
                     if (filter == null) {
                         if (symbol == SymbolTable.VALUE_NOT_FOUND) {
-                            rcf = new LatestByValueDeferredIndexedRowCursorFactory(latestByIndex, Chars.toString(symbolValue), false);
+                            rcf = new LatestByValueDeferredIndexedRowCursorFactory(columnIndexes.getQuick(latestByIndex), Chars.toString(symbolValue), false);
                         } else {
-                            rcf = new LatestByValueIndexedRowCursorFactory(latestByIndex, symbol, false);
+                            rcf = new LatestByValueIndexedRowCursorFactory(columnIndexes.getQuick(latestByIndex), symbol, false);
                         }
                         return new DataFrameRecordCursorFactory(metadata, dataFrameCursorFactory, rcf, false, null, false, columnIndexes, null);
                     }
@@ -1053,7 +1053,7 @@ public class SqlCodeGenerator implements Mutable {
             assert nKeyValues > 0;
 
             // we have "latest by" column values, but no index
-            final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(latestByIndex);
+            final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(latestByIndex));
 
             if (nKeyValues > 1) {
                 return new LatestByValuesFilteredRecordCursorFactory(
@@ -1081,7 +1081,14 @@ public class SqlCodeGenerator implements Mutable {
                 );
             }
 
-            return new LatestByValueFilteredRecordCursorFactory(metadata, dataFrameCursorFactory, latestByIndex, symbolKey, filter, columnIndexes);
+            return new LatestByValueFilteredRecordCursorFactory(
+                    metadata,
+                    dataFrameCursorFactory,
+                    latestByIndex,
+                    symbolKey,
+                    filter,
+                    columnIndexes
+            );
         }
         // we select all values of "latest by" column
 
