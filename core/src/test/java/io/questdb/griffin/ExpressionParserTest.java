@@ -440,8 +440,8 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCaseWithCast() throws SqlException {
-        x("1castint1'th1'2'th2'0case5*1+",
-                "case (cast 1 as int)" +
+        x("1intcast1'th1'2'th2'0case5*1+",
+                "case (cast(1 as int))" +
                         " when 1" +
                         " then 'th1'" +
                         " when 2" +

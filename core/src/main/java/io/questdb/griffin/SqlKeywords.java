@@ -24,6 +24,8 @@
 
 package io.questdb.griffin;
 
+import io.questdb.std.GenericLexer;
+
 public class SqlKeywords {
     public static final String CONCAT_FUNC_NAME = "concat";
 
@@ -264,7 +266,11 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'e';
     }
 
-    public static boolean isCastKeyword(CharSequence tok) {
+    public static boolean isCastFunction(CharSequence tok, GenericLexer lexer) {
+        return isCastKeyword(tok) && lexer.peek().charAt(0) == '(';
+    }
+
+    private static boolean isCastKeyword(CharSequence tok) {
         if (tok.length() != 4) {
             return false;
         }

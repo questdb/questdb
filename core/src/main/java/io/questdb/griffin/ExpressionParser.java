@@ -511,7 +511,7 @@ class ExpressionParser {
                         break;
                     case 'c':
                     case 'C':
-                        if (SqlKeywords.isCastKeyword(tok)) {
+                        if (SqlKeywords.isCastFunction(tok, lexer)) {
                             if (prevBranch != BRANCH_DOT_DEREFERENCE) {
                                 castBraceCountStack.push(-1);
                                 thisBranch = BRANCH_OPERATOR;

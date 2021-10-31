@@ -438,7 +438,7 @@ public final class SqlParser {
             tok = tok(lexer, "'index' or 'cast'");
             if (isIndexKeyword(tok)) {
                 parseCreateTableIndexDef(lexer, model);
-            } else if (isCastKeyword(tok)) {
+            } else if (isCastFunction(tok, lexer)) {
                 parseCreateTableCastDef(lexer, model);
             } else {
                 throw errUnexpected(lexer, tok);
@@ -1218,25 +1218,7 @@ public final class SqlParser {
             if (Chars.equals(tok, '*')) {
                 expr = nextLiteral(GenericLexer.immutableOf(tok), lexer.lastTokenPosition());
             } else {
-                // cut off some obvious errors
-                if (isFromKeyword(tok)) {
-                    throw SqlException.$(lexer.getPosition(), "column name expected");
-                }
-
-                if (isSelectKeyword(tok)) {
-                    throw SqlException.$(lexer.getPosition(), "reserved name");
-                }
-
-                lexer.unparse();
-                expr = expr(lexer, model);
-
-                if (expr == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "missing expression");
-                }
-
-                if (Chars.endsWith(expr.token, '.') && expr.type == ExpressionNode.LITERAL) {
-                    throw SqlException.$(expr.position + expr.token.length(), "'*' or column name expected");
-                }
+                expr = parseExpressionAndCheckForErrors(lexer, model, tok);
             }
 
             final CharSequence alias;
@@ -1330,6 +1312,31 @@ public final class SqlParser {
                 throw err(lexer, "',', 'from' or 'over' expected");
             }
         }
+    }
+
+    @NotNull
+    private ExpressionNode parseExpressionAndCheckForErrors(GenericLexer lexer, QueryModel model, CharSequence tok) throws SqlException {
+        ExpressionNode expr;
+        // cut off some obvious errors
+        if (isFromKeyword(tok)) {
+            throw SqlException.$(lexer.getPosition(), "column name expected");
+        }
+
+        if (isSelectKeyword(tok)) {
+            throw SqlException.$(lexer.getPosition(), "reserved name");
+        }
+
+        lexer.unparse();
+        expr = expr(lexer, model);
+
+        if (expr == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "missing expression");
+        }
+
+        if (Chars.endsWith(expr.token, '.') && expr.type == ExpressionNode.LITERAL) {
+            throw SqlException.$(expr.position + expr.token.length(), "'*' or column name expected");
+        }
+        return expr;
     }
 
     private void parseSelectFrom(GenericLexer lexer, QueryModel model, QueryModel masterModel) throws SqlException {
