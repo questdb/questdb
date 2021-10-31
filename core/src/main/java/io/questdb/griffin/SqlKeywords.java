@@ -24,8 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.std.GenericLexer;
-
 public class SqlKeywords {
     public static final String CONCAT_FUNC_NAME = "concat";
 
