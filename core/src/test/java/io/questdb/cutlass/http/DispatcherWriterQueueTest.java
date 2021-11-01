@@ -159,8 +159,8 @@ public class DispatcherWriterQueueTest {
                     // Writer locked, supposed to return timeout error
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=alter+table+x+add+column+y+int HTTP/1.1\r\n",
-                            "83\r\n" +
-                                    "{\"query\":\"alter table x add column y int\",\"error\":\"Timeout expired on waiting for the ALTER TABLE execution result.\",\"position\":12}\r\n" +
+                            "82\r\n" +
+                                    "{\"query\":\"alter table x add column y int\",\"error\":\"Timeout expired on waiting for the ALTER TABLE execution result\",\"position\":12}\r\n" +
                                     "00\r\n" +
                                     "\r\n"
                     );
