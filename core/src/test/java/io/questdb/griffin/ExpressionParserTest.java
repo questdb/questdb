@@ -461,12 +461,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCastFunctionCallMultiSpace() throws SqlException {
-        x("1102030f+shortcast", "cast\t --- this is a comment\n\n(1+f(10,20,30) as short)");
+        x("1102030f+shortcast", "cast\t --- this is a comment\n\n(1+f(10,20,30) as short\n)");
     }
 
     @Test
     public void testCastFunctionWithLambdaMultiSpaceNewlineAndComment() throws SqlException {
-        x("(select-choose a, b, c from (x))flongcast", "cast    --- this is a comment\n\n(f(select a,b,c from x) as long)");
+        x("(select-choose a, b, c from (x))flongcast", "cast    --- this is a comment\n\n(f(select a,b,c from x) as long\n)");
     }
 
     @Test
