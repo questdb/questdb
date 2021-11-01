@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
@@ -47,6 +48,7 @@ import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.griffin.engine.table.*;
 import io.questdb.griffin.engine.union.*;
 import io.questdb.griffin.model.*;
+import io.questdb.jit.FilterExprIRSerializer;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -687,6 +689,8 @@ public class SqlCodeGenerator implements Mutable {
     @NotNull
     private RecordCursorFactory generateFilter0(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext, ExpressionNode filter) throws SqlException {
         model.setWhereClause(null);
+
+        //todo: check for constant filter
         final Function f = compileFilter(filter, factory.getMetadata(), executionContext);
         if (f.isConstant()) {
             //noinspection TryFinallyCanBeTryWithResources
@@ -698,6 +702,25 @@ public class SqlCodeGenerator implements Mutable {
                 return new EmptyTableRecordCursorFactory(factory.getMetadata());
             } finally {
                 f.close();
+            }
+        }
+        final boolean arm = Os.type == Os.LINUX_ARM64 || Os.type == Os.OSX_ARM64;
+        final boolean optimize = factory.supportPageFrameCursor() && !arm;
+        if(optimize) {
+            MemoryCARWImpl mem = new MemoryCARWImpl(1024, 1, MemoryTag.NATIVE_DEFAULT);
+            try {
+                FilterExprIRSerializer.serialize(mem, filter, factory.getMetadata());
+                f.close();
+                final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
+                final int topDownColumnCount = topDownColumns.size();
+                final IntList columnIndexes = new IntList();
+                for (int i = 0; i < topDownColumnCount; i++) {
+                    int columnIndex = factory.getMetadata().getColumnIndexQuiet(topDownColumns.getQuick(i).getName());
+                    columnIndexes.add(columnIndex);
+                }
+                return new CompiledFilterRecordCursorFactory(factory, columnIndexes, mem);
+            } catch (SqlException e) {
+                mem.close();
             }
         }
         return new FilteredRecordCursorFactory(factory, f);
