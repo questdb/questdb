@@ -274,7 +274,12 @@ public class LogFactoryTest {
             Assert.assertTrue(Files.touch(path.concat("mylog-2015-05-03.log.2").$()));
         }
 
-        RingQueue<LogRecordSink> queue = new RingQueue<>(() -> new LogRecordSink(1024), 1024);
+        RingQueue<LogRecordSink> queue = new RingQueue<>(
+                LogRecordSink::new,
+                1024,
+                1024,
+                MemoryTag.NATIVE_DEFAULT
+        );
 
         SPSequence pubSeq = new SPSequence(queue.getCycle());
         SCSequence subSeq = new SCSequence();

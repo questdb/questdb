@@ -26,6 +26,8 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.mp.*;
+import io.questdb.std.DirectObjectFactory;
+import io.questdb.std.MemoryTag;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
 
@@ -123,12 +125,23 @@ public class MessageBusImpl implements MessageBus {
         latestByPubSeq.then(latestBySubSeq).then(latestByPubSeq);
 
         // todo: move to configuration
-        this.tableWriterCommandQueue = new RingQueue<>(() -> new TableWriterTask(2048), 4);
+        this.tableWriterCommandQueue = new RingQueue<>(
+                TableWriterTask::new,
+                2048,
+                4,
+                MemoryTag.NATIVE_REPL
+        );
         this.tableWriterCommandPubSeq = new MPSequence(this.tableWriterCommandQueue.getCycle());
         this.tableWriterCommandSubSeq = new FanOut();
         this.tableWriterCommandPubSeq.then(this.tableWriterCommandSubSeq).then(this.tableWriterCommandPubSeq);
 
-        this.tableWriterEventQueue = new RingQueue<>(() -> new TableWriterTask(2048), 4);
+        this.tableWriterEventQueue = new RingQueue<>(
+                TableWriterTask::new,
+                2048,
+                4,
+                MemoryTag.NATIVE_REPL
+
+        );
         this.tableWriterEventPubSeq = new MPSequence(this.tableWriterCommandQueue.getCycle());
         this.tableWriterEventSubSeq = new FanOut();
         this.tableWriterEventPubSeq.then(this.tableWriterEventSubSeq).then(this.tableWriterEventPubSeq);
