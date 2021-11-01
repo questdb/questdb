@@ -56,7 +56,7 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
     }
 
     protected static AbstractLineSender createLineProtoSender() {
-        return new LineUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 1024, 1);
+        return new LineUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 80, 1);
     }
 
     protected static void assertReader(String tableName, String expected) {
@@ -103,9 +103,11 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                     }
                     Os.sleep(250L); // allow reader to hit the readout
                 }
+
                 if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
                     Assert.fail();
                 }
+
                 assertReader(tableName, expected, expectedExtraStringColumns);
             }
         });

@@ -73,7 +73,7 @@ public class CairoEngine implements Closeable, WriterSource {
         this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
         if (configuration.getTelemetryConfiguration().getEnabled()) {
             this.telemetryQueue = new RingQueue<>(TelemetryTask::new, configuration.getTelemetryConfiguration().getQueueCapacity());
-            this.telemetryPubSeq = new MPSequence(telemetryQueue.getCapacity());
+            this.telemetryPubSeq = new MPSequence(telemetryQueue.getCycle());
             this.telemetrySubSeq = new SCSequence();
             telemetryPubSeq.then(telemetrySubSeq).then(telemetryPubSeq);
         } else {
@@ -85,7 +85,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // subscribe to table writer commands to provide cold command handling
         this.tableWriterCmdQueue = messageBus.getTableWriterCommandQueue();
         final FanOut fanOut = messageBus.getTableWriterCommandFanOut();
-        fanOut.and(tableWriterCmdSubSeq = new MCSequence(fanOut.current(), tableWriterCmdQueue.getCapacity()));
+        fanOut.and(tableWriterCmdSubSeq = new MCSequence(fanOut.current(), tableWriterCmdQueue.getCycle()));
         openTableId();
         try {
             EngineMigration.migrateEngineTo(this, ColumnType.VERSION, false);

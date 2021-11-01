@@ -40,7 +40,7 @@ public class NullConstantTest {
         Assert.assertEquals(ColumnType.NULL, constant.getType());
         Assert.assertTrue(constant.isConstant());
         Assert.assertTrue(constant.isRuntimeConstant());
-        Assert.assertFalse(constant.supportsRandomAccess());
+        Assert.assertTrue(constant.supportsRandomAccess());
         Assert.assertFalse(constant.isUndefined());
 
         Assert.assertEquals(TableUtils.NULL_LEN, constant.getArrayLength());

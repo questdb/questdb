@@ -34,6 +34,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -285,21 +286,27 @@ public class O3FailureTest extends AbstractO3Test {
     };
 
     @Test
+    public void testColumnTopFailToWriteFollowedByFailToRemove() throws Exception {
+        counter.set(1);
+        executeWithoutPool(O3FailureTest::testColumnTopMidAppendBlankColumnFailRetry0, ffWriteAndRemoveTop);
+    }
+
+    @Test
     public void testColumnTopLastDataOOODataFailRetryCantWriteTop() throws Exception {
         counter.set(1);
-        executeWithoutPool(O3FailureTest::testColumnTopLastDataOOODataFailRetry0, ffWriteTop19700107);
+        executeWithoutPool((compiler, sqlExecutionContext, sqlExecutionContext2) -> testColumnTopLastDataOOODataFailRetry0(sqlExecutionContext, sqlExecutionContext2), ffWriteTop19700107);
     }
 
     @Test
     public void testColumnTopLastDataOOODataFailRetryCantWriteTopContended() throws Exception {
         counter.set(1);
-        executeWithPool(0, O3FailureTest::testColumnTopLastDataOOODataFailRetry0, ffWriteTop19700107);
+        executeWithPool(0, (compiler, sqlExecutionContext, sqlExecutionContext2) -> testColumnTopLastDataOOODataFailRetry0(sqlExecutionContext, sqlExecutionContext2), ffWriteTop19700107);
     }
 
     @Test
     public void testColumnTopLastDataOOODataFailRetryMapRo() throws Exception {
         counter.set(1);
-        executeWithoutPool(O3FailureTest::testColumnTopLastDataOOODataFailRetry0, new FilesFacadeImpl() {
+        executeWithoutPool((compiler, sqlExecutionContext, sqlExecutionContext2) -> testColumnTopLastDataOOODataFailRetry0(sqlExecutionContext, sqlExecutionContext2), new FilesFacadeImpl() {
 
             long theFd = 0;
 
@@ -326,7 +333,7 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testColumnTopLastDataOOODataFailRetryMapRoContended() throws Exception {
         counter.set(1);
-        executeWithPool(0, O3FailureTest::testColumnTopLastDataOOODataFailRetry0, new FilesFacadeImpl() {
+        executeWithPool(0, (compiler, sqlExecutionContext, sqlExecutionContext2) -> testColumnTopLastDataOOODataFailRetry0(sqlExecutionContext, sqlExecutionContext2), new FilesFacadeImpl() {
 
             long theFd = 0;
 
@@ -371,12 +378,6 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
-    public void testColumnTopFailToWriteFollowedByFailToRemove() throws Exception {
-        counter.set(1);
-        executeWithoutPool(O3FailureTest::testColumnTopMidAppendBlankColumnFailRetry0, ffWriteAndRemoveTop);
-    }
-
-    @Test
     public void testColumnTopMidAppendBlankContended() throws Exception {
         counter.set(1);
         executeWithPool(0, O3FailureTest::testColumnTopMidAppendBlankColumnFailRetry0, ffWriteTop);
@@ -399,7 +400,7 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testColumnTopMidDataMergeDataFailRetryReadTop() throws Exception {
         counter.set(11);
-        executeWithoutPool(O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, new FilesFacadeImpl() {
+        executeWithoutPool((compiler, sqlExecutionContext, sqlExecutionContext2) -> testColumnTopMidDataMergeDataFailRetry0(sqlExecutionContext, sqlExecutionContext2), new FilesFacadeImpl() {
             long theFd;
 
             @Override
@@ -427,7 +428,7 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testColumnTopMidDataMergeDataFailRetryReadTopContended() throws Exception {
         counter.set(11);
-        executeWithoutPool(O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, new FilesFacadeImpl() {
+        executeWithPool(0, (compiler, sqlExecutionContext, sqlExecutionContext2) -> testColumnTopMidDataMergeDataFailRetry0(sqlExecutionContext, sqlExecutionContext2), new FilesFacadeImpl() {
             long theFd;
 
             @Override
@@ -600,7 +601,7 @@ public class O3FailureTest extends AbstractO3Test {
         // different number of calls to "truncate" on Windows and *Nix
         // the number targets truncate of key file in BitmapIndexWriter
         counter.set(Os.type == Os.WINDOWS ? 98 : 97);
-        executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
+        executeWithPool(0, (compiler, sqlExecutionContext, sqlExecutionContext2) -> testColumnTopLastOOOPrefixFailRetry0(sqlExecutionContext, sqlExecutionContext2), new FilesFacadeImpl() {
 
             @Override
             public boolean truncate(long fd, long size) {
@@ -617,7 +618,7 @@ public class O3FailureTest extends AbstractO3Test {
         // different number of calls to "truncate" on Windows and *Nix
         // the number targets truncate of key file in BitmapIndexWriter
         counter.set(Os.type == Os.WINDOWS ? 98 : 97);
-        executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
+        executeWithPool(0, (compiler, sqlExecutionContext, sqlExecutionContext2) -> testColumnTopLastOOOPrefixFailRetry0(sqlExecutionContext, sqlExecutionContext2), new FilesFacadeImpl() {
             @Override
             public boolean truncate(long fd, long size) {
                 if (counter.decrementAndGet() == 0) {
@@ -838,12 +839,6 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
-    public void testSetAppendPositionFails() throws Exception {
-        counter.set(182);
-        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
-    }
-
-    @Test
     public void testPartitionedDataAppendOODataNotNullStrTailContended() throws Exception {
         counter.set(174);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
@@ -869,19 +864,19 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOOPrependOODatThenRegularAppend() throws Exception {
-        counter.set(162);
+        counter.set(163);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODatThenRegularAppend0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOOData() throws Exception {
-        counter.set(162);
+        counter.set(163);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataContended() throws Exception {
-        counter.set(162);
+        counter.set(163);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
@@ -947,7 +942,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallelNoReopen() throws Exception {
-        counter.set(162);
+        counter.set(163);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetryNoReopen, ffAllocateFailure);
     }
 
@@ -1004,6 +999,12 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
+    public void testSetAppendPositionFails() throws Exception {
+        counter.set(182);
+        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
+    }
+
+    @Test
     public void testTwoRowsConsistency() throws Exception {
         executeWithPool(0, O3FailureTest::testTwoRowsConsistency0);
     }
@@ -1037,12 +1038,16 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
+
         try {
             compiler.compile("insert into x select * from top", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ex) {
             Chars.contains(ex.getFlyweightMessage(), "timestamps before 1970-01-01");
         }
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -1052,6 +1057,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x select * from top where ts >= 0"
         );
         assertIndexConsistency(compiler, sqlExecutionContext);
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testInsertAsSelectNegativeTimestamp0(
@@ -1083,12 +1089,16 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
+
         try {
             compiler.compile("insert into x select * from top", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ex) {
             Chars.contains(ex.getFlyweightMessage(), "timestamps before 1970-01-01");
         }
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -1098,6 +1108,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x select * from top where ts >= 0"
         );
         assertIndexConsistency(compiler, sqlExecutionContext);
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedOOPrefixesExistingPartitionsFailRetry0(
@@ -1157,11 +1168,15 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
+
         try {
             compiler.compile("insert into x select * from top", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -1172,6 +1187,7 @@ public class O3FailureTest extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedDataAppendOODataNotNullStrTailFailRetry0(
@@ -1229,11 +1245,15 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
+
         try {
             compiler.compile("insert into x select * from append", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException | CairoError ignored) {
         }
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -1244,6 +1264,7 @@ public class O3FailureTest extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedDataAppendOODataIndexedFailRetry0(
@@ -1301,11 +1322,15 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
+
         try {
             compiler.compile("insert into x select * from append", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -1314,10 +1339,11 @@ public class O3FailureTest extends AbstractO3Test {
                 "create table y as (x union all append)",
                 "insert into x select * from append"
         );
+
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testColumnTopLastDataOOODataFailRetry0(
-            CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException, URISyntaxException {
@@ -1452,11 +1478,15 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
+
         try {
             compiler.compile("insert into x select * from append", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
@@ -1469,7 +1499,6 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     private static void testColumnTopMidDataMergeDataFailRetry0(
-            CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException, URISyntaxException {
@@ -1590,11 +1619,15 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
+
         try {
             compiler.compile("insert into x select * from append", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
@@ -1605,8 +1638,15 @@ public class O3FailureTest extends AbstractO3Test {
         );
     }
 
+    private static void assertXCount(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String expectedMaxTimestamp) throws SqlException {
+        assertXCount(compiler, sqlExecutionContext);
+        assertMaxTimestamp(compiler.engine, sqlExecutionContext, expectedMaxTimestamp);
+    }
+
     private static void testColumnTopLastOOOPrefixFailRetry0(
-            CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException, URISyntaxException {
@@ -1726,11 +1766,15 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
+
         try {
             compiler.compile("insert into x select * from append", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
@@ -1739,6 +1783,25 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext,
                 "/o3/testColumnTopLastOOOPrefix.txt"
         );
+    }
+
+    @NotNull
+    private static String prepareCountAndMaxTimestampSinks(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "select count() from x",
+                sink2
+        );
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from x",
+                sink
+        );
+
+        return Chars.toString(sink);
     }
 
     private static void assertO3DataConsistency(
@@ -1823,11 +1886,16 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext
         );
 
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, executionContext);
+
         try {
             compiler.compile("insert into x select * from append", executionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
+
+        assertXCount(compiler, executionContext, expectedMaxTimestamp);
+
         // create third table, which will contain both X and 1AM
         assertO3DataConsistency(
                 engine,
@@ -1838,6 +1906,7 @@ public class O3FailureTest extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, executionContext);
+        assertXCountY(compiler, executionContext);
     }
 
     private static void testColumnTopMidAppendBlankColumnFailRetry0(
@@ -1924,11 +1993,15 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext
         );
 
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, executionContext);
+
         try {
             compiler.compile("insert into x select * from append", executionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
+
+        assertXCount(compiler, executionContext, expectedMaxTimestamp);
 
         // create third table, which will contain both X and 1AM
         assertO3DataConsistency(
@@ -1940,6 +2013,7 @@ public class O3FailureTest extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, executionContext);
+        assertXCountY(compiler, executionContext);
     }
 
     private static void testColumnTopMidMergeBlankColumnFailRetry0(
@@ -2026,11 +2100,15 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
+
         try {
             compiler.compile("insert into x select * from append", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         // create third table, which will contain both X and 1AM
         assertO3DataConsistency(
@@ -2042,6 +2120,7 @@ public class O3FailureTest extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testColumnTopMidAppendColumnFailRetry0(
@@ -2166,11 +2245,14 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
         try {
             compiler.compile("insert into x select * from append", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignore) {
         }
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -2266,11 +2348,15 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
+
         try {
             compiler.compile("insert into x select * from append", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         if (reopenTableWriter) {
             engine.releaseAllWriters();
@@ -2289,6 +2375,8 @@ public class O3FailureTest extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext
         );
+
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedDataAppendOOPrependOODatThenRegularAppend0(
@@ -2349,11 +2437,15 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
+
         try {
             compiler.compile("insert into x select * from append", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         // all records but one is appended to middle partition
         // last record is prepended to the last partition
@@ -2396,6 +2488,8 @@ public class O3FailureTest extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext
         );
+
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testOooFollowedByAnotherOOO0(
@@ -2523,6 +2617,8 @@ public class O3FailureTest extends AbstractO3Test {
         printSqlResult(compiler, sqlExecutionContext, "y order by ts");
         TestUtils.printSql(compiler, sqlExecutionContext, "x", sink2);
         TestUtils.assertEquals(sink, sink2);
+
+        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testTwoRowsConsistency0(

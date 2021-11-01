@@ -527,6 +527,10 @@ io.questdb.griffin.engine.functions.str.ConcatFunctionFactory
 # replace()
 io.questdb.griffin.engine.functions.str.ReplaceStrFunctionFactory
 
+# left()/right()
+io.questdb.griffin.engine.functions.str.LeftFunctionFactory
+io.questdb.griffin.engine.functions.str.RightFunctionFactory
+
 # avg()
 io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory
 

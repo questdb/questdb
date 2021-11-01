@@ -116,6 +116,10 @@ public final class Numbers {
         }
     }
 
+    public static boolean isPow2(int value) {
+        return (value & (value - 1)) == 0;
+    }
+
     public static void append(CharSink sink, final int value) {
         int i = value;
         if (i < 0) {

@@ -26,6 +26,7 @@ import React, {
   CSSProperties,
   forwardRef,
   Ref,
+  useRef,
   useCallback,
   useEffect,
   useState,
@@ -49,10 +50,11 @@ import {
   Tooltip,
 } from "components"
 import { selectors } from "store"
-import { color } from "utils"
+import { color, ErrorResult } from "utils"
 import * as QuestDB from "utils/questdb"
 
 import Table from "./Table"
+import LoadingError from "./LoadingError"
 import { BusEvent } from "../../consts"
 
 type Props = Readonly<{
@@ -108,6 +110,8 @@ const Schema = ({
 }: Props & { innerRef: Ref<HTMLDivElement> }) => {
   const [quest] = useState(new QuestDB.Client())
   const [loading, setLoading] = useState(false)
+  const [loadingError, setLoadingError] = useState<ErrorResult | null>(null)
+  const errorRef = useRef<ErrorResult | null>(null)
   const [tables, setTables] = useState<QuestDB.Table[]>()
   const [opened, setOpened] = useState<string>()
   const [refresh, setRefresh] = useState(Date.now())
@@ -118,27 +122,52 @@ const Schema = ({
   }, [])
 
   const fetchTables = useCallback(() => {
+    setLoading(true)
     combineLatest(
       from(quest.showTables()).pipe(startWith(null)),
       of(true).pipe(delay(1000), startWith(false)),
-    ).subscribe(([response, loading]) => {
-      if (response && response.type === QuestDB.Type.DQL) {
-        setTables(response.data)
+    ).subscribe(
+      ([response, loading]) => {
+        if (response && response.type === QuestDB.Type.DQL) {
+          setLoadingError(null)
+          errorRef.current = null
+          setTables(response.data)
+          setRefresh(Date.now())
+        } else {
+          setLoading(false)
+        }
+      },
+      (error) => {
+        setLoadingError(error)
+      },
+      () => {
         setLoading(false)
-        setRefresh(Date.now())
-      } else {
-        setLoading(loading)
-      }
-    })
+      },
+    )
   }, [quest])
 
   useEffect(() => {
     void fetchTables()
 
-    window.bus.on(BusEvent.MSQ_QUERY_SCHEMA, () => {
+    window.bus.on(BusEvent.MSG_QUERY_SCHEMA, () => {
       void fetchTables()
     })
-  }, [fetchTables])
+
+    window.bus.on(
+      BusEvent.MSG_CONNECTION_ERROR,
+      (_event, error: ErrorResult) => {
+        errorRef.current = error
+        setLoadingError(error)
+      },
+    )
+
+    window.bus.on(BusEvent.MSG_CONNECTION_OK, () => {
+      // The connection has been re-established, as we have an error in memory
+      if (errorRef.current) {
+        void fetchTables()
+      }
+    })
+  }, [errorRef, fetchTables])
 
   return (
     <Wrapper ref={innerRef} {...rest}>
@@ -164,10 +193,12 @@ const Schema = ({
       </Menu>
 
       <Content _loading={loading}>
-        {loading && <Loader size="48px" />}
-        {!loading &&
-          tables &&
-          tables.map(({ table }) => (
+        {loading ? (
+          <Loader size="48px" />
+        ) : loadingError ? (
+          <LoadingError error={loadingError} />
+        ) : (
+          tables?.map(({ table }) => (
             <Table
               expanded={table === opened}
               key={table}
@@ -175,7 +206,8 @@ const Schema = ({
               refresh={refresh}
               table={table}
             />
-          ))}
+          ))
+        )}
         {!loading && <FlexSpacer />}
       </Content>
     </Wrapper>

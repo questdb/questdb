@@ -21,6 +21,7 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+import { BusEvent } from "../consts"
 
 type ColumnDefinition = Readonly<{ name: string; type: string }>
 
@@ -191,6 +192,11 @@ export class Client {
         type: Type.ERROR,
       }
 
+      const genericErrorPayload = {
+        ...err,
+        error: "An error occured, please try again",
+      }
+
       if (error instanceof DOMException) {
         // eslint-disable-next-line prefer-promise-reject-errors
         return await Promise.reject({
@@ -202,11 +208,10 @@ export class Client {
         })
       }
 
+      bus.trigger(BusEvent.MSG_CONNECTION_ERROR, genericErrorPayload)
+
       // eslint-disable-next-line prefer-promise-reject-errors
-      return await Promise.reject({
-        ...err,
-        error: "An error occured, please try again",
-      })
+      return await Promise.reject(genericErrorPayload)
     } finally {
       const index = this._controllers.indexOf(controller)
 
@@ -218,6 +223,8 @@ export class Client {
     if (response.ok) {
       const fetchTime = (new Date().getTime() - start.getTime()) * 1e6
       const data = (await response.json()) as RawResult
+
+      bus.trigger(BusEvent.MSG_CONNECTION_OK)
 
       if (data.ddl) {
         return {
@@ -244,13 +251,20 @@ export class Client {
       }
     }
 
-    // eslint-disable-next-line prefer-promise-reject-errors
-    return await Promise.reject({
+    const errorPayload = {
       error: `QuestDB is not reachable [${response.status}]`,
       position: -1,
       query,
       type: Type.ERROR,
+    }
+
+    bus.trigger(BusEvent.MSG_CONNECTION_ERROR, {
+      ...errorPayload,
+      status: response.status,
     })
+
+    // eslint-disable-next-line prefer-promise-reject-errors
+    return await Promise.reject(errorPayload)
   }
 
   async showTables(): Promise<QueryResult<Table>> {
