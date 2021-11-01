@@ -126,6 +126,7 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    @Ignore
     public void testAppendIntoColdWriterContended() throws Exception {
         executeWithPool(0, O3Test::testAppendIntoColdWriter0);
     }
@@ -5269,6 +5270,8 @@ public class O3Test extends AbstractO3Test {
                 executionContext
         );
 
+        // 518300000000L
+
         // 549700000000L
         try (TableWriter w = engine.getWriter(executionContext.getCairoSecurityContext(), "x", "test")) {
             // this is out of order row into last partition
@@ -5279,8 +5282,16 @@ public class O3Test extends AbstractO3Test {
             // lets add column
             w.addColumn("v", ColumnType.DOUBLE);
 
+            // this row goes into a non-recent partition
+            row = w.newRow(518300000000L);
+            row.putInt(0, 10);
+            row.putLong(1, 3500000L);
+            // skip over the timestamp
+            row.putDouble(3, 10.2);
+            row.append();
+
             // another O3 row, this time it is appended to last partition
-            row =  w.newRow(549700000000L + 100000000L);
+            row =  w.newRow(549900000000L);
             row.putInt(0, 10);
             row.putLong(1, 3500000L);
             // skip over the timestamp
