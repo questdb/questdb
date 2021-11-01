@@ -281,7 +281,7 @@ public class LogFactoryTest {
                 MemoryTag.NATIVE_DEFAULT
         );
 
-        SPSequence pubSeq = new SPSequence(queue.getCapacity());
+        SPSequence pubSeq = new SPSequence(queue.getCycle());
         SCSequence subSeq = new SCSequence();
         pubSeq.then(subSeq).then(pubSeq);
 

@@ -1279,7 +1279,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         private void close() {
             LOG.info().$("line protocol writer closing [threadId=").$(workerId).$(']').$();
             // Finish all jobs in the queue before stopping
-            for (int n = 0; n < queue.getCapacity(); n++) {
+            for (int n = 0; n < queue.getCycle(); n++) {
                 if (!run(workerId)) {
                     break;
                 }
