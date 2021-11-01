@@ -56,6 +56,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.net.URL;
@@ -1256,6 +1257,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
     }
 
     @Test
+    @Ignore
     public void testAlterCommandSequenceReleased2() throws Exception {
         long day1 = 0;
         long day2 = IntervalUtils.parseFloorPartialDate("1970-02-02") * 1000;

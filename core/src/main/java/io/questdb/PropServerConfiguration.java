@@ -351,7 +351,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinSndBufSize;
     private final int latestByQueueCapacity;
     private final int sampleByIndexSearchPageSize;
-    private long writerAsyncCommandBusyWaitTimeout;
+    private final long writerAsyncCommandBusyWaitTimeout;
     private final int binaryEncodingMaxLength;
     private final long writerDataIndexKeyAppendPageSize;
     private final long writerDataIndexValueAppendPageSize;
