@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.Sequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -2701,6 +2700,28 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByAllIndexedFilterColumnDereference() throws Exception {
+        final String expected = "b\tk\n" +
+                "RXGZ\t1970-01-12T13:46:40.000000Z\n";
+        assertQuery(expected,
+                "select b,k from x latest by b where b = 'RXGZ' and k < '1970-01-22'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " timestamp_sequence(0, 100000000000) k," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_double(0)*100 a1," +
+                        " rnd_double(0)*100 a2" +
+                        " from long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testLatestByAllIndexedFilterBySymbol() throws Exception {
         final String expected = "a\tb\tc\tk\n" +
                 "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n";
@@ -3186,6 +3207,33 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByKeyValueColumnDereference() throws Exception {
+        // no index
+        assertQuery("k\ta\tb\n" +
+                        "1970-01-03T07:33:20.000000Z\t23.90529010846525\tRXGZ\n",
+                "select k,a,b from x latest by b where b = 'RXGZ'",
+                "create table x as " +
+                        "(" +
+                        "select " +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'RXGZ'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "k\ta\tb\n" +
+                        "1971-01-01T00:00:00.000000Z\t56.594291398612405\tRXGZ\n");
+    }
+
+    @Test
     public void testLatestByKeyValueFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +
@@ -3523,6 +3571,31 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(t)",
                 "a\tb\tk\n" +
                         "81.64182592467493\tXYZ\t1971-01-05T15:06:40.000000Z\n");
+    }
+
+    @Test
+    public void testLatestByMissingKeyValueIndexedColumnDereference() throws Exception {
+        assertQuery(null,
+                "select b,k,a from x latest by b where b in ('XYZ')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " rnd_symbol('XYZ', 'PEHN', 'ZZNK')," +
+                        " timestamp_sequence(to_timestamp('1971', 'yyyy'), 100000000000) t" +
+                        " from long_sequence(10)" +
+                        ") timestamp(t)",
+                "b\tk\ta\n" +
+                        "XYZ\t1971-01-05T15:06:40.000000Z\t81.64182592467493\n");
     }
 
     @Test
@@ -6181,8 +6254,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testVectorSumAvgDoubleRndColumnWithNullsParallel() throws Exception {
-
-        Sequence seq = engine.getMessageBus().getVectorAggregateSubSeq();
         final AtomicBoolean running = new AtomicBoolean(true);
         final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
         final GroupByJob job = new GroupByJob(engine.getMessageBus());

@@ -30,9 +30,9 @@ public class SCSequence extends AbstractSSequence {
         super(waitStrategy);
     }
 
-    public SCSequence(long index, WaitStrategy waitStrategy) {
+    public SCSequence(long value, WaitStrategy waitStrategy) {
         super(waitStrategy);
-        this.value = index;
+        setCurrent(value);
     }
 
     public SCSequence() {
@@ -52,8 +52,38 @@ public class SCSequence extends AbstractSSequence {
     }
 
     @Override
+    // The method is final is because we call it from
+    // the constructor.
+    public final void setCurrent(long value) {
+        this.value = value;
+    }
+
+    @Override
     public long current() {
         return value;
+    }
+
+    public void clear() {
+        setBarrier(OpenBarrier.INSTANCE);
+    }
+
+    public <T> boolean consumeAll(RingQueue<T> queue, QueueConsumer<T> consumer) {
+        long cursor = next();
+        if (cursor < 0) {
+            return false;
+        }
+
+        do {
+            if (cursor > -1) {
+                final long available = available();
+                while (cursor < available) {
+                    consumer.consume(queue.get(cursor++));
+                }
+                done(available - 1);
+            }
+        } while ((cursor = next()) != -1);
+
+        return true;
     }
 
     @Override
@@ -75,24 +105,5 @@ public class SCSequence extends AbstractSSequence {
     private long next0(long next) {
         cache = barrier.availableIndex(next);
         return next > cache ? -1 : next;
-    }
-
-    public <T> boolean consumeAll(RingQueue<T> queue, QueueConsumer<T> consumer) {
-        long cursor = next();
-        if (cursor < 0) {
-            return false;
-        }
-
-        do {
-            if (cursor > -1) {
-                final long available = available();
-                while (cursor < available) {
-                    consumer.consume(queue.get(cursor++));
-                }
-                done(available - 1);
-            }
-        } while ((cursor = next()) != -1);
-
-        return true;
     }
 }

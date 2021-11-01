@@ -25,6 +25,7 @@
 package io.questdb.mp;
 
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjectFactory;
 
 import java.io.Closeable;
@@ -35,6 +36,10 @@ public class RingQueue<T> implements Closeable {
 
     @SuppressWarnings("unchecked")
     public RingQueue(ObjectFactory<T> factory, int cycle) {
+
+        // zero queue is allowed for testing
+        assert cycle == 0 || Numbers.isPow2(cycle);
+
         this.mask = cycle - 1;
         this.buf = (T[]) new Object[cycle];
 
@@ -54,7 +59,7 @@ public class RingQueue<T> implements Closeable {
         return buf[(int) (cursor & mask)];
     }
 
-    public int getCapacity() {
+    public int getCycle() {
         return buf.length;
     }
 }

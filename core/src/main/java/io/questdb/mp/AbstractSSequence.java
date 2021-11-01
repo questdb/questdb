@@ -66,6 +66,7 @@ abstract class AbstractSSequence extends AbstractSequence implements Sequence {
     @Override
     public void setBarrier(Barrier barrier) {
         this.barrier = barrier;
+        setCurrent(barrier.current());
     }
 
     @Override
