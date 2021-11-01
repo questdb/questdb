@@ -126,6 +126,11 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    public void testAppendIntoColdWriterContended() throws Exception {
+        executeWithPool(0, O3Test::testAppendIntoColdWriter0);
+    }
+
+    @Test
     public void testColumnTopLastAppendContended() throws Exception {
         executeWithPool(0, O3Test::testColumnTopLastAppendColumn0);
     }
@@ -5245,6 +5250,44 @@ public class O3Test extends AbstractO3Test {
 
         assertIndexConsistency(compiler, executionContext);
         assertXCountY(compiler, executionContext);
+    }
+
+    private static void testAppendIntoColdWriter0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        // create table with roughly 2AM data
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts" +
+                        " from long_sequence(500)" +
+                        ") timestamp (ts) partition by DAY",
+                executionContext
+        );
+
+        // 549700000000L
+        try (TableWriter w = engine.getWriter(executionContext.getCairoSecurityContext(), "x", "test")) {
+            // this is out of order row into last partition
+            TableWriter.Row row = w.newRow(549700000000L);
+            // change our mind
+            row.cancel();
+
+            // lets add column
+            w.addColumn("v", ColumnType.DOUBLE);
+
+            // another O3 row, this time it is appended to last partition
+            row =  w.newRow(549700000000L + 100000000L);
+            row.putInt(0, 10);
+            row.putLong(1, 3500000L);
+            // skip over the timestamp
+            row.putDouble(3, 10.2);
+            row.append();
+            w.commit();
+        }
     }
 
     private static void testColumnTopMidMergeBlankColumn0(
