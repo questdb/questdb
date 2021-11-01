@@ -45,6 +45,8 @@ set(
         src/main/c/share/bitmap_index_utils.h
         src/main/c/share/bitmap_index_utils.cpp
         src/main/c/share/geohash.cpp
+        src/main/c/share/compiler.h
+        src/main/c/share/compiler.cpp
 )
 
 # JNI includes
@@ -140,7 +142,7 @@ if (NOT DEFINED ASMJIT_EMBED)
 endif()
 
 include("${ASMJIT_DIR}/CMakeLists.txt")
-include_directories(${ASMJIT_INCLUDE_DIRS})
+include_directories(${ASMJIT_INCLUDE_DIRS} SYSTEM)
 
 #zlib
 set(ZLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/zlib-1.2.8)
@@ -148,10 +150,15 @@ set(ZLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/zlib-1.2.8)
 include(${ZLIB_SOURCE_DIR}/CMakeLists.txt)
 
 # ZLIB_SRCS is defined in Zlib Cmake config
-add_library(questdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS})
+add_library(questdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS} ${ASMJIT_SRC})
 
-set(DEBUG_OPTIONS "-Wall;-pedantic;-Wextra;-g;-O2;-Wno-unused-parameter")
+set(COMMON_OPTIONS "-Wno-unused-parameter;-Wno-gnu-anonymous-struct;-Wno-nested-anon-types")
+
+set(DEBUG_OPTIONS "-Wall;-pedantic;-Wextra;-g;-O2")
 set(RELEASE_OPTIONS "-O3")
+
+list(APPEND DEBUG_OPTIONS  "${ASMJIT_CFLAGS} ${COMMON_OPTIONS}")
+list(APPEND RELEASE_OPTIONS  "${ASMJIT_CFLAGS} ${COMMON_OPTIONS}")
 
 if (AARCH64)
 
