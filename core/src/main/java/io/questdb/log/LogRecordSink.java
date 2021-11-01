@@ -25,34 +25,25 @@
 package io.questdb.log;
 
 import io.questdb.std.Chars;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 
-import java.io.Closeable;
-
-public class LogRecordSink extends AbstractCharSink implements Closeable {
+public class LogRecordSink extends AbstractCharSink {
     private final long address;
     private final long lim;
     private long _wptr;
     private int level;
 
-    LogRecordSink(int capacity) {
-        int c = Numbers.ceilPow2(capacity);
-        this.address = _wptr = Unsafe.malloc(c, MemoryTag.NATIVE_DEFAULT);
-        this.lim = address + c;
+    LogRecordSink(long address, long addressSize) {
+        this.address = _wptr = address;
+        this.lim = address + addressSize;
     }
 
     public void clear(int len) {
         _wptr = address + len;
     }
 
-    @Override
-    public void close() {
-        Unsafe.free(address, lim - address, MemoryTag.NATIVE_DEFAULT);
-    }
 
     public long getAddress() {
         return address;
