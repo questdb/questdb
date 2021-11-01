@@ -45,6 +45,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.griffin.AbstractGriffinTest.compile;
 import static io.questdb.test.tools.TestUtils.compileAndExecute;
 
 public class O3FailureTest extends AbstractO3Test {
@@ -1387,19 +1388,19 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compileAndExecute(compiler, engine, "alter table x add column v double", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v1 float", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v2 int", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v3 byte", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v4 short", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v5 boolean", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v6 date", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v7 timestamp", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v8 symbol", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v10 char", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v11 string", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v12 binary", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v9 long", sqlExecutionContext);
+        compile("alter table x add column v double", sqlExecutionContext);
+        compile( "alter table x add column v1 float", sqlExecutionContext);
+        compile( "alter table x add column v2 int", sqlExecutionContext);
+        compile( "alter table x add column v3 byte", sqlExecutionContext);
+        compile( "alter table x add column v4 short", sqlExecutionContext);
+        compile( "alter table x add column v5 boolean", sqlExecutionContext);
+        compile( "alter table x add column v6 date", sqlExecutionContext);
+        compile( "alter table x add column v7 timestamp", sqlExecutionContext);
+        compile( "alter table x add column v8 symbol", sqlExecutionContext);
+        compile( "alter table x add column v10 char", sqlExecutionContext);
+        compile( "alter table x add column v11 string", sqlExecutionContext);
+        compile( "alter table x add column v12 binary", sqlExecutionContext);
+        compile( "alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
                 "insert into x " +
@@ -1528,19 +1529,19 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compileAndExecute(compiler, engine, "alter table x add column v double", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v1 float", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v2 int", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v3 byte", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v4 short", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v5 boolean", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v6 date", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v7 timestamp", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v8 symbol", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v10 char", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v11 string", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v12 binary", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v9 long", sqlExecutionContext);
+        compile( "alter table x add column v double", sqlExecutionContext);
+        compile( "alter table x add column v1 float", sqlExecutionContext);
+        compile( "alter table x add column v2 int", sqlExecutionContext);
+        compile( "alter table x add column v3 byte", sqlExecutionContext);
+        compile( "alter table x add column v4 short", sqlExecutionContext);
+        compile( "alter table x add column v5 boolean", sqlExecutionContext);
+        compile( "alter table x add column v6 date", sqlExecutionContext);
+        compile( "alter table x add column v7 timestamp", sqlExecutionContext);
+        compile( "alter table x add column v8 symbol", sqlExecutionContext);
+        compile( "alter table x add column v10 char", sqlExecutionContext);
+        compile( "alter table x add column v11 string", sqlExecutionContext);
+        compile( "alter table x add column v12 binary", sqlExecutionContext);
+        compile( "alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
                 "insert into x " +
@@ -1675,19 +1676,19 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compileAndExecute(compiler, engine, "alter table x add column v double", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v1 float", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v2 int", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v3 byte", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v4 short", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v5 boolean", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v6 date", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v7 timestamp", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v8 symbol", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v10 char", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v11 string", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v12 binary", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v9 long", sqlExecutionContext);
+        compile( "alter table x add column v double", sqlExecutionContext);
+        compile( "alter table x add column v1 float", sqlExecutionContext);
+        compile( "alter table x add column v2 int", sqlExecutionContext);
+        compile( "alter table x add column v3 byte", sqlExecutionContext);
+        compile( "alter table x add column v4 short", sqlExecutionContext);
+        compile( "alter table x add column v5 boolean", sqlExecutionContext);
+        compile( "alter table x add column v6 date", sqlExecutionContext);
+        compile( "alter table x add column v7 timestamp", sqlExecutionContext);
+        compile( "alter table x add column v8 symbol", sqlExecutionContext);
+        compile( "alter table x add column v10 char", sqlExecutionContext);
+        compile( "alter table x add column v11 string", sqlExecutionContext);
+        compile( "alter table x add column v12 binary", sqlExecutionContext);
+        compile( "alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
                 "insert into x " +
@@ -1940,19 +1941,19 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext
         );
 
-        compileAndExecute(compiler, engine, "alter table x add column v double", executionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v1 float", executionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v2 int", executionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v3 byte", executionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v4 short", executionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v5 boolean", executionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v6 date", executionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v7 timestamp", executionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v8 symbol", executionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v10 char", executionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v11 string", executionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v12 binary", executionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v9 long", executionContext);
+        compile( "alter table x add column v double", executionContext);
+        compile( "alter table x add column v1 float", executionContext);
+        compile( "alter table x add column v2 int", executionContext);
+        compile( "alter table x add column v3 byte", executionContext);
+        compile( "alter table x add column v4 short", executionContext);
+        compile( "alter table x add column v5 boolean", executionContext);
+        compile( "alter table x add column v6 date", executionContext);
+        compile( "alter table x add column v7 timestamp", executionContext);
+        compile( "alter table x add column v8 symbol", executionContext);
+        compile( "alter table x add column v10 char", executionContext);
+        compile( "alter table x add column v11 string", executionContext);
+        compile( "alter table x add column v12 binary", executionContext);
+        compile( "alter table x add column v9 long", executionContext);
 
         compiler.compile(
                 "create table append as (" +
@@ -2047,19 +2048,19 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compileAndExecute(compiler, engine, "alter table x add column v double", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v1 float", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v2 int", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v3 byte", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v4 short", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v5 boolean", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v6 date", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v7 timestamp", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v8 symbol index", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v10 char", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v11 string", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v12 binary", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v9 long", sqlExecutionContext);
+        compile( "alter table x add column v double", sqlExecutionContext);
+        compile( "alter table x add column v1 float", sqlExecutionContext);
+        compile( "alter table x add column v2 int", sqlExecutionContext);
+        compile( "alter table x add column v3 byte", sqlExecutionContext);
+        compile( "alter table x add column v4 short", sqlExecutionContext);
+        compile( "alter table x add column v5 boolean", sqlExecutionContext);
+        compile( "alter table x add column v6 date", sqlExecutionContext);
+        compile( "alter table x add column v7 timestamp", sqlExecutionContext);
+        compile( "alter table x add column v8 symbol index", sqlExecutionContext);
+        compile( "alter table x add column v10 char", sqlExecutionContext);
+        compile( "alter table x add column v11 string", sqlExecutionContext);
+        compile( "alter table x add column v12 binary", sqlExecutionContext);
+        compile( "alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
                 "create table append as (" +
@@ -2153,19 +2154,19 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compileAndExecute(compiler, engine, "alter table x add column v double", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v1 float", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v2 int", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v3 byte", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v4 short", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v5 boolean", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v6 date", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v7 timestamp", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v8 symbol", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v10 char", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v11 string", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v12 binary", sqlExecutionContext);
-        compileAndExecute(compiler, engine, "alter table x add column v9 long", sqlExecutionContext);
+        compile( "alter table x add column v double", sqlExecutionContext);
+        compile( "alter table x add column v1 float", sqlExecutionContext);
+        compile( "alter table x add column v2 int", sqlExecutionContext);
+        compile( "alter table x add column v3 byte", sqlExecutionContext);
+        compile( "alter table x add column v4 short", sqlExecutionContext);
+        compile( "alter table x add column v5 boolean", sqlExecutionContext);
+        compile( "alter table x add column v6 date", sqlExecutionContext);
+        compile( "alter table x add column v7 timestamp", sqlExecutionContext);
+        compile( "alter table x add column v8 symbol", sqlExecutionContext);
+        compile( "alter table x add column v10 char", sqlExecutionContext);
+        compile( "alter table x add column v11 string", sqlExecutionContext);
+        compile( "alter table x add column v12 binary", sqlExecutionContext);
+        compile( "alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
                 "insert into x " +
