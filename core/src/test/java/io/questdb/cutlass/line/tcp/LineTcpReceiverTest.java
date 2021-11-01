@@ -80,7 +80,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
     public static final int WAIT_ALTER_TABLE_RELEASE = 0x4;
 
     private final WorkerPool sharedWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
-        private final int[] affinity = {-1, -1};
+        private final int[] affinity = {-1};
 
         @Override
         public int[] getWorkerAffinity() {
@@ -89,7 +89,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
 
         @Override
         public int getWorkerCount() {
-            return 2;
+            return 1;
         }
 
         @Override
@@ -1228,7 +1228,6 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
             String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
             send(server, lineData, "plug", WAIT_ENGINE_TABLE_RELEASE);
             lineData = "plug,room=6B watts=\"22\" " + day2 + "\n";
-//                    + "plug,room=6C watts=\"333\" " + day3 + "\n";
 
             for(int i = 0; i < 10; i++) {
                 SqlException exception = sendWithAlterStatement(
@@ -1239,7 +1238,44 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                         false,
                         "ALTER TABLE plug add column col" + i + " int");
                 Assert.assertNull(exception);
-//                send(server, lineData, "plug");
+            }
+            String expected = "room\twatts\ttimestamp\tcol0\tcol1\tcol2\tcol3\tcol4\tcol5\tcol6\tcol7\tcol8\tcol9\n" +
+                    "6A\t1\t1970-01-01T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n";
+            assertTable(expected, "plug");
+        });
+    }
+
+    @Test
+    public void testAlterCommandSequenceReleased2() throws Exception {
+        long day1 = 0;
+        long day2 = IntervalUtils.parseFloorPartialDate("1970-02-02") * 1000;
+        long day3 = IntervalUtils.parseFloorPartialDate("1970-03-03") * 1000;
+        runInContext((server) -> {
+            String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
+            send(server, lineData, "plug", WAIT_ENGINE_TABLE_RELEASE);
+            lineData = "plug,room=6B watts=\"22\" " + day2 + "\n"
+                    + "plug,room=6C watts=\"333\" " + day3 + "\n";
+
+            for(int i = 0; i < 10; i++) {
+                LOG.info().$("Altering table, adding column col").$(i).$();
+                SqlException exception = sendWithAlterStatement(
+                        server,
+                        lineData,
+                        "plug",
+                        WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                        false,
+                        "ALTER TABLE plug add column col" + i + " int");
+                Assert.assertNull(exception);
             }
             String expected = "room\twatts\ttimestamp\n" +
                     "6B\t22\t1970-02-02T00:00:00.000000Z\n" +
@@ -1435,6 +1471,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                                     LOG.info().$("EV_RETURN ").$(name).$();
                                     releaseLatch.countDown();
                                     break;
+                                case PoolListener.EV_CREATE:
                                 case PoolListener.EV_GET:
                                     LOG.info().$("EV_GET ").$(name).$();
                                     if (alterTableCommand != null) {
