@@ -634,7 +634,7 @@ public class LogFactory implements Closeable {
 
         @Override
         public void close() {
-            for (int i = 0, n = ring.getCapacity(); i < n; i++) {
+            for (int i = 0, n = ring.getCycle(); i < n; i++) {
                 Misc.free(ring.get(i));
             }
         }
