@@ -129,6 +129,19 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${OUTPUT})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${OUTPUT})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${OUTPUT})
 
+#asmjit
+if (NOT DEFINED ASMJIT_DIR)
+    set(ASMJIT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/asmjit)
+endif()
+
+set(ASMJIT_DIR "${ASMJIT_DIR}" CACHE PATH "Location of 'asmjit'")
+if (NOT DEFINED ASMJIT_EMBED)
+    set(ASMJIT_EMBED TRUE)
+endif()
+
+include("${ASMJIT_DIR}/CMakeLists.txt")
+include_directories(${ASMJIT_INCLUDE_DIRS})
+
 #zlib
 set(ZLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/zlib-1.2.8)
 
