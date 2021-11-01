@@ -441,7 +441,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testCaseWithDanglingCast() {
         assertFail(
-                "case (cast 1 as int))",
+                "case (cast 1 as int)",
                 11,
                 "dangling expression"
         );
