@@ -162,6 +162,61 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsyncAlterSymbolCache() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            try {
+                setUpEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
+                long commandId;
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
+                    CompiledQuery cc = compiler.compile("alter table product alter column name cache", sqlExecutionContext);
+                    commandId = executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext, alterTableExecutionContext);
+                    writer.tick();
+                    engine.tick();
+                }
+
+                SqlException exception = waitWriterEvent(engine, commandId, alterTableExecutionContext, 500_000, 0);
+                Assert.assertNull(exception);
+
+                engine.releaseAllReaders();
+                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "product")) {
+                    int colIndex = rdr.getMetadata().getColumnIndex("name");
+                    Assert.assertTrue(rdr.getSymbolMapReader(colIndex).isCached());
+                }
+            } finally {
+                stopEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
+            }
+        });
+    }
+
+    @Test
+    public void testAsyncRenameMultipleColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            try {
+                setUpEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
+                long commandId;
+                try (TableWriter ignored = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
+                    CompiledQuery cc = compiler.compile("alter table product rename column name to name1, timestamp to timestamp1", sqlExecutionContext);
+                    commandId = executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext, alterTableExecutionContext);
+                }
+                engine.tick();
+
+                SqlException exception = waitWriterEvent(engine, commandId, alterTableExecutionContext, 500_000, 0);
+                Assert.assertNull(exception);
+
+                engine.releaseAllReaders();
+                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "product")) {
+                    Assert.assertEquals(0, rdr.getMetadata().getColumnIndex("timestamp1"));
+                    Assert.assertEquals(1, rdr.getMetadata().getColumnIndex("name1"));
+                }
+            } finally {
+                stopEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
+            }
+        });
+    }
+
+    @Test
     public void testCommandQueueReused() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table product (timestamp timestamp)", sqlExecutionContext);
@@ -233,61 +288,6 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 } finally {
                     stopEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testAsyncAlterSymbolCache() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
-            try {
-                setUpEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
-                long commandId;
-                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
-                    CompiledQuery cc = compiler.compile("alter table product alter column name cache", sqlExecutionContext);
-                    commandId = executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext, alterTableExecutionContext);
-                    writer.tick();
-                    engine.tick();
-                }
-
-                SqlException exception = waitWriterEvent(engine, commandId, alterTableExecutionContext, 500_000, 0);
-                Assert.assertNull(exception);
-
-                engine.releaseAllReaders();
-                try(TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "product")) {
-                    int colIndex = rdr.getMetadata().getColumnIndex("name");
-                    Assert.assertTrue(rdr.getSymbolMapReader(colIndex).isCached());
-                }
-            } finally {
-                stopEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
-            }
-        });
-    }
-
-    @Test
-    public void testAsyncRenameMultipleColumns() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
-            try {
-                setUpEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
-                long commandId;
-                try (TableWriter ignored = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
-                    CompiledQuery cc = compiler.compile("alter table product rename column name to name1, timestamp to timestamp1", sqlExecutionContext);
-                    commandId = executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext, alterTableExecutionContext);
-                }
-                engine.tick();
-
-                SqlException exception = waitWriterEvent(engine, commandId, alterTableExecutionContext, 500_000, 0);
-                Assert.assertNull(exception);
-
-                engine.releaseAllReaders();
-                try(TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "product")) {
-                    Assert.assertEquals(0, rdr.getMetadata().getColumnIndex("timestamp1"));
-                    Assert.assertEquals(1, rdr.getMetadata().getColumnIndex("name1"));
-                }
-            } finally {
-                stopEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
             }
         });
     }

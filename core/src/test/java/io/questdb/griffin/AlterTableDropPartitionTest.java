@@ -47,7 +47,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                         Assert.fail();
                     } catch (SqlException e) {
                         Assert.assertEquals(34, e.getPosition());
-                        TestUtils.assertContains(e.getFlyweightMessage(), "'YYYY-MM-DD' expected");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "partition date in 'YYYY-MM-DD' format expected");
                     }
                 }
         );
