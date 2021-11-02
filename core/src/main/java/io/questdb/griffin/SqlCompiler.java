@@ -1249,11 +1249,6 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), "Invalid column type - Column should be of type symbol");
             }
 
-            if (reader.getSymbolMapReader(columnIndex).isCached() == cache) {
-                // Nothing to do.
-                return compiledQuery.ofAlter(null);
-            }
-
             return cache ? compiledQuery.ofAlter(alterQuery.ofCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName))
                     :  compiledQuery.ofAlter(alterQuery.ofRemoveCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName));
         } catch (CairoException e) {
@@ -1390,10 +1385,11 @@ public class SqlCompiler implements Closeable {
                 return IntervalUtils.parseFloorPartialDate(text);
             }
         } catch (NumericException e) {
-            // fall through to generte exception message
+            // fall through to generate exception message
         }
         // Invalid value
         final CairoException ee = CairoException.instance(0);
+        ee.put("partition date in ");
         switch (partitionBy) {
             case PartitionBy.DAY:
                 ee.put("'YYYY-MM-DD'");
@@ -1405,7 +1401,7 @@ public class SqlCompiler implements Closeable {
                 ee.put("'YYYY'");
                 break;
         }
-        ee.put(" expected");
+        ee.put(" format expected");
         throw ee;
     }
 

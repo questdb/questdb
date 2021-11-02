@@ -126,7 +126,6 @@ public class DispatcherWriterQueueTest {
                 },
                 1,
                 0,
-                "alter+table+x+alter+column+s+nocache",
                 "alter+table+x+alter+column+s+cache");
     }
 
