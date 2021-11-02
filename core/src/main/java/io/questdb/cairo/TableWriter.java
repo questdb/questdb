@@ -180,7 +180,7 @@ public class TableWriter implements Closeable {
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
     private int rowActon = ROW_ACTION_OPEN_PARTITION;
-    private final AlterTableImpl alterTableStatement = new AlterTableImpl();
+    private final AlterStatementImpl alterTableStatement = new AlterStatementImpl();
     private boolean isTicking;
 
 
@@ -1319,10 +1319,11 @@ public class TableWriter implements Closeable {
                     .$(",src=").$(instance)
                     .I$();
             error = "ALTER TABLE cannot change table structure while Writer is busy";
-        } catch (SqlException ex) {
+        } catch (SqlException | CairoException ex ) {
             error = ex.getFlyweightMessage();
         } catch (Throwable ex) {
-            error = ex.getMessage();
+            LOG.error().$("error on processing ALTER table [tableName=").$(tableName).$(",ex=").$(ex).I$();
+            error = "error on processing ALTER table, see QuestDB server logs for details";
         } finally {
             sequence.done(cursor);
         }

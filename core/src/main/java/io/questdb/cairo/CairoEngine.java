@@ -517,7 +517,7 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean useful = false;
             while (tick()) {
                 // process and drain cmd queue
-                useful |= true;
+                useful = true;
             }
             if (last + checkInterval < t) {
                 last = t;

@@ -148,10 +148,11 @@ public class TableWriterTask implements Closeable {
 
     public void putStr(CharSequence value) {
         int len = value.length();
-        ensureCapacity(len * 2 + 4);
+        final int byteLen = len * 2 + 4;
+        ensureCapacity(byteLen);
         Unsafe.getUnsafe().putInt(appendPtr, len);
         Chars.copyStrChars(value, 0, len, appendPtr + 4);
-        appendPtr += len * 2L + 4;
+        this.appendPtr += byteLen;
     }
 
     public void putByte(byte c) {

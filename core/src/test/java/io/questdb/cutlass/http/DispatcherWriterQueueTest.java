@@ -106,6 +106,19 @@ public class DispatcherWriterQueueTest {
     }
 
     @Test
+    public void testAlterTableAddNocacheAlterCache() throws Exception {
+        runAlterOnBusyTable(writer -> {
+                    TableWriterMetadata metadata = writer.getMetadata();
+                    int columnIndex = metadata.getColumnIndex("s");
+                    Assert.assertTrue("Column s must exist", columnIndex >= 0);
+                    Assert.assertTrue(metadata.isSymbolTableStatic(columnIndex));
+                },
+                1,
+                0,
+                "alter+table+x+alter+column+s+nocache");
+    }
+
+    @Test
     public void testAlterTableFailsToUpgradeConcurrently() throws Exception {
         runAlterOnBusyTable(writer -> {
                     TableWriterMetadata metadata = writer.getMetadata();

@@ -24,9 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.AlterTableExecutionContext;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.str.DirectCharSequence;
@@ -75,6 +73,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 for(int i = 0; i < engineCmdQueue; i++) {
                     CompiledQuery cc = compiler.compile("ALTER TABLE product add column column" + i + " int", sqlExecutionContext);
                     executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext, alterTableExecutionContext);
+                    engine.tick();
                 }
 
                 try {
@@ -93,7 +92,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAsyncAlterCommandsExceedsEngineEventQueue() throws Exception {
+    public void testAsyncAlterCommandsExceedEngineEventQueue() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table product (timestamp timestamp)", sqlExecutionContext);
 
@@ -122,13 +121,93 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 stopEngineAsyncWriterEventWait(engine, staleSequence);
 
                 // Re-execute last query
-                setUpEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
-                commandId = executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext, alterTableExecutionContext);
-                engine.tick();
-                writer.tick();
+                try {
+                    setUpEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
+                    commandId = executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext, alterTableExecutionContext);
+                    engine.tick();
+                    writer.tick();
 
-                exception = waitWriterEvent(engine, commandId, alterTableExecutionContext, 500_000, 0);
-                TestUtils.assertContains(exception.getFlyweightMessage(), "Duplicate column name: column5");
+                    exception = waitWriterEvent(engine, commandId, alterTableExecutionContext, 500_000, 0);
+                    TestUtils.assertContains(exception.getFlyweightMessage(), "Duplicate column name: column5");
+                } finally {
+                    stopEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInvalidAlterDropPartitionStatementQueued() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+
+            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
+                try {
+                    setUpEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
+
+                    AlterStatementImpl creepyAlter = new AlterStatementImpl();
+                    creepyAlter.ofDropPartition(0, "product", writer.getMetadata().getId()).ofPartition(0);
+                    long commandId = executeAlterCommandNoWait(engine, creepyAlter, sqlExecutionContext, alterTableExecutionContext);
+                    engine.tick();
+                    writer.tick();
+
+                    SqlException exception = waitWriterEvent(engine, commandId, alterTableExecutionContext, 500_000, 0);
+                    Assert.assertNotNull(exception);
+                    TestUtils.assertContains(exception.getFlyweightMessage(), "could not remove partition 'default'");
+                } finally {
+                    stopEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInvalidAlterStatementQueued() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+
+            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
+                try {
+                    setUpEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
+
+                    AlterStatementImpl creepyAlter = new AlterStatementImpl();
+                    creepyAlter.ofDropColumn(1, "product", writer.getMetadata().getId());
+                    creepyAlter.ofDropColumn("timestamp").ofDropColumn("timestamp");
+                    long commandId = executeAlterCommandNoWait(engine, creepyAlter, sqlExecutionContext, alterTableExecutionContext);
+                    engine.tick();
+                    writer.tick(true);
+
+                    SqlException exception = waitWriterEvent(engine, commandId, alterTableExecutionContext, 500_000, 0);
+                    Assert.assertNotNull(exception);
+                    TestUtils.assertContains(exception.getFlyweightMessage(), "Invalid column: timestamp");
+                } finally {
+                    stopEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCommandQueueReused() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table product (timestamp timestamp)", sqlExecutionContext);
+
+            // Block event queue with stale sequence
+            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
+                try {
+                    setUpEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
+                    for (int i = 0; i < 2 * engineEventQueue; i++) {
+                        CompiledQuery cc = compiler.compile("ALTER TABLE product add column column" + i + " int", sqlExecutionContext);
+                        long commandId = executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext, alterTableExecutionContext);
+                        engine.tick();
+                        writer.tick();
+                        Assert.assertNull(waitWriterEvent(engine, commandId, alterTableExecutionContext, 500_000, 0));
+                    }
+
+                    Assert.assertEquals(2 * engineEventQueue + 1, writer.getMetadata().getColumnCount());
+                } finally {
+                    stopEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
+                }
             }
         });
     }

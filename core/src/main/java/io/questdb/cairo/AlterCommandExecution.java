@@ -93,6 +93,7 @@ public class AlterCommandExecution {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         if (alterStatement != null) {
+            assert alterStatement.getTableName() != null;
             try (TableWriter writer = engine.getWriter(
                     sqlExecutionContext.getCairoSecurityContext(),
                     alterStatement.getTableName(), "Alter table statement")) {
@@ -192,10 +193,6 @@ public class AlterCommandExecution {
         setUpEngineAsyncWriterEventWait(engine, requestContext.getWriterEventConsumeSequence());
         try {
             long instance = engine.publishTableWriterCommand(alterStatement);
-            requestContext.debug().$("published writer event [table=")
-                    .$(alterStatement.getTableName())
-                    .$(",instance=").$(instance).I$();
-
             SqlException status = waitWriterEvent(
                     engine,
                     instance,

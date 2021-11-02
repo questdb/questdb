@@ -33,8 +33,8 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
 
-public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnStatement, AlterStatementRenameColumnStatement, AlterStatementDropColumnStatement, AlterStatementChangePartitionStatement, Mutable {
-    private final static Log LOG = LogFactory.getLog(AlterTableImpl.class);
+public class AlterStatementImpl implements AlterStatement, AlterStatementAddColumnStatement, AlterStatementRenameColumnStatement, AlterStatementDropColumnStatement, AlterStatementChangePartitionStatement, Mutable {
+    private final static Log LOG = LogFactory.getLog(AlterStatementImpl.class);
     private short command;
     private String tableName;
     private int tableId;
@@ -44,16 +44,14 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
     private final ObjCharSequenceList objCharList = new ObjCharSequenceList();
     private final DirectCharSequenceList directCharList = new DirectCharSequenceList();
     private final LongList longList = new LongList();
+    // This is only used to serialize Partition name in form 2020-02-12 or 2020-02 or 2020
+    // to exception message using TableUtils.setSinkForPartition
     private final ExceptionSinkAdapter exceptionSinkAdapter = new ExceptionSinkAdapter();
 
     @Override
     public void apply(TableWriter tableWriter, boolean acceptStructureChange) throws SqlException, TableStructureChangesException {
         try {
             switch (command) {
-                case DO_NOTHING:
-                    // Lock cannot be applied on another thread.
-                    // it is applied at the SQL compilation time
-                    break;
                 case ADD_COLUMN:
                     applyAddColumn(tableWriter);
                     break;
@@ -167,12 +165,6 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
         }
     }
 
-    public AlterStatement doNothing() {
-        this.command = DO_NOTHING;
-        this.tableName = null;
-        return this;
-    }
-
     public AlterStatementAddColumnStatement ofAddColumn(
             int tableNamePosition,
             String tableName,
@@ -187,6 +179,7 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
 
     @Override
     public AlterStatementAddColumnStatement ofAddColumn(CharSequence columnName, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity) {
+        assert columnName != null && columnName.length() > 0;
         this.objCharList.add(columnName);
         this.longList.add(type);
         this.longList.add(symbolCapacity);
@@ -237,6 +230,7 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
 
     @Override
     public AlterStatementDropColumnStatement ofDropColumn(CharSequence columnName) {
+        assert columnName != null && columnName.length() > 0;
         this.objCharList.add(columnName);
         return this;
     }
@@ -258,6 +252,7 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
     }
 
     public AlterStatement ofRemoveCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
+        assert columnName != null && columnName.length() > 0;
         this.command = REMOVE_SYMBOL_CACHE;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
@@ -453,6 +448,8 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
         tableWriter.changeCacheFlag(columnIndex, isCacheOn);
     }
 
+    // This is only used to serialize Partition name in form 2020-02-12 or 2020-02 or 2020
+    // to exception message using TableUtils.setSinkForPartition
     private static class ExceptionSinkAdapter implements CharSink {
         private SqlException ex;
 
@@ -469,6 +466,12 @@ public class AlterTableImpl implements AlterStatement, AlterStatementAddColumnSt
         @Override
         public char[] getDoubleDigitsBuffer() {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSink put(CharSequence cs) {
+            ex.put(cs);
+            return this;
         }
 
         @Override

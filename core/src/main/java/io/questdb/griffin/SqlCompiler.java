@@ -68,7 +68,7 @@ public class SqlCompiler implements Closeable {
     protected final CairoEngine engine;
     protected final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
     protected final CompiledQueryImpl compiledQuery = new CompiledQueryImpl();
-    protected final AlterTableImpl alterQuery = new AlterTableImpl();
+    protected final AlterStatementImpl alterQuery = new AlterStatementImpl();
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -1336,11 +1336,13 @@ public class SqlCompiler implements Closeable {
         // removePartition does not fail to determine next minTimestamp
         // Last partition cannot be dropped, exclude it from the list
         // TODO: allow to drop last partition
+        int partitionCount = 0;
         for (int i = reader.getPartitionCount() - 2; i > -1; i--) {
             long partitionTimestamp = reader.getPartitionTimestampByIndex(i);
             partitionFunctionRec.setTimestamp(partitionTimestamp);
             if (function.getBool(partitionFunctionRec)) {
                 changePartitionStatement.ofPartition(partitionTimestamp);
+                partitionCount++;
             }
         }
     }
