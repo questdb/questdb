@@ -129,7 +129,8 @@ int64_t compile_x86_scalar_loop(const uint64_t *columns,
                 uint64_t column_addr = columns[column_index];
                 c.mov(col, column_addr);
                 Xmm data = c.newXmm();
-                c.vmovss(data, Mem(col, index, 3, 0, 8));
+//                c.vmovss(data, Mem(col, index, 2, 0, 4));
+                c.cvtss2sd(data, Mem(col, index, 2, 0, 4)); // float to double
                 tmp.push(data);
             }
                 break;
@@ -162,16 +163,50 @@ int64_t compile_x86_scalar_loop(const uint64_t *columns,
                 tmp.push(val);
             }
                 break;
+            case NEG:
+            {
+                auto arg = tmp.top();
+                tmp.pop();
+                if(arg.isXmm()) {
+                    Xmm r = c.newXmmSd();
+                    c.xorpd(r, r);
+                    c.subpd(r, arg.xmm());
+                    arg = r;
+                } else {
+                    c.neg(arg.gp());
+                }
+                tmp.push(arg);
+            }
+                break;
+            case NOT:
+            {
+                auto arg = tmp.top();
+                tmp.pop();
+                if(arg.isXmm()) {
+                    // error?
+                } else {
+                    c.not_(arg.gp());
+                    c.and_(arg.gp(), 1);
+                }
+                tmp.push(arg);
+            }
+                break;
             default:
                 auto rhs = tmp.top();
                 tmp.pop();
                 auto lhs = tmp.top();
                 tmp.pop();
                 if (rhs.isXmm() && !lhs.isXmm()) {
-                    // todo: lhs convert
+                    // lhs long to double
+                    Gp i = lhs.gp();
+                    lhs = c.newXmm();
+                    c.vcvtsi2sd(lhs.xmm(), rhs.xmm(), i);
                 }
                 if (lhs.isXmm() && !rhs.isXmm()) {
-                    // todo: rhs convert
+                    // rhs long to double
+                    Gp i = rhs.gp();
+                    rhs = c.newXmm();
+                    c.vcvtsi2sd(rhs.xmm(), lhs.xmm(), i);
                 }
                 switch (ic) {
                     case AND:
@@ -282,7 +317,7 @@ int64_t compile_x86_scalar_loop(const uint64_t *columns,
                         break;
                     case SUB:
                         if (lhs.isXmm()) {
-                            c.vsubsd(lhs.xmm(), rhs.xmm(), lhs.xmm());
+                            c.vsubsd(lhs.xmm(), lhs.xmm(), rhs.xmm());
                         } else {
                             c.sub(lhs.gp(), rhs.gp());
                         }
@@ -298,9 +333,11 @@ int64_t compile_x86_scalar_loop(const uint64_t *columns,
                         break;
                     case DIV:
                         if (lhs.isXmm()) {
-                            c.vdivsd(lhs.xmm(), rhs.xmm(), lhs.xmm());
+                            c.vdivsd(lhs.xmm(), lhs.xmm(), rhs.xmm());
                         } else {
-                            c.idiv(lhs.gp(), rhs.gp());
+                            Gp r = c.newGpq();
+                            c.xor_(r,r);
+                            c.idiv(r, lhs.gp(), rhs.gp());
                         }
                         tmp.push(lhs);
                         break;

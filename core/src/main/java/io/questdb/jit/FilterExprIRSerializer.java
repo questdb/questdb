@@ -95,7 +95,7 @@ public class FilterExprIRSerializer {
                                 .put(node.token);
                 }
             } else {
-                serializeOperator(memory, node.position, node.token);
+                serializeOperator(memory, node.position, node.token, argCount);
             }
         }
     }
@@ -220,11 +220,7 @@ public class FilterExprIRSerializer {
         throw SqlException.position(position).put("invalid constant: ").put(token);
     }
 
-    private static void serializeOperator(MemoryA memory, int position, final CharSequence token) throws SqlException {
-        if(Chars.equals(token, "-")) {
-            memory.putByte(NEG);
-            return;
-        }
+    private static void serializeOperator(MemoryA memory, int position, final CharSequence token, int argCount) throws SqlException {
         if(Chars.equals(token, "not")) {
             memory.putByte(NOT);
             return;
@@ -241,7 +237,7 @@ public class FilterExprIRSerializer {
             memory.putByte(EQ);
             return;
         }
-        if(Chars.equals(token, "<>")) {
+        if(Chars.equals(token, "<>") || Chars.equals(token, "!=")) {
             memory.putByte(NE);
             return;
         }
@@ -262,11 +258,17 @@ public class FilterExprIRSerializer {
             return;
         }
         if(Chars.equals(token, "+")) {
-            memory.putByte(ADD);
+            if(argCount == 2) {
+                memory.putByte(ADD);
+            } // ignore unary
             return;
         }
         if(Chars.equals(token, "-")) {
-            memory.putByte(SUB);
+            if(argCount == 2) {
+                memory.putByte(SUB);
+            } else if (argCount == 1) {
+                memory.putByte(NEG);
+            }
             return;
         }
         if(Chars.equals(token, "*")) {
