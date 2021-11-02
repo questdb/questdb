@@ -1257,36 +1257,6 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore
-    public void testAlterCommandSequenceReleased2() throws Exception {
-        long day1 = 0;
-        long day2 = IntervalUtils.parseFloorPartialDate("1970-02-02") * 1000;
-        long day3 = IntervalUtils.parseFloorPartialDate("1970-03-03") * 1000;
-        runInContext((server) -> {
-            String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
-            send(server, lineData, "plug", WAIT_ENGINE_TABLE_RELEASE);
-            lineData = "plug,room=6B watts=\"22\" " + day2 + "\n"
-                    + "plug,room=6C watts=\"333\" " + day3 + "\n";
-
-            for(int i = 0; i < 10; i++) {
-                LOG.info().$("Altering table, adding column col").$(i).$();
-                SqlException exception = sendWithAlterStatement(
-                        server,
-                        lineData,
-                        "plug",
-                        WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                        false,
-                        "ALTER TABLE plug add column col" + i + " int");
-                Assert.assertNull(exception);
-            }
-            String expected = "room\twatts\ttimestamp\n" +
-                    "6B\t22\t1970-02-02T00:00:00.000000Z\n" +
-                    "6C\t333\t1970-03-03T00:00:00.000000Z\n";
-            assertTable(expected, "plug");
-        });
-    }
-
-    @Test
     public void testAlterCommandTableMetaModifications() throws Exception {
         runInContext((server) -> {
             String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819999000\n" +
@@ -1457,7 +1427,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                     if (waited) {
                         LOG.info().$("Stopped waiting for writer ASYNC event").$();
                         // If subscribed to global writer event queue, unsubscribe here
-                        AlterCommandExecution.stopCommandWait(engine, requestContext);
+                        AlterCommandExecution.stopEngineAsyncWriterEventWait(engine, requestContext.getWriterEventConsumeSequence());
                     }
                 }
             }).start();
@@ -1534,14 +1504,14 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                     server.setSchedulerListener(null);
                     break;
             }
-            AlterCommandExecution.stopCommandWait(engine, requestContext);
+            AlterCommandExecution.stopEngineAsyncWriterEventWait(engine, requestContext.getWriterEventConsumeSequence());
         }
         return null;
     }
 
     private long executeAlterSql(String sql) throws SqlException {
         // Subscribe local writer even queue to the global engine writer response queue
-        AlterCommandExecution.setUpWait(engine, requestContext);
+        AlterCommandExecution.setUpEngineAsyncWriterEventWait(engine, requestContext.getWriterEventConsumeSequence());
         LOG.info().$("Started waiting for writer ASYNC event").$();
         try (SqlCompiler compiler = new SqlCompiler(engine);
              SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)

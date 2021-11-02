@@ -26,8 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryFCRImpl;
@@ -123,7 +121,6 @@ public class TableWriter implements Closeable {
     private final ObjList<Runnable> o3NullSetters;
     private final ObjList<MemoryCARW> o3Columns;
     private final ObjList<MemoryCARW> o3Columns2;
-    private final TimestampValueRecord dropPartitionFunctionRec = new TimestampValueRecord();
     private final ObjList<O3CallbackTask> o3PendingCallbackTasks = new ObjList<>();
     private final O3ColumnUpdateMethod oooSortVarColumnRef = this::o3SortVarColumn;
     private final O3ColumnUpdateMethod oooSortFixColumnRef = this::o3SortFixColumn;
@@ -185,7 +182,6 @@ public class TableWriter implements Closeable {
     private int rowActon = ROW_ACTION_OPEN_PARTITION;
     private final AlterTableImpl alterTableStatement = new AlterTableImpl();
     private boolean isTicking;
-    private long lastAlterCmdId = -1;
 
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
@@ -1044,26 +1040,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public void removePartition(Function function, int posForError) throws SqlException {
-        if (partitionBy == PartitionBy.NONE) {
-            throw SqlException.$(posForError, "table is not partitioned");
-        }
-
-        if (txWriter.getPartitionCount() == 0) {
-            throw SqlException.$(posForError, "table is empty");
-        } else {
-            // Drop partitions in descending order so if folders are missing on disk
-            // removePartition does not fail to determine next minTimestamp
-            for (int i = txWriter.getPartitionCount() - 1; i > -1; i--) {
-                long partitionTimestamp = txWriter.getPartitionTimestamp(i);
-                dropPartitionFunctionRec.setTimestamp(partitionTimestamp);
-                if (function.getBool(dropPartitionFunctionRec)) {
-                    removePartition(partitionTimestamp);
-                }
-            }
-        }
-    }
-
     public void renameColumn(CharSequence currentName, CharSequence newName) {
 
         checkDistressed();
@@ -1334,22 +1310,8 @@ public class TableWriter implements Closeable {
                     .$(",tableId=").$(tableId)
                     .$(",instance=").$(instance)
                     .I$();
-            if (instance == 6) {
-                int i = 0;
-            }
-            // Check that it's not a dup due to global / local queue jumps
-            if (lastAlterCmdId < instance) {
-                alterTableStatement.deserialize(cmd);
-                alterTableStatement.apply(this, acceptStructureChange);
-                lastAlterCmdId = instance;
-            } else {
-                LOG.error()
-                        .$("ASYNC ALTER TABLE cmd is out of sequence and will be ignored [tableName=").$(tableName)
-                        .$(",tableId=").$(tableId)
-                        .$(",instance=").$(instance)
-                        .I$();
-                error = "stale ALTER TABLE command received and will be ignored";
-            }
+            alterTableStatement.deserialize(cmd);
+            alterTableStatement.apply(this, acceptStructureChange);
         } catch (TableStructureChangesException ex) {
             LOG.info()
                     .$("cannot complete ASYNC ALTER TABLE cmd, table structure change is not allowed atm [tableName=").$(tableName)
@@ -3959,6 +3921,8 @@ public class TableWriter implements Closeable {
                     processAlterTableEvent(cmd, cursor, commandSubSeq, acceptStructureChange);
                     break;
                 default:
+                    LOG.error().$("unknown TableWriterTask type, ignored: ").$(cmd).$();
+                    // Don't block the queue even if command is unknown
                     commandSubSeq.done(cursor);
                     break;
             }
@@ -5030,19 +4994,6 @@ public class TableWriter implements Closeable {
         void putTimestamp(int columnIndex, long value);
 
         void putTimestamp(int columnIndex, CharSequence value);
-    }
-
-    static class TimestampValueRecord implements Record {
-        private long value;
-
-        @Override
-        public long getTimestamp(int col) {
-            return value;
-        }
-
-        public void setTimestamp(long value) {
-            this.value = value;
-        }
     }
 
     private class RowImpl implements Row {

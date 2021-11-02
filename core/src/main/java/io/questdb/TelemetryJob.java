@@ -127,7 +127,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             CompiledQuery cc = compiler.compile(
                     "ALTER TABLE " + configTableName + " ADD COLUMN " + columnDetails,
                     executionContext);
-            AlterCommandExecution.executeAlterStatement(engine, cc.getAlterStatement(), executionContext);
+            AlterCommandExecution.executeAlterStatementSyncOrFail(engine, cc.getAlterStatement(), executionContext);
         } catch (EntryUnavailableException e) {
             LOG.info().$("Failed to alter telemetry table, writer is busy [table=").$(configTableName).I$();
         } catch (SqlException ex) {
