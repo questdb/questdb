@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.api.MemoryAR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
@@ -35,6 +36,8 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
     private final RecordCursorFactory factory;
     private final CompiledFilterRecordCursor cursor;
     private final MemoryAR filter;
+    private DirectLongList rows;
+    private DirectLongList columns;
 
     public CompiledFilterRecordCursorFactory(RecordCursorFactory factory, @NotNull IntList columnIndexes, MemoryAR filter) {
         assert !(factory instanceof FilteredRecordCursorFactory);
@@ -42,17 +45,21 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
         this.factory = factory;
         this.cursor = new CompiledFilterRecordCursor(columnIndexes, filter);
         this.filter = filter;
+        this.rows = new DirectLongList(1024);
+        this.columns = new DirectLongList(10);
     }
 
     @Override
     public void close() {
         factory.close();
         filter.close();
+        rows.close();
+        columns.close();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        this.cursor.of(factory, executionContext);
+        this.cursor.of(factory, rows, columns, executionContext);
         return this.cursor;
     }
 

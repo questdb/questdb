@@ -43,6 +43,8 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
     private PageFrameCursor pageFrameCursor;
     private RecordMetadata metadata;
+
+
     private DirectLongList rows;
     private DirectLongList columns;
 
@@ -64,17 +66,11 @@ class CompiledFilterRecordCursor implements RecordCursor {
         this.filterSize = filter.getAppendOffset();
         filter.jumpTo(0);
         this.filterAddr = filter.getPageAddress(0);
-
-        this.rows = new DirectLongList(1024);
-        this.columns = new DirectLongList(10);
     }
 
     @Override
     public void close() {
         pageFrameCursor.close();
-        rows.close();
-        columns.close();
-        filter.close();
     }
 
     @Override
@@ -105,17 +101,19 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
     @Override
     public Record getRecordB() {
-        return recordB;
+//        return recordB;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void recordAt(Record record, long rowId) {
-        ((PageFrameRecord)record).jumpTo(Rows.toLocalRowID(rowId));
+//        ((PageFrameRecord)record).jumpTo(Rows.toLocalRowID(rowId));
+        throw new UnsupportedOperationException();
     }
 
-    void of(RecordCursorFactory factory, SqlExecutionContext executionContext) throws SqlException {
-        this.rows.clear();
-        this.columns.clear();
+    void of(RecordCursorFactory factory, DirectLongList rows, DirectLongList columns, SqlExecutionContext executionContext) throws SqlException {
+        this.rows = rows;
+        this.columns = columns;
         this.pageFrameCursor = factory.getPageFrameCursor(executionContext);
         this.metadata = factory.getMetadata();
         this.next = nextPage;
@@ -133,13 +131,13 @@ class CompiledFilterRecordCursor implements RecordCursor {
         PageFrame frame;
         while ((frame = pageFrameCursor.next()) != null) {
             recordA.of(frame);
-
+            int sz = metadata.getColumnCount();
+            columns.extend(sz);
             columns.clear();
-            for (int columnIndex = 0, sz = metadata.getColumnCount(); columnIndex < sz; columnIndex++) {
+            for (int columnIndex = 0; columnIndex < sz; columnIndex++) {
                 final long columnBaseAddress = frame.getPageAddress(columnIndex);
                 columns.add(columnBaseAddress);
             }
-
             rows.extend(frame.getPartitionHi());
             this.current = 0;
             this.hi = FiltersCompiler.compile(columns.getAddress(),
@@ -149,7 +147,6 @@ class CompiledFilterRecordCursor implements RecordCursor {
                     rows.getAddress(),
                     frame.getPartitionHi(),
                     frame.getPartitionLo());
-
             if (current < hi) {
                 recordA.jumpTo(rows.get(current++));
                 next = nextRow;
@@ -252,10 +249,10 @@ class CompiledFilterRecordCursor implements RecordCursor {
             return Unsafe.getUnsafe().getInt(address + index * Integer.BYTES);
         }
 
-        @Override
-        public long getRowId() {
-            return Rows.toRowID(frame.getPartitionIndex(), index);
-        }
+//        @Override
+//        public long getRowId() {
+//            return Rows.toRowID(frame.getPartitionIndex(), index);
+//        }
 
         @Override
         public long getLong(int columnIndex) {
