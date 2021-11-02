@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
@@ -46,7 +47,17 @@ public class CharIndexFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        if (args == null || args.size() < 2 || args.size() > 3) {
+            throw SqlException.$(position, "charindex can be used with 2 or 3 arguments");
+        }
+
         final Function substrFunc = args.getQuick(0);
         if (substrFunc.isConstant()) {
             if (substrFunc.getStrLen(null) < 1) {
@@ -96,12 +107,12 @@ public class CharIndexFunctionFactory implements FunctionFactory {
         }
 
         private int charIndex(@NotNull CharSequence substr, @NotNull CharSequence str, int pos) {
-            int substrLen;
-            if ((substrLen = substr.length()) < 1) {
+            final int substrLen = substr.length();
+            if (substrLen < 1) {
                 return 0;
             }
-            final int strLen;
-            if ((strLen = str.length()) < 1) {
+            final int strLen = str.length();
+            if (strLen < 1) {
                 return 0;
             }
             if (pos < 1) {
