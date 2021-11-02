@@ -30,6 +30,7 @@ import { CheckboxBlankCircle } from "@styled-icons/remix-line/CheckboxBlankCircl
 import { CodeSSlash } from "@styled-icons/remix-line/CodeSSlash"
 import { Information } from "@styled-icons/remix-line/Information"
 import { Table as TableIcon } from "@styled-icons/remix-line/Table"
+import { PieChart } from "@styled-icons/remix-line/PieChart"
 
 import {
   SecondaryButton,
@@ -48,6 +49,7 @@ type Props = Readonly<{
   kind: "column" | "table"
   name: string
   onClick?: (event: MouseEvent) => void
+  partitionBy?: string
   suffix?: ReactNode
   tooltip?: boolean
   type?: string
@@ -133,6 +135,17 @@ const InfoIconWrapper = styled.div`
   justify-content: center;
 `
 
+const PartitionByWrapper = styled.div`
+  margin-right: 1rem;
+  display: flex;
+  align-items: center;
+`
+
+const PieChartIcon = styled(PieChart)`
+  color: ${color("gray2")};
+  margin-right: 0.5rem;
+`
+
 const Row = ({
   className,
   description,
@@ -140,6 +153,7 @@ const Row = ({
   kind,
   indexed,
   name,
+  partitionBy,
   onClick,
   suffix,
   tooltip,
@@ -192,6 +206,13 @@ const Row = ({
           <Type _style="italic" color="draculaPink" transform="lowercase">
             {type}
           </Type>
+        )}
+
+        {kind === "table" && partitionBy !== "NONE" && (
+          <PartitionByWrapper>
+            <PieChartIcon size="14px" />
+            <Text color="gray2">{partitionBy}</Text>
+          </PartitionByWrapper>
         )}
 
         <PlusButton onClick={handlePlusButtonClick} size="sm" tooltip={tooltip}>

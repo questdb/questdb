@@ -138,6 +138,7 @@ const Table = ({
           kind="table"
           name={name}
           onClick={handleClick}
+          partitionBy={partitionBy}
           suffix={loading && <Loader size="18px" />}
           tooltip={!!description}
         />
