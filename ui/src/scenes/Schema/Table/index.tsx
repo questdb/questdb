@@ -43,6 +43,7 @@ type Props = QuestDB.Table &
   Readonly<{
     expanded: boolean
     description?: string
+    isScrolling: boolean
     onChange: (table: string) => void
     refresh: number
     table: string
@@ -92,7 +93,14 @@ const Loader = styled(Loader4)`
   ${spinAnimation};
 `
 
-const Table = ({ description, expanded, onChange, refresh, table }: Props) => {
+const Table = ({
+  description,
+  expanded,
+  isScrolling,
+  onChange,
+  refresh,
+  table,
+}: Props) => {
   const ref = useRef<HTMLDivElement>(null)
   const [quest] = useState(new QuestDB.Client())
   const [loading, setLoading] = useState(false)
@@ -135,7 +143,7 @@ const Table = ({ description, expanded, onChange, refresh, table }: Props) => {
         />
       </ContextMenuTrigger>
 
-      <ContextualMenu name={table} />
+      {!isScrolling && <ContextualMenu name={table} />}
 
       <CSSTransition
         classNames="collapse"

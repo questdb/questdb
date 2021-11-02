@@ -48,6 +48,7 @@ import {
   spinAnimation,
   Text,
   Tooltip,
+  VirtualList,
 } from "components"
 import { selectors } from "store"
 import { color, ErrorResult } from "utils"
@@ -115,11 +116,39 @@ const Schema = ({
   const [tables, setTables] = useState<QuestDB.Table[]>()
   const [opened, setOpened] = useState<string>()
   const [refresh, setRefresh] = useState(Date.now())
+  const [isScrolling, setIsScrolling] = useState(false)
   const { readOnly } = useSelector(selectors.console.getConfig)
 
   const handleChange = useCallback((name: string) => {
     setOpened(name)
   }, [])
+
+  const handleScrollingStateChange = useCallback(
+    (isScrolling) => {
+      setIsScrolling(isScrolling)
+    },
+    [setIsScrolling],
+  )
+
+  const listItemContent = useCallback(
+    (index: number) => {
+      if (tables) {
+        const table = tables[index]
+
+        return (
+          <Table
+            expanded={table.table === opened}
+            isScrolling={isScrolling}
+            key={table.table}
+            onChange={handleChange}
+            refresh={refresh}
+            table={table.table}
+          />
+        )
+      }
+    },
+    [handleChange, isScrolling, opened, refresh, tables],
+  )
 
   const fetchTables = useCallback(() => {
     setLoading(true)
@@ -198,15 +227,12 @@ const Schema = ({
         ) : loadingError ? (
           <LoadingError error={loadingError} />
         ) : (
-          tables?.map(({ table }) => (
-            <Table
-              expanded={table === opened}
-              key={table}
-              onChange={handleChange}
-              refresh={refresh}
-              table={table}
-            />
-          ))
+          <VirtualList
+            height={310}
+            isScrolling={handleScrollingStateChange}
+            itemContent={listItemContent}
+            totalCount={tables?.length}
+          />
         )}
         {!loading && <FlexSpacer />}
       </Content>

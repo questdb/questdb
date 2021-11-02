@@ -52,6 +52,7 @@
     "react-popper": "2.2.3",
     "react-redux": "7.2.0",
     "react-transition-group": "4.4.1",
+    "react-virtuoso": "^2.2.6",
     "redux": "4.0.5",
     "redux-observable": "1.2.0",
     "resize-observer-polyfill": "1.5.1",
