@@ -225,7 +225,7 @@ public class AlterStatementImpl implements AlterStatement, AlterStatementAddColu
     public AlterStatementRenameColumnStatement ofRenameColumn(CharSequence columnName, CharSequence newName) {
         this.objCharList.add(columnName);
         this.objCharList.add(newName);
-        return null;
+        return this;
     }
 
     @Override
