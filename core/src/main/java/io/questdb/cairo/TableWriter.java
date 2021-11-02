@@ -1333,15 +1333,20 @@ public class TableWriter implements Closeable {
     private void replAlterTableEvent0(long tableId, long instance, CharSequence error) {
         final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
         if (pubCursor > -1) {
-            final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
-            event.of(TableWriterTask.TSK_ALTER_TABLE, tableId, tableName);
-            if (error != null) {
-                event.putStr(error);
-            } else {
-                event.putInt(0);
+            try {
+                final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
+                event.of(TableWriterTask.TSK_ALTER_TABLE, tableId, tableName);
+                if (error != null) {
+                    event.putStr(error);
+                } else {
+                    event.putInt(0);
+                }
+                event.setInstance(instance);
+            } finally {
+                messageBus.getTableWriterEventPubSeq().done(pubCursor);
             }
-            event.setInstance(instance);
-            messageBus.getTableWriterEventPubSeq().done(pubCursor);
+
+            // Log result
             LogRecord lg = LOG.info()
                     .$("published alter table complete event [table=").$(tableName)
                     .$(",tableId=").$(tableId)
@@ -1351,6 +1356,7 @@ public class TableWriter implements Closeable {
             }
             lg.I$();
         } else if (pubCursor == -1) {
+            // Queue is full
             LOG.error()
                     .$("cannot publish alter table complete event [table=").$(tableName)
                     .$(",tableId=").$(tableId)

@@ -411,6 +411,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getWriterCommandQueueCapacity() {
+        return 4;
+    }
+
+    @Override
     public boolean isParallelIndexingEnabled() {
         return true;
     }

@@ -32,6 +32,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
 
@@ -140,15 +141,16 @@ public class AlterCommandExecution {
             long writerAsyncCommandBusyWaitTimeout,
             int queryTableNamePosition
     ) {
-        long start = System.currentTimeMillis();
-        long maxWaitTimeoutMilli = Math.max(writerAsyncCommandBusyWaitTimeout / 1000L, 1L);
-        SCSequence tableWriterEventSeq = requestContext.getWriterEventConsumeSequence();
-        RingQueue<TableWriterTask> tableWriterEventQueue = engine.getMessageBus().getTableWriterEventQueue();
+        final MicrosecondClock clock = engine.getConfiguration().getMicrosecondClock();
+        final long start = clock.getTicks();
+        final SCSequence tableWriterEventSeq = requestContext.getWriterEventConsumeSequence();
+        final RingQueue<TableWriterTask> tableWriterEventQueue = engine.getMessageBus().getTableWriterEventQueue();
+
         while (true) {
             long seq = tableWriterEventSeq.next();
             if (seq < 0) {
                 // Queue is empty, check if the execution blocked for too long
-                if (System.currentTimeMillis() - start > maxWaitTimeoutMilli) {
+                if (clock.getTicks() - start > writerAsyncCommandBusyWaitTimeout) {
                     return SqlException.$(queryTableNamePosition, "Timeout expired on waiting for the ALTER TABLE execution result");
                 }
                 LockSupport.parkNanos(100);

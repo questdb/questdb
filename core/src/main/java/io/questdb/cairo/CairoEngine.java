@@ -204,6 +204,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         .I$();
                 return correlationId;
             } else if (pubCursor == -1) {
+                // Queue is full
                 LOG.error()
                         .$("could not publish writer task [table=").$(tableName)
                         .$(",instance").$(correlationId)
@@ -436,13 +437,13 @@ public class CairoEngine implements Closeable, WriterSource {
             } catch (Throwable e) {
                 if (e instanceof Sinkable) {
                     LOG.error()
-                            .$("could not create table writer [tableName=").$(tableName)
+                            .$("could not create table writer or execute writer command [tableName=").$(tableName)
                             .$(", tableId=").$(cmd.getTableId())
                             .$(", ex=`").$((Sinkable) e).$('`')
                             .I$();
                 } else {
                     LOG.error()
-                            .$("could not create table writer [tableName=").$(tableName)
+                            .$("could not create table writer or execute writer command [tableName=").$(tableName)
                             .$(", tableId=").$(cmd.getTableId())
                             .$(", ex=`").$(e).$('`')
                             .I$();

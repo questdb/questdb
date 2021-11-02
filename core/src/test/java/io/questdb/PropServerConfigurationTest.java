@@ -254,6 +254,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getAggressiveReadRetryCount());
         Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getWriterIdleTimeout());
         Assert.assertEquals(0, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
+        Assert.assertEquals(32, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
+        Assert.assertEquals(500_000, configuration.getCairoConfiguration().getWriterAsyncCommandBusyWaitTimeout());
 
         Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
         Assert.assertEquals("HTTP/1.1 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
@@ -540,6 +542,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(256, configuration.getCairoConfiguration().getColumnCastModelPoolCapacity());
             Assert.assertEquals(64, configuration.getCairoConfiguration().getCreateTableModelPoolCapacity());
             Assert.assertEquals(2001, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
+            Assert.assertEquals(16, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
+            Assert.assertEquals(333000, configuration.getCairoConfiguration().getWriterAsyncCommandBusyWaitTimeout());
 
             Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getCommitLag());
             Assert.assertEquals(100000, configuration.getCairoConfiguration().getMaxUncommittedRows());

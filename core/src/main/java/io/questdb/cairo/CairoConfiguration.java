@@ -276,6 +276,8 @@ public interface CairoConfiguration {
 
     long getWriterAsyncCommandBusyWaitTimeout();
 
+    int getWriterCommandQueueCapacity();
+
     boolean isO3QuickSortEnabled();
 
     boolean isParallelIndexingEnabled();
