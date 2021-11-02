@@ -269,6 +269,61 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void setMaxUncommittedRowsFailsToSwapMetadataUntilWriterReopen2() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
+                CairoTestUtils.create(tbl.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                ff = new FilesFacadeImpl() {
+                    @Override
+                    public boolean rename(LPSZ from, LPSZ to) {
+                        if (Chars.endsWith(to, TableUtils.META_FILE_NAME)) {
+                            return false;
+                        }
+                        return super.rename(from, to);
+                    }
+
+                };
+                String alterCommand = "ALTER TABLE X SET PARAM maxUncommittedRows = 11111";
+                try {
+                    compile(alterCommand, sqlExecutionContext);
+                    Assert.fail("Alter table should fail");
+                } catch (CairoError e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
+                }
+
+                engine.releaseAllReaders();
+                try (TableReader ignored = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
+                    Assert.fail();
+                } catch (CairoException ignored) {
+                }
+
+                ff = new FilesFacadeImpl();
+                // Now try with another failure.
+                engine.releaseAllWriters();
+                ff = new FilesFacadeImpl() {
+                    @Override
+                    public long openRO(LPSZ from) {
+                        if (Chars.endsWith(from, TableUtils.META_FILE_NAME)) {
+                            return -1;
+                        }
+                        return super.openRO(from);
+                    }
+
+                };
+                try {
+                    compile(alterCommand, sqlExecutionContext);
+                    Assert.fail();
+                } catch (CairoException | SqlException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "File not found:");
+                }
+            }
+        });
+    }
+
+    @Test
     public void setMaxUncommittedRowsMissingEquals() throws Exception {
         assertFailure("ALTER TABLE X SET PARAM maxUncommittedRows 100",
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",

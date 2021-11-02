@@ -24,10 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.AlterStatementImpl;
-import io.questdb.cairo.AlterTableExecutionContext;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.str.DirectCharSequence;
@@ -236,6 +233,34 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 } finally {
                     stopEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testAsyncAlterSymbolCache() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            try {
+                setUpEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
+                long commandId;
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
+                    CompiledQuery cc = compiler.compile("alter table product alter column name cache", sqlExecutionContext);
+                    commandId = executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext, alterTableExecutionContext);
+                    writer.tick();
+                    engine.tick();
+                }
+
+                SqlException exception = waitWriterEvent(engine, commandId, alterTableExecutionContext, 500_000, 0);
+                Assert.assertNull(exception);
+
+                engine.releaseAllReaders();
+                try(TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "product")) {
+                    int colIndex = rdr.getMetadata().getColumnIndex("name");
+                    Assert.assertTrue(rdr.getSymbolMapReader(colIndex).isCached());
+                }
+            } finally {
+                stopEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
             }
         });
     }

@@ -38,8 +38,18 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAlterExpectLockWriter() throws Exception {
+        assertFailure("alter system lock reader", 18, "'writer' expected");
+    }
+
+    @Test
     public void testAlterExpectTableName2() throws Exception {
         assertFailure("alter system unlock writer", 26, "table name expected");
+    }
+
+    @Test
+    public void testAlterExpectUnkockWriter() throws Exception {
+        assertFailure("alter system unlock reader", 20, "'writer' expected");
     }
 
     @Test

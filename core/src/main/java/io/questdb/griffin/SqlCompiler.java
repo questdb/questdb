@@ -945,9 +945,9 @@ public class SqlCompiler implements Closeable {
                             return alterTableColumnAddIndex(tableNamePosition, tableName, columnNameNamePosition, columnName, tableMetadata);
                         } else {
                             if (SqlKeywords.isCacheKeyword(tok)) {
-                                return alterTableColumnCacheFlag(tableNamePosition, tableName, columnName, tableMetadata, true);
+                                return alterTableColumnCacheFlag(tableNamePosition, tableName, columnName, reader, true);
                             } else if (SqlKeywords.isNoCacheKeyword(tok)) {
-                                return alterTableColumnCacheFlag(tableNamePosition, tableName, columnName, tableMetadata, false);
+                                return alterTableColumnCacheFlag(tableNamePosition, tableName, columnName, reader, false);
                             } else {
                                 throw SqlException.$(lexer.lastTokenPosition(), "'cache' or 'nocache' expected");
                             }
@@ -1235,10 +1235,11 @@ public class SqlCompiler implements Closeable {
             int tableNamePosition,
             String tableName,
             CharSequence columnName,
-            TableReaderMetadata metadata,
+            TableReader reader,
             boolean cache
     ) throws SqlException {
         try {
+            TableReaderMetadata metadata = reader.getMetadata();
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex == -1) {
                 throw SqlException.invalidColumn(lexer.lastTokenPosition(), columnName);
@@ -1248,7 +1249,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), "Invalid column type - Column should be of type symbol");
             }
 
-            if (metadata.isSymbolTableStatic(columnIndex) == cache) {
+            if (reader.getSymbolMapReader(columnIndex).isCached() == cache) {
                 // Nothing to do.
                 return compiledQuery.ofAlter(null);
             }
