@@ -39,11 +39,10 @@ import org.jetbrains.annotations.NotNull;
 public class CharIndexFunctionFactory implements FunctionFactory {
 
     private static final IntConstant NOT_FOUND = new IntConstant(0);
-    private static final IntConstant DEFAULT_POS = new IntConstant(1);
 
     @Override
     public String getSignature() {
-        return "charindex(V)";
+        return "charindex(SSI)";
     }
 
     @Override
@@ -54,10 +53,6 @@ public class CharIndexFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        if (args == null || args.size() < 2 || args.size() > 3) {
-            throw SqlException.$(position, "charindex can be used with 2 or 3 arguments");
-        }
-
         final Function substrFunc = args.getQuick(0);
         if (substrFunc.isConstant()) {
             if (substrFunc.getStrLen(null) < 1) {
@@ -72,24 +67,21 @@ public class CharIndexFunctionFactory implements FunctionFactory {
             }
         }
 
-        Function posFunc = DEFAULT_POS;
-        if (args.size() == 3) {
-            posFunc = args.getQuick(2);
-        }
+        final Function startFunc = args.getQuick(2);
 
-        return new CharIndexFunc(substrFunc, strFunc, posFunc);
+        return new Func(substrFunc, strFunc, startFunc);
     }
 
-    private static class CharIndexFunc extends IntFunction {
+    public static class Func extends IntFunction {
 
         private final Function substrFunc;
         private final Function strFunc;
-        private final Function posFunc; // pos starts with 1
+        private final Function startFunc; // positions start with 1
 
-        public CharIndexFunc(Function substrFunc, Function strFunc, Function posFunc) {
+        public Func(Function substrFunc, Function strFunc, Function startFunc) {
             this.substrFunc = substrFunc;
             this.strFunc = strFunc;
-            this.posFunc = posFunc;
+            this.startFunc = startFunc;
         }
 
         @Override
@@ -97,16 +89,16 @@ public class CharIndexFunctionFactory implements FunctionFactory {
             final CharSequence substr = this.substrFunc.getStr(rec);
             final CharSequence str = this.strFunc.getStr(rec);
             if (substr != null && str != null) {
-                final int pos = this.posFunc.getInt(rec);
-                if (str.length() < pos) {
+                final int start = this.startFunc.getInt(rec);
+                if (str.length() < start) {
                     return 0;
                 }
-                return charIndex(substr, str, pos);
+                return charIndex(substr, str, start);
             }
             return 0;
         }
 
-        private int charIndex(@NotNull CharSequence substr, @NotNull CharSequence str, int pos) {
+        private int charIndex(@NotNull CharSequence substr, @NotNull CharSequence str, int start) {
             final int substrLen = substr.length();
             if (substrLen < 1) {
                 return 0;
@@ -115,12 +107,12 @@ public class CharIndexFunctionFactory implements FunctionFactory {
             if (strLen < 1) {
                 return 0;
             }
-            if (pos < 1) {
-                pos = 1;
+            if (start < 1) {
+                start = 1;
             }
 
             OUTER:
-            for (int i = pos - 1; i < strLen; i++) {
+            for (int i = start - 1; i < strLen; i++) {
                 final char c = str.charAt(i);
                 if (c == substr.charAt(0)) {
                     if (strLen - i < substrLen) {
@@ -137,11 +129,6 @@ public class CharIndexFunctionFactory implements FunctionFactory {
                 }
             }
             return 0;
-        }
-
-        @Override
-        public boolean isConstant() {
-            return substrFunc.isConstant() && strFunc.isConstant();
         }
     }
 }

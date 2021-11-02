@@ -57,9 +57,9 @@ public class CharIndexFunctionFactoryTest  extends AbstractGriffinTest {
     }
 
     @Test
-    public void testPosition() throws Exception {
+    public void testStart() throws Exception {
         assertQuery(
-                "substr\tstr\tpos\tcharindex\n" +
+                "substr\tstr\tstart\tcharindex\n" +
                         ",\tcat,dog\t10\t0\n" +
                         ",\t\t6\t0\n" +
                         ",\tcat,dog\t7\t0\n" +
@@ -70,11 +70,11 @@ public class CharIndexFunctionFactoryTest  extends AbstractGriffinTest {
                         ",\ta,b,c\t6\t0\n" +
                         ",\t\t0\t0\n" +
                         ",\t\t3\t0\n",
-                "select substr,str,pos,charindex(substr,str,pos) from x",
+                "select substr,str,start,charindex(substr,str,start) from x",
                 "create table x as (" +
                         "select rnd_str('cat,dog','a,b,c',NULL) as str\n" +
                         ", rnd_str(',') as substr\n" +
-                        ", rnd_int(-1,10,0) as pos\n" +
+                        ", rnd_int(-1,10,0) as start\n" +
                         "from long_sequence(10)" +
                         ")",
                 null,
