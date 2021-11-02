@@ -33,13 +33,13 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
     //alter system [lock|unlock] writer <tableName>
 
     @Test
-    public void testAlterExpectTableName1() throws Exception {
-        assertFailure("alter system lock writer", 24, "table name expected");
+    public void testAlterExpectLockWriter() throws Exception {
+        assertFailure("alter system lock reader", 18, "'writer' expected");
     }
 
     @Test
-    public void testAlterExpectLockWriter() throws Exception {
-        assertFailure("alter system lock reader", 18, "'writer' expected");
+    public void testAlterExpectTableName1() throws Exception {
+        assertFailure("alter system lock writer", 24, "table name expected");
     }
 
     @Test
@@ -78,8 +78,54 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDoubleLockWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            compile("alter system lock writer x", sqlExecutionContext);
+            try {
+                compile("alter system lock writer x", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "could not lock, busy");
+            }
+        });
+    }
+
+    @Test
+    public void testLockWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            compile("alter system lock writer x", sqlExecutionContext);
+            TestUtils.assertEquals("alterSystem", engine.lockWriter("x", "new lock"));
+        });
+    }
+
+    @Test
     public void testNonExistentTable() throws Exception {
         assertFailure("alter system unlock writer z", 27, "table 'z' does not exist");
+    }
+
+    @Test
+    public void testUnlockNonExistingWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compile("alter system unlock writer y", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "table 'y' does not exist");
+            }
+
+        });
+    }
+
+    @Test
+    public void testUnlockWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            compile("alter system lock writer x", sqlExecutionContext);
+            compile("alter system unlock writer x", sqlExecutionContext);
+            Assert.assertNull(engine.lockWriter("x", "new lock 2"));
+        });
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {

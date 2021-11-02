@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.log.LogRecord;
+import io.questdb.mp.MPSequence;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.test.tools.TestUtils;
@@ -197,6 +198,13 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 setUpEngineAsyncWriterEventWait(engine, alterTableExecutionContext.getWriterEventConsumeSequence());
                 long commandId;
                 try (TableWriter ignored = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
+                    // Add invalid command to engine queue
+                    MPSequence commandPugSeq = messageBus.getTableWriterCommandPubSeq();
+                    long pubCursor = commandPugSeq.next();
+                    Assert.assertTrue(pubCursor > -1);
+                    messageBus.getTableWriterCommandQueue().get(pubCursor).setTableId(ignored.getMetadata().getId());
+                    commandPugSeq.done(pubCursor);
+
                     CompiledQuery cc = compiler.compile("alter table product rename column name to name1, timestamp to timestamp1", sqlExecutionContext);
                     commandId = executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext, alterTableExecutionContext);
                 }
@@ -291,4 +299,5 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             }
         });
     }
+
 }

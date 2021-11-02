@@ -49,26 +49,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     private final int DIR_MODE = configuration.getMkDirMode();
 
     @Test
-    public void testAttachAFailsInvalidFormatPartitionsMonthly() throws Exception {
-        assertMemoryLeak(() -> {
-            try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.MONTH)) {
-
-                CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
-
-                String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '2020-01-01'";
-                try {
-                    compile(alterCommand, sqlExecutionContext);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals("[38] table 'dst' could not be altered: [0]: partition date in 'YYYY-MM' format expected", e.getMessage());
-                }
-            }
-        });
-    }
-
-    @Test
     public void testAttachActive2Partitions() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
@@ -177,6 +157,66 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     Assert.fail();
                 } catch (SqlException e) {
                     Assert.assertEquals("[38] table 'dst' could not be altered: [0]: partition date in 'YYYY' format expected", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachFailsInvalidFormatPartitionsMonthly() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.MONTH)) {
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '2020-01-01'";
+                try {
+                    compile(alterCommand, sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals("[38] table 'dst' could not be altered: [0]: partition date in 'YYYY-MM' format expected", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachFailsInvalidFormat() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.MONTH)) {
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '202A-01'";
+                try {
+                    compile(alterCommand, sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals("[38] table 'dst' could not be altered: [0]: partition date in 'YYYY-MM' format expected", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachFailsInvalidSepartorFormat() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.MONTH)) {
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '2020-01'.'2020-02'";
+                try {
+                    compile(alterCommand, sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals("[47] ',' expected", e.getMessage());
                 }
             }
         });
