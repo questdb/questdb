@@ -81,11 +81,11 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final Path path = new Path();
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
+    private final LineTcpReceiverConfiguration configuration;
     private Sequence pubSeq;
     private int loadCheckCycles = 0;
     private int reshuffleCount = 0;
     private LineTcpReceiver.SchedulerListener listener;
-    private final LineTcpReceiverConfiguration configuration;
 
     LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
@@ -117,11 +117,17 @@ class LineTcpMeasurementScheduler implements Closeable {
         int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
         int queueSize = lineConfiguration.getWriterQueueCapacity();
         queue = new RingQueue<>(
-                () -> new LineTcpMeasurementEvent(
-                        maxMeasurementSize,
+                (address, addressSize) -> new LineTcpMeasurementEvent(
+                        address,
+                        addressSize,
                         lineConfiguration.getMicrosecondClock(),
-                        lineConfiguration.getTimestampAdapter()),
-                queueSize);
+                        lineConfiguration.getTimestampAdapter()
+                ),
+                getEventSlotSize(maxMeasurementSize),
+                queueSize,
+                MemoryTag.NATIVE_DEFAULT
+        );
+
         pubSeq = new MPSequence(queueSize);
 
         int nWriterThreads = writerWorkerPool.getWorkerCount();
@@ -173,12 +179,14 @@ class LineTcpMeasurementScheduler implements Closeable {
             } finally {
                 tableUpdateDetailsLock.writeLock().unlock();
             }
-            for (int n = 0; n < queue.getCapacity(); n++) {
-                queue.get(n).close();
-            }
-            path.close();
-            ddlMem.close();
+            Misc.free(path);
+            Misc.free(ddlMem);
+            Misc.free(queue);
         }
+    }
+
+    private static long getEventSlotSize(int maxMeasurementSize) {
+        return Numbers.ceilPow2((long) (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1));
     }
 
     @NotNull
@@ -225,10 +233,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         return loadCheckCycles;
     }
 
-    int getReshuffleCount() {
-        return reshuffleCount;
-    }
-
     long getNextPublisherEventSequence() {
         assert isOpen();
         long seq;
@@ -236,6 +240,10 @@ class LineTcpMeasurementScheduler implements Closeable {
         while ((seq = pubSeq.next()) == -2) {
         }
         return seq;
+    }
+
+    int getReshuffleCount() {
+        return reshuffleCount;
     }
 
     private boolean isOpen() {
@@ -448,16 +456,21 @@ class LineTcpMeasurementScheduler implements Closeable {
         private volatile boolean rebalanceReleasedByFromThread;
         private boolean commitOnWriterClose;
 
-        private LineTcpMeasurementEvent(int maxMeasurementSize, MicrosecondClock clock, LineProtoTimestampAdapter timestampAdapter) {
-            bufSize = (long) (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1);
-            bufLo = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
+        private LineTcpMeasurementEvent(
+                long bufLo,
+                long bufSize,
+                MicrosecondClock clock,
+                LineProtoTimestampAdapter timestampAdapter
+        ) {
+            this.bufLo = bufLo;
+            this.bufSize = bufSize;
             this.clock = clock;
             this.timestampAdapter = timestampAdapter;
         }
 
         @Override
         public void close() {
-            Unsafe.free(bufLo, bufSize, MemoryTag.NATIVE_DEFAULT);
+            // this is concurrent writer release
             tableUpdateDetails = Misc.free(tableUpdateDetails);
             bufLo = 0;
         }
@@ -1266,7 +1279,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         private void close() {
             LOG.info().$("line protocol writer closing [threadId=").$(workerId).$(']').$();
             // Finish all jobs in the queue before stopping
-            for (int n = 0; n < queue.getCapacity(); n++) {
+            for (int n = 0; n < queue.getCycle(); n++) {
                 if (!run(workerId)) {
                     break;
                 }

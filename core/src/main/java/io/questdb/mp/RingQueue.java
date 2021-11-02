@@ -24,22 +24,52 @@
 
 package io.questdb.mp;
 
+import io.questdb.std.DirectObjectFactory;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjectFactory;
+import io.questdb.std.Unsafe;
 
 import java.io.Closeable;
 
 public class RingQueue<T> implements Closeable {
     private final int mask;
     private final T[] buf;
+    private final long memory;
+    private long memorySize;
+    private final int memoryTag;
 
     @SuppressWarnings("unchecked")
     public RingQueue(ObjectFactory<T> factory, int cycle) {
+
+        // zero queue is allowed for testing
+        assert cycle == 0 || Numbers.isPow2(cycle);
+
         this.mask = cycle - 1;
         this.buf = (T[]) new Object[cycle];
 
         for (int i = 0; i < cycle; i++) {
             buf[i] = factory.newInstance();
+        }
+
+        // heap based queue
+        this.memory = 0;
+        this.memorySize = 0;
+        this.memoryTag = 0;
+    }
+
+    @SuppressWarnings("unchecked")
+    public RingQueue(DirectObjectFactory<T> factory, long slotSize, int cycle, int memoryTag) {
+        this.mask = cycle - 1;
+        this.buf = (T[]) new Object[cycle];
+
+        this.memorySize = slotSize * cycle;
+        this.memoryTag = memoryTag;
+        this.memory = Unsafe.calloc(memorySize, memoryTag);
+        long p = memory;
+        for (int i = 0; i < cycle; i++) {
+            buf[i] = factory.newInstance(p, slotSize);
+            p += slotSize;
         }
     }
 
@@ -48,13 +78,17 @@ public class RingQueue<T> implements Closeable {
         for (int i = 0, n = buf.length; i < n; i++) {
             Misc.free(buf[i]);
         }
+        if (memorySize > 0) {
+            Unsafe.free(memory, memorySize, memoryTag);
+            this.memorySize = 0;
+        }
     }
 
     public T get(long cursor) {
         return buf[(int) (cursor & mask)];
     }
 
-    public int getCapacity() {
+    public int getCycle() {
         return buf.length;
     }
 }
