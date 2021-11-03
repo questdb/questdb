@@ -2,7 +2,7 @@ import React, { ReactNode } from "react"
 import { Virtuoso } from "react-virtuoso"
 
 type Props = Readonly<{
-  height: number
+  height?: number
   isScrolling?: (isScrolling: boolean) => void
   itemContent: (index: number, data: any) => ReactNode
   totalCount: number | undefined
@@ -18,7 +18,7 @@ export const VirtualList = ({
     <Virtuoso
       isScrolling={isScrolling}
       itemContent={itemContent}
-      style={{ height }}
+      style={height ? { height } : {}}
       totalCount={totalCount}
     />
   )

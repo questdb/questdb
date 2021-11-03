@@ -119,8 +119,6 @@ const Schema = ({
   const [refresh, setRefresh] = useState(Date.now())
   const [isScrolling, setIsScrolling] = useState(false)
   const { readOnly } = useSelector(selectors.console.getConfig)
-  const contentRef = useRef<HTMLDivElement | null>(null)
-  const [contentHeight, setContentHeight] = useState(310)
 
   const handleChange = useCallback((name: string) => {
     setOpened(name)
@@ -201,12 +199,6 @@ const Schema = ({
     })
   }, [errorRef, fetchTables])
 
-  useEffect(() => {
-    if (contentRef.current) {
-      setContentHeight(contentRef.current?.offsetHeight)
-    }
-  }, [contentRef])
-
   return (
     <Wrapper ref={innerRef} {...rest}>
       <Menu>
@@ -230,14 +222,13 @@ const Schema = ({
         )}
       </Menu>
 
-      <Content _loading={loading} ref={contentRef}>
+      <Content _loading={loading}>
         {loading ? (
           <Loader size="48px" />
         ) : loadingError ? (
           <LoadingError error={loadingError} />
         ) : (
           <VirtualList
-            height={contentHeight}
             isScrolling={handleScrollingStateChange}
             itemContent={listItemContent}
             totalCount={tables?.length}
