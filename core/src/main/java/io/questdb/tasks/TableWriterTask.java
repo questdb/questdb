@@ -44,8 +44,8 @@ public class TableWriterTask implements Closeable {
     private long sequence;
     private long ip;
 
-    public TableWriterTask(long size) {
-        data = Unsafe.calloc(size, MemoryTag.NATIVE_REPL);
+    public TableWriterTask(long data, long size) {
+        this.data = data;
         this.dataSize = size;
         this.appendPtr = data;
         this.appendLim = data + dataSize;
@@ -54,7 +54,6 @@ public class TableWriterTask implements Closeable {
     @Override
     public void close() {
         if (dataSize > 0) {
-            Unsafe.free(data, dataSize, MemoryTag.NATIVE_REPL);
             dataSize = 0;
             appendPtr = 0;
             appendLim = 0;

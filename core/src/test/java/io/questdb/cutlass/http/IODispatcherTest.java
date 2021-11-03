@@ -6278,7 +6278,7 @@ public class IODispatcherTest {
 
                 // server will publish status of each request to this queue
                 final RingQueue<Status> queue = new RingQueue<>(Status::new, 1024);
-                final MPSequence pubSeq = new MPSequence(queue.getCapacity());
+                final MPSequence pubSeq = new MPSequence(queue.getCycle());
                 SCSequence subSeq = new SCSequence();
                 pubSeq.then(subSeq).then(pubSeq);
 

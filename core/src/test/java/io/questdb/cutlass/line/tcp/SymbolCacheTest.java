@@ -71,7 +71,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                 final AtomicBoolean cacheInError = new AtomicBoolean(false);
 
                 RingQueue<Holder> wheel = new RingQueue<Holder>(Holder::new, 256);
-                SPSequence pubSeq = new SPSequence(wheel.getCapacity());
+                SPSequence pubSeq = new SPSequence(wheel.getCycle());
                 SCSequence subSeq = new SCSequence();
                 pubSeq.then(subSeq).then(pubSeq);
 

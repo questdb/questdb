@@ -628,15 +628,18 @@ public class LogFactory implements Closeable {
         private FanOut fanOut;
 
         public Holder(int queueDepth, final int recordLength) {
-            this.ring = new RingQueue<>(() -> new LogRecordSink(recordLength), queueDepth);
+            this.ring = new RingQueue<>(
+                    LogRecordSink::new,
+                    Numbers.ceilPow2(recordLength),
+                    queueDepth,
+                    MemoryTag.NATIVE_DEFAULT
+            );
             this.lSeq = new MPSequence(queueDepth);
         }
 
         @Override
         public void close() {
-            for (int i = 0, n = ring.getCapacity(); i < n; i++) {
-                Misc.free(ring.get(i));
-            }
+            Misc.free(ring);
         }
     }
 
@@ -644,5 +647,6 @@ public class LogFactory implements Closeable {
         reserved.add("scope");
         reserved.add("class");
         reserved.add("level");
+        Os.init();
     }
 }
