@@ -2667,10 +2667,26 @@ public class TableWriter implements Closeable {
                         o3Basket.ensureCapacity(columnCount, indexCount);
 
                         AtomicInteger columnCounter = o3ColumnCounters.next();
-                        columnCounter.set(columnCount);
+
+                        // async partition processing set this counter to the column count
+                        // and then manages issues if publishing of column tasks fails
+                        // mid-column-count.
                         latchCount++;
 
                         if (append) {
+                            // we are appending last partition, make sure it has been mapped!
+                            // this also might fail, make sure exception is trapped and partitions are
+                            // counted down correctly
+                            try {
+                                setAppendPosition(srcDataMax, false);
+                            } catch (Throwable e) {
+                                o3BumpErrorCount();
+                                o3ClockDownPartitionUpdateCount();
+                                o3CountDownDoneLatch();
+                                throw e;
+                            }
+
+                            columnCounter.set(columnCount);
                             Path pathToPartition = Path.getThreadLocal(this.path);
                             TableUtils.setPathForPartition(pathToPartition, partitionBy, o3TimestampMin, false);
                             TableUtils.txnPartitionConditionally(pathToPartition, srcNameTxn);

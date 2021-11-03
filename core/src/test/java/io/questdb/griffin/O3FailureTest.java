@@ -26,6 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -39,7 +41,6 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -58,9 +59,8 @@ public class O3FailureTest extends AbstractO3Test {
 
         @Override
         public long length(long fd) {
-            long ll = counter.decrementAndGet();
-            System.out.println(ll);
-            if (ll == 0) {
+            final long remaining = counter.decrementAndGet();
+            if (remaining == 0) {
                 failNextAlloc = true;
                 return 0;
             }
@@ -288,12 +288,12 @@ public class O3FailureTest extends AbstractO3Test {
             return super.allocate(fd, size);
         }
     };
+    private static final Log LOG = LogFactory.getLog(O3FailureTest.class);
 
     @Test
-    @Ignore
     public void testAllocateFailsAtO3OpenColumn() throws Exception {
-        counter.set(28);
-        executeWithPool(0, O3FailureTest::testAppendIntoColdWriter0, ffAllocateFailure);
+        counter.set(45);
+        executeWithPool(0, O3FailureTest::testAllocateFailsAtO3OpenColumn0, ffAllocateFailure);
     }
 
     @Test
@@ -1014,7 +1014,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testTwoRowsConsistency0);
     }
 
-    private static void testAppendIntoColdWriter0(
+    private static void testAllocateFailsAtO3OpenColumn0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext executionContext
@@ -1537,26 +1537,34 @@ public class O3FailureTest extends AbstractO3Test {
 
         try (TableWriter w = engine.getWriter(executionContext.getCairoSecurityContext(), "x", "test")) {
 
-            TableWriter.Row row;
-            // lets add column
+            // Adding column is essential, columns open in writer's constructor will have
+            // mapped memory, whereas newly added column does not
             w.addColumn("v", ColumnType.DOUBLE);
 
-            // this row goes into a non-recent partition
-            // triggering O3
-            row = w.newRow(518300000000L);
-            row.putInt(0, 10);
-            row.putLong(1, 3500000L);
-            // skip over the timestamp
-            row.putDouble(3, 10.2);
-            row.append();
+            // stash copy of X, in case X is corrupt
+            compiler.compile("create table y as (select * from x)", executionContext);
 
-            // another O3 row, this time it is appended to last partition
-            row = w.newRow(549900000000L);
-            row.putInt(0, 10);
-            row.putLong(1, 3500000L);
-            // skip over the timestamp
-            row.putDouble(3, 10.2);
-            row.append();
+            xxx(w);
+
+            // this should fail
+            try {
+                w.commit();
+                Assert.fail();
+            } catch (CairoException ignored) {
+                w.rollback();
+            }
+
+            // check that X and Y are the same
+            TestUtils.assertSqlCursors(
+                    compiler,
+                    executionContext,
+                    "x",
+                    "y",
+                    LOG
+            );
+
+            // repeat the same rows
+            xxx(w);
             w.commit();
         }
 
@@ -1568,6 +1576,38 @@ public class O3FailureTest extends AbstractO3Test {
         );
 
         TestUtils.assertEquals(expected, sink2);
+
+        sink2.clear();
+        sink2.put(
+                "count\n" +
+                "502\n"
+        );
+
+        assertXCount(
+                compiler,
+                executionContext
+        );
+
+    }
+
+    private static void xxx(TableWriter w) {
+        TableWriter.Row row;
+        // this row goes into a non-recent partition
+        // triggering O3
+        row = w.newRow(518300000000L);
+        row.putInt(0, 10);
+        row.putLong(1, 3500000L);
+        // skip over the timestamp
+        row.putDouble(3, 10.2);
+        row.append();
+
+        // another O3 row, this time it is appended to last partition
+        row = w.newRow(549900000000L);
+        row.putInt(0, 10);
+        row.putLong(1, 3500000L);
+        // skip over the timestamp
+        row.putDouble(3, 10.2);
+        row.append();
     }
 
     private static void testInsertAsSelectNulls0(

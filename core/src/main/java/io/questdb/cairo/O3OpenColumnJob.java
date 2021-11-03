@@ -77,9 +77,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter
     ) {
-
-        tableWriter.setAppendPosition(srcDataMax, false);
-
         final long dstLen = srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop;
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BINARY:
