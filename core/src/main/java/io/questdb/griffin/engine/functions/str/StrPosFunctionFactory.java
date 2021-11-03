@@ -70,26 +70,26 @@ public class StrPosFunctionFactory implements FunctionFactory {
             final CharSequence str = this.strFunc.getStr(rec);
             final CharSequence substr = this.substrFunc.getStr(rec);
             if (str != null && substr != null) {
-                return strpos(substr, str);
+                return strpos(str, substr);
             }
             return Numbers.INT_NaN;
         }
 
-        private int strpos(@NotNull CharSequence substr, @NotNull CharSequence str) {
-            final int strLen = str.length();
-            if (strLen < 1) {
-                return 0;
-            }
+        private int strpos(@NotNull CharSequence str, @NotNull CharSequence substr) {
             final int substrLen = substr.length();
             if (substrLen < 1) {
                 return 1;
+            }
+            final int strLen = str.length();
+            if (strLen < 1) {
+                return 0;
             }
 
             OUTER:
             for (int i = 0; i < strLen - substrLen + 1; i++) {
                 final char c = str.charAt(i);
                 if (c == substr.charAt(0)) {
-                    for (int k = 1; k < substrLen && k + i < strLen; k++) {
+                    for (int k = 1; k < substrLen; k++) {
                         if (str.charAt(i + k) != substr.charAt(k)) {
                             continue OUTER;
                         }
