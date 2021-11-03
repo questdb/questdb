@@ -70,6 +70,7 @@ const loadingStyles = css`
 
 const Wrapper = styled(PaneWrapper)`
   overflow-x: auto;
+  height: 100%;
 `
 
 const Menu = styled(PaneMenu)`
@@ -118,6 +119,8 @@ const Schema = ({
   const [refresh, setRefresh] = useState(Date.now())
   const [isScrolling, setIsScrolling] = useState(false)
   const { readOnly } = useSelector(selectors.console.getConfig)
+  const contentRef = useRef<HTMLDivElement | null>(null)
+  const [contentHeight, setContentHeight] = useState(310)
 
   const handleChange = useCallback((name: string) => {
     setOpened(name)
@@ -198,6 +201,12 @@ const Schema = ({
     })
   }, [errorRef, fetchTables])
 
+  useEffect(() => {
+    if (contentRef.current) {
+      setContentHeight(contentRef.current?.offsetHeight)
+    }
+  }, [contentRef])
+
   return (
     <Wrapper ref={innerRef} {...rest}>
       <Menu>
@@ -221,14 +230,14 @@ const Schema = ({
         )}
       </Menu>
 
-      <Content _loading={loading}>
+      <Content _loading={loading} ref={contentRef}>
         {loading ? (
           <Loader size="48px" />
         ) : loadingError ? (
           <LoadingError error={loadingError} />
         ) : (
           <VirtualList
-            height={310}
+            height={contentHeight}
             isScrolling={handleScrollingStateChange}
             itemContent={listItemContent}
             totalCount={tables?.length}
