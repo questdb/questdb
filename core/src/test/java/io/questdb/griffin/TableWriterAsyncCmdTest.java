@@ -28,7 +28,10 @@ import io.questdb.cairo.*;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.DirectCharSequence;
+import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -129,11 +132,72 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "Could not publish writer ALTER TABLE task [table=product]");
                 }
-            }
+            } // Unblock table
 
-            // Unblock table
             CompiledQuery cc = compiler.compile("ALTER TABLE product add column column5 int", sqlExecutionContext);
-            executeAlterCommand(engine, cc.getAlterStatement(), sqlExecutionContext, alterTableExecutionContext);
+            Assert.assertEquals(-1, executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext, alterTableExecutionContext));
+        });
+    }
+
+    @Test
+    public void testAsyncAlterCommandsFailsToRemoveColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = new FilesFacadeImpl() {
+                int attempt = 0;
+
+                @Override
+                public boolean rename(LPSZ from, LPSZ to) {
+                    if (Chars.endsWith(from, "_meta") && attempt++ < configuration.getFileOperationRetryCount()) {
+                        return false;
+                    }
+                    return super.rename(from, to);
+                }
+            };
+            compile("create table product as (select x, x as toremove from long_sequence(100))", sqlExecutionContext);
+            long commandId;
+
+            // Block table
+            try (TableWriter ignored = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
+                CompiledQuery cc = compiler.compile("ALTER TABLE product drop column toremove", sqlExecutionContext);
+                commandId = executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext, alterTableExecutionContext);
+                engine.tick();
+            } // Unblock table
+
+            SqlException exception = waitWriterEvent(engine, commandId, alterTableExecutionContext, 500_000, 0);
+            Assert.assertNotNull(exception);
+            TestUtils.assertContains(exception.getFlyweightMessage(), "cannot drop column. Try again later");
+            compile("ALTER TABLE product drop column toremove", sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testAsyncAlterCommandsFailsToDropPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = new FilesFacadeImpl() {
+                int attempt = 0;
+
+                @Override
+                public boolean rename(LPSZ from, LPSZ to) {
+                    if (Chars.endsWith(from, "_meta") && attempt++ < configuration.getFileOperationRetryCount()) {
+                        return false;
+                    }
+                    return super.rename(from, to);
+                }
+            };
+            compile("create table product as (select x, x as toremove from long_sequence(100))", sqlExecutionContext);
+            long commandId;
+
+            // Block table
+            try (TableWriter ignored = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
+                CompiledQuery cc = compiler.compile("ALTER TABLE product drop column toremove", sqlExecutionContext);
+                commandId = executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext, alterTableExecutionContext);
+                engine.tick();
+            } // Unblock table
+
+            SqlException exception = waitWriterEvent(engine, commandId, alterTableExecutionContext, 500_000, 0);
+            Assert.assertNotNull(exception);
+            TestUtils.assertContains(exception.getFlyweightMessage(), "cannot drop column. Try again later");
+            compile("ALTER TABLE product drop column toremove", sqlExecutionContext);
         });
     }
 

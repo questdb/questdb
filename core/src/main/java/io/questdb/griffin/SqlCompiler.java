@@ -1256,23 +1256,18 @@ public class SqlCompiler implements Closeable {
             TableReader reader,
             boolean cache
     ) throws SqlException {
-        try {
-            TableReaderMetadata metadata = reader.getMetadata();
-            int columnIndex = metadata.getColumnIndexQuiet(columnName);
-            if (columnIndex == -1) {
-                throw SqlException.invalidColumn(lexer.lastTokenPosition(), columnName);
-            }
-
-            if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
-                throw SqlException.$(lexer.lastTokenPosition(), "Invalid column type - Column should be of type symbol");
-            }
-
-            return cache ? compiledQuery.ofAlter(alterQuery.ofCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName))
-                    :  compiledQuery.ofAlter(alterQuery.ofRemoveCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName));
-        } catch (CairoException e) {
-            throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage())
-                    .put("[errno=").put(e.getErrno()).put(']');
+        TableReaderMetadata metadata = reader.getMetadata();
+        int columnIndex = metadata.getColumnIndexQuiet(columnName);
+        if (columnIndex == -1) {
+            throw SqlException.invalidColumn(lexer.lastTokenPosition(), columnName);
         }
+
+        if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
+            throw SqlException.$(lexer.lastTokenPosition(), "Invalid column type - Column should be of type symbol");
+        }
+
+        return cache ? compiledQuery.ofAlter(alterQuery.ofCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName))
+                :  compiledQuery.ofAlter(alterQuery.ofRemoveCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName));
     }
 
     private CompiledQuery alterTableDropColumn(int tableNamePosition, String tableName, TableReaderMetadata metadata) throws SqlException {
