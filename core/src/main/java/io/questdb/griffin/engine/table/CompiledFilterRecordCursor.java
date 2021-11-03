@@ -24,7 +24,10 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryAR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -39,7 +42,6 @@ import java.util.function.BooleanSupplier;
 class CompiledFilterRecordCursor implements RecordCursor {
 
     private final PageFrameRecord recordA;
-    private final PageFrameRecord recordB;
 
     private PageFrameCursor pageFrameCursor;
     private RecordMetadata metadata;
@@ -60,7 +62,6 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
     public CompiledFilterRecordCursor(@NotNull IntList columnIndexes, MemoryAR filter) {
         this.recordA = new PageFrameRecord(columnIndexes);
-        this.recordB = new PageFrameRecord(columnIndexes);
 
         this.filter = filter;
         this.filterSize = filter.getAppendOffset();
@@ -101,13 +102,11 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
     @Override
     public Record getRecordB() {
-//        return recordB;
         throw new UnsupportedOperationException();
     }
 
     @Override
     public void recordAt(Record record, long rowId) {
-//        ((PageFrameRecord)record).jumpTo(Rows.toLocalRowID(rowId));
         throw new UnsupportedOperationException();
     }
 
@@ -130,7 +129,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private boolean nextPage() {
         PageFrame frame;
         while ((frame = pageFrameCursor.next()) != null) {
-            recordA.of(frame);
+            recordA.of(frame, pageFrameCursor);
             int sz = metadata.getColumnCount();
             columns.extend(sz);
             columns.clear();
@@ -159,9 +158,11 @@ class CompiledFilterRecordCursor implements RecordCursor {
     public static class PageFrameRecord implements Record {
         private final ByteSequenceView bsview = new ByteSequenceView();
         private final CharSequenceView csview = new CharSequenceView();
+        private final CharSequenceView csview2 = new CharSequenceView();
         private final Long256Impl long256A = new Long256Impl();
         private final Long256Impl long256B = new Long256Impl();
 
+        private PageFrameCursor cursor;
         private PageFrame frame;
         private final IntList columnIndexes;
         private long index = 0;
@@ -186,37 +187,29 @@ class CompiledFilterRecordCursor implements RecordCursor {
             this.index = index;
         }
 
-        public void of(PageFrame frame) {
+        public void of(PageFrame frame, PageFrameCursor cursor) {
+            this.cursor = cursor;
             this.frame = frame;
             this.index = 0;
         }
 
         @Override
         public BinarySequence getBin(int columnIndex) {
-//        final int col = deferenceColumn(columnIndex);
-//        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
-//        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
-//                recordIndex,
-//                TableReader.getPrimaryColumnIndex(columnBase, col)
-//        );
-//        return reader.getColumn(absoluteColumnIndex).getBin(
-//                reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)
-//        );
-            return null;
+            final int idx = getColumnIndex(columnIndex);
+            final long indexPageAddress = frame.getIndexPageAddress(idx);
+            final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + index * Long.BYTES);
+            final long dataPageAddress = frame.getPageAddress(idx);
+            final long size = frame.getPageSize(idx);
+            return getBin(dataPageAddress, offset, size, bsview);
         }
 
         @Override
         public long getBinLen(int columnIndex) {
-//        final int col = deferenceColumn(columnIndex);
-//        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
-//        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
-//                recordIndex,
-//                TableReader.getPrimaryColumnIndex(columnBase, col)
-//        );
-//        return reader.getColumn(absoluteColumnIndex).getBinLen(
-//                reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)
-//        );
-            return 0;
+            final int idx = getColumnIndex(columnIndex);
+            final long indexPageAddress = frame.getIndexPageAddress(idx);
+            final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + index * Long.BYTES);
+            final long dataPageAddress = frame.getPageAddress(idx);
+            return Unsafe.getUnsafe().getLong(dataPageAddress + offset);
         }
 
         @Override
@@ -249,10 +242,10 @@ class CompiledFilterRecordCursor implements RecordCursor {
             return Unsafe.getUnsafe().getInt(address + index * Integer.BYTES);
         }
 
-//        @Override
-//        public long getRowId() {
-//            return Rows.toRowID(frame.getPartitionIndex(), index);
-//        }
+        @Override
+        public long getRowId() {
+            throw new UnsupportedOperationException();
+        }
 
         @Override
         public long getLong(int columnIndex) {
@@ -274,16 +267,31 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
         @Override
         public CharSequence getStr(int columnIndex) {
-//        final int col = deferenceColumn(columnIndex);
-//        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
-//        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
-//                recordIndex,
-//                TableReader.getPrimaryColumnIndex(columnBase, col)
-//        );
-//        return reader.getColumn(absoluteColumnIndex).getStr(
-//                reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)
-//        );
-            return null;
+            final int idx = getColumnIndex(columnIndex);
+            final long indexPageAddress = frame.getIndexPageAddress(idx);
+            final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + index * Long.BYTES);
+            final long dataPageAddress = frame.getPageAddress(idx);
+            final long size = frame.getPageSize(idx);
+            return getStr(dataPageAddress, offset, size, csview);
+        }
+
+        @Override
+        public int getStrLen(int columnIndex) {
+            final int idx = getColumnIndex(columnIndex);
+            final long indexPageAddress = frame.getIndexPageAddress(idx);
+            final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + index * Long.BYTES);
+            final long dataPageAddress = frame.getPageAddress(idx);
+            return Unsafe.getUnsafe().getInt(dataPageAddress + offset);
+        }
+
+        @Override
+        public CharSequence getStrB(int columnIndex) {
+            final int idx = getColumnIndex(columnIndex);
+            final long indexPageAddress = frame.getIndexPageAddress(idx);
+            final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + index * Long.BYTES);
+            final long dataPageAddress = frame.getPageAddress(idx);
+            final long size = frame.getPageSize(idx);
+            return getStr(dataPageAddress, offset, size, csview2);
         }
 
         @Override
@@ -305,55 +313,17 @@ class CompiledFilterRecordCursor implements RecordCursor {
         }
 
         @Override
-        public CharSequence getStrB(int columnIndex) {
-//        final int col = deferenceColumn(columnIndex);
-//        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
-//        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
-//                recordIndex,
-//                TableReader.getPrimaryColumnIndex(columnBase, col)
-//        );
-//        return reader.getColumn(absoluteColumnIndex).getStr2(
-//                reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)
-//        );
-            return null;
-        }
-
-        @Override
-        public int getStrLen(int columnIndex) {
-//        final int col = deferenceColumn(columnIndex);
-//        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
-//        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
-//                recordIndex,
-//                TableReader.getPrimaryColumnIndex(columnBase, col)
-//        );
-//        return reader.getColumn(absoluteColumnIndex).getStrLen(
-//                reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)
-//        );
-            return 0;
-        }
-
-        @Override
         public CharSequence getSym(int columnIndex) {
-//        final int col = deferenceColumn(columnIndex);
-//        final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
-//        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
-//                offset,
-//                TableReader.getPrimaryColumnIndex(columnBase, col)
-//        );
-//        return frame.getSymbolMapReader(col).valueOf(reader.getColumn(absoluteColumnIndex).getInt(offset));
-            return null;
+            final long address = getColumnAddress(columnIndex);
+            final int key = Unsafe.getUnsafe().getInt(address + index * Integer.BYTES);
+            return cursor.getSymbolMapReader(getColumnIndex(columnIndex)).valueOf(key);
         }
 
         @Override
         public CharSequence getSymB(int columnIndex) {
-//        final int col = deferenceColumn(columnIndex);
-//        final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
-//        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
-//                offset,
-//                TableReader.getPrimaryColumnIndex(columnBase, col)
-//        );
-//        return reader.getSymbolMapReader(col).valueBOf(reader.getColumn(absoluteColumnIndex).getInt(offset));
-            return null;
+            final long address = getColumnAddress(columnIndex);
+            final int key = Unsafe.getUnsafe().getInt(address + index * Integer.BYTES);
+            return cursor.getSymbolMapReader(getColumnIndex(columnIndex)).valueBOf(key);
         }
 
         @Override
@@ -381,8 +351,12 @@ class CompiledFilterRecordCursor implements RecordCursor {
         }
 
         private long getColumnAddress(int columnIndex) {
-            final int idx = columnIndexes.getQuick(columnIndex);
+            final int idx = getColumnIndex(columnIndex);
             return frame.getPageAddress(idx);
+        }
+
+        private int getColumnIndex(int columnIndex) {
+            return columnIndexes.getQuick(columnIndex);
         }
 
         void getLong256(long addr, CharSink sink) {
@@ -405,15 +379,41 @@ class CompiledFilterRecordCursor implements RecordCursor {
             );
         }
 
-        CharSequence getStr(long offset, CharSequenceView view) {
-//        long addr = addressOf(offset);
-//        final int len = Unsafe.getUnsafe().getInt(addr);
-//        if (len != TableUtils.NULL_LEN) {
-//            if (len + 4 + offset <= size()) {
-//                return view.of(addr + Vm.STRING_LENGTH_BYTES, len);
-//            }
-//            throw CairoException.instance(0).put("String is outside of file boundary [offset=").put(offset).put(", len=").put(len).put(", size=").put(size()).put(']');
-//        }
+        BinarySequence getBin(long base, long offset, long size, ByteSequenceView view) {
+            final long address = base + offset;
+            final long len = Unsafe.getUnsafe().getLong(address);
+            if (len != TableUtils.NULL_LEN) {
+                if (len + Long.BYTES + offset <= size) {
+                    return view.of(address + Long.BYTES, len);
+                }
+                throw CairoException.instance(0)
+                        .put("Bin is outside of file boundary [offset=")
+                        .put(offset)
+                        .put(", len=")
+                        .put(len)
+                        .put(", size=")
+                        .put(size)
+                        .put(']');
+            }
+            return null;
+        }
+
+        CharSequence getStr(long base, long offset, long size, CharSequenceView view) {
+            final long address = base + offset;
+            final int len = Unsafe.getUnsafe().getInt(address);
+            if (len != TableUtils.NULL_LEN) {
+                if (len + 4 + offset <= size) {
+                    return view.of(address + Vm.STRING_LENGTH_BYTES, len);
+                }
+                throw CairoException.instance(0)
+                        .put("String is outside of file boundary [offset=")
+                        .put(offset)
+                        .put(", len=")
+                        .put(len)
+                        .put(", size=")
+                        .put(size)
+                        .put(']');
+            }
             return null;
         }
 
