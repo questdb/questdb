@@ -64,9 +64,9 @@ public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testConstantNull() throws Exception {
         assertQuery(
-                "strpos\n" +
-                        "NaN\n",
-                "select strpos(null,'a')",
+                "pos1\tpos2\n" +
+                        "NaN\tNaN\n",
+                "select strpos(null,'a') pos1, strpos('a',null) pos2",
                 null,
                 null,
                 true,
@@ -79,10 +79,32 @@ public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
     public void testConstantEmptyString() throws Exception {
         assertQuery(
                 "pos1\tpos2\tpos3\n" +
-                        // TODO fix the function, so that the result is "0\t1\t1\n",
+                        // TODO(puzpuzpuz): fix the empty string literal, so that the result is "0\t1\t1\n"
                         "NaN\tNaN\tNaN\n",
                 "select strpos('','a') pos1, strpos('a',cast('' as string)) pos2, strpos('','') pos3",
                 null,
+                null,
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testSplitColumn() throws Exception {
+        assertQuery(
+                "str\tstr1\tstr2\n" +
+                        "dog,cat\tdog\tcat\n" +
+                        "dog,cat\tdog\tcat\n" +
+                        "apple,pear\tapple\tpear\n",
+                "select str,\n" +
+                        "left(str, strpos(str, ',') - 1) str1,\n" +
+                        "right(str, length(str) - strpos(str, ',')) str2\n" +
+                        "from x",
+                "create table x as (" +
+                        "select rnd_str('dog,cat','apple,pear') as str\n" +
+                        "from long_sequence(3)" +
+                        ")",
                 null,
                 true,
                 false,

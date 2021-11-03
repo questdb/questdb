@@ -68,11 +68,14 @@ public class StrPosFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final CharSequence str = this.strFunc.getStr(rec);
-            final CharSequence substr = this.substrFunc.getStr(rec);
-            if (str != null && substr != null) {
-                return strpos(str, substr);
+            if (str == null) {
+                return Numbers.INT_NaN;
             }
-            return Numbers.INT_NaN;
+            final CharSequence substr = this.substrFunc.getStr(rec);
+            if (substr == null) {
+                return Numbers.INT_NaN;
+            }
+            return strpos(str, substr);
         }
 
         private int strpos(@NotNull CharSequence str, @NotNull CharSequence substr) {
