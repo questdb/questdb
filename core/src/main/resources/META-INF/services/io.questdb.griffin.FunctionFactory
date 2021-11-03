@@ -534,9 +534,8 @@ io.questdb.griffin.engine.functions.str.RightFunctionFactory
 # avg()
 io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory
 
-# charindex()
-io.questdb.griffin.engine.functions.str.CharIndexFunctionFactory
-io.questdb.griffin.engine.functions.str.CharIndexZeroStartFunctionFactory
+# strpos()
+io.questdb.griffin.engine.functions.str.StrPosFunctionFactory
 
 # ^
 io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory

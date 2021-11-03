@@ -24,6 +24,7 @@
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.math.*;
+import io.questdb.griffin.engine.functions.str.StrPosFunctionFactory;
 
 open module io.questdb {
     requires transitive jdk.unsupported;
@@ -558,9 +559,8 @@ open module io.questdb {
 
             // first
             io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory,
-            // charindex
-            io.questdb.griffin.engine.functions.str.CharIndexFunctionFactory,
-            io.questdb.griffin.engine.functions.str.CharIndexZeroStartFunctionFactory,
+            // strpos
+            io.questdb.griffin.engine.functions.str.StrPosFunctionFactory,
 //                  Change string case
             io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory,
             io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory,

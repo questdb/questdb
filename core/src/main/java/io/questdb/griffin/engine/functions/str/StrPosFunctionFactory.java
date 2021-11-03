@@ -30,19 +30,18 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
-public class CharIndexFunctionFactory implements FunctionFactory {
-
-    private static final IntConstant NOT_FOUND = new IntConstant(0);
+public class StrPosFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "charindex(SSI)";
+        return "strpos(SS)";
     }
 
     @Override
@@ -53,82 +52,62 @@ public class CharIndexFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final Function substrFunc = args.getQuick(0);
-        if (substrFunc.isConstant()) {
-            if (substrFunc.getStrLen(null) < 1) {
-                return NOT_FOUND;
-            }
-        }
-
-        final Function strFunc = args.getQuick(1);
-        if (strFunc.isConstant()) {
-            if (strFunc.getStrLen(null) < 1) {
-                return NOT_FOUND;
-            }
-        }
-
-        final Function startFunc = args.getQuick(2);
-
-        return new Func(substrFunc, strFunc, startFunc);
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    public static class Func extends IntFunction {
+    public static class Func extends IntFunction implements BinaryFunction {
 
-        private final Function substrFunc;
         private final Function strFunc;
-        private final Function startFunc; // positions start with 1
+        private final Function substrFunc;
 
-        public Func(Function substrFunc, Function strFunc, Function startFunc) {
-            this.substrFunc = substrFunc;
+        public Func(Function strFunc, Function substrFunc) {
             this.strFunc = strFunc;
-            this.startFunc = startFunc;
+            this.substrFunc = substrFunc;
         }
 
         @Override
         public int getInt(Record rec) {
-            final CharSequence substr = this.substrFunc.getStr(rec);
             final CharSequence str = this.strFunc.getStr(rec);
-            if (substr != null && str != null) {
-                final int start = this.startFunc.getInt(rec);
-                if (str.length() < start) {
-                    return 0;
-                }
-                return charIndex(substr, str, start);
+            final CharSequence substr = this.substrFunc.getStr(rec);
+            if (str != null && substr != null) {
+                return strpos(substr, str);
             }
-            return 0;
+            return Numbers.INT_NaN;
         }
 
-        private int charIndex(@NotNull CharSequence substr, @NotNull CharSequence str, int start) {
-            final int substrLen = substr.length();
-            if (substrLen < 1) {
-                return 0;
-            }
+        private int strpos(@NotNull CharSequence substr, @NotNull CharSequence str) {
             final int strLen = str.length();
             if (strLen < 1) {
                 return 0;
             }
-            if (start < 1) {
-                start = 1;
+            final int substrLen = substr.length();
+            if (substrLen < 1) {
+                return 1;
             }
 
             OUTER:
-            for (int i = start - 1; i < strLen; i++) {
+            for (int i = 0; i < strLen - substrLen + 1; i++) {
                 final char c = str.charAt(i);
                 if (c == substr.charAt(0)) {
-                    if (strLen - i < substrLen) {
-                        return 0;
-                    }
-
                     for (int k = 1; k < substrLen && k + i < strLen; k++) {
                         if (str.charAt(i + k) != substr.charAt(k)) {
                             continue OUTER;
                         }
                     }
-
                     return i + 1;
                 }
             }
             return 0;
+        }
+
+        @Override
+        public Function getLeft() {
+            return strFunc;
+        }
+
+        @Override
+        public Function getRight() {
+            return substrFunc;
         }
     }
 }
