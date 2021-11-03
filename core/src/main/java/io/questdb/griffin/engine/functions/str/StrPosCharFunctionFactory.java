@@ -81,7 +81,6 @@ public class StrPosCharFunctionFactory implements FunctionFactory {
                 return 0;
             }
 
-            OUTER:
             for (int i = 0; i < strLen; i++) {
                 if (str.charAt(i) == substr) {
                     return i + 1;
