@@ -1729,6 +1729,7 @@ public final class SqlParser {
         columnAliasStop.add("from");
         columnAliasStop.add(",");
         columnAliasStop.add("over");
+        columnAliasStop.add("union");
         //
         groupByStopSet.add("order");
         groupByStopSet.add(")");

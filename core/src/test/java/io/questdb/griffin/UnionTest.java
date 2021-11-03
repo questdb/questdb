@@ -314,7 +314,6 @@ public class UnionTest extends AbstractGriffinTest {
                     true
             );
         });
-
     }
 
     @Test
@@ -623,6 +622,31 @@ public class UnionTest extends AbstractGriffinTest {
 
             try (RecordCursorFactory factory = compiler.compile("select * from x union all y union z", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(expected2, factory, false, true, false);
+            }
+        });
+    }
+
+    @Test
+    public void testUnionAllOfLiterals() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected1 = "2020-04-21\t1\n" +
+                    "2020-04-21\t1\n" +
+                    "2020-04-22\t2\n";
+            final String query1 = "select '2020-04-21', 1\n" +
+                    "union all\n" +
+                    "select '2020-04-22', 2";
+            try (RecordCursorFactory rcf = compiler.compile(query1, sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected1, rcf, false, false, true);
+            }
+
+            final String expected2 = "a\tb\n" +
+                    "2020-04-21\t1\n" +
+                    "2020-04-22\t2\n";
+            final String query2 = "select '2020-04-21' a, 1 b\n" +
+                    "union all\n" +
+                    "select '2020-04-22', 2";
+            try (RecordCursorFactory rcf = compiler.compile(query2, sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected2, rcf, false, false, true);
             }
         });
     }
