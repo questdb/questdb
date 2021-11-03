@@ -41,6 +41,7 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -294,6 +295,13 @@ public class O3FailureTest extends AbstractO3Test {
     public void testAllocateFailsAtO3OpenColumn() throws Exception {
         counter.set(45);
         executeWithPool(0, O3FailureTest::testAllocateFailsAtO3OpenColumn0, ffAllocateFailure);
+    }
+
+    @Test
+    @Ignore
+    public void testAllocateToResizeLastPartition() throws Exception {
+        counter.set(39);
+        executeWithPool(0, O3FailureTest::testAllocateToResizeLastPartition0, ffAllocateFailure);
     }
 
     @Test
@@ -1544,7 +1552,7 @@ public class O3FailureTest extends AbstractO3Test {
             // stash copy of X, in case X is corrupt
             compiler.compile("create table y as (select * from x)", executionContext);
 
-            xxx(w);
+            testAllocateFailsAtO3OpenColumnAppendRows(w);
 
             // this should fail
             try {
@@ -1564,7 +1572,7 @@ public class O3FailureTest extends AbstractO3Test {
             );
 
             // repeat the same rows
-            xxx(w);
+            testAllocateFailsAtO3OpenColumnAppendRows(w);
             w.commit();
         }
 
@@ -1590,7 +1598,66 @@ public class O3FailureTest extends AbstractO3Test {
 
     }
 
-    private static void xxx(TableWriter w) {
+    private static void testAllocateToResizeLastPartition0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        // create table with roughly 2AM data
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts" +
+                        " from long_sequence(500)" +
+                        ") timestamp (ts) partition by DAY",
+                executionContext
+        );
+
+        try (TableWriter w = engine.getWriter(executionContext.getCairoSecurityContext(), "x", "test")) {
+
+            // stash copy of X, in case X is corrupt
+            compiler.compile("create table y as (select * from x)", executionContext);
+
+            TableWriter.Row row;
+            // this row goes into a non-recent partition
+            // triggering O3
+            row = w.newRow(518300000000L);
+            row.putInt(0, 10);
+            row.putLong(1, 3500000L);
+            row.append();
+
+
+            // here we need enough rows to saturate existing page
+            // same timestamp is ok
+            for (int i = 0; i < 4_000_000; i++) {
+                row = w.newRow(549900000000L);
+                row.putInt(0, 10);
+                row.putLong(1, 3500000L);
+                row.append();
+            }
+
+            // this should fail
+            try {
+                w.commit();
+                Assert.fail();
+            } catch (CairoException ignored) {
+                w.rollback();
+            }
+
+            // check that X and Y are the same
+            TestUtils.assertSqlCursors(
+                    compiler,
+                    executionContext,
+                    "x",
+                    "y",
+                    LOG
+            );
+        }
+    }
+
+    private static void testAllocateFailsAtO3OpenColumnAppendRows(TableWriter w) {
         TableWriter.Row row;
         // this row goes into a non-recent partition
         // triggering O3
