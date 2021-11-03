@@ -27,6 +27,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
@@ -173,17 +174,17 @@ public class FilterExprIRSerializer {
 //            throw SqlException.position(position).put("invalid constant: ").put(token);
 //        }
 //
-//        if (SqlKeywords.isTrueKeyword(token)) {
-//            memory.putByte(IMM_I1);
-//            memory.putByte((byte) 1);
-//            return;
-//        }
-//
-//        if (SqlKeywords.isFalseKeyword(token)) {
-//            memory.putByte(IMM_I1);
-//            memory.putByte((byte) 0);
-//            return;
-//        }
+        if (SqlKeywords.isTrueKeyword(token)) {
+            memory.putByte(IMM_I1);
+            memory.putLong(1);
+            return;
+        }
+
+        if (SqlKeywords.isFalseKeyword(token)) {
+            memory.putByte(IMM_I1);
+            memory.putLong(0);
+            return;
+        }
 
 //        try {
 //            final int n = Numbers.parseInt(token);
