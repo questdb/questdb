@@ -24,7 +24,6 @@
 
 package io.questdb.std;
 
-import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
