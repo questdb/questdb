@@ -55,7 +55,7 @@ public class StrPosFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    public static class Func extends IntFunction implements BinaryFunction {
+    private static class Func extends IntFunction implements BinaryFunction {
 
         private final Function strFunc;
         private final Function substrFunc;
