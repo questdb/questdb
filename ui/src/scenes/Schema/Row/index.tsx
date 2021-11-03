@@ -25,29 +25,32 @@
 import React, { MouseEvent, ReactNode, useCallback } from "react"
 import styled from "styled-components"
 import { Rocket } from "@styled-icons/boxicons-regular/Rocket"
+import { SortDown } from "@styled-icons/boxicons-regular/SortDown"
 import { CheckboxBlankCircle } from "@styled-icons/remix-line/CheckboxBlankCircle"
 import { CodeSSlash } from "@styled-icons/remix-line/CodeSSlash"
 import { Information } from "@styled-icons/remix-line/Information"
 import { Table as TableIcon } from "@styled-icons/remix-line/Table"
+import { PieChart } from "@styled-icons/remix-line/PieChart"
 
 import {
-  PopperHover,
   SecondaryButton,
   Text,
-  Tooltip,
   TransitionDuration,
+  IconWithTooltip,
 } from "components"
 import { color } from "utils"
 import { BusEvent } from "../../../consts"
 
 type Props = Readonly<{
   className?: string
+  designatedTimestamp?: string
   description?: string
   expanded?: boolean
   indexed?: boolean
   kind: "column" | "table"
   name: string
   onClick?: (event: MouseEvent) => void
+  partitionBy?: string
   suffix?: ReactNode
   tooltip?: boolean
   type?: string
@@ -109,6 +112,11 @@ const RocketIcon = styled(Rocket)`
   margin-right: 1rem;
 `
 
+const SortDownIcon = styled(SortDown)`
+  color: ${color("draculaGreen")};
+  margin-right: 0.8rem;
+`
+
 const DotIcon = styled(CheckboxBlankCircle)`
   color: ${color("gray2")};
   margin-right: 1rem;
@@ -128,13 +136,26 @@ const InfoIconWrapper = styled.div`
   justify-content: center;
 `
 
+const PartitionByWrapper = styled.div`
+  margin-right: 1rem;
+  display: flex;
+  align-items: center;
+`
+
+const PieChartIcon = styled(PieChart)`
+  color: ${color("gray2")};
+  margin-right: 0.5rem;
+`
+
 const Row = ({
   className,
+  designatedTimestamp,
   description,
   expanded,
   kind,
   indexed,
   name,
+  partitionBy,
   onClick,
   suffix,
   tooltip,
@@ -157,23 +178,24 @@ const Row = ({
         {kind === "table" && <TitleIcon size="18px" />}
 
         {kind === "column" && indexed && (
-          <PopperHover
-            modifiers={[
-              {
-                name: "offset",
-                options: {
-                  offset: [-15, 0],
-                },
-              },
-            ]}
+          <IconWithTooltip
+            icon={<RocketIcon size="13px" />}
             placement="top"
-            trigger={<RocketIcon size="13px" />}
-          >
-            <Tooltip>Indexed</Tooltip>
-          </PopperHover>
+            tooltip="Indexed"
+          />
         )}
 
-        {kind === "column" && !indexed && <DotIcon size="12px" />}
+        {kind === "column" && !indexed && name === designatedTimestamp && (
+          <IconWithTooltip
+            icon={<SortDownIcon size="14px" />}
+            placement="top"
+            tooltip="Designated timestamp"
+          />
+        )}
+
+        {kind === "column" && !indexed && type !== "TIMESTAMP" && (
+          <DotIcon size="12px" />
+        )}
 
         <Text color="draculaForeground" ellipsis>
           {name}
@@ -188,30 +210,28 @@ const Row = ({
           </Type>
         )}
 
+        {kind === "table" && partitionBy !== "NONE" && (
+          <PartitionByWrapper>
+            <PieChartIcon size="14px" />
+            <Text color="gray2">{partitionBy}</Text>
+          </PartitionByWrapper>
+        )}
+
         <PlusButton onClick={handlePlusButtonClick} size="sm" tooltip={tooltip}>
           <CodeSSlash size="16px" />
           <span>Add</span>
         </PlusButton>
 
         {tooltip && description && (
-          <PopperHover
-            modifiers={[
-              {
-                name: "offset",
-                options: {
-                  offset: [-15, 0],
-                },
-              },
-            ]}
-            placement="right"
-            trigger={
+          <IconWithTooltip
+            icon={
               <InfoIconWrapper>
                 <InfoIcon size="10px" />
               </InfoIconWrapper>
             }
-          >
-            <Tooltip>{description}</Tooltip>
-          </PopperHover>
+            placement="right"
+            tooltip={description}
+          />
         )}
       </FlexRow>
 
