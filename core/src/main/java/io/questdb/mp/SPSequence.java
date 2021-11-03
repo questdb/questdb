@@ -57,6 +57,11 @@ public class SPSequence extends AbstractSSequence {
     }
 
     @Override
+    public void setCurrent(long value) {
+        this.value = value;
+    }
+
+    @Override
     public long next() {
         long next = getValue() + 1;
         long lo = next - cycle;
