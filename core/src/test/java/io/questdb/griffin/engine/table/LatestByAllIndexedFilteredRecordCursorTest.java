@@ -42,58 +42,55 @@ import org.junit.Test;
 public class LatestByAllIndexedFilteredRecordCursorTest extends AbstractGriffinTest {
     // TODO: smelly test, smelly test why are you broken
     @Test
-    public void testIndexedLatestByWithWhereOnOtherCol() throws Exception {
-
+    public void testSingleIndexedColLatestByWithWhereOnOtherCol() throws Exception {
         assertMemoryLeak(() -> {
+            String tableName = "tab";
 
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
+                model.col("id", ColumnType.SYMBOL).indexed(true, 2)
+                        .col("name", ColumnType.SYMBOL).indexed(true, 2)
+                        .col("value", ColumnType.DOUBLE)
+                        .col("ts", ColumnType.TIMESTAMP);
+                CairoTestUtils.create(model);
+            }
+            insertRows(tableName);
+
+            // tab latest by id where name = "c2"
+            int columnIndex = 0; // id
+            IntList columnIndexes = new IntList(4);
+            columnIndexes.add(0); // id
+            columnIndexes.add(1); // name
+            columnIndexes.add(2); // value
+            columnIndexes.add(3); // ts
+            ObjList<Function> args = new ObjList<>(2);
+            args.add(new SymbolColumn(1, true));  // name
+            args.add(new StrConstant("c2"));
+            Function filter = new EqSymStrFunctionFactory().newInstance(
+                    0, args, null, configuration, sqlExecutionContext);
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
+                 LatestByAllIndexedFilteredRecordCursorFactory factory = new LatestByAllIndexedFilteredRecordCursorFactory(
+                         reader.getMetadata(),
+                         configuration,
+                         new FullBwdDataFrameCursorFactory(
+                                 engine,
+                                 tableName,
+                                 -1,
+                                 -1),
+                         columnIndex,
+                         filter,
+                         columnIndexes,
+                         new LongList(0)
+                 );
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                TestUtils.assertCursor("id\tname\tvalue\tts\n" +
+                                "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n" +
+                                "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n",
+                        cursor,
+                        reader.getMetadata(),
+                        true,
+                        sink);
+            }
         });
-
-        String tableName = "tab";
-
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-            model.col("id", ColumnType.SYMBOL).indexed(true, 2)
-                    .col("name", ColumnType.SYMBOL).indexed(true, 2)
-                    .col("value", ColumnType.DOUBLE)
-                    .col("ts", ColumnType.TIMESTAMP);
-            CairoTestUtils.create(model);
-        }
-        insertRows(tableName);
-
-        // tab latest by id where name = "c2"
-        int columnIndex = 0; // id
-        IntList columnIndexes = new IntList(4);
-        columnIndexes.add(0); // id
-        columnIndexes.add(1); // name
-        columnIndexes.add(2); // value
-        columnIndexes.add(3); // ts
-        ObjList<Function> args = new ObjList<>(2);
-        args.add(new SymbolColumn(1, true));  // name
-        args.add(new StrConstant("c2"));
-        Function filter = new EqSymStrFunctionFactory().newInstance(
-                0, args, null, configuration, sqlExecutionContext);
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
-             LatestByAllIndexedFilteredRecordCursorFactory factory = new LatestByAllIndexedFilteredRecordCursorFactory(
-                     reader.getMetadata(),
-                     configuration,
-                     new FullBwdDataFrameCursorFactory(
-                             engine,
-                             tableName,
-                             -1,
-                             -1),
-                     columnIndex,
-                     filter,
-                     columnIndexes,
-                     new LongList(0)
-             );
-             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            TestUtils.assertCursor("id\tname\tvalue\tts\n" +
-                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n" +
-                            "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n",
-                    cursor,
-                    reader.getMetadata(),
-                    true,
-                    sink);
-        }
     }
 
     private void insertRows(CharSequence tableName) throws Exception {
