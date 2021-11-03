@@ -862,6 +862,16 @@ public class SqlCompiler implements Closeable {
         return tok;
     }
 
+    private static CharSequence maybeExpectToken(GenericLexer lexer, CharSequence expected, boolean expect) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+
+        if (expect && tok == null) {
+            throw SqlException.position(lexer.getPosition()).put(expected).put(" expected");
+        }
+
+        return tok;
+    }
+
     private CompiledQuery alterSystemLockWriter(SqlExecutionContext executionContext) throws SqlException {
         final int tableNamePosition = lexer.getPosition();
         CharSequence tok = GenericLexer.unquote(expectToken(lexer, "table name"));
@@ -1065,8 +1075,15 @@ public class SqlCompiler implements Closeable {
                 tableName,
                 tableMetadata.getId());
 
+        int semicolonPos = -1;
         do {
-            tok = expectToken(lexer, "'column' or column name");
+            tok = maybeExpectToken(lexer, "'column' or column name", semicolonPos < 0);
+            if (semicolonPos >= 0) {
+                if (tok != null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+                }
+                break;
+            }
 
             int index = tableMetadata.getColumnIndexQuiet(tok);
             if (index != -1) {
@@ -1209,7 +1226,8 @@ public class SqlCompiler implements Closeable {
                 break;
             }
 
-            if (!Chars.equals(tok, ',')) {
+            semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
+            if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
 
@@ -1259,8 +1277,15 @@ public class SqlCompiler implements Closeable {
 
     private CompiledQuery alterTableDropColumn(int tableNamePosition, String tableName, TableReaderMetadata metadata) throws SqlException {
         AlterStatementDropColumnStatement dropColumnStatement = alterQuery.ofDropColumn(tableNamePosition, tableName, metadata.getId());
+        int semicolonPos = -1;
         do {
-            CharSequence tok = GenericLexer.unquote(expectToken(lexer, "column name"));
+            CharSequence tok = GenericLexer.unquote(maybeExpectToken(lexer, "column name", semicolonPos < 0));
+            if (semicolonPos >= 0) {
+                if (tok != null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+                }
+                break;
+            }
 
             if (metadata.getColumnIndexQuiet(tok) == -1) {
                 throw SqlException.invalidColumn(lexer.lastTokenPosition(), tok);
@@ -1274,7 +1299,8 @@ public class SqlCompiler implements Closeable {
                 break;
             }
 
-            if (!Chars.equals(tok, ',')) {
+            semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
+            if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
         } while (true);
@@ -1350,8 +1376,15 @@ public class SqlCompiler implements Closeable {
             partitions = alterQuery.ofAttachPartition(pos, tableName, reader.getMetadata().getId());
         }
         assert action == PartitionAction.DROP || action == PartitionAction.ATTACH;
+        int semicolonPos = -1;
         do {
-            CharSequence tok = expectToken(lexer, "partition name");
+            CharSequence tok = maybeExpectToken(lexer, "partition name", semicolonPos < 0);
+            if (semicolonPos >= 0) {
+                if (tok != null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+                }
+                break;
+            }
             if (Chars.equals(tok, ',')) {
                 throw SqlException.$(lexer.lastTokenPosition(), "partition name missing");
             }
@@ -1363,11 +1396,12 @@ public class SqlCompiler implements Closeable {
             partitions.ofPartition(timestamp);
             tok = SqlUtil.fetchNext(lexer);
 
-            if (tok == null || Chars.equals(tok, ';')) {
+            if (tok == null) {
                 break;
             }
 
-            if (!Chars.equals(tok, ',')) {
+            semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
+            if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
         } while (true);
@@ -1405,8 +1439,16 @@ public class SqlCompiler implements Closeable {
 
     private CompiledQuery alterTableRenameColumn(int tableNamePosition, String tableName, TableReaderMetadata metadata) throws SqlException {
         AlterStatementRenameColumnStatement renameColumnStatement = alterQuery.ofRenameColumn(tableNamePosition, tableName, metadata.getId());
+        int hadSemicolonPos = -1;
+
         do {
-            CharSequence tok = GenericLexer.unquote(expectToken(lexer, "current column name"));
+            CharSequence tok = GenericLexer.unquote(maybeExpectToken(lexer, "current column name", hadSemicolonPos < 0));
+            if (hadSemicolonPos >= 0) {
+                if (tok != null) {
+                    throw SqlException.$(hadSemicolonPos, "',' expected");
+                }
+                break;
+            }
             int columnIndex = metadata.getColumnIndexQuiet(tok);
             if (columnIndex == -1) {
                 throw SqlException.invalidColumn(lexer.lastTokenPosition(), tok);
@@ -1440,7 +1482,8 @@ public class SqlCompiler implements Closeable {
                 break;
             }
 
-            if (!Chars.equals(tok, ',')) {
+            hadSemicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
+            if (hadSemicolonPos < 0 && !Chars.equals(tok, ',')) {
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
         } while (true);

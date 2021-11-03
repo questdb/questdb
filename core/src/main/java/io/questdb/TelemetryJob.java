@@ -81,6 +81,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             compiler.compile(
                     "CREATE TABLE IF NOT EXISTS " + configTableName + " (id long256, enabled boolean, version symbol, os symbol, package symbol)",
                     sqlExecutionContext);
+
             tryAddColumn(compiler, engine, sqlExecutionContext, "version symbol");
             tryAddColumn(compiler, engine, sqlExecutionContext, "os symbol");
             tryAddColumn(compiler, engine, sqlExecutionContext, "package symbol");

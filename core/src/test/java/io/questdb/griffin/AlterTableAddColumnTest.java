@@ -591,8 +591,34 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAddUnknown() throws Exception {
-        assertFailure("alter table x add blah", 22, "column type expected");
+    public void testAddTwoColumnsWithSemicolonAtTheEnd() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createX();
+
+                    Assert.assertEquals(ALTER, compile("alter table x add column mycol int; \n", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, compile("alter table x add column second symbol;", sqlExecutionContext).getType());
+                    assertQueryPlain(
+                            "c\tmycol\tsecond\n" +
+                                    "XYZ\tNaN\t\n" +
+                                    "ABC\tNaN\t\n" +
+                                    "ABC\tNaN\t\n" +
+                                    "XYZ\tNaN\t\n" +
+                                    "\tNaN\t\n" +
+                                    "CDE\tNaN\t\n" +
+                                    "CDE\tNaN\t\n" +
+                                    "ABC\tNaN\t\n" +
+                                    "\tNaN\t\n" +
+                                    "XYZ\tNaN\t\n",
+                            "select c, mycol, second from x"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testAddTwoColumnsWithSemicolonAsSeparator() throws Exception {
+        assertFailure("alter table x add column mycol int; second symbol", 36, "',' expected");
     }
 
     @Test
