@@ -43,6 +43,7 @@ import { BusEvent } from "../../../consts"
 
 type Props = Readonly<{
   className?: string
+  designatedTimestamp?: string
   description?: string
   expanded?: boolean
   indexed?: boolean
@@ -148,6 +149,7 @@ const PieChartIcon = styled(PieChart)`
 
 const Row = ({
   className,
+  designatedTimestamp,
   description,
   expanded,
   kind,
@@ -183,7 +185,7 @@ const Row = ({
           />
         )}
 
-        {kind === "column" && !indexed && type === "TIMESTAMP" && (
+        {kind === "column" && !indexed && name === designatedTimestamp && (
           <IconWithTooltip
             icon={<SortDownIcon size="14px" />}
             placement="top"

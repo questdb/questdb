@@ -94,6 +94,7 @@ export type QueryResult<T extends Record<string, any>> =
 export type Table = {
   name: string
   partitionBy: string
+  designatedTimestamp: string
 }
 
 export type Column = {

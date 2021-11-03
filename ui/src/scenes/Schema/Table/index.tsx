@@ -41,6 +41,7 @@ import ContextualMenu from "./ContextualMenu"
 
 type Props = QuestDB.Table &
   Readonly<{
+    designatedTimestamp: string
     expanded: boolean
     description?: string
     onChange: (table: string) => void
@@ -95,6 +96,7 @@ const Loader = styled(Loader4)`
 
 const Table = ({
   description,
+  designatedTimestamp,
   expanded,
   onChange,
   refresh,
@@ -156,6 +158,7 @@ const Table = ({
           {columns?.map((column) => (
             <Row
               {...column}
+              designatedTimestamp={designatedTimestamp}
               key={`${column.column}-${column.type}${
                 column.indexed ? "-i" : ""
               }`}

@@ -198,16 +198,19 @@ const Schema = ({
         ) : loadingError ? (
           <LoadingError error={loadingError} />
         ) : (
-          tables?.map(({ name, partitionBy }: QuestDB.Table) => (
-            <Table
-              expanded={name === opened}
-              key={name}
-              name={name}
-              onChange={handleChange}
-              partitionBy={partitionBy}
-              refresh={refresh}
-            />
-          ))
+          tables?.map(
+            ({ name, partitionBy, designatedTimestamp }: QuestDB.Table) => (
+              <Table
+                designatedTimestamp={designatedTimestamp}
+                expanded={name === opened}
+                key={name}
+                name={name}
+                onChange={handleChange}
+                partitionBy={partitionBy}
+                refresh={refresh}
+              />
+            ),
+          )
         )}
         {!loading && <FlexSpacer />}
       </Content>
