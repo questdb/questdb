@@ -2710,29 +2710,10 @@ public class TableWriter implements Closeable {
                                             indexWriter
                                     );
                                 } catch (Throwable e) {
-                                    columnCounter.addAndGet(columnsPublished - columnCount + 1);
-                                    O3CopyJob.copyIdleQuick(
-                                            columnCounter,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            0,
-                                            this
-                                    );
+                                    if (columnCounter.addAndGet(columnsPublished - columnCount) == 0) {
+                                        o3ClockDownPartitionUpdateCount();
+                                        o3CountDownDoneLatch();
+                                    }
                                     throw e;
                                 }
                             }
