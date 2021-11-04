@@ -199,12 +199,16 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
     @Test
     public void testNotEquals2Symbols() throws Exception {
         final String expected = "k\tprice\tts\n" +
+                "ABB\t0.8043224099968393\t1970-01-03T00:00:00.000000Z\n" +
                 "DXR\t0.08486964232560668\t1970-01-03T00:06:00.000000Z\n" +
-                "DXR\t0.0843832076262595\t1970-01-03T00:12:00.000000Z\n";
-
+                "DXR\t0.0843832076262595\t1970-01-03T00:12:00.000000Z\n" +
+                "ABB\t0.22452340856088226\t1970-01-03T00:30:00.000000Z\n" +
+                "ABB\t0.3491070363730514\t1970-01-03T00:36:00.000000Z\n" +
+                "ABB\t0.7611029514995744\t1970-01-03T00:42:00.000000Z\n" +
+                "ABB\t0.4217768841969397\t1970-01-03T00:48:00.000000Z\n";
         assertQuery(
                 "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym != 'HBC' and sym != 'ABB'",
+                "select sym k, price, ts from x where sym != 'HBC' and sym != 'AAA'",
                 "create table x (\n" +
                         "    sym symbol cache index,\n" +
                         "    price double,\n" +
@@ -217,6 +221,25 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
                         "    from long_sequence(10)) timestamp (ts)",
                 expected
         );
+        // insert query values:
+        //
+        // sym	price	ts
+        // ABB	0.8043224099968393	1970-01-03T00:00:00.000000Z (selected)
+        // DXR	0.08486964232560668	1970-01-03T00:06:00.000000Z (selected)
+        // DXR	0.0843832076262595	1970-01-03T00:12:00.000000Z (selected)
+        // HBC	0.6508594025855301	1970-01-03T00:18:00.000000Z
+        // HBC	0.7905675319675964	1970-01-03T00:24:00.000000Z
+        // ABB	0.22452340856088226	1970-01-03T00:30:00.000000Z (selected)
+        // ABB	0.3491070363730514	1970-01-03T00:36:00.000000Z (selected)
+        // ABB	0.7611029514995744	1970-01-03T00:42:00.000000Z (selected)
+        // ABB	0.4217768841969397	1970-01-03T00:48:00.000000Z (selected)
+        // HBC	0.0367581207471136	1970-01-03T00:54:00.000000Z
+        //
+        // sym can only take values from 'ABB', 'HBC', 'DXR'
+        //
+        // condition: where sym != 'HBC' and sym != 'AAA'
+        // equivalent: sym = 'ABB' or sym = ''DXR'
+        // equivalent: sym != 'HBC' (optimisation)
     }
 
     @Test

@@ -183,6 +183,7 @@ public class PerformanceTest extends AbstractCairoTest {
                             row.append();
                             timestamp += 1000;
                         }
+                        //LOG.info().$("committing transaction ").$(i).$();
                         w.commit();
                     }
                 } catch (NumericException | InterruptedException e) {
