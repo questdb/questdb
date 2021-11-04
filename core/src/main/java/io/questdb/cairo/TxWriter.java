@@ -45,7 +45,7 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
     public TxWriter(FilesFacade ff, @Transient Path path, int partitionBy) {
         super(ff, path, partitionBy);
         try {
-            readUnchecked();
+            unsafeLoadAll();
         } catch (Throwable e) {
             // Do not truncate in case the file cannot be read
             txMem.close(false);
@@ -128,8 +128,8 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
     }
 
     @Override
-    public void readUnchecked() {
-        super.readUnchecked();
+    void unsafeLoadAll() {
+        super.unsafeLoadAll();
         this.prevTransientRowCount = this.transientRowCount;
         this.prevMaxTimestamp = maxTimestamp;
         this.prevMinTimestamp = minTimestamp;

@@ -119,11 +119,19 @@ public class TableReadFailTest extends AbstractCairoTest {
                 mem.jumpTo(TableUtils.TX_OFFSET_TXN);
                 mem.putLong(123);
                 mem.jumpTo(offset);
-                mem.close();
+//                mem.close();
 
                 // this should time out
                 try {
                     reader.reload();
+
+                    mem.jumpTo(TableUtils.TX_OFFSET_TXN_CHECK);
+                    mem.putLong(123);
+                    mem.jumpTo(offset);
+                    mem.close();
+
+                    reader.reload();
+
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "timeout");
