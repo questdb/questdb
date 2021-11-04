@@ -333,7 +333,7 @@ class ExpressionParser {
                             CharSequence geohashTok = GenericLexer.immutableOf(tok);
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok == null || tok.charAt(0) != '(') {
-                                lexer.backTo(position + 7, geohashTok);
+                                lexer.backTo(position + SqlKeywords.GEOHASH_KEYWORD_LENGTH, geohashTok);
                                 tok = geohashTok;
                                 processDefaultBranch = true;
                                 break;
@@ -512,6 +512,17 @@ class ExpressionParser {
                     case 'c':
                     case 'C':
                         if (SqlKeywords.isCastKeyword(tok)) {
+                            CharSequence caseTok = GenericLexer.immutableOf(tok);
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok == null || tok.charAt(0) != '(') {
+                                lexer.backTo(position + SqlKeywords.CASE_KEYWORD_LENGTH, caseTok);
+                                tok = caseTok;
+                                processDefaultBranch = true;
+                                break;
+                            }
+
+                            lexer.backTo(position + SqlKeywords.CASE_KEYWORD_LENGTH, caseTok);
+                            tok = caseTok;
                             if (prevBranch != BRANCH_DOT_DEREFERENCE) {
                                 castBraceCountStack.push(-1);
                                 thisBranch = BRANCH_OPERATOR;
