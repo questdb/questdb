@@ -38,8 +38,9 @@ import Settings from "../Settings"
 import SideMenu from "../SideMenu"
 import Schema from "../Schema"
 import Sidebar from "../Sidebar"
-import { LocalStorageProvider } from "providers/LocalStorageProvider"
+import { useLocalStorage } from "providers/LocalStorageProvider"
 import { QuestProvider } from "providers"
+import { StoreKey } from "../../utils/localStorage/types"
 
 const Console = styled.div`
   display: flex;
@@ -59,8 +60,21 @@ const Layout = () => {
   const sideMenuNode = document.getElementById("sideMenu")
   const modalNode = document.getElementById("modal")
   const { sm } = useScreenSize()
+  const {
+    editorSplitterBasis,
+    resultsSplitterBasis,
+    updateSettings,
+  } = useLocalStorage()
 
-  const handleResultSplitterChange = useCallback(() => {
+  const handleEditorSplitterChange = useCallback((value) => {
+    updateSettings(StoreKey.EDITOR_SPLITTER_BASIS, value)
+    setTimeout(() => {
+      window.bus.trigger(BusEvent.MSG_ACTIVE_PANEL)
+    }, 0)
+  }, [])
+
+  const handleResultsSplitterChange = useCallback((value) => {
+    updateSettings(StoreKey.RESULTS_SPLITTER_BASIS, value)
     setTimeout(() => {
       window.bus.trigger(BusEvent.MSG_ACTIVE_PANEL)
     }, 0)
@@ -71,42 +85,41 @@ const Layout = () => {
   }, [])
 
   return (
-    <LocalStorageProvider>
-      <QuestProvider>
-        <Sidebar />
-        <Footer />
-        {consoleNode &&
-          createPortal(
-            <Console>
-              <Splitter
-                direction="vertical"
-                fallback={350}
-                max={300}
-                min={200}
-                onChange={handleResultSplitterChange}
-              >
-                <Top>
-                  <Splitter
-                    direction="horizontal"
-                    fallback={350}
-                    max={300}
-                    min={200}
-                  >
-                    {!sm && <Schema />}
-                    <Editor />
-                  </Splitter>
-                </Top>
-                <Result />
-              </Splitter>
-              <Notifications />
-            </Console>,
-            consoleNode,
-          )}
-        {sideMenuNode && createPortal(<SideMenu />, sideMenuNode)}
-        {modalNode && createPortal(<Modal />, modalNode)}
-        {settingsNode && createPortal(<Settings />, settingsNode)}
-      </QuestProvider>
-    </LocalStorageProvider>
+    <QuestProvider>
+      <Sidebar />
+      <Footer />
+      {consoleNode &&
+        createPortal(
+          <Console>
+            <Splitter
+              direction="vertical"
+              fallback={editorSplitterBasis}
+              max={300}
+              min={200}
+              onChange={handleEditorSplitterChange}
+            >
+              <Top>
+                <Splitter
+                  direction="horizontal"
+                  fallback={resultsSplitterBasis}
+                  max={300}
+                  min={200}
+                  onChange={handleResultsSplitterChange}
+                >
+                  {!sm && <Schema />}
+                  <Editor />
+                </Splitter>
+              </Top>
+              <Result />
+            </Splitter>
+            <Notifications />
+          </Console>,
+          consoleNode,
+        )}
+      {sideMenuNode && createPortal(<SideMenu />, sideMenuNode)}
+      {modalNode && createPortal(<Modal />, modalNode)}
+      {settingsNode && createPortal(<Settings />, settingsNode)}
+    </QuestProvider>
   )
 }
 
