@@ -1730,6 +1730,8 @@ public final class SqlParser {
         columnAliasStop.add(",");
         columnAliasStop.add("over");
         columnAliasStop.add("union");
+        columnAliasStop.add("except");
+        columnAliasStop.add("intersect");
         //
         groupByStopSet.add("order");
         groupByStopSet.add(")");

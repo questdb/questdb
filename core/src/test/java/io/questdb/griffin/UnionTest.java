@@ -650,4 +650,50 @@ public class UnionTest extends AbstractGriffinTest {
             }
         });
     }
+
+    @Test
+    public void testExceptOfLiterals() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected1 = "2020-04-21\t1\n" +
+                    "2020-04-21\t1\n";
+            final String query1 = "select '2020-04-21', 1\n" +
+                    "except\n" +
+                    "select '2020-04-22', 2";
+            try (RecordCursorFactory rcf = compiler.compile(query1, sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected1, rcf, true, false, false);
+            }
+
+            final String expected2 = "a\tb\n" +
+                    "2020-04-21\t1\n";
+            final String query2 = "select '2020-04-21' a, 1 b\n" +
+                    "except\n" +
+                    "select '2020-04-22', 2";
+            try (RecordCursorFactory rcf = compiler.compile(query2, sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected2, rcf, true, false, false);
+            }
+        });
+    }
+
+    @Test
+    public void testIntersectOfLiterals() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected1 = "2020-04-21\t1\n" +
+                    "2020-04-21\t1\n";
+            final String query1 = "select '2020-04-21', 1\n" +
+                    "intersect\n" +
+                    "select '2020-04-21', 1";
+            try (RecordCursorFactory rcf = compiler.compile(query1, sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected1, rcf, true, false, false);
+            }
+
+            final String expected2 = "a\tb\n" +
+                    "2020-04-21\t1\n";
+            final String query2 = "select '2020-04-21' a, 1 b\n" +
+                    "intersect\n" +
+                    "select '2020-04-21', 1";
+            try (RecordCursorFactory rcf = compiler.compile(query2, sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected2, rcf, true, false, false);
+            }
+        });
+    }
 }
