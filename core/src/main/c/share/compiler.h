@@ -29,6 +29,15 @@
 #include <asmjit/asmjit.h>
 #include <numeric>
 
+enum data_type_t : uint8_t {
+   i8,
+   i16,
+   i32,
+   i64,
+   f32,
+   f64,
+};
+
 enum instruction_t : uint8_t {
     MEM_I1 = 0,
     MEM_I2 = 1,
@@ -83,10 +92,13 @@ T read(const uint8_t *buf, size_t size, uint32_t &pos) {
 struct jit_value_t {
 
     inline jit_value_t() noexcept
-            : op_() {}
+            : op_(), type_() {}
 
     inline jit_value_t(asmjit::Operand op) noexcept
-            : op_(op) {}
+            : op_(op), type_() {}
+
+    inline jit_value_t(asmjit::Operand op, data_type_t type) noexcept
+            : op_(op), type_(type) {}
 
     inline jit_value_t(const jit_value_t &other) noexcept = default;
 
@@ -106,6 +118,10 @@ struct jit_value_t {
 
     inline bool isMem() const noexcept { return op_.isMem(); }
 
+    inline bool isZmm() const noexcept { return op_.isReg(asmjit::x86::Reg::kTypeZmm); }
+
+    inline bool isYmm() const noexcept { return op_.isReg(asmjit::x86::Reg::kTypeYmm); }
+
     inline bool isXmm() const noexcept { return op_.isReg(asmjit::x86::Reg::kTypeXmm); }
 
     inline bool isGpq() const noexcept { return op_.isReg(asmjit::x86::Reg::kTypeGpq); }
@@ -114,12 +130,18 @@ struct jit_value_t {
 
     inline const asmjit::x86::Mem &mem() const noexcept { return op_.as<asmjit::x86::Mem>(); }
 
+    inline const asmjit::x86::Zmm &zmm() const noexcept { return op_.as<asmjit::x86::Zmm>(); }
+
+    inline const asmjit::x86::Ymm &ymm() const noexcept { return op_.as<asmjit::x86::Ymm>(); }
+
     inline const asmjit::x86::Xmm &xmm() const noexcept { return op_.as<asmjit::x86::Xmm>(); }
 
     inline const asmjit::x86::Gpq &gp() const noexcept { return op_.as<asmjit::x86::Gpq>(); }
 
+    inline const data_type_t dtype() const noexcept { return type_; }
 private:
     asmjit::Operand op_;
+    data_type_t type_;
 };
 
 extern "C" {
