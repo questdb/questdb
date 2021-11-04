@@ -34,6 +34,4 @@ public interface Long256 {
     long getLong2();
 
     long getLong3();
-
-    void clear();
 }

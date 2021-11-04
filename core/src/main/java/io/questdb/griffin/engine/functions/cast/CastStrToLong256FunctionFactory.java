@@ -34,6 +34,8 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
+import static io.questdb.griffin.engine.functions.cast.CastSymbolToLong256FunctionFactory.appendLong256;
+
 public class CastStrToLong256FunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
@@ -47,15 +49,12 @@ public class CastStrToLong256FunctionFactory implements FunctionFactory {
 
     private static class Func extends Long256Function implements UnaryFunction {
         private final Function arg;
+        private final Long256Impl long256builder = new Long256Impl();
         private final Long256Impl long256a = new Long256Impl();
         private final Long256Impl long256b = new Long256Impl();
 
         public Func(Function arg) {
             this.arg = arg;
-        }
-
-        private static Long256Impl Z(CharSequence text, int len, Long256Impl long256) {
-            return Numbers.parseLong256(text, len, long256);
         }
 
         @Override
@@ -69,7 +68,7 @@ public class CastStrToLong256FunctionFactory implements FunctionFactory {
             if (value == null) {
                 return Long256Impl.NULL_LONG256;
             }
-            return Z(value, value.length(), long256a);
+            return Numbers.parseLong256(value, value.length(), long256a);
         }
 
         @Override
@@ -78,13 +77,15 @@ public class CastStrToLong256FunctionFactory implements FunctionFactory {
             if (value == null) {
                 return Long256Impl.NULL_LONG256;
             }
-            return Z(value, value.length(), long256b);
+            return Numbers.parseLong256(value, value.length(), long256b);
         }
 
         @Override
         public void getLong256(Record rec, CharSink sink) {
             final CharSequence value = arg.getStr(rec);
-            CastSymbolToLong256FunctionFactory.charSequenceToLong256(sink, value);
+            if (value != null) {
+                appendLong256(value, long256builder, sink);
+            }
         }
     }
 }

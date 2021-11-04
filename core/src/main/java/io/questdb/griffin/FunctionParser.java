@@ -502,7 +502,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
 
         // long256
-        long256Sink.clear();
         if (Numbers.extractLong256(tok, len, long256Sink)) {
             return new Long256Constant(long256Sink); // values are copied from this sink
         }

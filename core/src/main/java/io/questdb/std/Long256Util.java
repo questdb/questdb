@@ -55,9 +55,4 @@ public class Long256Util {
 
         return Long.compare(a.getLong0(), b.getLong0());
     }
-
-
-    public static boolean isValidString(CharSequence text, int len) {
-        return len > 2 && ((len & 1) == 0) && len < 67 && text.charAt(0) == '0' && text.charAt(1) == 'x';
-    }
 }

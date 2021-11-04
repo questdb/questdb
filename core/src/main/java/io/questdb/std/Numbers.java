@@ -66,10 +66,10 @@ public final class Numbers {
     private static final LongHexAppender[] longHexAppenderPad64 = new LongHexAppender[Long.SIZE + 1];
     private static final int[] N_5_BITS = new int[]{0, 3, 5, 7, 10, 12, 14, 17, 19, 21, 24, 26, 28, 31, 33, 35, 38, 40, 42, 45, 47, 49, 52, 54, 56, 59, 61};
     private static final int EXP_SHIFT = SIGNIFICAND_WIDTH - 1;
-    private final static ThreadLocal<Long256Impl> long256Builder = new ThreadLocal<>(Long256Impl::new);
     static final long EXP_ONE = ((long) EXP_BIAS) << EXP_SHIFT; // exponent of 1.0
     private static final long FRACT_HOB = (1L << EXP_SHIFT); // assumed High-Order bit
     private static final int[] insignificantDigitsNumber = new int[]{0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 9, 9, 10, 10, 10, 11, 11, 11, 12, 12, 12, 12, 13, 13, 13, 14, 14, 14, 15, 15, 15, 15, 16, 16, 16, 17, 17, 17, 18, 18, 18, 19};
+
     private Numbers() {
     }
 
@@ -411,18 +411,6 @@ public final class Numbers {
             sink.put(hexDigits[(c = c % 0x1000) / 0x100]);
             sink.put(hexDigits[(c = c % 0x100) / 0x10]);
             sink.put(hexDigits[c % 0x10]);
-        }
-    }
-
-    public static void appendLong256(CharSequence value, CharSink sink) {
-        Long256Impl long256 = getThreadLocalLong256Builder();
-        if (extractLong256(value, value.length(), long256)) {
-            appendLong256(
-                    long256.getLong0(),
-                    long256.getLong1(),
-                    long256.getLong2(),
-                    long256.getLong3(),
-                    sink);
         }
     }
 
@@ -1007,12 +995,8 @@ public final class Numbers {
         return parseLong0(sequence, p, lim);
     }
 
-    public static boolean probeLong256(CharSequence value) {
-        return extractLong256(value, value.length(), getThreadLocalLong256Builder());
-    }
-
     public static boolean extractLong256(CharSequence value, int len, Long256Acceptor acceptor) {
-        if (Long256Util.isValidString(value, len)) {
+        if (len > 2 && ((len & 1) == 0) && len < 67 && value.charAt(0) == '0' && value.charAt(1) == 'x') {
             try {
                 Long256FromCharSequenceDecoder.decode(value, 2, len, acceptor);
                 return true;
@@ -1250,12 +1234,6 @@ public final class Numbers {
         long signMask = valueBits & Numbers.SIGN_BIT_MASK;
         double absValue = Double.longBitsToDouble(valueBits & ~Numbers.SIGN_BIT_MASK);
         return Double.longBitsToDouble(Double.doubleToRawLongBits(roundUp00PosScale(absValue, scale)) | signMask);
-    }
-
-    private static Long256Impl getThreadLocalLong256Builder() {
-        Long256Impl b = long256Builder.get();
-        b.clear();
-        return b;
     }
 
     private static void appendLongHex4(CharSink sink, long value) {

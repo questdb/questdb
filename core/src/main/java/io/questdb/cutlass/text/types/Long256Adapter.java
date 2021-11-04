@@ -27,12 +27,14 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.DirectByteCharSequence;
 
 public final class Long256Adapter extends AbstractTypeAdapter {
 
     public static final Long256Adapter INSTANCE = new Long256Adapter();
+    public static final Long256Impl LONG_256_BUILDER = new Long256Impl();
 
     private Long256Adapter() {
     }
@@ -44,7 +46,7 @@ public final class Long256Adapter extends AbstractTypeAdapter {
 
     @Override
     public boolean probe(CharSequence text) {
-        return Numbers.probeLong256(text);
+        return Numbers.extractLong256(text, text.length(), LONG_256_BUILDER);
     }
 
     @Override
