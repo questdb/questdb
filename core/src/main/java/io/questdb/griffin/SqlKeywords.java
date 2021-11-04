@@ -26,6 +26,8 @@ package io.questdb.griffin;
 
 public class SqlKeywords {
     public static final String CONCAT_FUNC_NAME = "concat";
+    public static final int CASE_KEYWORD_LENGTH = 4;
+    public static int GEOHASH_KEYWORD_LENGTH = 7;
 
     public static boolean isAddKeyword(CharSequence tok) {
         if (tok.length() != 3) {
