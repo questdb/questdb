@@ -86,7 +86,7 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Clo
 
     @Override
     public CharSink put(CharSequence cs, int lo, int hi) {
-            builder.append(cs, lo, hi);
+        builder.append(cs, lo, hi);
         return this;
     }
 

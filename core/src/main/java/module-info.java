@@ -558,6 +558,9 @@ open module io.questdb {
 
             // first
             io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory,
+            // strpos
+            io.questdb.griffin.engine.functions.str.StrPosFunctionFactory,
+            io.questdb.griffin.engine.functions.str.StrPosCharFunctionFactory,
 //                  Change string case
             io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory,
             io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory,

@@ -22,7 +22,12 @@
  *
  ******************************************************************************/
 
-import React, { createContext, PropsWithChildren, useState } from "react"
+import React, {
+  createContext,
+  PropsWithChildren,
+  useState,
+  useContext,
+} from "react"
 import { getValue, setValue } from "utils/localStorage"
 import { StoreKey } from "utils/localStorage/types"
 import { parseBoolean, parseInteger } from "./utils"
@@ -38,6 +43,8 @@ const defaultConfig: LocalConfig = {
   isNotificationEnabled: true,
   notificationDelay: 5,
   queryText: "",
+  editorSplitterBasis: 350,
+  resultsSplitterBasis: 350,
 }
 
 type ContextProps = {
@@ -47,6 +54,8 @@ type ContextProps = {
   notificationDelay: number
   isNotificationEnabled: boolean
   queryText: string
+  editorSplitterBasis: number
+  resultsSplitterBasis: number
   updateSettings: (key: StoreKey, value: SettingsType) => void
 }
 
@@ -57,6 +66,8 @@ const defaultValues: ContextProps = {
   isNotificationEnabled: true,
   notificationDelay: 5,
   queryText: "",
+  editorSplitterBasis: 350,
+  resultsSplitterBasis: 350,
   updateSettings: (key: StoreKey, value: SettingsType) => undefined,
 }
 
@@ -89,6 +100,18 @@ export const LocalStorageProvider = ({
   const [queryText, setQueryText] = useState<string>(
     getValue(StoreKey.QUERY_TEXT),
   )
+  const [editorSplitterBasis, seteditorSplitterBasis] = useState<number>(
+    parseInteger(
+      getValue(StoreKey.EDITOR_SPLITTER_BASIS),
+      defaultConfig.editorSplitterBasis,
+    ),
+  )
+  const [resultsSplitterBasis, setresultsSplitterBasis] = useState<number>(
+    parseInteger(
+      getValue(StoreKey.RESULTS_SPLITTER_BASIS),
+      defaultConfig.resultsSplitterBasis,
+    ),
+  )
 
   const updateSettings = (key: StoreKey, value: SettingsType) => {
     setValue(key, value.toString())
@@ -120,6 +143,16 @@ export const LocalStorageProvider = ({
       case StoreKey.QUERY_TEXT:
         setQueryText(value)
         break
+      case StoreKey.EDITOR_SPLITTER_BASIS:
+        seteditorSplitterBasis(
+          parseInteger(value, defaultConfig.editorSplitterBasis),
+        )
+        break
+      case StoreKey.RESULTS_SPLITTER_BASIS:
+        setresultsSplitterBasis(
+          parseInteger(value, defaultConfig.resultsSplitterBasis),
+        )
+        break
     }
   }
 
@@ -132,11 +165,17 @@ export const LocalStorageProvider = ({
         isNotificationEnabled,
         notificationDelay,
         queryText,
+        editorSplitterBasis,
+        resultsSplitterBasis,
         updateSettings,
       }}
     >
       {children}
     </LocalStorageContext.Provider>
   )
+}
+
+export const useLocalStorage = () => {
+  return useContext(LocalStorageContext)
 }
 /* eslint-enable prettier/prettier */
