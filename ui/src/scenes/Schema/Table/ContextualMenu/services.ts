@@ -27,6 +27,7 @@ import { trim } from "ramda"
 
 export const formatTableSchemaQueryResult = (
   name: string,
+  partitionBy: string,
   result: QuestDB.QueryRawResult,
 ): string => {
   if (result.type === QuestDB.Type.DQL) {
@@ -75,6 +76,10 @@ export const formatTableSchemaQueryResult = (
 
     if (designatedName) {
       query += ` timestamp (${designatedName})`
+    }
+
+    if (partitionBy !== "NONE") {
+      query += ` PARTITION_BY ${partitionBy}`
     }
 
     return `${query};`

@@ -41,12 +41,14 @@ import ContextualMenu from "./ContextualMenu"
 
 type Props = QuestDB.Table &
   Readonly<{
+    designatedTimestamp: string
     expanded: boolean
     description?: string
     isScrolling: boolean
     onChange: (table: string) => void
     refresh: number
-    table: string
+    name: string
+    partitionBy: string
   }>
 
 const Wrapper = styled.div`
@@ -99,7 +101,9 @@ const Table = ({
   isScrolling,
   onChange,
   refresh,
-  table,
+  designatedTimestamp,
+  name,
+  partitionBy,
 }: Props) => {
   const ref = useRef<HTMLDivElement>(null)
   const [quest] = useState(new QuestDB.Client())
@@ -109,7 +113,7 @@ const Table = ({
   useEffect(() => {
     if (expanded) {
       combineLatest(
-        from(quest.showColumns(table)).pipe(startWith(null)),
+        from(quest.showColumns(name)).pipe(startWith(null)),
         of(true).pipe(delay(1000), startWith(false)),
       ).subscribe(([response, loading]) => {
         if (response && response.type === QuestDB.Type.DQL) {
@@ -120,30 +124,31 @@ const Table = ({
         }
       })
     }
-  }, [expanded, refresh, quest, table])
+  }, [expanded, refresh, quest, name])
 
   const handleClick = useCallback(
     (e) => {
-      onChange(expanded ? "" : table)
+      onChange(expanded ? "" : name)
     },
-    [expanded, onChange, table],
+    [expanded, onChange, name],
   )
 
   return (
     <Wrapper _height={columns ? columns.length * 30 : 0} ref={ref}>
-      <ContextMenuTrigger id={table}>
+      <ContextMenuTrigger id={name}>
         <Title
           description={description}
           expanded={expanded}
           kind="table"
-          name={table}
+          name={name}
           onClick={handleClick}
+          partitionBy={partitionBy}
           suffix={loading && <Loader size="18px" />}
           tooltip={!!description}
         />
       </ContextMenuTrigger>
 
-      {!isScrolling && <ContextualMenu name={table} />}
+      {!isScrolling && <ContextualMenu name={name} partitionBy={partitionBy} />}
 
       <CSSTransition
         classNames="collapse"
@@ -155,6 +160,7 @@ const Table = ({
           {columns?.map((column) => (
             <Row
               {...column}
+              designatedTimestamp={designatedTimestamp}
               key={`${column.column}-${column.type}${
                 column.indexed ? "-i" : ""
               }`}
