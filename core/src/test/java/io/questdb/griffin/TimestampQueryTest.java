@@ -44,6 +44,37 @@ import java.util.stream.Stream;
 
 public class TimestampQueryTest extends AbstractGriffinTest {
 
+
+    @Test
+    public void testCast2AsValidColumnNameTouchFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table xyz(time timestamp, cast2 geohash(8c)) timestamp(time) partition by DAY;";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO xyz VALUES(1609459199000000, #u33d8b12)");
+            String expected = "touch\n{\"data_pages\": 2, \"index_key_pages\":0, \"index_values_pages\": 0}\n";
+            String query = "select touch(select time, cast2 from xyz);";
+            assertSql(query, expected);
+        });
+    }
+
+
+    @Test
+    public void testCastAsValidColumnNameSelectTest() throws Exception {
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table xyz(time timestamp, cast geohash(8c)) timestamp(time) partition by DAY;";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO xyz VALUES(1609459199000000, #u33d8b12)");
+            String expected = "time\tcast\n" +
+                    "2020-12-31T23:59:59.000000Z\tu33d8b12\n";
+            String query = "select time, cast from xyz;";
+            assertSql(query, expected);
+        });
+    }
+
     @Test
     public void testEqualityTimestampFormatYearAndMonthNegativeTest() throws Exception {
         assertMemoryLeak(() -> {
@@ -1269,6 +1300,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 false
         );
     }
+
     private void assertTimestampTtFailedQuery(String expectedError, String query) {
         assertTimestampTtFailedQuery0(expectedError, query);
         String dtsQuery = query.replace("nts", "dts");

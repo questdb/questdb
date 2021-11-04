@@ -100,7 +100,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
                     Numbers.encodeLowHighShorts((short) 0, (short) (5 * (tok.length() - 1))),
                     ExpressionParser.extractGeoHashSuffix(0, tok));
         }
-        for (String tok : new String[]{"#/x", "#/1x", "#/x1", "#/xx", "#/-1", }) {
+        for (String tok : new String[]{"#/x", "#/1x", "#/x1", "#/xx", "#/-1",}) {
             Assert.assertThrows("[0] invalid bits size for GEOHASH constant",
                     SqlException.class, () -> ExpressionParser.extractGeoHashSuffix(0, tok));
         }
@@ -439,15 +439,34 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseWithDanglingCast() {
+        assertFail(
+                "case (cast 1 as int)",
+                11,
+                "dangling expression"
+        );
+    }
+
+    @Test
     public void testCaseWithCast() throws SqlException {
-        x("1castint1'th1'2'th2'0case5*1+",
-                "case (cast 1 as int)" +
+        x("1intcast1'th1'2'th2'0case5*1+",
+                "case (cast(1 as int))" +
                         " when 1" +
                         " then 'th1'" +
                         " when 2" +
                         " then 'th2'" +
                         " else 0" +
                         " end * 5 + 1");
+    }
+
+    @Test
+    public void testCastFunctionCallMultiSpace() throws SqlException {
+        x("1102030f+shortcast", "cast\t --- this is a comment\n\n(1+f(10,20,30) as short\n)");
+    }
+
+    @Test
+    public void testCastFunctionWithLambdaMultiSpaceNewlineAndComment() throws SqlException {
+        x("(select-choose a, b, c from (x))flongcast", "cast    --- this is a comment\n\n(f(select a,b,c from x) as long\n)");
     }
 
     @Test
@@ -1120,6 +1139,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         x("i0.1e+3<90100case", "case when i < 0.1e+3 then 90 else 100 end");
 
     }
+
     private void assertFail(String content, int pos, String contains) {
         try {
             compiler.testParseExpression(content, rpnBuilder);
