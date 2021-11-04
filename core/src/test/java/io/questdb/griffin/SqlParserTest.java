@@ -2872,17 +2872,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testInvalidGroupBy1() throws Exception {
-        assertSyntaxError("select x, y from tab sample by x,", 32, "unexpected");
+        assertSyntaxError("select x, y from tab sample by x,", 32, "literal expected");
     }
 
     @Test
     public void testInvalidGroupBy2() throws Exception {
-        assertSyntaxError("select x, y from (tab sample by x,)", 33, "')' expected");
+        assertSyntaxError("select x, y from (tab sample by x,)", 33, "literal expected");
     }
 
     @Test
     public void testInvalidGroupBy3() throws Exception {
-        assertSyntaxError("select x, y from tab sample by x, order by y", 32, "unexpected token: ,");
+        assertSyntaxError("select x, y from tab sample by x, order by y", 32, "literal expected");
     }
 
     @Test

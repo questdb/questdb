@@ -28,6 +28,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.Timestamps;
+import org.jetbrains.annotations.NotNull;
 
 public final class TimestampSamplerFactory {
 
@@ -77,31 +78,7 @@ public final class TimestampSamplerFactory {
                 }
             }
 
-            switch (cs.charAt(k)) {
-                case 'T':
-                    // millis
-                    return new MicroTimestampSampler(Timestamps.MILLI_MICROS * n);
-                case 's':
-                    // seconds
-                    return new MicroTimestampSampler(Timestamps.SECOND_MICROS * n);
-                case 'm':
-                    // minutes
-                    return new MicroTimestampSampler(Timestamps.MINUTE_MICROS * n);
-                case 'h':
-                    // hours
-                    return new MicroTimestampSampler(Timestamps.HOUR_MICROS * n);
-                case 'd':
-                    // days
-                    return new MicroTimestampSampler(Timestamps.DAY_MICROS * n);
-                case 'M':
-                    // months
-                    return new MonthTimestampSampler(n);
-                case 'y':
-                    return new YearTimestampSampler(n);
-                default:
-                    break;
-
-            }
+            return createTimestampSampler(n, cs.charAt(k), position + k);
         } catch (NumericException ignore) {
             // we are parsing a pre-validated number
             // but we have to deal with checked exception anyway
@@ -112,32 +89,40 @@ public final class TimestampSamplerFactory {
     }
 
     public static TimestampSampler getInstance(long period, CharSequence units, int position) throws SqlException {
-        if (units.length() != 1) {
-            throw SqlException.$(position, "expected one character interval qualifier");
+        if (units.length() == 1) {
+            return createTimestampSampler(period, units.charAt(0), position);
         }
-        switch (units.charAt(0)) {
+        // Just in case SqlParser will allow this in the future
+        throw SqlException.$(position, "expected one character interval qualifier");
+    }
+
+    @NotNull
+    private static TimestampSampler createTimestampSampler(long interval, char timeUnit, int position) throws SqlException {
+        switch (timeUnit) {
             case 'T':
                 // millis
-                return new MicroTimestampSampler(Timestamps.MILLI_MICROS * period);
+                return new MicroTimestampSampler(Timestamps.MILLI_MICROS * interval);
             case 's':
                 // seconds
-                return new MicroTimestampSampler(Timestamps.SECOND_MICROS * period);
+                return new MicroTimestampSampler(Timestamps.SECOND_MICROS * interval);
             case 'm':
                 // minutes
-                return new MicroTimestampSampler(Timestamps.MINUTE_MICROS * period);
+                return new MicroTimestampSampler(Timestamps.MINUTE_MICROS * interval);
             case 'h':
                 // hours
-                return new MicroTimestampSampler(Timestamps.HOUR_MICROS * period);
+                return new MicroTimestampSampler(Timestamps.HOUR_MICROS * interval);
             case 'd':
                 // days
-                return new MicroTimestampSampler(Timestamps.DAY_MICROS * period);
+                return new MicroTimestampSampler(Timestamps.DAY_MICROS * interval);
             case 'M':
                 // months
-                return new MonthTimestampSampler((int) period);
+                return new MonthTimestampSampler((int) interval);
             case 'y':
-                return new YearTimestampSampler((int) period);
+                return new YearTimestampSampler((int) interval);
             default:
-                throw SqlException.$(position, "unexpected sample by unit");
+                // Just in case SqlParser will allow this in the future
+                throw SqlException.$(position, "unsupported interval qualifier");
+
         }
     }
 }

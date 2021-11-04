@@ -8805,8 +8805,12 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSimpleArithmeticsInPeriod2() throws Exception {
-        assertQuery("sum\tk\n",
-                "select sum(a), k from x sample by (10+20) m",
+        assertQuery("sum\tk\n" +
+                        "1592.0966416600525\t1970-01-03T00:00:00.000000Z\n" +
+                        "1566.8131178120786\t1970-01-04T06:00:00.000000Z\n" +
+                        "1393.2872924527742\t1970-01-05T12:00:00.000000Z\n" +
+                        "584.4161505427071\t1970-01-06T18:00:00.000000Z\n",
+                "select sum(a), k from x sample by (10+20) h",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -8814,7 +8818,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
-                        " long_sequence(0)" +
+                        " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
                 "k",
                 false);
@@ -8822,8 +8826,28 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSimpleArithmeticsInPeriod3() throws Exception {
-        assertQuery("sum\tk\n",
-                "select sum(a), k from x sample by 300/10 m",
+        assertQuery("sum\tk\n" +
+                        "1592.0966416600525\t1970-01-03T00:00:00.000000Z\n" +
+                        "1566.8131178120786\t1970-01-04T06:00:00.000000Z\n" +
+                        "1393.2872924527742\t1970-01-05T12:00:00.000000Z\n" +
+                        "584.4161505427071\t1970-01-06T18:00:00.000000Z\n",
+                "select sum(a), k from x sample by 300/10 h",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false);
+    }
+
+    @Test
+    public void testSamplePeriodInvalidWithNoUnits() throws Exception {
+        assertFailure("select sum(a), k from x sample by 300/10 align to calendar\"",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -8833,8 +8857,56 @@ public class SampleByTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(0)" +
                         ") timestamp(k) partition by NONE",
-                "k",
-                false);
+                47,
+                "one letter sample by period unit expected");
+    }
+
+    @Test
+    public void testSamplePeriodInvalidWithNoUnits2() throws Exception {
+        assertFailure("select sum(a), k from x sample by 300/10",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(0)" +
+                        ") timestamp(k) partition by NONE",
+                40,
+                "literal expected");
+    }
+
+    @Test
+    public void testSamplePeriodInvalidWithWrongUnit() throws Exception {
+        assertFailure("select sum(a), k from x sample by 300/10 milli",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(0)" +
+                        ") timestamp(k) partition by NONE",
+                46,
+                "one letter sample by period unit expected");
+    }
+
+    @Test
+    public void testSamplePeriodInvalidWithWrongUnitLetter() throws Exception {
+        assertFailure("select sum(a), k from x sample by 300/10 L",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(0)" +
+                        ") timestamp(k) partition by NONE",
+                42,
+                "one letter sample by period unit expected");
     }
 
     private void assertSampleByIndexQuery(String expected, String query, String insert) throws Exception {

@@ -24,6 +24,8 @@
 
 package io.questdb.griffin;
 
+import io.questdb.griffin.model.ExpressionNode;
+
 public class SqlKeywords {
     public static final String CONCAT_FUNC_NAME = "concat";
 

@@ -154,16 +154,43 @@ public final class SqlParser {
 
     private void expectSample(GenericLexer lexer, QueryModel model) throws SqlException {
         final ExpressionNode n = expr(lexer, (QueryModel) null);
-        if (n.type == ExpressionNode.CONSTANT) {
+        if (isFullSampleByPeriod(n)) {
             model.setSampleBy(n);
             return;
         }
         // This is complex expression of sample by period. It must follow time unit interval
         ExpressionNode periodUnit = expectLiteral(lexer);
-        if (periodUnit == null || periodUnit.type != ExpressionNode.LITERAL) {
-            throw SqlException.$(lexer.getUnparsed() == null ? lexer.getPosition() : lexer.lastTokenPosition(), "Sample by units expected");
+        if (periodUnit == null || periodUnit.type != ExpressionNode.LITERAL || !isValidSampleByPeriodLetter(periodUnit.token)) {
+            throw SqlException.$(lexer.getUnparsed() == null ? lexer.getPosition() : lexer.lastTokenPosition(), "one letter sample by period unit expected");
         }
         model.setSampleBy(n, periodUnit);
+    }
+
+
+    public static boolean isFullSampleByPeriod(ExpressionNode n) {
+        return n != null && (n.type == ExpressionNode.CONSTANT || (n.type == ExpressionNode.LITERAL && isValidSampleByPeriodLetter(n.token)));
+    }
+
+    private static boolean isValidSampleByPeriodLetter(CharSequence token) {
+        if (token.length() != 1) return false;
+        switch (token.charAt(0)) {
+            case 'T':
+                // millis
+            case 's':
+                // seconds
+            case 'm':
+                // minutes
+            case 'h':
+                // hours
+            case 'd':
+                // days
+            case 'M':
+                // months
+            case 'y':
+                return true;
+            default:
+                return false;
+        }
     }
 
     private ExpressionNode expectExpr(GenericLexer lexer) throws SqlException {
