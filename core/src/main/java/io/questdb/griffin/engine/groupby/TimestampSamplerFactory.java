@@ -110,4 +110,34 @@ public final class TimestampSamplerFactory {
 
         throw SqlException.$(position + k, "unsupported interval qualifier");
     }
+
+    public static TimestampSampler getInstance(long period, CharSequence units, int position) throws SqlException {
+        if (units.length() != 1) {
+            throw SqlException.$(position, "expected one character interval qualifier");
+        }
+        switch (units.charAt(0)) {
+            case 'T':
+                // millis
+                return new MicroTimestampSampler(Timestamps.MILLI_MICROS * period);
+            case 's':
+                // seconds
+                return new MicroTimestampSampler(Timestamps.SECOND_MICROS * period);
+            case 'm':
+                // minutes
+                return new MicroTimestampSampler(Timestamps.MINUTE_MICROS * period);
+            case 'h':
+                // hours
+                return new MicroTimestampSampler(Timestamps.HOUR_MICROS * period);
+            case 'd':
+                // days
+                return new MicroTimestampSampler(Timestamps.DAY_MICROS * period);
+            case 'M':
+                // months
+                return new MonthTimestampSampler((int) period);
+            case 'y':
+                return new YearTimestampSampler((int) period);
+            default:
+                throw SqlException.$(position, "unexpected sample by unit");
+        }
+    }
 }

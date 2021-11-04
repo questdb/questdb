@@ -8753,6 +8753,90 @@ public class SampleByTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testSimpleArithmeticsInPeriod() throws Exception {
+        assertQuery("sum\tk\n",
+                "select sum(a), k from x sample by (10+20)m",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(0)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false);
+    }
+
+    @Test
+    public void testSimpleArithmeticsInPeriodSyntax() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table x as " +
+                            "(" +
+                            "select" +
+                            "   rnd_double(1)*180 lat," +
+                            "   rnd_double(1)*180 lon," +
+                            "   rnd_symbol('a') s," +
+                            "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                            "   from" +
+                            "   long_sequence(100)" +
+                            "), index(s) timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            try (
+                    RecordCursorFactory ignored = compiler.compile(
+                            "select k, s, first(lat) lat, last(lon) lon " +
+                                    "from x " +
+                                    "where s in ('a') " +
+                                    "sample by $1 T align to calendar",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory()
+            ) {
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "sample by period must be a constant expression");
+            }
+        });
+    }
+
+    @Test
+    public void testSimpleArithmeticsInPeriod2() throws Exception {
+        assertQuery("sum\tk\n",
+                "select sum(a), k from x sample by (10+20) m",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(0)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false);
+    }
+
+    @Test
+    public void testSimpleArithmeticsInPeriod3() throws Exception {
+        assertQuery("sum\tk\n",
+                "select sum(a), k from x sample by 300/10 m",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(0)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false);
+    }
+
     private void assertSampleByIndexQuery(String expected, String query, String insert) throws Exception {
         assertSampleByIndexQuery(expected, query, insert, false);
     }

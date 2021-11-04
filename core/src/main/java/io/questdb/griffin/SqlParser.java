@@ -152,6 +152,20 @@ public final class SqlParser {
         throw SqlException.$((lexer.lastTokenPosition()), "'by' expected");
     }
 
+    private void expectSample(GenericLexer lexer, QueryModel model) throws SqlException {
+        final ExpressionNode n = expr(lexer, (QueryModel) null);
+        if (n.type == ExpressionNode.CONSTANT) {
+            model.setSampleBy(n);
+            return;
+        }
+        // This is complex expression of sample by period. It must follow time unit interval
+        ExpressionNode periodUnit = expectLiteral(lexer);
+        if (periodUnit == null || periodUnit.type != ExpressionNode.LITERAL) {
+            throw SqlException.$(lexer.getUnparsed() == null ? lexer.getPosition() : lexer.lastTokenPosition(), "Sample by units expected");
+        }
+        model.setSampleBy(n, periodUnit);
+    }
+
     private ExpressionNode expectExpr(GenericLexer lexer) throws SqlException {
         final ExpressionNode n = expr(lexer, (QueryModel) null);
         if (n != null) {
@@ -863,7 +877,7 @@ public final class SqlParser {
 
         if (tok != null && isSampleKeyword(tok)) {
             expectBy(lexer);
-            model.setSampleBy(expectLiteral(lexer));
+            expectSample(lexer, model);
             tok = optTok(lexer);
 
             if (tok != null && isFillKeyword(tok)) {

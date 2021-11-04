@@ -1297,7 +1297,8 @@ public class SqlCodeGenerator implements Mutable {
     private RecordCursorFactory generateSampleBy(
             QueryModel model,
             SqlExecutionContext executionContext,
-            ExpressionNode sampleByNode
+            ExpressionNode sampleByNode,
+            ExpressionNode sampleByUnits
     ) throws SqlException {
         executionContext.pushTimestampRequiredFlag(true);
         try {
@@ -1343,7 +1344,21 @@ public class SqlCodeGenerator implements Mutable {
 
             final RecordMetadata metadata = factory.getMetadata();
             final ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
-            final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
+            final TimestampSampler timestampSampler;
+            if (sampleByUnits == null) {
+                 timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
+            } else {
+                Function sampleByPeriod = functionParser.parseFunction(
+                        sampleByNode,
+                        EmptyRecordMetadata.INSTANCE,
+                        executionContext
+                );
+                if (!sampleByPeriod.isConstant() || (sampleByPeriod.getType() != ColumnType.LONG && sampleByPeriod.getType() != ColumnType.INT)) {
+                    throw SqlException.$(model.getModelPosition(), "sample by period must be a constant expression of INT or LONG type");
+                }
+                long period = sampleByPeriod.getLong(null);
+                timestampSampler = TimestampSamplerFactory.getInstance(period, sampleByUnits.token, sampleByNode.position);
+            }
 
             final int fillCount = sampleByFill.size();
             try {
@@ -1965,7 +1980,7 @@ public class SqlCodeGenerator implements Mutable {
 
         final ExpressionNode sampleByNode = model.getSampleBy();
         if (sampleByNode != null) {
-            return generateSampleBy(model, executionContext, sampleByNode);
+            return generateSampleBy(model, executionContext, sampleByNode, model.getSampleByUnit());
         }
 
         RecordCursorFactory factory = null;
