@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cairo.AlterTableExecutionContext;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
@@ -47,12 +46,11 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
-public class JsonQueryProcessorState implements Mutable, Closeable, AlterTableExecutionContext {
+public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_RECORD_PREFIX = 9;
     static final int QUERY_SETUP_FIRST_RECORD = 8;
     static final int QUERY_SUFFIX = 7;
@@ -70,11 +68,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable, AlterTableEx
     private final ObjList<String> columnNames = new ObjList<>();
     private final HttpConnectionContext httpConnectionContext;
     private final IntList columnSkewList = new IntList();
-    private final DirectCharSequence directCharSequence = new DirectCharSequence();
     private final NanosecondClock nanosecondClock;
     private final int floatScale;
     private final int doubleScale;
-    private final SCSequence writerEventConsumeSequence = new SCSequence();
+    private final SCSequence tempConsumeSequence = new SCSequence();
     private Rnd rnd;
     private RecordCursorFactory recordCursorFactory;
     private RecordCursor cursor;
@@ -175,28 +172,20 @@ public class JsonQueryProcessorState implements Mutable, Closeable, AlterTableEx
         return rnd;
     }
 
-    @Override
-    public SCSequence getWriterEventConsumeSequence() {
-        return writerEventConsumeSequence;
+    public SCSequence getConsumeSequence() {
+        return tempConsumeSequence;
     }
 
     public void setRnd(Rnd rnd) {
         this.rnd = rnd;
     }
 
-    @Override
     public LogRecord debug() {
         return LOG.debug().$('[').$(getFd()).$("] ");
     }
 
-    @Override
     public LogRecord info() {
         return LOG.info().$('[').$(getFd()).$("] ");
-    }
-
-    @Override
-    public DirectCharSequence getDirectCharSequence() {
-        return directCharSequence;
     }
 
     public void logBufferTooSmall() {

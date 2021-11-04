@@ -346,7 +346,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 engine,
                 cc.getAlterStatement(),
                 sqlExecutionContext,
-                state
+                state.getConsumeSequence()
         );
         sendConfirmation(state, cc, keepAliveHeader);
     }

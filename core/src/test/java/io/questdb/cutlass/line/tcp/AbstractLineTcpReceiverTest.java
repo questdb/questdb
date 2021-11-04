@@ -25,12 +25,8 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.AlterTableExecutionContext;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.log.LogRecord;
-import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;

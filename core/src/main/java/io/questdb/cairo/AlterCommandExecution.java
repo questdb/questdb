@@ -24,40 +24,44 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.sql.AlterStatement;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
 
 import java.util.concurrent.locks.LockSupport;
 
 public class AlterCommandExecution {
+    private static final Log LOG = LogFactory.getLog(WriterPool.class);
+
     /***
      * Executes alter command
      * If writer is busy, posts alter command asynchronous to writer queue and waits for the response in blocking manner
      * @param engine Cairo Engine
      * @param alterStatement statement to execute
      * @param sqlExecutionContext context to execute
-     * @param requestContext request context use logging from
+     * @param responseConsumeSequence consume sequence to await async response from Table Writer
      * @throws SqlException if alter table execution fails in sync or async manner
      */
     public static void executeAlterCommand(
             CairoEngine engine,
             AlterStatement alterStatement,
             SqlExecutionContext sqlExecutionContext,
-            AlterTableExecutionContext requestContext
+            SCSequence responseConsumeSequence
     ) throws SqlException {
         try {
             executeAlterStatementSyncOrFail(engine, alterStatement, sqlExecutionContext);
         } catch (EntryUnavailableException ex) {
-            executeWriterCommandAsync(engine, alterStatement, requestContext);
+            executeWriterCommandAsync(engine, alterStatement, responseConsumeSequence);
         }
     }
 
@@ -68,21 +72,19 @@ public class AlterCommandExecution {
      * @param engine Cairo Engine
      * @param alterStatement statement to execute
      * @param sqlExecutionContext context to execute
-     * @param requestContext request context use logging from
      * @return commandId if async or -1L if executed synchronous
      * @throws SqlException if alter table execution fails in sync
      */
     public static long executeAlterCommandNoWait(
             CairoEngine engine,
             AlterStatement alterStatement,
-            SqlExecutionContext sqlExecutionContext,
-            AlterTableExecutionContext requestContext
+            SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         try {
             executeAlterStatementSyncOrFail(engine, alterStatement, sqlExecutionContext);
             return -1L;
         } catch (EntryUnavailableException ex) {
-            return executeWriterCommandAsyncNoWait(engine, alterStatement, requestContext);
+            return executeWriterCommandAsyncNoWait(engine, alterStatement);
         }
     }
 
@@ -95,9 +97,12 @@ public class AlterCommandExecution {
     ) throws SqlException {
         if (alterStatement != null) {
             assert alterStatement.getTableName() != null;
-            try (TableWriter writer = engine.getWriter(
-                    sqlExecutionContext.getCairoSecurityContext(),
-                    alterStatement.getTableName(), "Alter table statement")) {
+            try (
+                    TableWriter writer = engine.getWriter(
+                            sqlExecutionContext.getCairoSecurityContext(),
+                            alterStatement.getTableName(), "Alter table statement"
+                    )
+            ) {
                 alterStatement.apply(writer, true);
             } catch (TableStructureChangesException e) {
                 assert false : "TableStructureChangesException not happen when acceptStructureChange passed as true";
@@ -110,7 +115,7 @@ public class AlterCommandExecution {
      * @param engine Cairo Engine to consume events from
      * @param consumerSequence sequence to subscribe ot the events
      */
-    public static void setUpEngineAsyncWriterEventWait(CairoEngine engine, Sequence consumerSequence) {
+    public static void setUpEngineAsyncWriterEventWait(CairoEngine engine, SCSequence consumerSequence) {
         final FanOut writerEventFanOut = engine.getMessageBus().getTableWriterEventFanOut();
         writerEventFanOut.and(consumerSequence);
     }
@@ -129,7 +134,7 @@ public class AlterCommandExecution {
      * Blocking wait for the Writer Event
      * @param engine Cairo Engine
      * @param commandId command to wait the reply to
-     * @param requestContext request context used for logging and reply subscription
+     * @param responseConsumeSequence consume sequence to await async response from Table Writer
      * @param writerAsyncCommandBusyWaitTimeout maximum wait timeout, microseconds
      * @param queryTableNamePosition table name position in alter SQL query
      * @return null if success, or instance of SqlException of wait is timed out or resulted in an error
@@ -137,17 +142,16 @@ public class AlterCommandExecution {
     public static SqlException waitWriterEvent(
             CairoEngine engine,
             long commandId,
-            AlterTableExecutionContext requestContext,
+            Sequence responseConsumeSequence,
             long writerAsyncCommandBusyWaitTimeout,
             int queryTableNamePosition
     ) {
         final MicrosecondClock clock = engine.getConfiguration().getMicrosecondClock();
         final long start = clock.getTicks();
-        final SCSequence tableWriterEventSeq = requestContext.getWriterEventConsumeSequence();
         final RingQueue<TableWriterTask> tableWriterEventQueue = engine.getMessageBus().getTableWriterEventQueue();
 
         while (true) {
-            long seq = tableWriterEventSeq.next();
+            long seq = responseConsumeSequence.next();
             if (seq < 0) {
                 // Queue is empty, check if the execution blocked for too long
                 if (clock.getTicks() - start > writerAsyncCommandBusyWaitTimeout) {
@@ -159,12 +163,12 @@ public class AlterCommandExecution {
 
             TableWriterTask event = tableWriterEventQueue.get(seq);
             if (event.getInstance() != commandId || event.getType() != TableWriterTask.TSK_ALTER_TABLE) {
-                requestContext.info()
+                LOG.info()
                         .$("writer command response received and ignored [instance=").$(event.getInstance())
                         .$(",type=").$(event.getType())
                         .$(",expectedInstance=").$(commandId)
                         .I$();
-                tableWriterEventSeq.done(seq);
+                responseConsumeSequence.done(seq);
                 LockSupport.parkNanos(100);
                 continue;
             }
@@ -174,14 +178,10 @@ public class AlterCommandExecution {
             SqlException result = null;
             int strLen = Unsafe.getUnsafe().getInt(event.getData());
             if (strLen != 0) {
-                DirectCharSequence tempDirectCharSequence = requestContext.getDirectCharSequence();
-                result = SqlException.$(
-                        queryTableNamePosition,
-                        tempDirectCharSequence.of(event.getData() + 4L, event.getData() + 4L + 2L * strLen)
-                );
+                result = SqlException.$(queryTableNamePosition, event.getData() + 4L, event.getData() + 4L + 2L * strLen);
             }
-            tableWriterEventSeq.done(seq);
-            requestContext.info().$("writer command response received [instance=").$(commandId).I$();
+            responseConsumeSequence.done(seq);
+            LOG.info().$("writer command response received [instance=").$(commandId).I$();
             return result;
         }
     }
@@ -189,25 +189,25 @@ public class AlterCommandExecution {
     private static void executeWriterCommandAsync(
             CairoEngine engine,
             AlterStatement alterStatement,
-            AlterTableExecutionContext requestContext
+            SCSequence responseConsumeSequence
     ) throws SqlException {
-        requestContext.info().$("writer busy, will pass ALTER TABLE execution to writer owner async [table=").$(alterStatement.getTableName()).I$();
-        setUpEngineAsyncWriterEventWait(engine, requestContext.getWriterEventConsumeSequence());
+        LOG.info().$("writer busy, will pass ALTER TABLE execution to writer owner async [table=").$(alterStatement.getTableName()).I$();
+        setUpEngineAsyncWriterEventWait(engine, responseConsumeSequence);
         try {
             long instance = engine.publishTableWriterCommand(alterStatement);
             SqlException status = waitWriterEvent(
                     engine,
                     instance,
-                    requestContext,
+                    responseConsumeSequence,
                     engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout(),
                     alterStatement.getTableNamePosition()
             );
             if (status == null) {
-                requestContext.debug().$("received DONE response writer event [table=")
+                LOG.debug().$("received DONE response writer event [table=")
                         .$(alterStatement.getTableName())
                         .$(",instance=").$(instance).I$();
             } else {
-                requestContext.info().$("received error response for ALTER TABLE from writer [table=")
+                LOG.info().$("received error response for ALTER TABLE from writer [table=")
                         .$(alterStatement.getTableName())
                         .$(",instance=").$(instance)
                         .$(",error=").$(status.getFlyweightMessage())
@@ -215,18 +215,17 @@ public class AlterCommandExecution {
                 throw status;
             }
         } finally {
-            stopEngineAsyncWriterEventWait(engine, requestContext.getWriterEventConsumeSequence());
+            stopEngineAsyncWriterEventWait(engine, responseConsumeSequence);
         }
     }
 
     private static long executeWriterCommandAsyncNoWait(
             CairoEngine engine,
-            AlterStatement alterStatement,
-            AlterTableExecutionContext requestContext
+            AlterStatement alterStatement
     ) {
-        requestContext.info().$("writer busy, will pass ALTER TABLE execution to writer owner async [table=").$(alterStatement.getTableName()).I$();
+        LOG.info().$("writer busy, will pass ALTER TABLE execution to writer owner async [table=").$(alterStatement.getTableName()).I$();
         long instance = engine.publishTableWriterCommand(alterStatement);
-        requestContext.debug().$("published writer event [table=")
+        LOG.debug().$("published writer event [table=")
                 .$(alterStatement.getTableName())
                 .$(",instance=").$(instance).I$();
         return instance;

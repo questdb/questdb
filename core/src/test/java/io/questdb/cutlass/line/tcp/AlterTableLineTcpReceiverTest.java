@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.AlterCommandExecution;
-import io.questdb.cairo.AlterTableExecutionContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.pool.PoolListener;
@@ -36,14 +35,12 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.log.LogRecord;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectCharSequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -60,30 +57,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public static final int WAIT_ILP_TABLE_RELEASE = 0x2;
     public static final int WAIT_ALTER_TABLE_RELEASE = 0x4;
     private volatile long alterCommandId;
-
-    private final AlterTableExecutionContext requestContext = new AlterTableExecutionContext() {
-        private final SCSequence scSequence  = new SCSequence();
-
-        @Override
-        public LogRecord debug() {
-            return LOG.debug();
-        }
-
-        @Override
-        public LogRecord info() {
-            return LOG.info();
-        }
-
-        @Override
-        public DirectCharSequence getDirectCharSequence() {
-            return new DirectCharSequence();
-        }
-
-        @Override
-        public SCSequence getWriterEventConsumeSequence() {
-            return scSequence;
-        }
-    };
+    private final SCSequence scSequence  = new SCSequence();
 
     @Test
     public void testAlterTableAddIndex() throws Exception {
@@ -347,7 +321,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     sqlException = AlterCommandExecution.waitWriterEvent(
                             engine,
                             alterCommandId,
-                            requestContext,
+                            scSequence,
                             10_000_000,  // 1s
                             -1
                     );
@@ -359,7 +333,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     if (waited) {
                         LOG.info().$("Stopped waiting for writer ASYNC event").$();
                         // If subscribed to global writer event queue, unsubscribe here
-                        AlterCommandExecution.stopEngineAsyncWriterEventWait(engine, requestContext.getWriterEventConsumeSequence());
+                        AlterCommandExecution.stopEngineAsyncWriterEventWait(engine, scSequence);
                     }
                 }
             }).start();
@@ -436,14 +410,14 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     server.setSchedulerListener(null);
                     break;
             }
-            AlterCommandExecution.stopEngineAsyncWriterEventWait(engine, requestContext.getWriterEventConsumeSequence());
+            AlterCommandExecution.stopEngineAsyncWriterEventWait(engine, scSequence);
         }
         return null;
     }
 
     private long executeAlterSql(String sql) throws SqlException {
         // Subscribe local writer even queue to the global engine writer response queue
-        AlterCommandExecution.setUpEngineAsyncWriterEventWait(engine, requestContext.getWriterEventConsumeSequence());
+        AlterCommandExecution.setUpEngineAsyncWriterEventWait(engine, scSequence);
         LOG.info().$("Started waiting for writer ASYNC event").$();
         try (SqlCompiler compiler = new SqlCompiler(engine);
              SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
@@ -452,15 +426,18 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                              new BindVariableServiceImpl(configuration),
                              null,
                              -1,
-                             null)) {
+                             null
+                     )
+        ) {
             CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
             AlterStatement alterStatement = cc.getAlterStatement();
             assert alterStatement != null;
 
-            return AlterCommandExecution.executeAlterCommandNoWait(engine,
+            return AlterCommandExecution.executeAlterCommandNoWait(
+                    engine,
                     alterStatement,
-                    sqlExecutionContext,
-                    requestContext);
+                    sqlExecutionContext
+            );
         }
     }
 

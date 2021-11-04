@@ -43,6 +43,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return position(position).put(message);
     }
 
+    public static SqlException $(int position, long addrLo, long addrHi) {
+        return position(position).put(addrLo, addrHi);
+    }
+
     public static SqlException ambiguousColumn(int position) {
         return position(position).put("Ambiguous column name");
     }
@@ -111,6 +115,11 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public SqlException put(Sinkable sinkable) {
         message.put(sinkable);
+        return this;
+    }
+
+    public SqlException put(long addrLo, long addrHi) {
+        message.put(addrLo, addrHi);
         return this;
     }
 
