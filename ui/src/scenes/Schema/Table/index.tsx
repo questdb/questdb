@@ -44,6 +44,7 @@ type Props = QuestDB.Table &
     designatedTimestamp: string
     expanded: boolean
     description?: string
+    isScrolling: boolean
     onChange: (table: string) => void
     refresh: number
     name: string
@@ -96,10 +97,11 @@ const Loader = styled(Loader4)`
 
 const Table = ({
   description,
-  designatedTimestamp,
   expanded,
+  isScrolling,
   onChange,
   refresh,
+  designatedTimestamp,
   name,
   partitionBy,
 }: Props) => {
@@ -146,7 +148,7 @@ const Table = ({
         />
       </ContextMenuTrigger>
 
-      <ContextualMenu name={name} partitionBy={partitionBy} />
+      {!isScrolling && <ContextualMenu name={name} partitionBy={partitionBy} />}
 
       <CSSTransition
         classNames="collapse"
