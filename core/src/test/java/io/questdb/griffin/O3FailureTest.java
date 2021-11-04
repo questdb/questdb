@@ -41,7 +41,6 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -298,7 +297,6 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
-    @Ignore
     public void testAllocateToResizeLastPartition() throws Exception {
         counter.set(39);
         executeWithPool(0, O3FailureTest::testAllocateToResizeLastPartition0, ffAllocateFailure);
@@ -1628,7 +1626,6 @@ public class O3FailureTest extends AbstractO3Test {
             row.putLong(1, 3500000L);
             row.append();
 
-
             // here we need enough rows to saturate existing page
             // same timestamp is ok
             for (int i = 0; i < 4_000_000; i++) {
@@ -1655,6 +1652,39 @@ public class O3FailureTest extends AbstractO3Test {
                     LOG
             );
         }
+
+        compiler.compile(
+                "create table z as (select rnd_int() i, rnd_long() j, timestamp_sequence(549900000000L-4000000L, 10) ts from long_sequence(3000000))",
+                executionContext
+        );
+
+        compiler.compile(
+                "insert into x select * from z",
+                executionContext
+        );
+
+        TestUtils.assertSqlCursors(
+                compiler,
+                executionContext,
+                "x",
+                "(y union all z) order by ts",
+                LOG
+        );
+
+        TestUtils.printSql(
+                compiler,
+                executionContext,
+                "select max(ts), count() from (y union all z)",
+                sink2
+        );
+
+        TestUtils.printSql(
+                compiler,
+                executionContext,
+                "select max(ts), count() from x",
+                sink
+        );
+        TestUtils.assertEquals(sink2, sink);
     }
 
     private static void testAllocateFailsAtO3OpenColumnAppendRows(TableWriter w) {
@@ -2309,7 +2339,8 @@ public class O3FailureTest extends AbstractO3Test {
     private static void assertXCount(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
-            String expectedMaxTimestamp) throws SqlException {
+            CharSequence expectedMaxTimestamp
+    ) throws SqlException {
         assertXCount(compiler, sqlExecutionContext);
         assertMaxTimestamp(compiler.engine, sqlExecutionContext, expectedMaxTimestamp);
     }

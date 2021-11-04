@@ -1802,41 +1802,6 @@ public class TableWriter implements Closeable {
         denseIndexers.clear();
     }
 
-    private void setColumnSize(int columnIndex, long size, boolean doubleAllocate) {
-        MemoryMA mem1 = getPrimaryColumn(columnIndex);
-        MemoryMA mem2 = getSecondaryColumn(columnIndex);
-        int type = getColumnType(metaMem, columnIndex);
-        final long pos = size - columnTops.getQuick(columnIndex);
-        if (pos > 0) {
-            // subtract column top
-            final long m1pos;
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.BINARY:
-                case ColumnType.STRING:
-                    assert mem2 != null;
-                    if (doubleAllocate) {
-                        mem2.allocate(pos * Long.BYTES + Long.BYTES);
-                    }
-                    mem2.jumpTo(pos * Long.BYTES + Long.BYTES);
-                    m1pos = Unsafe.getUnsafe().getLong(mem2.getAppendAddress() - 8);
-                    break;
-                default:
-                    m1pos = pos << ColumnType.pow2SizeOf(type);
-                    break;
-            }
-            if (doubleAllocate) {
-                mem1.allocate(m1pos);
-            }
-            mem1.jumpTo(m1pos);
-        } else {
-            mem1.jumpTo(0);
-            if (mem2 != null) {
-                mem2.jumpTo(0);
-                mem2.putLong(0);
-            }
-        }
-    }
-
     private void closeAppendMemoryTruncate(boolean truncate) {
         for (int i = 0, n = columns.size(); i < n; i++) {
             MemoryMA m = columns.getQuick(i);
@@ -2691,6 +2656,7 @@ public class TableWriter implements Closeable {
                             TableUtils.setPathForPartition(pathToPartition, partitionBy, o3TimestampMin, false);
                             TableUtils.txnPartitionConditionally(pathToPartition, srcNameTxn);
                             final int plen = pathToPartition.length();
+                            int columnsPublished = 0;
                             for (int i = 0; i < columnCount; i++) {
                                 final int colOffset = TableWriter.getPrimaryColumnIndex(i);
                                 final boolean notTheTimestamp = i != timestampIndex;
@@ -2719,28 +2685,56 @@ public class TableWriter implements Closeable {
                                     dstVarMem = mem1;
                                 }
 
-                                O3OpenColumnJob.appendLastPartition(
-                                        pathToPartition,
-                                        plen,
-                                        columnName,
-                                        columnCounter,
-                                        notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
-                                        srcOooFixAddr,
-                                        srcOooVarAddr,
-                                        srcOooLo,
-                                        srcOooHi,
-                                        srcOooMax,
-                                        o3TimestampMin,
-                                        o3TimestampMax,
-                                        partitionTimestamp,
-                                        srcDataTop,
-                                        srcDataMax,
-                                        isIndexed,
-                                        dstFixMem,
-                                        dstVarMem,
-                                        this,
-                                        indexWriter
-                                );
+                                columnsPublished++;
+                                try {
+                                    O3OpenColumnJob.appendLastPartition(
+                                            pathToPartition,
+                                            plen,
+                                            columnName,
+                                            columnCounter,
+                                            notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
+                                            srcOooFixAddr,
+                                            srcOooVarAddr,
+                                            srcOooLo,
+                                            srcOooHi,
+                                            srcOooMax,
+                                            o3TimestampMin,
+                                            o3TimestampMax,
+                                            partitionTimestamp,
+                                            srcDataTop,
+                                            srcDataMax,
+                                            isIndexed,
+                                            dstFixMem,
+                                            dstVarMem,
+                                            this,
+                                            indexWriter
+                                    );
+                                } catch (Throwable e) {
+                                    columnCounter.addAndGet(columnsPublished - columnCount + 1);
+                                    O3CopyJob.copyIdleQuick(
+                                            columnCounter,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            this
+                                    );
+                                    throw e;
+                                }
                             }
                         } else {
                             if (flattenTimestamp) {
@@ -4576,6 +4570,41 @@ public class TableWriter implements Closeable {
         for (int i = 0; i < columnCount; i++) {
             // stop calculating oversize as soon as we find first over-sized column
             setColumnSize(i, position, doubleAllocate);
+        }
+    }
+
+    private void setColumnSize(int columnIndex, long size, boolean doubleAllocate) {
+        MemoryMA mem1 = getPrimaryColumn(columnIndex);
+        MemoryMA mem2 = getSecondaryColumn(columnIndex);
+        int type = getColumnType(metaMem, columnIndex);
+        final long pos = size - columnTops.getQuick(columnIndex);
+        if (pos > 0) {
+            // subtract column top
+            final long m1pos;
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.BINARY:
+                case ColumnType.STRING:
+                    assert mem2 != null;
+                    if (doubleAllocate) {
+                        mem2.allocate(pos * Long.BYTES + Long.BYTES);
+                    }
+                    mem2.jumpTo(pos * Long.BYTES + Long.BYTES);
+                    m1pos = Unsafe.getUnsafe().getLong(mem2.getAppendAddress() - 8);
+                    break;
+                default:
+                    m1pos = pos << ColumnType.pow2SizeOf(type);
+                    break;
+            }
+            if (doubleAllocate) {
+                mem1.allocate(m1pos);
+            }
+            mem1.jumpTo(m1pos);
+        } else {
+            mem1.jumpTo(0);
+            if (mem2 != null) {
+                mem2.jumpTo(0);
+                mem2.putLong(0);
+            }
         }
     }
 
