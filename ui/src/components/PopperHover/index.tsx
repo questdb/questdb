@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-import type { Placement, Options } from "@popperjs/core"
+import type { Placement as PopperJsPlacement, Options } from "@popperjs/core"
 import React, {
   ReactNode,
   useCallback,
@@ -36,6 +36,8 @@ import { CSSTransition } from "react-transition-group"
 
 import { usePopperStyles, useTransition } from "../Hooks"
 import { TransitionDuration } from "../Transition"
+
+export type Placement = PopperJsPlacement
 
 type Props = Readonly<{
   children: ReactNode
