@@ -190,14 +190,14 @@ public class CairoEngine implements Closeable, WriterSource {
         CharSequence tableName = alterTableStatement.getTableName();
 
         while (true) {
-            MPSequence commandPugSeq = messageBus.getTableWriterCommandPubSeq();
-            long pubCursor = commandPugSeq.next();
+            MPSequence commandPubSeq = messageBus.getTableWriterCommandPubSeq();
+            long pubCursor = commandPubSeq.next();
             long correlationId = alterCommandCommandCorrelationId.incrementAndGet();
             if (pubCursor > -1) {
                 final TableWriterTask command = tableWriterCmdQueue.get(pubCursor);
                 alterTableStatement.serialize(command);
                 command.setInstance(correlationId);
-                commandPugSeq.done(pubCursor);
+                commandPubSeq.done(pubCursor);
                 LOG.info()
                         .$("published ASYNC writer ALTER TABLE task [table=").$(tableName)
                         .$(",instance=").$(correlationId)
@@ -426,10 +426,12 @@ public class CairoEngine implements Closeable, WriterSource {
             String tableName = cmd.getTableName();
             boolean done = false;
             LOG.info().$("received table command cmd [tableName=").$(tableName)
+                    .$(", type=").$(cmd.getType())
+                    .$(", instance=").$(cmd.getInstance())
                     .I$();
 
             try (TableWriter writer = writerPool.get(tableName, "async writer cmd")) {
-                done = true;
+                done = true; // next line must call done() on the sequence
                 writer.processCommandQueue(cmd, tableWriterCmdSubSeq, cursor, true);
             } catch (EntryUnavailableException e) {
                 // ignore command, writer is busy

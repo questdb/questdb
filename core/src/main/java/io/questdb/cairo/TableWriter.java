@@ -1302,22 +1302,22 @@ public class TableWriter implements Closeable {
         try {
             LOG.info()
                     .$("received ASYNC ALTER TABLE cmd [tableName=").$(tableName)
-                    .$(",tableId=").$(tableId)
-                    .$(",instance=").$(instance)
+                    .$(", tableId=").$(tableId)
+                    .$(", instance=").$(instance)
                     .I$();
             alterTableStatement.deserialize(cmd);
             alterTableStatement.apply(this, acceptStructureChange);
         } catch (TableStructureChangesException ex) {
             LOG.info()
                     .$("cannot complete ASYNC ALTER TABLE cmd, table structure change is not allowed atm [tableName=").$(tableName)
-                    .$(",tableId=").$(tableId)
-                    .$(",src=").$(instance)
+                    .$(", tableId=").$(tableId)
+                    .$(", src=").$(instance)
                     .I$();
             error = "ALTER TABLE cannot change table structure while Writer is busy";
         } catch (SqlException | CairoException ex ) {
             error = ex.getFlyweightMessage();
         } catch (Throwable ex) {
-            LOG.error().$("error on processing ALTER table [tableName=").$(tableName).$(",ex=").$(ex).I$();
+            LOG.error().$("error on processing ALTER table [tableName=").$(tableName).$(", ex=").$(ex).I$();
             error = "error on processing ALTER table, see QuestDB server logs for details";
         } finally {
             sequence.done(cursor);
