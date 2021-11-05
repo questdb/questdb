@@ -24,17 +24,30 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.AlterStatement;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
+import io.questdb.mp.SCSequence;
 
 public class CompiledQueryImpl implements CompiledQuery {
+    private final CairoEngine engine;
     private RecordCursorFactory recordCursorFactory;
     private InsertStatement insertStatement;
     private TextLoader textLoader;
     private AlterStatement alterStatement;
     private short type;
+    private SqlExecutionContext defaultSqlExecutionContext;
+
+    public CompiledQueryImpl(CairoEngine engine) {
+        this.engine = engine;
+    }
+
+    public CompiledQueryImpl withDefaultContext(SqlExecutionContext executionContext) {
+        defaultSqlExecutionContext = executionContext;
+        return this;
+    }
 
     @Override
     public RecordCursorFactory getRecordCursorFactory() {
@@ -126,4 +139,24 @@ public class CompiledQueryImpl implements CompiledQuery {
     CompiledQuery ofBackupTable() {
         return of(BACKUP_TABLE);
     }
+
+    @Override
+    public long executeAlterNoWait() throws SqlException {
+        return AlterCommandExecution.executeAlterCommandNoWait(
+                engine,
+                alterStatement,
+                defaultSqlExecutionContext
+        );
+    }
+
+    @Override
+    public void executeAlter(SCSequence tempSequence) throws SqlException {
+        AlterCommandExecution.executeAlterCommand(
+                engine,
+                alterStatement,
+                defaultSqlExecutionContext,
+                tempSequence
+        );
+    }
+
 }

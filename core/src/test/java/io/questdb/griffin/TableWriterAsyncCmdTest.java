@@ -24,7 +24,10 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AlterStatementImpl;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
@@ -34,7 +37,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.cairo.AlterCommandExecution.*;
+import static io.questdb.griffin.AlterCommandExecution.*;
 
 public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
 

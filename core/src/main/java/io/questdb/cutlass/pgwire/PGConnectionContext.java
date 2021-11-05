@@ -35,7 +35,6 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.log.LogRecord;
 import io.questdb.mp.SCSequence;
 import io.questdb.network.*;
 import io.questdb.std.*;
@@ -1094,12 +1093,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     configureContextForSet();
                     break;
                 case CompiledQuery.ALTER:
-                    AlterCommandExecution.executeAlterCommand(
-                            engine,
-                            cc.getAlterStatement(),
-                            sqlExecutionContext,
-                            tempSequence
-                    );
+                    cc.executeAlter(tempSequence);
                 default:
                     // DDL SQL
                     queryTag = TAG_OK;

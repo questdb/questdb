@@ -26,8 +26,14 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
 import io.questdb.Telemetry;
-import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.InsertStatement;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.cutlass.text.Utf8Exception;
@@ -342,12 +348,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CompiledQuery cc,
             CharSequence keepAliveHeader
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, SqlException {
-        AlterCommandExecution.executeAlterCommand(
-                engine,
-                cc.getAlterStatement(),
-                sqlExecutionContext,
-                state.getConsumeSequence()
-        );
+        cc.executeAlter(state.getConsumeSequence());
         sendConfirmation(state, cc, keepAliveHeader);
     }
 

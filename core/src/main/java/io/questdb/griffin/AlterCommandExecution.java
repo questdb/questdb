@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,12 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.TableStructureChangesException;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.sql.AlterStatement;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
@@ -52,7 +54,7 @@ public class AlterCommandExecution {
      * @param responseConsumeSequence consume sequence to await async response from Table Writer
      * @throws SqlException if alter table execution fails in sync or async manner
      */
-    public static void executeAlterCommand(
+    static void executeAlterCommand(
             CairoEngine engine,
             AlterStatement alterStatement,
             SqlExecutionContext sqlExecutionContext,
@@ -75,7 +77,7 @@ public class AlterCommandExecution {
      * @return commandId if async or -1L if executed synchronous
      * @throws SqlException if alter table execution fails in sync
      */
-    public static long executeAlterCommandNoWait(
+    static long executeAlterCommandNoWait(
             CairoEngine engine,
             AlterStatement alterStatement,
             SqlExecutionContext sqlExecutionContext
@@ -100,7 +102,7 @@ public class AlterCommandExecution {
             try (
                     TableWriter writer = engine.getWriter(
                             sqlExecutionContext.getCairoSecurityContext(),
-                            alterStatement.getTableName(), "Alter table statement"
+                            alterStatement.getTableName(), "alter statement execution"
                     )
             ) {
                 alterStatement.apply(writer, true);
@@ -113,11 +115,11 @@ public class AlterCommandExecution {
     /***
      * Sets up execution wait sequence to listen to the Engine async writer events
      * @param engine Cairo Engine to consume events from
-     * @param consumerSequence sequence to subscribe ot the events
+     * @param sequence sequence to subscribe ot the events
      */
-    public static void setUpEngineAsyncWriterEventWait(CairoEngine engine, SCSequence consumerSequence) {
+    public static void setUpEngineAsyncWriterEventWait(CairoEngine engine, SCSequence sequence) {
         final FanOut writerEventFanOut = engine.getMessageBus().getTableWriterEventFanOut();
-        writerEventFanOut.and(consumerSequence);
+        writerEventFanOut.and(sequence);
     }
 
     /***
@@ -157,7 +159,7 @@ public class AlterCommandExecution {
                 if (clock.getTicks() - start > writerAsyncCommandBusyWaitTimeout) {
                     return SqlException.$(queryTableNamePosition, "Timeout expired on waiting for the ALTER TABLE execution result");
                 }
-                LockSupport.parkNanos(100);
+                LockSupport.parkNanos(1);
                 continue;
             }
 
@@ -165,11 +167,11 @@ public class AlterCommandExecution {
             if (event.getInstance() != commandId || event.getType() != TableWriterTask.TSK_ALTER_TABLE) {
                 LOG.info()
                         .$("writer command response received and ignored [instance=").$(event.getInstance())
-                        .$(",type=").$(event.getType())
-                        .$(",expectedInstance=").$(commandId)
+                        .$(", type=").$(event.getType())
+                        .$(", expectedInstance=").$(commandId)
                         .I$();
                 responseConsumeSequence.done(seq);
-                LockSupport.parkNanos(100);
+                LockSupport.parkNanos(1);
                 continue;
             }
 
@@ -209,8 +211,8 @@ public class AlterCommandExecution {
             } else {
                 LOG.info().$("received error response for ALTER TABLE from writer [table=")
                         .$(alterStatement.getTableName())
-                        .$(",instance=").$(instance)
-                        .$(",error=").$(status.getFlyweightMessage())
+                        .$(", instance=").$(instance)
+                        .$(", error=").$(status.getFlyweightMessage())
                         .I$();
                 throw status;
             }

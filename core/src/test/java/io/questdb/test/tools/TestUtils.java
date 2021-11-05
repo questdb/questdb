@@ -26,10 +26,7 @@ package io.questdb.test.tools;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
@@ -482,11 +479,7 @@ public final class TestUtils {
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         AlterStatement alterStatement = cc.getAlterStatement();
         if (cc.getType() == CompiledQuery.ALTER && alterStatement != null) {
-            try(TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), alterStatement.getTableName(), "alter table")) {
-                alterStatement.apply(writer, true);
-            } catch (TableStructureChangesException e) {
-                assert false : "should not throw when acceptStructureChange is true";
-            }
+            AlterCommandExecution.executeAlterStatementSyncOrFail(engine, alterStatement, sqlExecutionContext);
         }
         return cc;
     }

@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.AlterStatement;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
+import io.questdb.mp.SCSequence;
 
 public interface CompiledQuery {
     short SELECT = 1;
@@ -53,4 +54,8 @@ public interface CompiledQuery {
     AlterStatement getAlterStatement();
 
     short getType();
+
+    void executeAlter(SCSequence tempSequence) throws SqlException;
+
+    long executeAlterNoWait() throws SqlException;
 }

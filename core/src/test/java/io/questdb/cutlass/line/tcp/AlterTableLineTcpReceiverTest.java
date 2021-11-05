@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.AlterCommandExecution;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.pool.PoolListener;
@@ -433,11 +432,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             AlterStatement alterStatement = cc.getAlterStatement();
             assert alterStatement != null;
 
-            return AlterCommandExecution.executeAlterCommandNoWait(
-                    engine,
-                    alterStatement,
-                    sqlExecutionContext
-            );
+            return cc.executeAlterNoWait();
         }
     }
 

@@ -67,7 +67,7 @@ public class SqlCompiler implements Closeable {
     protected final Path path = new Path();
     protected final CairoEngine engine;
     protected final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
-    protected final CompiledQueryImpl compiledQuery = new CompiledQueryImpl();
+    protected final CompiledQueryImpl compiledQuery;
     protected final AlterStatementImpl alterQuery = new AlterStatementImpl();
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
@@ -107,6 +107,7 @@ public class SqlCompiler implements Closeable {
         this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
         this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
         this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
+        this.compiledQuery = new CompiledQueryImpl(engine);
         this.characterStore = new CharacterStore(
                 configuration.getSqlCharacterStoreCapacity(),
                 configuration.getSqlCharacterStoreSequencePoolCapacity());
@@ -821,6 +822,9 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(0, "empty query");
         }
 
+        // Save execution context in resulting Compiled Query
+        // it may be used for Alter Table statement execution
+        compiledQuery.withDefaultContext(executionContext);
         final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
         if (executor == null) {
             return compileUsingModel(executionContext);
