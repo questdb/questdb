@@ -42,6 +42,7 @@ import { StoreAction, StoreShape } from "types"
 
 import Layout from "./scenes/Layout"
 import { theme } from "./theme"
+import { LocalStorageProvider } from "./providers/LocalStorageProvider"
 
 const epicMiddleware = createEpicMiddleware<
   StoreAction,
@@ -65,9 +66,11 @@ ReactDOM.render(
   <ScreenSizeProvider>
     <Provider store={store}>
       <ThemeProvider theme={theme}>
-        <FadeSlow />
-        <FadeReg />
-        <Layout />
+        <LocalStorageProvider>
+          <FadeSlow />
+          <FadeReg />
+          <Layout />
+        </LocalStorageProvider>
       </ThemeProvider>
     </Provider>
   </ScreenSizeProvider>,

@@ -48,6 +48,7 @@ import {
   spinAnimation,
   Text,
   Tooltip,
+  VirtualList,
 } from "components"
 import { selectors } from "store"
 import { color, ErrorResult } from "utils"
@@ -69,6 +70,7 @@ const loadingStyles = css`
 
 const Wrapper = styled(PaneWrapper)`
   overflow-x: auto;
+  height: 100%;
 `
 
 const Menu = styled(PaneMenu)`
@@ -115,11 +117,41 @@ const Schema = ({
   const [tables, setTables] = useState<QuestDB.Table[]>()
   const [opened, setOpened] = useState<string>()
   const [refresh, setRefresh] = useState(Date.now())
+  const [isScrolling, setIsScrolling] = useState(false)
   const { readOnly } = useSelector(selectors.console.getConfig)
 
   const handleChange = useCallback((name: string) => {
     setOpened(name)
   }, [])
+
+  const handleScrollingStateChange = useCallback(
+    (isScrolling) => {
+      setIsScrolling(isScrolling)
+    },
+    [setIsScrolling],
+  )
+
+  const listItemContent = useCallback(
+    (index: number) => {
+      if (tables) {
+        const table = tables[index]
+
+        return (
+          <Table
+            designatedTimestamp={table.designatedTimestamp}
+            expanded={table.name === opened}
+            isScrolling={isScrolling}
+            key={table.name}
+            name={table.name}
+            onChange={handleChange}
+            partitionBy={table.partitionBy}
+            refresh={refresh}
+          />
+        )
+      }
+    },
+    [handleChange, isScrolling, opened, refresh, tables],
+  )
 
   const fetchTables = useCallback(() => {
     setLoading(true)
@@ -198,19 +230,11 @@ const Schema = ({
         ) : loadingError ? (
           <LoadingError error={loadingError} />
         ) : (
-          tables?.map(
-            ({ name, partitionBy, designatedTimestamp }: QuestDB.Table) => (
-              <Table
-                designatedTimestamp={designatedTimestamp}
-                expanded={name === opened}
-                key={name}
-                name={name}
-                onChange={handleChange}
-                partitionBy={partitionBy}
-                refresh={refresh}
-              />
-            ),
-          )
+          <VirtualList
+            isScrolling={handleScrollingStateChange}
+            itemContent={listItemContent}
+            totalCount={tables?.length}
+          />
         )}
         {!loading && <FlexSpacer />}
       </Content>
