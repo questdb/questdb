@@ -91,6 +91,13 @@ final class WhereClauseParser implements Mutable {
                 Chars.equals(left.token, right.token);
     }
 
+    private boolean preferredOrIndexed(CharSequence columnName, RecordMetadata m, boolean latestByMultiColumn) {
+        return !latestByMultiColumn &&
+                (Chars.equalsIgnoreCaseNc(preferredKeyColumn, columnName)
+                        ||
+                        (preferredKeyColumn == null && m.isColumnIndexed(m.getColumnIndex(columnName))));
+    }
+
     private boolean analyzeEquals(AliasTranslator translator,
                                   IntrinsicModel model,
                                   ExpressionNode node,
@@ -143,9 +150,7 @@ final class WhereClauseParser implements Mutable {
                     case ColumnType.STRING:
                     case ColumnType.LONG:
                     case ColumnType.INT:
-                        final boolean preferred = Chars.equalsIgnoreCaseNc(preferredKeyColumn, column);
-                        final boolean indexed = m.isColumnIndexed(index);
-                        if (!latestByMultiColumn && (preferred || (indexed && preferredKeyColumn == null))) {
+                        if (preferredOrIndexed(column, m, latestByMultiColumn)) {
                             CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
                             if (Chars.equalsIgnoreCaseNc(model.keyColumn, column)) {
                                 // compute overlap of values
@@ -567,15 +572,13 @@ final class WhereClauseParser implements Mutable {
     private boolean analyzeInLambda(
             IntrinsicModel model,
             CharSequence columnName,
-            RecordMetadata meta,
+            RecordMetadata m,
             ExpressionNode node,
             boolean latestByMultiColumn
     ) throws SqlException {
 
-        int columnIndex = meta.getColumnIndex(columnName);
-        boolean preferred = Chars.equalsIgnoreCaseNc(preferredKeyColumn, columnName);
-        final boolean indexed = meta.isColumnIndexed(columnIndex);
-        if (!latestByMultiColumn && (preferred || (indexed && preferredKeyColumn == null))) {
+        int columnIndex = m.getColumnIndex(columnName);
+        if (preferredOrIndexed(columnName, m, latestByMultiColumn)) {
             if (preferredKeyColumn != null && !Chars.equalsIgnoreCase(columnName, preferredKeyColumn)) {
                 return false;
             }
@@ -587,7 +590,7 @@ final class WhereClauseParser implements Mutable {
             // check if we already have indexed column and it is of worse selectivity
             if (model.keyColumn != null
                     && (!Chars.equalsIgnoreCase(model.keyColumn, columnName))
-                    && meta.getIndexValueBlockCapacity(columnIndex) <= meta.getIndexValueBlockCapacity(model.keyColumn)) {
+                    && m.getIndexValueBlockCapacity(columnIndex) <= m.getIndexValueBlockCapacity(model.keyColumn)) {
                 return false;
             }
 
@@ -683,22 +686,20 @@ final class WhereClauseParser implements Mutable {
     private boolean analyzeListOfValues(
             IntrinsicModel model,
             CharSequence columnName,
-            RecordMetadata meta,
+            RecordMetadata m,
             ExpressionNode node,
             boolean latestByMultiColumn
     ) {
-        final int columnIndex = meta.getColumnIndex(columnName);
+        final int columnIndex = m.getColumnIndex(columnName);
         boolean newColumn = true;
-        boolean preferred = Chars.equalsIgnoreCaseNc(preferredKeyColumn, columnName);
-        final boolean indexed = meta.isColumnIndexed(columnIndex);
-        if (!latestByMultiColumn && (preferred || (indexed && preferredKeyColumn == null))) {
+        if (preferredOrIndexed(columnName, m, latestByMultiColumn)) {
 
             // check if we already have indexed column and it is of worse selectivity
             // "preferred" is an unfortunate name, this column is from "latest by" clause, I should name it better
             //
             if (model.keyColumn != null
                     && (newColumn = !Chars.equals(model.keyColumn, columnName))
-                    && meta.getIndexValueBlockCapacity(columnIndex) <= meta.getIndexValueBlockCapacity(model.keyColumn)) {
+                    && m.getIndexValueBlockCapacity(columnIndex) <= m.getIndexValueBlockCapacity(model.keyColumn)) {
                 return false;
             }
 
@@ -794,8 +795,8 @@ final class WhereClauseParser implements Mutable {
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
             } else {
-                CharSequence column = translator.translateAlias(a.token);
-                int index = m.getColumnIndexQuiet(column);
+                CharSequence columnName = translator.translateAlias(a.token);
+                int index = m.getColumnIndexQuiet(columnName);
                 if (index == -1) {
                     throw SqlException.invalidColumn(a.position, a.token);
                 }
@@ -805,58 +806,55 @@ final class WhereClauseParser implements Mutable {
                     case ColumnType.STRING:
                     case ColumnType.LONG:
                     case ColumnType.INT:
-                        if (m.isColumnIndexed(index)) {
-                            final boolean preferred = Chars.equalsIgnoreCaseNc(preferredKeyColumn, column);
-                            final boolean indexed = m.isColumnIndexed(index);
-                            if (!latestByMultiColumn && (preferred || (indexed && preferredKeyColumn == null))) {
-                                CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
-                                if (Chars.equalsIgnoreCaseNc(model.keyColumn, column)) {
-                                    if (model.keyExcludedValues.contains(value)) {
-                                        // when we have "x not in ('a,'b') and x != 'a')" the x='b' can never happen
-                                        // so we have to clear all other key values
-                                        if (model.keyExcludedValues.size() > 1) {
-                                            model.keyExcludedValues.clear();
-                                            model.keyExcludedValuePositions.clear();
-                                            model.keyExcludedValues.add(value);
-                                            model.keyExcludedValuePositions.add(b.position);
-                                            node.intrinsicValue = IntrinsicModel.TRUE;
-                                            return true;
-                                        }
-                                    } else {
-                                        if (model.keyValues.contains(value)) {
-                                            if (model.keyValues.size() > 1) {
-                                                int removedIndex = model.keyValues.remove(value);
-                                                if (removedIndex > -1) {
-                                                    model.keyValuePositions.removeIndex(index);
-                                                }
-                                                model.keyValuePositions.remove(b.position);
-                                            } else {
-                                                model.keyValues.clear();
-                                                model.keyValuePositions.clear();
-                                            }
-                                            removeNodes(b, keyNodes);
-                                        }
+                        if (preferredOrIndexed(columnName, m, latestByMultiColumn)) {
+                            CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
+                            if (Chars.equalsIgnoreCaseNc(model.keyColumn, columnName)) {
+                                if (model.keyExcludedValues.contains(value)) {
+                                    // when we have "x not in ('a,'b') and x != 'a')" the x='b' can never happen
+                                    // so we have to clear all other key values
+                                    if (model.keyExcludedValues.size() > 1) {
+                                        model.keyExcludedValues.clear();
+                                        model.keyExcludedValuePositions.clear();
+                                        model.keyExcludedValues.add(value);
+                                        model.keyExcludedValuePositions.add(b.position);
                                         node.intrinsicValue = IntrinsicModel.TRUE;
-                                        model.intrinsicValue = IntrinsicModel.FALSE;
-                                        return false;
+                                        return true;
                                     }
-                                } else if (model.keyColumn == null || m.getIndexValueBlockCapacity(index) > m.getIndexValueBlockCapacity(model.keyColumn)) {
-                                    model.keyColumn = column;
-                                    model.keyValues.clear();
-                                    model.keyValuePositions.clear();
-                                    model.keyExcludedValues.clear();
-                                    model.keyExcludedValuePositions.clear();
+                                } else {
+                                    if (model.keyValues.contains(value)) {
+                                        if (model.keyValues.size() > 1) {
+                                            int removedIndex = model.keyValues.remove(value);
+                                            if (removedIndex > -1) {
+                                                model.keyValuePositions.removeIndex(index);
+                                            }
+                                            model.keyValuePositions.remove(b.position);
+                                        } else {
+                                            model.keyValues.clear();
+                                            model.keyValuePositions.clear();
+                                        }
+                                        removeNodes(b, keyNodes);
+                                    }
                                     model.keyExcludedValues.add(value);
                                     model.keyExcludedValuePositions.add(b.position);
-                                    resetNodes();
-                                    node.intrinsicValue = IntrinsicModel.TRUE;
+                                    model.intrinsicValue = IntrinsicModel.TRUE;
+                                    return false;
                                 }
-                                keyExclNodes.add(node);
-                                return true;
-                            } else if (preferred) {
-                                keyExclNodes.add(node);
-                                return false;
+                            } else if (model.keyColumn == null || m.getIndexValueBlockCapacity(index) > m.getIndexValueBlockCapacity(model.keyColumn)) {
+                                model.keyColumn = columnName;
+                                model.keyValues.clear();
+                                model.keyValuePositions.clear();
+                                model.keyExcludedValues.clear();
+                                model.keyExcludedValuePositions.clear();
+                                model.keyExcludedValues.add(value);
+                                model.keyExcludedValuePositions.add(b.position);
+                                resetNodes();
+                                node.intrinsicValue = IntrinsicModel.TRUE;
                             }
+                            keyExclNodes.add(node);
+                            return true;
+                        } else if (Chars.equalsIgnoreCaseNc(preferredKeyColumn, columnName)) {
+                            keyExclNodes.add(node);
+                            return false;
                         }
                         return false;
                     default:
@@ -874,7 +872,8 @@ final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             FunctionParser functionParser,
             RecordMetadata metadata,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            boolean latestByMultiColumn
     ) throws SqlException {
 
         ExpressionNode node = notNode.rhs;
@@ -899,7 +898,7 @@ final class WhereClauseParser implements Mutable {
         if (ok) {
             notNode.intrinsicValue = IntrinsicModel.TRUE;
         } else {
-            analyzeNotListOfValues(model, column, m, node, notNode);
+            analyzeNotListOfValues(model, column, m, node, notNode, latestByMultiColumn);
         }
 
         return ok;
@@ -912,7 +911,8 @@ final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             FunctionParser functionParser,
             RecordMetadata metadata,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            boolean latestByMultiColumn
     ) throws SqlException {
 
         ExpressionNode node = notNode.rhs;
@@ -929,29 +929,26 @@ final class WhereClauseParser implements Mutable {
         if (ok) {
             notNode.intrinsicValue = IntrinsicModel.TRUE;
         } else {
-            analyzeNotListOfValues(model, column, m, node, notNode);
+            analyzeNotListOfValues(model, column, m, node, notNode, latestByMultiColumn);
         }
 
         return ok;
     }
 
-
     private void analyzeNotListOfValues(
             IntrinsicModel model,
             CharSequence columnName,
-            RecordMetadata meta,
+            RecordMetadata m,
             ExpressionNode node,
-            ExpressionNode notNode
+            ExpressionNode notNode,
+            boolean latestByMultiColumn
     ) {
-        final int columnIndex = meta.getColumnIndex(columnName);
+        final int columnIndex = m.getColumnIndex(columnName);
         boolean newColumn = true;
-        boolean preferred = Chars.equalsIgnoreCaseNc(preferredKeyColumn, columnName);
-
-        if (preferred || (preferredKeyColumn == null && meta.isColumnIndexed(columnIndex))) {
-
+        if (preferredOrIndexed(columnName, m, latestByMultiColumn)) {
             if (model.keyColumn != null
                     && (newColumn = !Chars.equals(model.keyColumn, columnName))
-                    && meta.getIndexValueBlockCapacity(columnIndex) <= meta.getIndexValueBlockCapacity(model.keyColumn)) {
+                    && m.getIndexValueBlockCapacity(columnIndex) <= m.getIndexValueBlockCapacity(model.keyColumn)) {
                 return;
             }
 
@@ -1393,8 +1390,9 @@ final class WhereClauseParser implements Mutable {
             case INTRINSIC_OP_NOT_EQ:
                 return analyzeNotEquals(translator, model, node, m, latestByMultiColumn);
             case INTRINSIC_OP_NOT:
-                return (isInKeyword(node.rhs.token) && analyzeNotIn(translator, model, node, m, functionParser, metadata, executionContext))
-                        || (isBetweenKeyword(node.rhs.token) && analyzeNotBetween(translator, model, node, m, functionParser, metadata, executionContext));
+                return (isInKeyword(node.rhs.token) && analyzeNotIn(translator, model, node, m, functionParser, metadata, executionContext, latestByMultiColumn))
+                        ||
+                        (isBetweenKeyword(node.rhs.token) && analyzeNotBetween(translator, model, node, m, functionParser, metadata, executionContext, latestByMultiColumn));
             case INTRINSIC_OP_BETWEEN:
                 return analyzeBetween(translator, model, node, m, functionParser, metadata, executionContext);
             default:

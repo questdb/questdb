@@ -196,7 +196,6 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
         );
     }
 
-    // TODO: FIX
     @Test
     public void testNotEquals2Symbols() throws Exception {
         final String expected = "k\tprice\tts\n" +
@@ -220,10 +219,7 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
                         "        rnd_double() price, \n" +
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
                         "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                false,
-                true,
-                true
+                expected
         );
         // insert query values:
         //
