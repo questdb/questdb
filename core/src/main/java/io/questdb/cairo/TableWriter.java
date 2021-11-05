@@ -227,7 +227,6 @@ public class TableWriter implements Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableName = Chars.toString(tableName);
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
-        // todo: move these sequences and queue onto message bus
         this.o3PartitionUpdateQueue = new RingQueue<O3PartitionUpdateTask>(O3PartitionUpdateTask.CONSTRUCTOR, configuration.getO3PartitionUpdateQueueCapacity());
         this.o3PartitionUpdatePubSeq = new MPSequence(this.o3PartitionUpdateQueue.getCycle());
         this.o3PartitionUpdateSubSeq = new SCSequence();
@@ -754,10 +753,6 @@ public class TableWriter implements Closeable {
 
     public long getO3RowCount() {
         return hasO3() ? getO3RowCount0() : 0;
-    }
-
-    private long getO3RowCount0() {
-        return (masterRef - o3MasterRef + 1) / 2;
     }
 
     public int getPartitionBy() {
@@ -1588,52 +1583,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private static void setColumnSize(
-            FilesFacade ff,
-            MemoryMA mem1,
-            MemoryMA mem2,
-            int type,
-            long actualPosition,
-            long buf,
-            boolean ensureFileSize
-    ) {
-        long mem1Size;
-        if (actualPosition > 0) {
-            // subtract column top
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.BINARY:
-                case ColumnType.STRING:
-                    assert mem2 != null;
-                    mem1Size = TableUtils.readLongOrFail(
-                            ff,
-                            mem2.getFd(),
-                            actualPosition * 8L,
-                            buf
-                    );
-                    if (ensureFileSize) {
-                        mem1.allocate(mem1Size);
-                        mem2.allocate(actualPosition * Long.BYTES + Long.BYTES);
-                    }
-                    mem1.jumpTo(mem1Size);
-                    mem2.jumpTo(actualPosition * Long.BYTES + Long.BYTES);
-                    break;
-                default:
-                    mem1Size = actualPosition << ColumnType.pow2SizeOf(type);
-                    if (ensureFileSize) {
-                        mem1.allocate(mem1Size);
-                    }
-                    mem1.jumpTo(mem1Size);
-                    break;
-            }
-        } else {
-            mem1.jumpTo(0);
-            if (mem2 != null) {
-                mem2.jumpTo(0);
-                mem2.putLong(0);
-            }
-        }
-    }
-
     /**
      * This an O(n) method to find if column by the same name already exists. The benefit of poor performance
      * is that we don't keep column name strings on heap. We only use this method when adding new column, where
@@ -1876,6 +1825,14 @@ public class TableWriter implements Closeable {
         throw new CairoError("Table '" + tableName + "' is distressed");
     }
 
+    private void clearO3() {
+        this.o3MasterRef = -1; // clears o3 flag, hasO3() will be returning false
+        rowActon = ROW_ACTION_SWITCH_PARTITION;
+        // transaction log is either not required or pending
+        activeColumns = columns;
+        activeNullSetters = nullSetters;
+    }
+
     private void clearTodoLog() {
         try {
             todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
@@ -1902,19 +1859,9 @@ public class TableWriter implements Closeable {
     void closeActivePartition(long size) {
         for (int i = 0; i < columnCount; i++) {
             // stop calculating oversize as soon as we find first over-sized column
-            final MemoryMA mem1 = getPrimaryColumn(i);
-            final MemoryMA mem2 = getSecondaryColumn(i);
-            setColumnSize(
-                    ff,
-                    mem1,
-                    mem2,
-                    getColumnType(metaMem, i),
-                    size - columnTops.getQuick(i),
-                    tempMem16b,
-                    false
-            );
-            Misc.free(mem1);
-            Misc.free(mem2);
+            setColumnSize(i, size, false);
+            Misc.free((MemoryMA) getPrimaryColumn(i));
+            Misc.free((MemoryMA) getSecondaryColumn(i));
         }
         Misc.freeObjList(denseIndexers);
         denseIndexers.clear();
@@ -2404,6 +2351,10 @@ public class TableWriter implements Closeable {
         return o3PartitionUpdateQueue;
     }
 
+    private long getO3RowCount0() {
+        return (masterRef - o3MasterRef + 1) / 2;
+    }
+
     private long getPartitionLo(long timestamp) {
         return timestampFloorMethod.floor(timestamp);
     }
@@ -2428,6 +2379,10 @@ public class TableWriter implements Closeable {
 
     SymbolMapWriter getSymbolMapWriter(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex);
+    }
+
+    private boolean hasO3() {
+        return o3MasterRef > -1;
     }
 
     private long indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize) {
@@ -2742,14 +2697,31 @@ public class TableWriter implements Closeable {
                         o3Basket.ensureCapacity(columnCount, indexCount);
 
                         AtomicInteger columnCounter = o3ColumnCounters.next();
-                        columnCounter.set(columnCount);
+
+                        // async partition processing set this counter to the column count
+                        // and then manages issues if publishing of column tasks fails
+                        // mid-column-count.
                         latchCount++;
 
                         if (append) {
+                            // we are appending last partition, make sure it has been mapped!
+                            // this also might fail, make sure exception is trapped and partitions are
+                            // counted down correctly
+                            try {
+                                setAppendPosition(srcDataMax, false);
+                            } catch (Throwable e) {
+                                o3BumpErrorCount();
+                                o3ClockDownPartitionUpdateCount();
+                                o3CountDownDoneLatch();
+                                throw e;
+                            }
+
+                            columnCounter.set(columnCount);
                             Path pathToPartition = Path.getThreadLocal(this.path);
                             TableUtils.setPathForPartition(pathToPartition, partitionBy, o3TimestampMin, false);
                             TableUtils.txnPartitionConditionally(pathToPartition, srcNameTxn);
                             final int plen = pathToPartition.length();
+                            int columnsPublished = 0;
                             for (int i = 0; i < columnCount; i++) {
                                 final int colOffset = TableWriter.getPrimaryColumnIndex(i);
                                 final boolean notTheTimestamp = i != timestampIndex;
@@ -2778,28 +2750,37 @@ public class TableWriter implements Closeable {
                                     dstVarMem = mem1;
                                 }
 
-                                O3OpenColumnJob.appendLastPartition(
-                                        pathToPartition,
-                                        plen,
-                                        columnName,
-                                        columnCounter,
-                                        notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
-                                        srcOooFixAddr,
-                                        srcOooVarAddr,
-                                        srcOooLo,
-                                        srcOooHi,
-                                        srcOooMax,
-                                        o3TimestampMin,
-                                        o3TimestampMax,
-                                        partitionTimestamp,
-                                        srcDataTop,
-                                        srcDataMax,
-                                        isIndexed,
-                                        dstFixMem,
-                                        dstVarMem,
-                                        this,
-                                        indexWriter
-                                );
+                                columnsPublished++;
+                                try {
+                                    O3OpenColumnJob.appendLastPartition(
+                                            pathToPartition,
+                                            plen,
+                                            columnName,
+                                            columnCounter,
+                                            notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
+                                            srcOooFixAddr,
+                                            srcOooVarAddr,
+                                            srcOooLo,
+                                            srcOooHi,
+                                            srcOooMax,
+                                            o3TimestampMin,
+                                            o3TimestampMax,
+                                            partitionTimestamp,
+                                            srcDataTop,
+                                            srcDataMax,
+                                            isIndexed,
+                                            dstFixMem,
+                                            dstVarMem,
+                                            this,
+                                            indexWriter
+                                    );
+                                } catch (Throwable e) {
+                                    if (columnCounter.addAndGet(columnsPublished - columnCount) == 0) {
+                                        o3ClockDownPartitionUpdateCount();
+                                        o3CountDownDoneLatch();
+                                    }
+                                    throw e;
+                                }
                             }
                         } else {
                             if (flattenTimestamp) {
@@ -2895,14 +2876,6 @@ public class TableWriter implements Closeable {
             throw e;
         }
         return false;
-    }
-
-    private void clearO3() {
-        this.o3MasterRef = -1; // clears o3 flag, hasO3() will be returning false
-        rowActon = ROW_ACTION_SWITCH_PARTITION;
-        // transaction log is either not required or pending
-        activeColumns = columns;
-        activeNullSetters = nullSetters;
     }
 
     private void o3CommitPartitionAsync(
@@ -3778,7 +3751,7 @@ public class TableWriter implements Closeable {
         final long ts = repairDataGaps(timestamp);
         openPartition(ts);
         populateDenseIndexerList();
-        setAppendPosition(txWriter.getTransientRowCount(), true);
+        setAppendPosition(txWriter.getTransientRowCount(), false);
         if (performRecovery) {
             performRecovery();
         }
@@ -4544,10 +4517,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private boolean hasO3() {
-        return o3MasterRef > -1;
-    }
-
     void rowCancel() {
         if ((masterRef & 1) == 0) {
             return;
@@ -4653,18 +4622,45 @@ public class TableWriter implements Closeable {
         throw e;
     }
 
-    private void setAppendPosition(final long position, boolean ensureFileSize) {
+    void setAppendPosition(final long position, boolean doubleAllocate) {
         for (int i = 0; i < columnCount; i++) {
             // stop calculating oversize as soon as we find first over-sized column
-            setColumnSize(
-                    ff,
-                    getPrimaryColumn(i),
-                    getSecondaryColumn(i),
-                    getColumnType(metaMem, i),
-                    position - columnTops.getQuick(i),
-                    tempMem16b,
-                    ensureFileSize
-            );
+            setColumnSize(i, position, doubleAllocate);
+        }
+    }
+
+    private void setColumnSize(int columnIndex, long size, boolean doubleAllocate) {
+        MemoryMA mem1 = getPrimaryColumn(columnIndex);
+        MemoryMA mem2 = getSecondaryColumn(columnIndex);
+        int type = getColumnType(metaMem, columnIndex);
+        final long pos = size - columnTops.getQuick(columnIndex);
+        if (pos > 0) {
+            // subtract column top
+            final long m1pos;
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.BINARY:
+                case ColumnType.STRING:
+                    assert mem2 != null;
+                    if (doubleAllocate) {
+                        mem2.allocate(pos * Long.BYTES + Long.BYTES);
+                    }
+                    mem2.jumpTo(pos * Long.BYTES + Long.BYTES);
+                    m1pos = Unsafe.getUnsafe().getLong(mem2.getAppendAddress() - 8);
+                    break;
+                default:
+                    m1pos = pos << ColumnType.pow2SizeOf(type);
+                    break;
+            }
+            if (doubleAllocate) {
+                mem1.allocate(m1pos);
+            }
+            mem1.jumpTo(m1pos);
+        } else {
+            mem1.jumpTo(0);
+            if (mem2 != null) {
+                mem2.jumpTo(0);
+                mem2.putLong(0);
+            }
         }
     }
 
