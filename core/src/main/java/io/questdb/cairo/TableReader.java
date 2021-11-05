@@ -910,30 +910,26 @@ public class TableReader implements Closeable, SymbolTableSource {
         int count = 0;
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
         while (true) {
-            long txn = txFile.readTxn();
 
-            // exit if this is the same as we already have
-            if (txn == this.txn) {
-                txnScoreboard.acquireTxn(txn);
-                if (txn == TableUtils.INITIAL_TXN) {
-                    this.txFile.readSymbolCounts(this.symbolCountSnapshot);
-                }
-                return false;
-            }
+            // Note that txn numbers should be read in the reverse order to how they are written
+            // writer writes `txn` followed by `txn_check` when all is written out.
+            // Reader must begin with `txn_check` followed by verifying that `txn` remains the same.
+
+            long txn = txFile.unsafeReadTxnCheck();
 
             // make sure this isn't re-ordered
             Unsafe.getUnsafe().loadFence();
 
             // do start and end sequences match? if so we have a chance at stable read
-            if (txn == txFile.readTxnCheck()) {
+            if (txn == txFile.unsafeReadTxn()) {
                 // great, we seem to have got stable read, lets do some reading
                 // and check later if it was worth it
 
                 Unsafe.getUnsafe().loadFence();
-                txFile.readUnchecked();
+                txFile.unsafeLoadAll();
 
                 this.symbolCountSnapshot.clear();
-                this.txFile.readSymbolCounts(this.symbolCountSnapshot);
+                this.txFile.unsafeLoadSymbolCounts(this.symbolCountSnapshot);
 
                 Unsafe.getUnsafe().loadFence();
                 // ok, we have snapshot, check if our snapshot is stable
@@ -1009,7 +1005,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private boolean reload(boolean activation) {
-        if (this.txn == txFile.readTxn()) {
+        if (this.txn == txFile.unsafeReadTxn()) {
             if (activation) {
                 txnScoreboard.acquireTxn(txn);
             }

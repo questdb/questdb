@@ -315,7 +315,6 @@ public class TableWriter implements Closeable {
             configureColumnMemory();
             configureTimestampSetter();
             this.appendTimestampSetter = timestampSetter;
-            this.txWriter.readRowCounts();
             configureAppendPosition();
             purgeUnusedPartitions();
             clearTodoLog();
@@ -773,7 +772,7 @@ public class TableWriter implements Closeable {
 
     // todo: hide raw memory access from public interface when slave is able to send data over the network
     public long getRawTxnMemory() {
-        return txWriter.getRawMemory();
+        return txWriter.unsafeGetRawMemory();
     }
 
     public long getStructureVersion() {
@@ -1318,7 +1317,7 @@ public class TableWriter implements Closeable {
                     masterRef++;
                 }
                 freeColumns(false);
-                this.txWriter.readUnchecked();
+                this.txWriter.unsafeLoadAll();
                 rollbackIndexes();
                 rollbackSymbolTables();
                 purgeUnusedPartitions();
@@ -1928,7 +1927,7 @@ public class TableWriter implements Closeable {
                         configuration,
                         path.trimTo(rootLen),
                         metadata.getColumnName(i),
-                        txWriter.readSymbolCount(symbolIndex),
+                        txWriter.unsafeReadSymbolCount(symbolIndex),
                         symbolIndex,
                         txWriter
                 );
@@ -4305,7 +4304,7 @@ public class TableWriter implements Closeable {
                 path.trimTo(rootLen);
             }
 
-            final long expectedSize = txWriter.readFixedRowCount();
+            final long expectedSize = txWriter.unsafeReadFixedRowCount();
             if (expectedSize != fixedRowCount || maxTimestamp != this.txWriter.getMaxTimestamp()) {
                 LOG.info()
                         .$("actual table size has been adjusted [name=`").utf8(tableName).$('`')
@@ -4425,9 +4424,9 @@ public class TableWriter implements Closeable {
     }
 
     private void rollbackSymbolTables() {
-        int expectedMapWriters = txWriter.readWriterCount();
+        int expectedMapWriters = txWriter.unsafeReadWriterCount();
         for (int i = 0; i < expectedMapWriters; i++) {
-            denseSymbolMapWriters.getQuick(i).rollback(txWriter.readSymbolWriterIndexOffset(i));
+            denseSymbolMapWriters.getQuick(i).rollback(txWriter.unsafeReadSymbolWriterIndexOffset(i));
         }
     }
 

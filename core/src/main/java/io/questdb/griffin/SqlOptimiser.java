@@ -620,6 +620,33 @@ class SqlOptimiser {
         assert postFilterRemoved.size() == pc;
     }
 
+    private boolean checkForAggregates(ExpressionNode node) {
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.rhs != null) {
+                if (functionParser.isGroupBy(node.rhs.token)) {
+                    return true;
+                }
+                this.sqlNodeStack.push(node.rhs);
+            }
+
+            if (node.lhs != null) {
+                if (functionParser.isGroupBy(node.lhs.token)) {
+                    return true;
+                }
+                node = node.lhs;
+            } else {
+                if (!sqlNodeStack.isEmpty()) {
+                    node = this.sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            }
+        }
+
+        return false;
+    }
+
     void clear() {
         contextPool.clear();
         intHashSetPool.clear();
@@ -1139,33 +1166,6 @@ class SqlOptimiser {
         return replaced;
     }
 
-    private boolean checkForAggregates(ExpressionNode node) {
-        sqlNodeStack.clear();
-        while (node != null) {
-            if (node.rhs != null) {
-                if (functionParser.isGroupBy(node.rhs.token)) {
-                    return true;
-                }
-                this.sqlNodeStack.push(node.rhs);
-            }
-
-            if (node.lhs != null) {
-                if (functionParser.isGroupBy(node.lhs.token)) {
-                    return true;
-                }
-                node = node.lhs;
-            } else {
-                if (!sqlNodeStack.isEmpty()) {
-                    node = this.sqlNodeStack.poll();
-                } else {
-                    node = null;
-                }
-            }
-        }
-
-        return false;
-    }
-
     private void emitColumnLiteralsTopDown(ObjList<QueryColumn> columns, QueryModel target) {
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
@@ -1481,6 +1481,28 @@ class SqlOptimiser {
                 m.setJoinType(QueryModel.JOIN_CROSS);
             }
         }
+    }
+
+    private boolean isEffectivelyConstantExpression(ExpressionNode node) {
+        sqlNodeStack.clear();
+        while (null != node) {
+            if (node.type == ExpressionNode.OPERATION) {
+                sqlNodeStack.push(node.rhs);
+                node = node.lhs;
+            }
+
+            if (!(node.type == ExpressionNode.CONSTANT || (node.type == ExpressionNode.FUNCTION && functionParser.isRuntimeConstant(node.token)))) {
+                return false;
+            }
+
+            if (sqlNodeStack.isEmpty()) {
+                node = null;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+
+        return true;
     }
 
     private ExpressionNode makeJoinAlias(int index) {
@@ -1831,12 +1853,14 @@ class SqlOptimiser {
             throw SqlException.$(tableNamePosition, "table directory is of unknown format");
         }
 
-        try (TableReader r = engine.getReader(
-                executionContext.getCairoSecurityContext(),
-                tableLookupSequence.of(tableName, lo, hi - lo),
-                TableUtils.ANY_TABLE_ID,
-                TableUtils.ANY_TABLE_VERSION
-        )) {
+        try (
+                TableReader r = engine.getReader(
+                        executionContext.getCairoSecurityContext(),
+                        tableLookupSequence.of(tableName, lo, hi - lo),
+                        TableUtils.ANY_TABLE_ID,
+                        TableUtils.ANY_TABLE_VERSION
+                )
+        ) {
             model.setTableVersion(r.getVersion());
             model.setTableId(r.getMetadata().getId());
             copyColumnsFromMetadata(model, r.getMetadata(), false);
@@ -3067,28 +3091,6 @@ class SqlOptimiser {
             root.setModelPosition(model.getModelPosition());
         }
         return root;
-    }
-
-    private boolean isEffectivelyConstantExpression(ExpressionNode node) {
-        sqlNodeStack.clear();
-        while (null != node) {
-            if (node.type == ExpressionNode.OPERATION) {
-                sqlNodeStack.push(node.rhs);
-                node = node.lhs;
-            }
-
-            if (!(node.type == ExpressionNode.CONSTANT || (node.type == ExpressionNode.FUNCTION && functionParser.isRuntimeConstant(node.token)))) {
-                return false;
-            }
-
-            if (sqlNodeStack.isEmpty()) {
-                node = null;
-            } else {
-                node = sqlNodeStack.poll();
-            }
-        }
-
-        return true;
     }
 
     private CharSequence setAndGetModelAlias(QueryModel model) {
