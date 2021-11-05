@@ -888,8 +888,9 @@ final class WhereClauseParser implements Mutable {
                                         }
                                         removeNodes(b, keyNodes);
                                     }
+                                    model.keyExcludedValues.add(value);
+                                    model.keyExcludedValuePositions.add(b.position);
                                     node.intrinsicValue = IntrinsicModel.TRUE;
-                                    model.intrinsicValue = IntrinsicModel.FALSE;
                                     return false;
                                 }
                             } else if (model.keyColumn == null || m.getIndexValueBlockCapacity(index) > m.getIndexValueBlockCapacity(model.keyColumn)) {

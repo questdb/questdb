@@ -191,16 +191,32 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testBindVariableInIndexLookupList() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (deviceName SYMBOL capacity 1000 index, time TIMESTAMP, slot SYMBOL, port SYMBOL, downStream DOUBLE, upStream DOUBLE) timestamp(time) partition by DAY", sqlExecutionContext);
-            compiler.compile("create table src as (select rnd_symbol(15000, 4,4,0) sym, timestamp_sequence(0, 100000) ts, rnd_double() val from long_sequence(500))", sqlExecutionContext);
-            compiler.compile("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src", sqlExecutionContext);
+            compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (" +
+                    "deviceName SYMBOL capacity 1000 index, " +
+                    "time TIMESTAMP, " +
+                    "slot SYMBOL, " +
+                    "port SYMBOL, " +
+                    "downStream DOUBLE, " +
+                    "upStream DOUBLE" +
+                    ") timestamp(time) partition by DAY",
+                    sqlExecutionContext);
+            compiler.compile("create table src as (" +
+                    "    select rnd_symbol(15000, 4,4,0) sym, " +
+                    "           timestamp_sequence(0, 100000) ts, " +
+                    "           rnd_double() val " +
+                    "    from long_sequence(500)" +
+                    ")",
+                    sqlExecutionContext);
+            compiler.compile("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src",
+                    sqlExecutionContext);
             try (
-                    RecordCursorFactory lookupFactory = compiler.compile("select * from alcatel_traffic_tmp where deviceName in ($1,$2)", sqlExecutionContext).getRecordCursorFactory()
+                    RecordCursorFactory lookupFactory = compiler.compile(
+                            "select * from alcatel_traffic_tmp where deviceName in ($1,$2)",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory()
             ) {
                 bindVariableService.setStr(0, "FKBW");
                 bindVariableService.setStr(1, "SHRI");
-
-
                 sink.clear();
                 try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
                     printer.print(cursor, lookupFactory.getMetadata(), true, sink);
