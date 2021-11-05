@@ -943,7 +943,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select * from x o where o.b in ('HYRX','PEHN', null) and a < a",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b, timestamp_sequence(0, 1000000000) k from long_sequence(20)), index(b)",
                 null,
-                false);
+                true);
     }
 
     @Test
