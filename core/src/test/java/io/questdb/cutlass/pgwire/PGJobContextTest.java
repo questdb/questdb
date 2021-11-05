@@ -947,54 +947,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertBinaryBindVariable() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table xyz (a int)", sqlExecutionContext);
-            try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection1 = getConnection(false, true);
-                    final Connection connection2 = getConnection(false, true);
-                    final PreparedStatement insert = connection1.prepareStatement(
-                            "insert into xyz values (?)"
-                    );
-                    final PreparedStatement alter = connection2.prepareStatement(
-                            "alter table xyz add column b long"
-                    )
-            ) {
-                connection1.setAutoCommit(false);
-                int totalCount = 10;
-                for (int i = 0; i < totalCount; i++) {
-                    insert.setInt(1, i);
-                    insert.execute();
-                }
-                CyclicBarrier start = new CyclicBarrier(2);
-                CountDownLatch finished = new CountDownLatch(1);
-
-                new Thread(() -> {
-                    try {
-                        start.await();
-                        alter.execute();
-                    } catch (Throwable e) {
-                        e.printStackTrace();
-                    } finally {
-                        finished.countDown();
-                    }
-                }).start();
-
-                start.await();
-                Thread.sleep(5);
-                connection1.commit();
-
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "xyz")) {
-                    int bIndex = rdr.getMetadata().getColumnIndex("b");
-                    Assert.assertEquals(1, bIndex);
-                    Assert.assertEquals(totalCount, rdr.size());
-                }
-            }
-        });
-    }
-
-    @Test
     public void testInsertBinaryBindVariable1() throws Exception {
         testInsertBinaryBindVariable(true);
     }
@@ -3088,6 +3040,55 @@ nodejs code:
                             rs2.close();
                         }
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRunAlterWhenTableLockedWithInserts() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table xyz (a int)", sqlExecutionContext);
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection1 = getConnection(false, true);
+                    final Connection connection2 = getConnection(false, true);
+                    final PreparedStatement insert = connection1.prepareStatement(
+                            "insert into xyz values (?)"
+                    );
+                    final PreparedStatement alter = connection2.prepareStatement(
+                            "alter table xyz add column b long"
+                    )
+            ) {
+                connection1.setAutoCommit(false);
+                int totalCount = 10;
+                for (int i = 0; i < totalCount; i++) {
+                    insert.setInt(1, i);
+                    insert.execute();
+                }
+                CyclicBarrier start = new CyclicBarrier(2);
+                CountDownLatch finished = new CountDownLatch(1);
+
+                new Thread(() -> {
+                    try {
+                        start.await();
+                        alter.execute();
+                    } catch (Throwable e) {
+                        e.printStackTrace();
+                    } finally {
+                        finished.countDown();
+                    }
+                }).start();
+
+                start.await();
+                Thread.sleep(5);
+                connection1.commit();
+                finished.await();
+
+                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "xyz")) {
+                    int bIndex = rdr.getMetadata().getColumnIndex("b");
+                    Assert.assertEquals(1, bIndex);
+                    Assert.assertEquals(totalCount, rdr.size());
                 }
             }
         });
