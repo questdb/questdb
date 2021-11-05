@@ -644,7 +644,25 @@ static inline asmjit::x86::Xmm get_high(asmjit::x86::Compiler &c, const asmjit::
     return y;
 }
 
-inline static void to_bits2(asmjit::x86::Compiler &c, asmjit::x86::Gp &dst, const asmjit::x86::Ymm &x) {
+inline static void to_bits32(asmjit::x86::Compiler &c, asmjit::x86::Gp &dst, const asmjit::x86::Ymm &x) {
+    //    return (uint32_t)_mm256_movemask_epi8(x);
+    c.vpmovmskb(dst, x);
+}
+
+inline static void to_bits16(asmjit::x86::Compiler &c, asmjit::x86::Gp &dst, const asmjit::x86::Ymm &x) {
+    //    __m128i a = _mm_packs_epi16(x.get_low(), x.get_high());  // 16-bit words to bytes
+    //    return (uint16_t)_mm_movemask_epi8(a);
+    asmjit::x86::Xmm l = get_low(c, x);
+    asmjit::x86::Xmm h = get_high(c, x);
+    c.packsswb(l, h); // 16-bit words to bytes
+    c.pmovmskb(dst, l);
+    c.and_(dst, 0xffff);
+}
+
+inline static void to_bits8(asmjit::x86::Compiler &c, asmjit::x86::Gp &dst, const asmjit::x86::Ymm &x) {
+    //    __m128i a = _mm_packs_epi32(x.get_low(), x.get_high());  // 32-bit dwords to 16-bit words
+    //    __m128i b = _mm_packs_epi16(a, a);  // 16-bit words to bytes
+    //    return (uint8_t)_mm_movemask_epi8(b);
     asmjit::x86::Xmm l = get_low(c, x);
     asmjit::x86::Xmm h = get_high(c, x);
     c.packssdw(l, h); // 32-bit dwords to 16-bit words
@@ -653,14 +671,56 @@ inline static void to_bits2(asmjit::x86::Compiler &c, asmjit::x86::Gp &dst, cons
     c.and_(dst, 0xff);
 }
 
+inline static void to_bits4(asmjit::x86::Compiler &c, asmjit::x86::Gp &dst, const asmjit::x86::Ymm &mask) {
+    //    uint32_t a = (uint32_t)_mm256_movemask_epi8(mask);
+    //    return ((a & 1) | ((a >> 7) & 2)) | (((a >> 14) & 4) | ((a >> 21) & 8));
+    c.vpmovmskb(dst, mask);
+    asmjit::x86::Gp y = c.newGpq();
+    c.mov(y, dst);
+    c.and_(y, 1);
+    asmjit::x86::Gp z = c.newGpq();
+    c.mov(z, dst);
+    c.shr(z, 7);
+    c.and_(z, 2);
+    c.or_(z, y);
+    c.mov(y, dst);
+    c.shr(y, 14);
+    c.and_(y, 4);
+    c.shr(dst, 21);
+    c.and_(dst, 8);
+    c.or_(dst, z);
+    c.or_(dst, y);
+    c.and_(dst, 0xf); // 4 bits
+}
+
+inline static void to_bits(asmjit::x86::Compiler &c, asmjit::x86::Gp &dst, const asmjit::x86::Ymm &mask, int64_t step) {
+    switch (step) {
+        case 32:
+            to_bits32(c, dst, mask);
+            break;
+        case 16:
+            to_bits16(c, dst, mask);
+            break;
+        case 8:
+            to_bits8(c, dst, mask);
+            break;
+        case 4:
+            to_bits4(c, dst, mask);
+            break;
+        default:
+            break;
+    }
+}
+
 inline static void unrolled_loop2(asmjit::x86::Compiler &c,
                                   const asmjit::x86::Gp &bits,
                                   const asmjit::x86::Gp &rows_ptr,
                                   const asmjit::x86::Gp &input,
-                                  asmjit::x86::Gp &output) {
+                                  asmjit::x86::Gp &output, int step) {
     asmjit::x86::Gp offset = c.newInt64();
-    for (int i = 0; i < 8; ++i) {
-        c.mov(qword_ptr(rows_ptr, output, 3), input);
+    for (int i = 0; i < step; ++i) {
+        c.lea(offset, asmjit::x86::ptr(input, i));
+        c.mov(qword_ptr(rows_ptr, output, 3), offset);
         c.mov(offset, bits);
         c.shr(offset, i);
         c.and_(offset, 1);
@@ -674,7 +734,8 @@ int64_t compile_x86_avx2_loop(const uint64_t *columns,
                               int64_t i_count,
                               int64_t *rows,
                               int64_t r_count,
-                              int64_t rowid_start) {
+                              int64_t rowid_start,
+                              int64_t step) {
 
     if (nullptr == columns ||
         nullptr == instrs ||
@@ -691,8 +752,8 @@ int64_t compile_x86_avx2_loop(const uint64_t *columns,
     JitRuntime rt;
     CodeHolder code;
     code.init(rt.environment());
-    //FileLogger logger(stdout);
-    //code.setLogger(&logger);
+    FileLogger logger(stdout);
+    code.setLogger(&logger);
     Compiler c(&code);
 
     std::stack<jit_value_t> tmp;
@@ -709,13 +770,14 @@ int64_t compile_x86_avx2_loop(const uint64_t *columns,
     Gp output = c.newGpq();
     c.mov(output, rowid_start);
 
-    constexpr int64_t step = 8; // todo: size ??
     const int64_t stop = r_count - step + 1;
 
     Label l_loop = c.newLabel();
     Label l_exit = c.newLabel();
 
     Gp index = c.newGpq();
+    c.xor_(index, index); //index = 0
+
     c.cmp(index, stop);
     c.jge(l_exit);
 
@@ -727,17 +789,44 @@ int64_t compile_x86_avx2_loop(const uint64_t *columns,
         switch (ic) {
             case RET:
                 break;
-            case MEM_I1:
-            case MEM_I2:
-            case MEM_I4:
+            case MEM_I1: {
+                Gp col = c.newGpq();
+                auto column_index = read<uint64_t>(instrs, i_count, rpos);
+                uint64_t column_addr = columns[column_index];
+                c.mov(col, column_addr);
+                Ymm data = c.newYmm();
+                c.vmovdqu(data, ymmword_ptr(col, index, 0));
+                tmp.push(jit_value_t(data, i8));
+            }
+                break;
+            case MEM_I2: {
+                Gp col = c.newGpq();
+                auto column_index = read<uint64_t>(instrs, i_count, rpos);
+                uint64_t column_addr = columns[column_index];
+                c.mov(col, column_addr);
+                Ymm data = c.newYmm();
+                c.vmovdqu(data, ymmword_ptr(col, index, 1));
+                tmp.push(jit_value_t(data, i16));
+            }
+                break;
+            case MEM_I4: {
+                Gp col = c.newGpq();
+                auto column_index = read<uint64_t>(instrs, i_count, rpos);
+                uint64_t column_addr = columns[column_index];
+                c.mov(col, column_addr);
+                Ymm data = c.newYmm();
+                c.vmovdqu(data, ymmword_ptr(col, index, 2));
+                tmp.push(jit_value_t(data, i32));
+            }
+                break;
             case MEM_I8: {
                 Gp col = c.newGpq();
                 auto column_index = read<uint64_t>(instrs, i_count, rpos);
                 uint64_t column_addr = columns[column_index];
                 c.mov(col, column_addr);
                 Ymm data = c.newYmm();
-                c.vmovdqu(data, ymmword_ptr(col, index));
-                tmp.push(data);
+                c.vmovdqu(data, ymmword_ptr(col, index, 3));
+                tmp.push(jit_value_t(data, i64));
             }
                 break;
             case MEM_F4: {
@@ -746,8 +835,8 @@ int64_t compile_x86_avx2_loop(const uint64_t *columns,
                 uint64_t column_addr = columns[column_index];
                 c.mov(col, column_addr);
                 Ymm data = c.newYmm();
-                c.vmovups(data, ymmword_ptr(col, index));
-                tmp.push(data);
+                c.vmovups(data, ymmword_ptr(col, index, 2));
+                tmp.push(jit_value_t(data, f32));
             }
                 break;
             case MEM_F8: {
@@ -756,32 +845,32 @@ int64_t compile_x86_avx2_loop(const uint64_t *columns,
                 uint64_t column_addr = columns[column_index];
                 c.mov(col, column_addr);
                 Ymm data = c.newYmm();
-                c.vmovupd(data, ymmword_ptr(col, index));
-                tmp.push(data);
+                c.vmovupd(data, ymmword_ptr(col, index, 3));
+                tmp.push(jit_value_t(data, f64));
             }
                 break;
             case IMM_I1: {
-                auto value = read<int8_t>(instrs, i_count, rpos);
+                auto value = read<int64_t>(instrs, i_count, rpos);
                 Mem c0 = c.newConst(ConstPool::kScopeLocal, &value, 1);
                 Ymm val = c.newYmm();
                 c.vpbroadcastb(val, c0);
-                tmp.push(val);
+                tmp.push(jit_value_t(val, i8));
             }
                 break;
             case IMM_I2: {
-                auto value = read<int16_t>(instrs, i_count, rpos);
-                Mem c0 = c.newInt16Const(ConstPool::kScopeLocal, value);
+                auto value = read<int64_t>(instrs, i_count, rpos);
+                Mem c0 = c.newInt16Const(ConstPool::kScopeLocal, (int16_t) value);
                 Ymm val = c.newYmm();
                 c.vpbroadcastw(val, c0);
-                tmp.push(val);
+                tmp.push(jit_value_t(val, i16));
             }
                 break;
             case IMM_I4: {
-                auto value = read<int32_t>(instrs, i_count, rpos);
-                Mem c0 = c.newInt32Const(ConstPool::kScopeLocal, value);
+                auto value = read<int64_t>(instrs, i_count, rpos);
+                Mem c0 = c.newInt32Const(ConstPool::kScopeLocal, (int32_t) value);
                 Ymm val = c.newYmm();
                 c.vpbroadcastd(val, c0);
-                tmp.push(val);
+                tmp.push(jit_value_t(val, i32));
             }
                 break;
             case IMM_I8: {
@@ -789,15 +878,15 @@ int64_t compile_x86_avx2_loop(const uint64_t *columns,
                 Mem c0 = c.newInt64Const(ConstPool::kScopeLocal, value);
                 Ymm val = c.newYmm();
                 c.vpbroadcastq(val, c0);
-                tmp.push(val);
+                tmp.push(jit_value_t(val, i64));
             }
                 break;
             case IMM_F4: {
-                auto value = read<float>(instrs, i_count, rpos); //todo: change serialization format
-                Mem c0 = c.newFloatConst(ConstPool::kScopeLocal, value);
+                auto value = read<double>(instrs, i_count, rpos); //todo: change serialization format
+                Mem c0 = c.newFloatConst(ConstPool::kScopeLocal, (float) value);
                 Ymm val = c.newYmm();
                 c.vbroadcastss(val, c0);
-                tmp.push(val);
+                tmp.push(jit_value_t(val, f32));
             }
                 break;
             case IMM_F8: {
@@ -805,7 +894,7 @@ int64_t compile_x86_avx2_loop(const uint64_t *columns,
                 Mem c0 = c.newDoubleConst(ConstPool::kScopeLocal, value);
                 Ymm val = c.newYmm();
                 c.vbroadcastsd(val, c0);
-                tmp.push(val);
+                tmp.push(jit_value_t(val, f64));
             }
                 break;
             case NEG: {
@@ -885,11 +974,8 @@ int64_t compile_x86_avx2_loop(const uint64_t *columns,
     tmp.pop();
 
     Gp bits = x86::r10;
-    to_bits2(c, bits, mask.ymm());
-    unrolled_loop2(c, bits, rows_ptr, index, output);
-
-    c.mov(qword_ptr(rows_ptr, output, 3), index);
-    c.add(output, mask.gp());
+    to_bits(c, bits, mask.ymm(), step);
+    unrolled_loop2(c, bits, rows_ptr, index, output, step);
 
     c.add(index, step); // index += step
     c.cmp(index, stop);
@@ -927,4 +1013,11 @@ Java_io_questdb_jit_FiltersCompiler_compile(JNIEnv *e,
                                    reinterpret_cast<int64_t *>(rowsAddr),
                                    rowsSize,
                                    rowidStart);
+//    return compile_x86_avx2_loop(reinterpret_cast<uint64_t *>(columnsAddr),
+//                                   columnsSize,
+//                                   reinterpret_cast<uint8_t *>(filterAddr),
+//                                   filterSize,
+//                                   reinterpret_cast<int64_t *>(rowsAddr),
+//                                   rowsSize,
+//                                   rowidStart, 4); //todo: pass with IR
 }
