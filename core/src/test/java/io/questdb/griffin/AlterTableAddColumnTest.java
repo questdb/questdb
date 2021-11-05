@@ -40,6 +40,32 @@ import static io.questdb.griffin.CompiledQuery.ALTER;
 public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
     @Test
+    public void testAdd2ColumnsWithoutUsingColumnKeywordAndUsingNotNullKeyword() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createX();
+
+                    Assert.assertEquals(ALTER, compile("alter table x add mycol int not null, mycol2 int", sqlExecutionContext).getType());
+
+                    assertQueryPlain(
+                            "c\tmycol\tmycol2\n" +
+                                    "XYZ\tNaN\tNaN\n" +
+                                    "ABC\tNaN\tNaN\n" +
+                                    "ABC\tNaN\tNaN\n" +
+                                    "XYZ\tNaN\tNaN\n" +
+                                    "\tNaN\tNaN\n" +
+                                    "CDE\tNaN\tNaN\n" +
+                                    "CDE\tNaN\tNaN\n" +
+                                    "ABC\tNaN\tNaN\n" +
+                                    "\tNaN\tNaN\n" +
+                                    "XYZ\tNaN\tNaN\n",
+                            "select c, mycol, mycol2 from x"
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testAddBadColumnNameBackSlash() throws Exception {
         assertFailure("alter table x add column \\", 25, "new column name contains invalid characters");
     }
@@ -128,105 +154,17 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAddColumnWithoutUsingColumnKeyword() throws Exception {
+    public void testAddColumnUpperCase() throws Exception {
         assertMemoryLeak(
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compile("alter table x add mycol int").getType());
-
-                    assertQueryPlain(
-                            "c\tmycol\n" +
-                                    "XYZ\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "XYZ\tNaN\n" +
-                                    "\tNaN\n" +
-                                    "CDE\tNaN\n" +
-                                    "CDE\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "\tNaN\n" +
-                                    "XYZ\tNaN\n",
-                            "select c, mycol from x"
-                    );
-                }
-        );
-    }
-
-    @Test
-    public void testAddColumnWithoutUsingColumnKeywordAndUsingNullKeyword() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createX();
-
-                    Assert.assertEquals(ALTER, compile("alter table x add mycol int null", sqlExecutionContext).getType());
-
-                    assertQueryPlain(
-                            "c\tmycol\n" +
-                                    "XYZ\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "XYZ\tNaN\n" +
-                                    "\tNaN\n" +
-                                    "CDE\tNaN\n" +
-                                    "CDE\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "\tNaN\n" +
-                                    "XYZ\tNaN\n",
-                            "select c, mycol from x"
-                    );
-                }
-        );
-    }
-
-    @Test
-    public void testAddColumnWithoutUsingColumnKeywordAndUsingNotNullKeyword() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createX();
-
-                    Assert.assertEquals(ALTER, compile("alter table x add mycol int not null", sqlExecutionContext).getType());
-
-                    assertQueryPlain(
-                            "c\tmycol\n" +
-                                    "XYZ\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "XYZ\tNaN\n" +
-                                    "\tNaN\n" +
-                                    "CDE\tNaN\n" +
-                                    "CDE\tNaN\n" +
-                                    "ABC\tNaN\n" +
-                                    "\tNaN\n" +
-                                    "XYZ\tNaN\n",
-                            "select c, mycol from x"
-                    );
-                }
-        );
-    }
-
-    @Test
-    public void testAdd2ColumnsWithoutUsingColumnKeywordAndUsingNotNullKeyword() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createX();
-
-                    Assert.assertEquals(ALTER, compile("alter table x add mycol int not null, mycol2 int", sqlExecutionContext).getType());
-
-                    assertQueryPlain(
-                            "c\tmycol\tmycol2\n" +
-                                    "XYZ\tNaN\tNaN\n" +
-                                    "ABC\tNaN\tNaN\n" +
-                                    "ABC\tNaN\tNaN\n" +
-                                    "XYZ\tNaN\tNaN\n" +
-                                    "\tNaN\tNaN\n" +
-                                    "CDE\tNaN\tNaN\n" +
-                                    "CDE\tNaN\tNaN\n" +
-                                    "ABC\tNaN\tNaN\n" +
-                                    "\tNaN\tNaN\n" +
-                                    "XYZ\tNaN\tNaN\n",
-                            "select c, mycol, mycol2 from x"
-                    );
+                    try {
+                        compile("alter table x add column D int", sqlExecutionContext);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "column 'D' already exists");
+                    }
                 }
         );
     }
@@ -284,17 +222,79 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAddColumnUpperCase() throws Exception {
+    public void testAddColumnWithoutUsingColumnKeyword() throws Exception {
         assertMemoryLeak(
                 () -> {
                     createX();
 
-                    try {
-                        compile("alter table x add column D int", sqlExecutionContext);
-                        Assert.fail();
-                    } catch (SqlException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "column 'D' already exists");
-                    }
+                    Assert.assertEquals(ALTER, compile("alter table x add mycol int").getType());
+
+                    assertQueryPlain(
+                            "c\tmycol\n" +
+                                    "XYZ\tNaN\n" +
+                                    "ABC\tNaN\n" +
+                                    "ABC\tNaN\n" +
+                                    "XYZ\tNaN\n" +
+                                    "\tNaN\n" +
+                                    "CDE\tNaN\n" +
+                                    "CDE\tNaN\n" +
+                                    "ABC\tNaN\n" +
+                                    "\tNaN\n" +
+                                    "XYZ\tNaN\n",
+                            "select c, mycol from x"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testAddColumnWithoutUsingColumnKeywordAndUsingNotNullKeyword() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createX();
+
+                    Assert.assertEquals(ALTER, compile("alter table x add mycol int not null", sqlExecutionContext).getType());
+
+                    assertQueryPlain(
+                            "c\tmycol\n" +
+                                    "XYZ\tNaN\n" +
+                                    "ABC\tNaN\n" +
+                                    "ABC\tNaN\n" +
+                                    "XYZ\tNaN\n" +
+                                    "\tNaN\n" +
+                                    "CDE\tNaN\n" +
+                                    "CDE\tNaN\n" +
+                                    "ABC\tNaN\n" +
+                                    "\tNaN\n" +
+                                    "XYZ\tNaN\n",
+                            "select c, mycol from x"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testAddColumnWithoutUsingColumnKeywordAndUsingNullKeyword() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createX();
+
+                    Assert.assertEquals(ALTER, compile("alter table x add mycol int null", sqlExecutionContext).getType());
+
+                    assertQueryPlain(
+                            "c\tmycol\n" +
+                                    "XYZ\tNaN\n" +
+                                    "ABC\tNaN\n" +
+                                    "ABC\tNaN\n" +
+                                    "XYZ\tNaN\n" +
+                                    "\tNaN\n" +
+                                    "CDE\tNaN\n" +
+                                    "CDE\tNaN\n" +
+                                    "ABC\tNaN\n" +
+                                    "\tNaN\n" +
+                                    "XYZ\tNaN\n",
+                            "select c, mycol from x"
+                    );
                 }
         );
     }
@@ -343,9 +343,9 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     try (CairoEngine engine = new CairoEngine(configuration)) {
                         try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                            Assert.assertEquals(
-                                    ALTER,
-                                    compile("alter table x add column meh symbol cache", sqlExecutionContext).getType());
+                            CompiledQuery compile = compiler.compile("alter table x add column meh symbol cache", sqlExecutionContext);
+                            Assert.assertEquals(ALTER, compile.getType());
+                            compile.executeSync();
 
                             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                                 SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -503,9 +503,9 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     try (CairoEngine engine = new CairoEngine(configuration)) {
                         try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                            Assert.assertEquals(
-                                    ALTER,
-                                    TestUtils.compileAndExecute(compiler, engine, "alter table x add column meh symbol", sqlExecutionContext).getType());
+                            CompiledQuery cc = compiler.compile("alter table x add column meh symbol", sqlExecutionContext);
+                            Assert.assertEquals(ALTER, cc.getType());
+                            cc.executeSync();
 
                             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                                 SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -543,8 +543,9 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     try (CairoEngine engine = new CairoEngine(configuration)) {
                         try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                            Assert.assertEquals(ALTER,
-                                    TestUtils.compileAndExecute(compiler, engine, "alter table x add column meh symbol", sqlExecutionContext).getType());
+                            CompiledQuery cc = compiler.compile("alter table x add column meh symbol", sqlExecutionContext);
+                            Assert.assertEquals(ALTER, cc.getType());
+                            cc.executeSync();
 
                             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                                 SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -591,6 +592,11 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAddTwoColumnsWithSemicolonAsSeparator() throws Exception {
+        assertFailure("alter table x add column mycol int; second symbol", 36, "',' expected");
+    }
+
+    @Test
     public void testAddTwoColumnsWithSemicolonAtTheEnd() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -614,11 +620,6 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     );
                 }
         );
-    }
-
-    @Test
-    public void testAddTwoColumnsWithSemicolonAsSeparator() throws Exception {
-        assertFailure("alter table x add column mycol int; second symbol", 36, "',' expected");
     }
 
     @Test

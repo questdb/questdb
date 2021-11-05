@@ -885,7 +885,7 @@ public class SqlCompiler implements Closeable {
             if (null != lockedReason) {
                 throw SqlException.$(tableNamePosition, "could not lock, busy [table=`").put(tok).put(", lockedReason=").put(lockedReason).put("`]");
             }
-            return compiledQuery.ofAlter(null);
+            return compiledQuery.ofLock();
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition)
                     .put(e.getFlyweightMessage())
@@ -899,7 +899,7 @@ public class SqlCompiler implements Closeable {
         tableExistsOrFail(tableNamePosition, tok, executionContext);
         try {
             engine.unlockWriter(tok);
-            return compiledQuery.ofAlter(null);
+            return compiledQuery.ofUnlock();
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition)
                     .put(e.getFlyweightMessage())

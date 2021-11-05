@@ -131,7 +131,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             compiler.compile(
                     "ALTER TABLE " + configTableName + " ADD COLUMN " + columnDetails,
                     executionContext
-            ).executeAlterNoWait();
+            ).executeAsyncNoWait();
         } catch (SqlException ex) {
             LOG.info().$("Failed to alter telemetry table [table=").$(configTableName).$(",error=").$(ex.getFlyweightMessage()).I$();
         }

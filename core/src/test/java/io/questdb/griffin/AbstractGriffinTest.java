@@ -1121,20 +1121,14 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
     @NotNull
     protected static CompiledQuery compile(CharSequence query) throws SqlException {
-        return compile(
-                query,
-                sqlExecutionContext
-        );
+        return compile(query, sqlExecutionContext);
     }
 
     @NotNull
     protected static CompiledQuery compile(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
-        return TestUtils.compileAndExecute(
-                compiler,
-                engine,
-                query,
-                executionContext
-        );
+        CompiledQuery cc = compiler.compile(query, executionContext);
+        cc.executeSync();
+        return cc;
     }
 
     protected void createPopulateTable(

@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.AlterStatement;
+import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
@@ -42,6 +43,16 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     public CompiledQueryImpl(CairoEngine engine) {
         this.engine = engine;
+    }
+
+    public CompiledQuery ofLock() {
+        type = LOCK;
+        return this;
+    }
+
+    public CompiledQuery ofUnlock() {
+        type = UNLOCK;
+        return this;
     }
 
     public CompiledQueryImpl withDefaultContext(SqlExecutionContext executionContext) {
@@ -141,22 +152,50 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     @Override
-    public long executeAlterNoWait() throws SqlException {
-        return AlterCommandExecution.executeAlterCommandNoWait(
-                engine,
-                alterStatement,
-                defaultSqlExecutionContext
-        );
+    public long executeAsyncNoWait() throws SqlException {
+        if (type == ALTER && alterStatement != null) {
+            return AlterCommandExecution.executeAlterCommandNoWait(
+                    engine,
+                    alterStatement,
+                    defaultSqlExecutionContext
+            );
+        } else if (type == INSERT) {
+            exeucteInsert();
+        }
+        return -1L;
     }
 
     @Override
-    public void executeAlter(SCSequence tempSequence) throws SqlException {
-        AlterCommandExecution.executeAlterCommand(
-                engine,
-                alterStatement,
-                defaultSqlExecutionContext,
-                tempSequence
-        );
+    public void executeAsyncWait(SCSequence tempSequence) throws SqlException {
+        if (type == ALTER && alterStatement != null) {
+            AlterCommandExecution.executeAlterCommand(
+                    engine,
+                    alterStatement,
+                    defaultSqlExecutionContext,
+                    tempSequence
+            );
+        } else if (type == INSERT) {
+            exeucteInsert();
+        }
     }
 
+    @Override
+    public void executeSync() throws SqlException {
+        if (type == ALTER && alterStatement != null) {
+            AlterCommandExecution.executeAlterStatementSyncOrFail(
+                    engine,
+                    alterStatement,
+                    defaultSqlExecutionContext
+            );
+        } else if (type == INSERT) {
+            exeucteInsert();
+        }
+    }
+
+    private void exeucteInsert() throws SqlException {
+        try (InsertMethod insertMethod = insertStatement.createMethod(defaultSqlExecutionContext)) {
+            insertMethod.execute();
+            insertMethod.commit();
+        }
+    }
 }

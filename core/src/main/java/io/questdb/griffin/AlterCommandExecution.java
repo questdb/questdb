@@ -92,7 +92,7 @@ public class AlterCommandExecution {
 
     // Executes alter command
     // If writer is busy exception is thrown
-    public static void executeAlterStatementSyncOrFail(
+    static void executeAlterStatementSyncOrFail(
             CairoEngine engine,
             AlterStatement alterStatement,
             SqlExecutionContext sqlExecutionContext

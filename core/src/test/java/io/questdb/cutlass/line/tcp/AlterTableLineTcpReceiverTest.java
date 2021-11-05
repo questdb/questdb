@@ -432,7 +432,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             AlterStatement alterStatement = cc.getAlterStatement();
             assert alterStatement != null;
 
-            return cc.executeAlterNoWait();
+            return cc.executeAsyncNoWait();
         }
     }
 

@@ -26,7 +26,10 @@ package io.questdb.test.tools;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
@@ -468,20 +471,6 @@ public final class TestUtils {
                 sink
         );
         assertEquals(expected, sink);
-    }
-
-    public static CompiledQuery compileAndExecute(
-            SqlCompiler compiler,
-            CairoEngine engine,
-            CharSequence query,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-        AlterStatement alterStatement = cc.getAlterStatement();
-        if (cc.getType() == CompiledQuery.ALTER && alterStatement != null) {
-            AlterCommandExecution.executeAlterStatementSyncOrFail(engine, alterStatement, sqlExecutionContext);
-        }
-        return cc;
     }
 
     public static void copyMimeTypes(String targetDir) throws IOException {

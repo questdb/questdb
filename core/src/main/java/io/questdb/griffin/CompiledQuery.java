@@ -44,6 +44,8 @@ public interface CompiledQuery {
     short COPY_REMOTE = 11;
     short RENAME_TABLE = 12;
     short BACKUP_TABLE = 13;
+    short LOCK = 14;
+    short UNLOCK = 14;
 
     RecordCursorFactory getRecordCursorFactory();
 
@@ -55,7 +57,24 @@ public interface CompiledQuery {
 
     short getType();
 
-    void executeAlter(SCSequence tempSequence) throws SqlException;
+    /***
+     * Execute CompiledQuery and blocks until completed.
+     * If the query is ALTER and locking TableWriter fails
+     * async command message will be passed and result awaited using tempSequence.
+     * @param tempSequence - temporary SCSequence instance to track completion of async ALTER command
+     * @throws SqlException - throws exception if command execution fails
+     */
+    void executeAsyncWait(SCSequence tempSequence) throws SqlException;
 
-    long executeAlterNoWait() throws SqlException;
+    /***
+     * Execute CompiledQuery non-blocking and command id if execution resulted in ASYNC command
+     * @throws SqlException - throws exception if command execution fails
+     */
+    long executeAsyncNoWait() throws SqlException;
+
+    /***
+     * Execute CompiledQuery non-blocking.
+     * If non-blocking execution fails EntryUnavailableException is thrown.
+     */
+    void executeSync() throws SqlException;
 }
