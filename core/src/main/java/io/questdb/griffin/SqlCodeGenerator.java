@@ -2504,7 +2504,7 @@ public class SqlCodeGenerator implements Mutable {
 
                 CharSequence preferredKeyColumn = null;
 
-                if (latestByHasOnlyOneColumn) {
+                if (listColumnFilterA.size() == 1) {
                     final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
 
                     if (ColumnType.isSymbol(myMeta.getColumnType(latestByIndex))) {
@@ -2522,7 +2522,7 @@ public class SqlCodeGenerator implements Mutable {
                         functionParser,
                         myMeta,
                         executionContext,
-                        latestByHasOnlyOneColumn
+                        listColumnFilterA.size() > 1
                 );
 
                 // intrinsic parser can collapse where clause when removing parts it can replace

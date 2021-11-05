@@ -1781,7 +1781,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 functionParser,
                 metadata,
                 sqlExecutionContext,
-                true);
+                false);
     }
 
     private IntrinsicModel noTimestampModelOf(CharSequence seq) throws SqlException {
@@ -1795,7 +1795,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 functionParser,
                 metadata,
                 sqlExecutionContext,
-                true);
+                false);
     }
 
     private IntrinsicModel noDesignatedTimestampNotIdxModelOf(CharSequence seq) throws SqlException {
@@ -1809,7 +1809,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 functionParser,
                 metadata,
                 sqlExecutionContext,
-                true);
+                false);
     }
 
     private IntrinsicModel runWhereCompareToModelTest(String where, String expected) throws SqlException {
@@ -1892,7 +1892,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 functionParser,
                 metadata,
                 sqlExecutionContext,
-                true);
+                false);
     }
 
     @FunctionalInterface
