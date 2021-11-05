@@ -28,7 +28,9 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -3364,14 +3366,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinOrder4() throws SqlException {
         assertQuery(
-                "select-choose b.id id, e.id id1 from (a cross join select [id] from b asof join d join select [id] from e on e.id = b.id cross join c)",
+                "select-choose a.o o, b.id id, c.x x, d.y y, e.id id1 from (select [o] from a cross join select [id] from b asof join select [y] from d join select [id] from e on e.id = b.id cross join select [x] from c)",
                 "a" +
                         " cross join b cross join c" +
                         " asof join d inner join e on b.id = e.id",
-                modelOf("a"),
+                modelOf("a").col("o", ColumnType.DOUBLE),
                 modelOf("b").col("id", ColumnType.INT),
-                modelOf("c"),
-                modelOf("d"),
+                modelOf("c").col("x", ColumnType.INT),
+                modelOf("d").col("y", ColumnType.LONG),
                 modelOf("e").col("id", ColumnType.INT)
         );
     }
