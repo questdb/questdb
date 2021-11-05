@@ -2532,6 +2532,12 @@ public class SqlCodeGenerator implements Mutable {
                 // to the downsized filter
                 model.setWhereClause(null);
 
+                if (intrinsicModel.intrinsicValue == IntrinsicModel.FALSE) {
+                    return new EmptyTableRecordCursorFactory(myMeta);
+                }
+
+                DataFrameCursorFactory dfcFactory;
+
                 if (latestByColumnCount > 0) {
                     Function f = compileFilter(intrinsicModel, myMeta, executionContext);
                     if (f != null && f.isConstant() && !f.getBool(null)) {
@@ -2553,8 +2559,6 @@ public class SqlCodeGenerator implements Mutable {
                 }
 
                 // below code block generates index-based filter
-
-                DataFrameCursorFactory dfcFactory;
 
                 final boolean intervalHitsOnlyOnePartition;
                 if (intrinsicModel.hasIntervalFilters()) {

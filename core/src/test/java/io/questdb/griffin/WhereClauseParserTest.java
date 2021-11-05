@@ -534,7 +534,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testContradictingNullSearch4() throws Exception {
         IntrinsicModel m = modelOf("sym != null and sym = null and ex != 'blah'");
-        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         assertFilter(m, "'blah'ex!=");
         Assert.assertEquals("[]", m.keyValues.toString());
         Assert.assertEquals("[]", m.keyValuePositions.toString());
@@ -543,7 +543,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testContradictingSearch1() throws Exception {
         IntrinsicModel m = modelOf("sym != 'blah' and sym = 'blah'");
-        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         Assert.assertNull(m.filter);
         Assert.assertEquals("[]", m.keyValues.toString());
         Assert.assertEquals("[]", m.keyValuePositions.toString());
@@ -552,7 +552,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testContradictingSearch12() throws Exception {
         IntrinsicModel m = modelOf("sym != 'ho' and sym in (null, 'ho')");
-        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         Assert.assertNull(m.filter);
         Assert.assertEquals("[null]", m.keyValues.toString());
         Assert.assertEquals("[30]", m.keyValuePositions.toString());
@@ -588,7 +588,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testContradictingSearch3() throws Exception {
         IntrinsicModel m = modelOf("sym != 'blah' and sym in ('blah')");
-        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         Assert.assertNull(m.filter);
         Assert.assertEquals("[]", m.keyValues.toString());
         Assert.assertEquals("[]", m.keyValuePositions.toString());
@@ -642,7 +642,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testContradictingSearch9() throws Exception {
         IntrinsicModel m = modelOf("sym != 'ho' and sym in ('blah', 'ho')");
-        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         Assert.assertNull(m.filter);
         Assert.assertEquals("[blah]", m.keyValues.toString());
         Assert.assertEquals("[32]", m.keyValuePositions.toString());
