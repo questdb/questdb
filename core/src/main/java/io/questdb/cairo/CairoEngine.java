@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -422,12 +423,13 @@ public class CairoEngine implements Closeable, WriterSource {
     public boolean tick() {
         final long cursor = tableWriterCmdSubSeq.next();
         if (cursor > -1) {
-            TableWriterTask cmd = tableWriterCmdQueue.get(cursor);
-            String tableName = cmd.getTableName();
+            final TableWriterTask cmd = tableWriterCmdQueue.get(cursor);
+            final String tableName = cmd.getTableName();
             boolean done = false;
             LOG.info().$("received table command cmd [tableName=").$(tableName)
                     .$(", type=").$(cmd.getType())
                     .$(", instance=").$(cmd.getInstance())
+                    .$(", ip=").$ip(cmd.getIp())
                     .I$();
 
             try (TableWriter writer = writerPool.get(tableName, "async writer cmd")) {
@@ -437,18 +439,13 @@ public class CairoEngine implements Closeable, WriterSource {
                 // ignore command, writer is busy
                 // it will tick on its way back to pool or earlier
             } catch (Throwable e) {
+                LogRecord record = LOG.error()
+                        .$("could not create table writer or execute writer command [tableName=").$(tableName)
+                        .$(", tableId=").$(cmd.getTableId()).$(", ex=`");
                 if (e instanceof Sinkable) {
-                    LOG.error()
-                            .$("could not create table writer or execute writer command [tableName=").$(tableName)
-                            .$(", tableId=").$(cmd.getTableId())
-                            .$(", ex=`").$((Sinkable) e).$('`')
-                            .I$();
+                    record.$((Sinkable) e).$('`').I$();
                 } else {
-                    LOG.error()
-                            .$("could not create table writer or execute writer command [tableName=").$(tableName)
-                            .$(", tableId=").$(cmd.getTableId())
-                            .$(", ex=`").$(e).$('`')
-                            .I$();
+                    record.$(e).$('`').I$();
                 }
             } finally {
                 if (!done) {

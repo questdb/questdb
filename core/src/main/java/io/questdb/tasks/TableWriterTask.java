@@ -96,6 +96,7 @@ public class TableWriterTask implements Closeable {
         this.tableName = tableName;
         this.type = type;
         this.appendPtr = data;
+        this.ip = 0L;
     }
 
     public long getAppendOffset() {
