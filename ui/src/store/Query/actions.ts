@@ -62,8 +62,11 @@ const stopRunning = (): QueryAction => ({
   type: QueryAT.STOP_RUNNING,
 })
 
-const toggleRunning = (): QueryAction => ({
+const toggleRunning = (isRefresh = false): QueryAction => ({
   type: QueryAT.TOGGLE_RUNNING,
+  payload: {
+    isRefresh,
+  },
 })
 
 export default {

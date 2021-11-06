@@ -47,8 +47,8 @@ import Loader from "../Loader"
 import QueryResult from "../QueryResult"
 import questdbMode from "./questdbMode"
 import {
-  getQueryFromCursor,
-  getQueryFromSelection,
+  getQueryRequestFromEditor,
+  getQueryRequestFromLastExecutedQuery,
   Request,
   toTextPosition,
 } from "./utils"
@@ -84,6 +84,7 @@ const Ace = () => {
   const { quest } = useContext(QuestContext)
   const [request, setRequest] = useState<Request | undefined>()
   const [value, setValue] = useState("")
+  const [lastExecutedQuery, setLastExecutedQuery] = useState("")
   const aceEditor = useRef<ReactAce | null>(null)
   const wrapper = useRef<HTMLDivElement | null>(null)
   const dispatch = useDispatch()
@@ -94,7 +95,7 @@ const Ace = () => {
   }, [])
 
   useEffect(() => {
-    if (!running && request) {
+    if (!running.value && request) {
       quest.abort()
       dispatch(actions.query.stopRunning())
       setRequest(undefined)
@@ -105,7 +106,7 @@ const Ace = () => {
   useEffect(() => {
     const editor = aceEditor?.current?.editor
 
-    if (running && editor) {
+    if (running.value && editor) {
       savePreferences(editor)
     }
   }, [running, savePreferences])
@@ -113,7 +114,7 @@ const Ace = () => {
   useEffect(() => {
     const editor = aceEditor?.current?.editor
 
-    if (running && editor) {
+    if (running.value && editor) {
       const markers = editor.session.getMarkers(true)
 
       if (markers) {
@@ -122,12 +123,13 @@ const Ace = () => {
         })
       }
 
-      const request =
-        editor.getSelectedText().length === 0
-          ? getQueryFromCursor(editor)
-          : getQueryFromSelection(editor)
+      const request = running.isRefresh
+        ? getQueryRequestFromLastExecutedQuery(lastExecutedQuery)
+        : getQueryRequestFromEditor(editor)
 
       if (request?.query) {
+        setLastExecutedQuery(request.query)
+
         void quest
           .queryRaw(request.query, { limit: "0,1000" })
           .then((result) => {
@@ -214,7 +216,7 @@ const Ace = () => {
         dispatch(actions.query.stopRunning())
       }
     }
-  }, [quest, dispatch, running])
+  }, [quest, dispatch, running, lastExecutedQuery])
 
   useEffect(() => {
     if (!aceEditor.current) {
@@ -223,8 +225,8 @@ const Ace = () => {
 
     const { editor } = aceEditor.current
 
-    const toggleRunning = () => {
-      dispatch(actions.query.toggleRunning())
+    const toggleRunning = (isRefresh: boolean = false) => {
+      dispatch(actions.query.toggleRunning(isRefresh))
     }
     const ro = new ResizeObserver(() => {
       editor.resize()
@@ -241,7 +243,7 @@ const Ace = () => {
     editor.commands.addCommand({
       bindKey: "F9",
       name: Command.EXECUTE,
-      exec: toggleRunning,
+      exec: () => toggleRunning,
     })
 
     editor.commands.addCommand({
@@ -249,7 +251,7 @@ const Ace = () => {
         mac: "Command-Enter",
         win: "Ctrl-Enter",
       },
-      exec: toggleRunning,
+      exec: () => toggleRunning,
       name: Command.EXECUTE_AT,
     })
 
@@ -296,7 +298,7 @@ const Ace = () => {
         preventScroll: false,
       })
 
-      toggleRunning()
+      toggleRunning(true)
     })
 
     window.bus.on(
