@@ -480,29 +480,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 LOG.error().$("append mid partition error 1 [table=").$(tableWriter.getTableName())
                         .$(", e=").$(e)
                         .I$();
-                tableWriter.o3BumpErrorCount();
-                O3CopyJob.copyIdleQuick(
-                        columnCounter,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        tableWriter
-                );
+                freeTs(columnCounter, srcTimestampFd, srcTimestampAddr, srcTimestampSize, tableWriter, ff);
                 throw e;
             }
         }
@@ -522,29 +500,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     LOG.error().$("append mid partition error 2 [table=").$(tableWriter.getTableName())
                             .$(", e=").$(e)
                             .I$();
-                    tableWriter.o3BumpErrorCount();
-                    O3CopyJob.copyIdleQuick(
-                            columnCounter,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            srcTimestampFd,
-                            srcTimestampAddr,
-                            srcTimestampSize,
-                            dstFixFd,
-                            0,
-                            0,
-                            dstVarFd,
-                            0,
-                            0,
-                            0,
-                            0,
-                            tableWriter
-                    );
+                    O3Utils.close(ff, dstFixFd);
+                    O3Utils.close(ff, dstVarFd);
+                    freeTs(columnCounter, srcTimestampFd, srcTimestampAddr, srcTimestampSize, tableWriter, ff);
                     throw e;
                 }
                 appendVarColumn(
@@ -605,29 +563,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     LOG.error().$("append mid partition error 3 [table=").$(tableWriter.getTableName())
                             .$(", e=").$(e)
                             .I$();
-                    tableWriter.o3BumpErrorCount();
-                    O3CopyJob.copyIdleQuick(
-                            columnCounter,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            srcTimestampFd,
-                            srcTimestampAddr,
-                            srcTimestampSize,
-                            dstFixFd,
-                            0,
-                            0,
-                            dstVarFd,
-                            0,
-                            0,
-                            0,
-                            0,
-                            tableWriter
-                    );
+                    O3Utils.close(ff, dstFixFd);
+                    O3Utils.close(ff, dstVarFd);
+                    freeTs(columnCounter, srcTimestampFd, srcTimestampAddr, srcTimestampSize, tableWriter, ff);
                     throw e;
                 }
                 appendFixColumn(
@@ -720,29 +658,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             LOG.error().$("append fix error [table=").$(tableWriter.getTableName())
                     .$(", e=").$(e)
                     .I$();
-            tableWriter.o3BumpErrorCount();
-            O3CopyJob.copyIdleQuick(
-                    columnCounter,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    srcTimestampFd,
-                    srcTimestampAddr,
-                    srcTimestampSize,
-                    dstFixFd,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    dstKFd,
-                    dstVFd,
-                    tableWriter
-            );
+            O3Utils.unmapAndClose(ff, dstFixFd, 0, 0);
+            O3Utils.close(ff, dstKFd);
+            O3Utils.close(ff, dstVFd);
+            freeTs(columnCounter, srcTimestampFd, srcTimestampAddr, srcTimestampSize, tableWriter, ff);
             throw e;
         }
 
@@ -838,29 +757,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             LOG.error().$("append ts error [table=").$(tableWriter.getTableName())
                     .$(", e=").$(e)
                     .I$();
-            tableWriter.o3BumpErrorCount();
-            O3CopyJob.copyIdleQuick(
-                    columnCounter,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    srcTimestampFd,
-                    srcTimestampAddr,
-                    srcTimestampSize,
-                    dstFixFd,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    tableWriter
-            );
+            O3Utils.close(ff, dstFixFd);
+            freeTs(columnCounter, srcTimestampFd, srcTimestampAddr, srcTimestampSize, tableWriter, ff);
             throw e;
         }
 
@@ -977,29 +875,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             LOG.error().$("append var error [table=").$(tableWriter.getTableName())
                     .$(", e=").$(e)
                     .I$();
-            tableWriter.o3BumpErrorCount();
-            O3CopyJob.copyIdleQuick(
-                    columnCounter,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    srcTimestampFd,
-                    srcTimestampAddr,
-                    srcTimestampSize,
-                    activeFixFd,
-                    dstFixAddr,
-                    dstFixSize,
-                    activeVarFd,
-                    dstVarAddr,
-                    dstVarSize,
-                    0,
-                    0,
-                    tableWriter
-            );
+            O3Utils.unmapAndClose(ff, activeFixFd, dstFixAddr, dstFixSize);
+            O3Utils.unmapAndClose(ff, activeVarFd, dstVarAddr, dstVarSize);
+            freeTs(columnCounter, srcTimestampFd, srcTimestampAddr, srcTimestampSize, tableWriter, ff);
             throw e;
         }
         publishCopyTask(
@@ -1658,29 +1536,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 LOG.error().$("merge mid partition error 1 [table=").$(tableWriter.getTableName())
                         .$(", e=").$(e)
                         .I$();
-                tableWriter.o3BumpErrorCount();
-                O3CopyJob.copyIdleQuick(
-                        columnCounter,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        tableWriter
-                );
+                freeTs(columnCounter, srcTimestampFd, srcTimestampAddr, srcTimestampSize, tableWriter, ff);
                 throw e;
             }
         }
@@ -1699,29 +1555,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     LOG.error().$("merge mid partition error 2 [table=").$(tableWriter.getTableName())
                             .$(", e=").$(e)
                             .I$();
-                    tableWriter.o3BumpErrorCount();
-                    O3CopyJob.copyIdleQuick(
-                            columnCounter,
-                            0,
-                            srcDataFixFd,
-                            0,
-                            0,
-                            srcDataVarFd,
-                            0,
-                            0,
-                            srcTimestampFd,
-                            srcTimestampAddr,
-                            srcTimestampSize,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            tableWriter
-                    );
+                    O3Utils.close(ff, srcDataFixFd);
+                    O3Utils.close(ff, srcDataVarFd);
+                    freeTs(columnCounter, srcTimestampFd, srcTimestampAddr, srcTimestampSize, tableWriter, ff);
                     throw e;
                 }
 
@@ -1779,29 +1615,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     LOG.error().$("merge mid partition error 3 [table=").$(tableWriter.getTableName())
                             .$(", e=").$(e)
                             .I$();
-                    tableWriter.o3BumpErrorCount();
-                    O3CopyJob.copyIdleQuick(
-                            columnCounter,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            srcTimestampFd,
-                            srcTimestampAddr,
-                            srcTimestampSize,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            tableWriter
-                    );
+                    freeTs(columnCounter, srcTimestampFd, srcTimestampAddr, srcTimestampSize, tableWriter, ff);
                     throw e;
                 }
                 mergeFixColumn(
@@ -1845,6 +1659,23 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         tmpBuf
                 );
                 break;
+        }
+    }
+
+    private static void freeTs(
+            AtomicInteger columnCounter,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            TableWriter tableWriter,
+            FilesFacade ff
+    ) {
+        tableWriter.o3BumpErrorCount();
+        if (columnCounter.decrementAndGet() == 0) {
+            O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
+            O3Utils.close(ff, srcTimestampFd);
+            tableWriter.o3ClockDownPartitionUpdateCount();
+            tableWriter.o3CountDownDoneLatch();
         }
     }
 
@@ -2010,29 +1841,18 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             LOG.error().$("merge fix error [table=").$(tableWriter.getTableName())
                     .$(", e=").$(e)
                     .I$();
+            O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
+            O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
+            O3Utils.close(ff, dstKFd);
+            O3Utils.close(ff, dstVFd);
             tableWriter.o3BumpErrorCount();
-            O3CopyJob.copyIdleQuick(
-                    columnCounter,
-                    timestampMergeIndexAddr,
-                    srcDataFixFd,
-                    srcDataFixAddr,
-                    srcDataFixSize,
-                    0,
-                    0,
-                    0,
-                    srcTimestampFd,
-                    srcTimestampAddr,
-                    srcTimestampSize,
-                    dstFixFd,
-                    dstFixAddr,
-                    dstFixSize,
-                    0,
-                    0,
-                    0,
-                    dstKFd,
-                    dstVFd,
-                    tableWriter
-            );
+            if (columnCounter.decrementAndGet() == 0) {
+                O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
+                O3Utils.close(ff, srcTimestampFd);
+                Vect.freeMergedIndex(timestampMergeIndexAddr);
+                tableWriter.o3ClockDownPartitionUpdateCount();
+                tableWriter.o3CountDownDoneLatch();
+            }
             throw e;
         }
 
@@ -2486,28 +2306,15 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     .$(", e=").$(e)
                     .I$();
             tableWriter.o3BumpErrorCount();
-            O3CopyJob.copyIdleQuick(
-                    columnCounter,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    dstFixFd,
-                    dstFixAddr,
-                    dstFixSize,
-                    dstVarFd,
-                    dstVarAddr,
-                    dstVarSize,
-                    dstKFd,
-                    dstVFd,
-                    tableWriter
-            );
+            final FilesFacade ff1 = tableWriter.getFilesFacade();
+            O3Utils.unmapAndClose(ff1, dstFixFd, dstFixAddr, dstFixSize);
+            O3Utils.unmapAndClose(ff1, dstVarFd, dstVarAddr, dstVarSize);
+            O3Utils.close(ff1, dstKFd);
+            O3Utils.close(ff1, dstVFd);
+            if (columnCounter.decrementAndGet() == 0) {
+                tableWriter.o3ClockDownPartitionUpdateCount();
+                tableWriter.o3CountDownDoneLatch();
+            }
             throw e;
         }
 
