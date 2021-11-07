@@ -8771,7 +8771,64 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSimpleArithmeticsInPeriodSyntax() throws Exception {
+    public void testSimpleLongArithmeticsInPeriod() throws Exception {
+        assertQuery("sum\tk\n",
+                "select sum(a), k from x sample by (1+2)*10L m align to calendar",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(0)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false);
+    }
+
+    @Test
+    public void testBindVarsInPeriodSyntax() throws Exception {
+        String query = "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by $1 T align to calendar";
+        testSampleByPeriodFails(
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by $1 T align to calendar",
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by ".length(),
+                "sample by period must be a constant expression");
+    }
+
+    @Test
+    public void testWrongTypeInPeriodSyntax() throws Exception {
+        testSampleByPeriodFails(
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by 1.0*3 T",
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by 1.0".length(),
+                "sample by period must be a constant expression of INT or LONG type");
+    }
+
+    @Test
+    public void testWrongTypeInPeriodSyntax2() throws Exception {
+        testSampleByPeriodFails(
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by '1T'",
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by '".length(),
+                "expected single letter qualifier");
+    }
+
+    @Test
+    public void testWrongTypeInPeriodSyntax3() throws Exception {
+        testSampleByPeriodFails(
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by '1' T",
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by '1' ".length(),
+                "unexpected token: T");
+    }
+
+    @Test
+    public void testWrongTypeInUnit() throws Exception {
+        testSampleByPeriodFails(
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by 10*3 mi",
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by 10*3 mi".length(),
+                "one letter sample by period unit expected");
+    }
+
+    private void testSampleByPeriodFails(String query, int errorPosition, String errorContains) throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile(
                     "create table x as " +
@@ -8786,19 +8843,16 @@ public class SampleByTest extends AbstractGriffinTest {
                             "), index(s) timestamp(k) partition by DAY",
                     sqlExecutionContext
             );
-
             try (
                     RecordCursorFactory ignored = compiler.compile(
-                            "select k, s, first(lat) lat, last(lon) lon " +
-                                    "from x " +
-                                    "where s in ('a') " +
-                                    "sample by $1 T align to calendar",
+                            query,
                             sqlExecutionContext
                     ).getRecordCursorFactory()
             ) {
                 Assert.fail();
             } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "sample by period must be a constant expression");
+                TestUtils.assertContains(ex.getFlyweightMessage(), errorContains);
+                Assert.assertEquals(errorPosition, ex.getPosition());
             }
         });
     }

@@ -1354,9 +1354,11 @@ public class SqlCodeGenerator implements Mutable {
                         executionContext
                 );
                 if (!sampleByPeriod.isConstant() || (sampleByPeriod.getType() != ColumnType.LONG && sampleByPeriod.getType() != ColumnType.INT)) {
+                    sampleByPeriod.close();
                     throw SqlException.$(sampleByNode.position, "sample by period must be a constant expression of INT or LONG type");
                 }
                 long period = sampleByPeriod.getLong(null);
+                sampleByPeriod.close();
                 timestampSampler = TimestampSamplerFactory.getInstance(period, sampleByUnits.token, sampleByUnits.position);
             }
 
