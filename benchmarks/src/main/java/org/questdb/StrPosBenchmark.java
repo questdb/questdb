@@ -73,11 +73,9 @@ public class StrPosBenchmark {
             int startLen = rnd.nextInt(1000);
             for (int j = 0; j < startLen; j++) {
                 builder.append('a');
-                strings[i] = "a".repeat(startLen) + ",b";
             }
             builder.append(",b");
             strings[i] = builder.toString();
-
         }
 
         records = new Record[N];
