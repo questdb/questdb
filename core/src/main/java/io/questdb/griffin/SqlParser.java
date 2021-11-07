@@ -161,7 +161,8 @@ public final class SqlParser {
         // This is complex expression of sample by period. It must follow time unit interval
         ExpressionNode periodUnit = expectLiteral(lexer);
         if (periodUnit == null || periodUnit.type != ExpressionNode.LITERAL || !isValidSampleByPeriodLetter(periodUnit.token)) {
-            throw SqlException.$(lexer.getUnparsed() == null ? lexer.getPosition() : lexer.lastTokenPosition(), "one letter sample by period unit expected");
+            int lexerPosition = lexer.getUnparsed() == null ? lexer.getPosition() : lexer.lastTokenPosition();
+            throw SqlException.$(periodUnit != null ? periodUnit.position : lexerPosition, "one letter sample by period unit expected");
         }
         model.setSampleBy(n, periodUnit);
     }
