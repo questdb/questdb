@@ -8887,7 +8887,7 @@ public class SampleByTest extends AbstractGriffinTest {
     public void testWrongTypeInPeriodSyntax2() throws Exception {
         testSampleByPeriodFails(
                 "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by '1T'",
-                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by '1".length() - 1,
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by '".length() - 1,
                 "expected single letter qualifier"
         );
     }

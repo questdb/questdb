@@ -64,7 +64,7 @@ public final class TimestampSamplerFactory {
 
         // expect 1 letter qualifier
         if (k + 1 < len) {
-            throw SqlException.$(position + k + 1, "expected single letter qualifier");
+            throw SqlException.$(position + k, "expected single letter qualifier");
         }
 
         try {
