@@ -100,6 +100,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode alias;
     private ExpressionNode timestamp;
     private ExpressionNode sampleBy;
+    private ExpressionNode sampleByUnit;
     private JoinContext context;
     private ExpressionNode joinCriteria;
     private int joinType;
@@ -255,6 +256,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void clearSampleBy() {
         sampleBy = null;
+        sampleByUnit = null;
         sampleByFill.clear();
         sampleByTimezoneName = null;
         sampleByOffset = null;
@@ -309,6 +311,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ExpressionNode getAlias() {
         return alias;
+    }
+
+    public ExpressionNode getSampleByUnit() {
+        return sampleByUnit;
     }
 
     public int getTableId() {
@@ -525,6 +531,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.sampleBy = sampleBy;
     }
 
+    public void setSampleBy(ExpressionNode sampleBy, ExpressionNode sampleByUnit) {
+        this.sampleBy = sampleBy;
+        this.sampleByUnit = sampleByUnit;
+    }
+
     public ExpressionNode getSampleByTimezoneName() {
         return sampleByTimezoneName;
     }
@@ -659,6 +670,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void moveSampleByFrom(QueryModel model) {
         this.sampleBy = model.sampleBy;
+        this.sampleByUnit = model.sampleByUnit;
         this.sampleByFill.clear();
         this.sampleByFill.addAll(model.sampleByFill);
         this.sampleByTimezoneName = model.sampleByTimezoneName;
