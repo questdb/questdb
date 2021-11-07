@@ -603,16 +603,6 @@ public final class TableUtils {
         }
     }
 
-    public static long readLongOrFail(FilesFacade ff, long fd, long offset, long tempMem8b) {
-        return readLongOrFail(
-                ff,
-                fd,
-                offset,
-                tempMem8b,
-                null
-        );
-    }
-
     public static long readLongOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, @Nullable Path path) {
         if (ff.read(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
             if (path != null) {
