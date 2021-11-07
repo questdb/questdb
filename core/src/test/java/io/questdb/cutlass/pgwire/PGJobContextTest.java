@@ -3132,7 +3132,7 @@ nodejs code:
 
     @Test
     public void testSimple() throws Exception {
-        testQuery("rnd_double(4) d, ", "s[VARCHAR],i[INTEGER],d[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[TIMESTAMP],rnd_bin[BINARY],rnd_char[CHAR],rnd_long256[NUMERIC]\n");
+        testQuery("rnd_double(4) d, ", "s[VARCHAR],i[INTEGER],d[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[TIMESTAMP],rnd_bin[BINARY],rnd_char[CHAR],rnd_long256[VARCHAR]\n");
     }
 
     @Test
@@ -3743,7 +3743,7 @@ nodejs code:
     public void testUtf8QueryText() throws Exception {
         testQuery(
                 "rnd_double(4) расход, ",
-                "s[VARCHAR],i[INTEGER],расход[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[TIMESTAMP],rnd_bin[BINARY],rnd_char[CHAR],rnd_long256[NUMERIC]\n"
+                "s[VARCHAR],i[INTEGER],расход[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[TIMESTAMP],rnd_bin[BINARY],rnd_char[CHAR],rnd_long256[VARCHAR]\n"
         );
     }
 
@@ -4344,7 +4344,7 @@ nodejs code:
                         try (ResultSet rs = statement.executeQuery()) {
                             // dump metadata
                             assertResultSet(
-                                    "kk[INTEGER],a[INTEGER],b[BIT],c[VARCHAR],d[DOUBLE],e[REAL],f[SMALLINT],g[TIMESTAMP],i[VARCHAR],j[BIGINT],k[TIMESTAMP],l[SMALLINT],m[BINARY],n[VARCHAR],cc[CHAR],l2[NUMERIC]\n" +
+                                    "kk[INTEGER],a[INTEGER],b[BIT],c[VARCHAR],d[DOUBLE],e[REAL],f[SMALLINT],g[TIMESTAMP],i[VARCHAR],j[BIGINT],k[TIMESTAMP],l[SMALLINT],m[BINARY],n[VARCHAR],cc[CHAR],l2[VARCHAR]\n" +
                                             "1,1569490116,false,Z,null,0.761,428,2015-05-16 20:27:48.158,VTJW,-8671107786057422727,1970-01-01 00:00:00.889001,26,00000000 68 61 26 af 19 c4 95 94 36 53 49,FOWLPD,X,0xbccb30ed7795ebc85f20a35e80e154f458dfd08eeb9cc39ecec82869edec121b\n" +
                                             "2,-461611463,false,J,0.9687423276940171,0.676,279,2015-11-21 14:32:13.134,HYRX,-6794405451419334859,1970-01-01 00:00:09.779013,6,null,ETJRSZSRYR,F,0x9ff97d73fc0c62d069440048957ae05360802a2ca499f211b771e27f939096b9\n" +
                                             "3,-1515787781,false,null,0.8001121139739173,0.188,759,2015-06-17 02:40:55.328,CPSW,-4091897709796604687,1970-01-01 00:00:18.669025,6,00000000 9c 1d 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3,DYYCTGQOLYXWCKYL,S,0x26567f4430b46b7f78c594c496995885aa1896d0ad3419d2910aa7b6d58506dc\n" +
@@ -4371,7 +4371,7 @@ nodejs code:
                 }
 
                 // run some random SQLs
-                final String header = "kk[INTEGER],a[INTEGER],b[BIT],c[VARCHAR],d[DOUBLE],e[REAL],f[SMALLINT],g[TIMESTAMP],i[VARCHAR],j[BIGINT],k[TIMESTAMP],l[SMALLINT],m[BINARY],n[VARCHAR],cc[CHAR],l2[NUMERIC]\n";
+                final String header = "kk[INTEGER],a[INTEGER],b[BIT],c[VARCHAR],d[DOUBLE],e[REAL],f[SMALLINT],g[TIMESTAMP],i[VARCHAR],j[BIGINT],k[TIMESTAMP],l[SMALLINT],m[BINARY],n[VARCHAR],cc[CHAR],l2[VARCHAR]\n";
 
                 final String[] results = {
                         "1,1569490116,false,Z,null,0.761,428,2015-05-16 20:27:48.158,VTJW,-8671107786057422727,1970-01-01 00:00:00.889001,26,00000000 68 61 26 af 19 c4 95 94 36 53 49,FOWLPD,X,0xbccb30ed7795ebc85f20a35e80e154f458dfd08eeb9cc39ecec82869edec121b\n",
