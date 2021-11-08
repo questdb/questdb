@@ -29,7 +29,7 @@ steps:
   - task: Maven@3
     displayName: "Run tests with Maven with Code Coverage"
     inputs:
-      mavenPomFile: "pom.xml"
+      mavenPomFile: "core/pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "test"
       options: "--batch-mode --quiet -P build-web-console,use-built-in-nodejs -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
