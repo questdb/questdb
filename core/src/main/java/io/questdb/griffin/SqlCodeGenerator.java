@@ -1096,7 +1096,7 @@ public class SqlCodeGenerator implements Mutable {
         // get latest rows for all values of "latest by" column
 
         if (indexed) {
-            return new LatestByAllIndexedFilteredRecordCursorFactory(
+            return new LatestByAllIndexedFilteredAfterRecordCursorFactory(
                     metadata,
                     configuration,
                     dataFrameCursorFactory,
@@ -2816,7 +2816,7 @@ public class SqlCodeGenerator implements Mutable {
             }
 
             if (listColumnFilterA.size() == 1 && myMeta.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(0))) {
-                return new LatestByAllIndexedFilteredRecordCursorFactory(
+                return new LatestByAllIndexedFilteredAfterRecordCursorFactory(
                         myMeta,
                         configuration,
                         new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),

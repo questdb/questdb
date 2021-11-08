@@ -27,75 +27,52 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.eq.EqSymStrFunctionFactory;
 import io.questdb.std.IntList;
-import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
-import io.questdb.test.tools.TestUtils;
-import org.junit.Ignore;
-import org.junit.Test;
 
 
-public class LatestByAllIndexedFilteredRecordCursorTest extends AbstractGriffinTest {
-    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory applies filter after latest by is executed")
-    @Test
-    public void testSingleIndexedColLatestByWithWhereOnOtherCol() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = "tab";
+public abstract class LatestByAllIndexedFilteredRecordCursorTest extends AbstractGriffinTest {
 
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-                model.col("id", ColumnType.SYMBOL).indexed(true, 2)
-                        .col("name", ColumnType.SYMBOL).indexed(true, 2)
-                        .col("value", ColumnType.DOUBLE)
-                        .col("ts", ColumnType.TIMESTAMP);
-                CairoTestUtils.create(model);
-            }
-            insertRows(tableName);
-
-            // tab latest by id where name = "c2"
-            int columnIndex = 0; // id
-            IntList columnIndexes = new IntList(4);
-            columnIndexes.add(0); // id
-            columnIndexes.add(1); // name
-            columnIndexes.add(2); // value
-            columnIndexes.add(3); // ts
-            ObjList<Function> args = new ObjList<>(2);
-            args.add(new SymbolColumn(1, true));  // name
-            args.add(new StrConstant("c2"));
-            Function filter = new EqSymStrFunctionFactory().newInstance(
-                    0, args, null, configuration, sqlExecutionContext);
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
-                 LatestByAllIndexedFilteredRecordCursorFactory factory = new LatestByAllIndexedFilteredRecordCursorFactory(
-                         reader.getMetadata(),
-                         configuration,
-                         new FullBwdDataFrameCursorFactory(
-                                 engine,
-                                 tableName,
-                                 -1,
-                                 -1),
-                         columnIndex,
-                         filter,
-                         columnIndexes,
-                         new LongList(0)
-                 );
-                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                TestUtils.assertCursor("id\tname\tvalue\tts\n" +
-                                "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n" +
-                                "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n",
-                        cursor,
-                        reader.getMetadata(),
-                        true,
-                        sink);
-            }
-        });
+    protected static final int ID_IDX = 0;
+    protected static final int NAME_IDX = 1;
+    protected static final int VALUE_IDX = 2;
+    protected static final int TS_IDX = 3;
+    protected static final IntList SELECT_ALL_IDXS = new IntList(4);
+    static {
+        SELECT_ALL_IDXS.add(ID_IDX);
+        SELECT_ALL_IDXS.add(NAME_IDX);
+        SELECT_ALL_IDXS.add(VALUE_IDX);
+        SELECT_ALL_IDXS.add(TS_IDX);
     }
 
-    private void insertRows(CharSequence tableName) throws Exception {
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "latest-by-insert")) {
+    protected Function createFilter(int colIdx, CharSequence value) {
+        // tab latest by id where col[colIdx] = value
+        ObjList<Function> args = new ObjList<>(2);
+        args.add(new SymbolColumn(colIdx, true));
+        args.add(new StrConstant(value));
+        Function filter = new EqSymStrFunctionFactory().newInstance(
+                0, args, null, configuration, sqlExecutionContext
+        );
+        return filter;
+    }
+
+    protected void createTable(String tableName) {
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
+            model.col("id", ColumnType.SYMBOL).indexed(true, 2)
+                    .col("name", ColumnType.SYMBOL).indexed(true, 2)
+                    .col("value", ColumnType.DOUBLE)
+                    .col("ts", ColumnType.TIMESTAMP);
+            CairoTestUtils.create(model);
+        }
+    }
+
+    protected void insertRows(String tableName) throws Exception {
+        try (TableWriter writer = engine.getWriter(
+                AllowAllCairoSecurityContext.INSTANCE, tableName, "latest-by-insert")) {
             appendRow(writer.newRow(), "d1", "c1", 101.1, "2021-10-05T11:31:35.878Z");
             appendRow(writer.newRow(), "d1", "c1", 101.2, "2021-10-05T12:31:35.878Z");
             appendRow(writer.newRow(), "d1", "c1", 101.3, "2021-10-05T13:31:35.878Z");
@@ -144,7 +121,13 @@ public class LatestByAllIndexedFilteredRecordCursorTest extends AbstractGriffinT
         );
     }
 
-    private static void appendRow(TableWriter.Row row, CharSequence id, CharSequence name, double value, CharSequence ts) {
+    protected static void appendRow(
+            TableWriter.Row row,
+            CharSequence id,
+            CharSequence name,
+            double value,
+            CharSequence ts
+    ) {
         row.putSym(0, id);
         row.putSym(1, name);
         row.putDouble(2, value);
