@@ -128,8 +128,6 @@ const Ace = () => {
         : getQueryRequestFromEditor(editor)
 
       if (request?.query) {
-        setLastExecutedQuery(request.query)
-
         void quest
           .queryRaw(request.query, { limit: "0,1000" })
           .then((result) => {
@@ -155,6 +153,7 @@ const Ace = () => {
             }
 
             if (result.type === QuestDB.Type.DQL) {
+              setLastExecutedQuery(request.query)
               dispatch(
                 actions.query.addNotification({
                   content: (
@@ -216,7 +215,7 @@ const Ace = () => {
         dispatch(actions.query.stopRunning())
       }
     }
-  }, [quest, dispatch, running, lastExecutedQuery])
+  }, [quest, dispatch, running])
 
   useEffect(() => {
     if (!aceEditor.current) {
