@@ -402,7 +402,7 @@
                                         <argument>--module-path</argument>
                                         <argument>${project.build.directory}/questdb-${project.version}.jar</argument>
                                         <argument>--add-modules</argument>
-                                        <argument>io.questdb,jdk.crypto.ec</argument>
+                                        <argument>io.questdb,jdk.crypto.ec,java.management</argument>
                                         <argument>--output</argument>
                                         <argument>${project.build.directory}/runtime</argument>
                                         <argument>--no-header-files</argument>
