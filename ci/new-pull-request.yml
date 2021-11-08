@@ -44,7 +44,7 @@ stages:
           - task: Maven@3
             displayName: "Compile with Maven"
             inputs:
-              mavenPomFile: "core/pom.xml"
+              mavenPomFile: "pom.xml"
               mavenOptions: "-Xmx3072m"
               options: "compile -DskipTests"
               jdkVersionOption: $(jdk)
