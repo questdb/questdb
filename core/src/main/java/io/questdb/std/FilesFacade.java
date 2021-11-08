@@ -64,6 +64,10 @@ public interface FilesFacade {
 
     long getPageSize();
 
+    default long alignedOffset(long offset) {
+        return offset - offset % getPageSize();
+    }
+
     boolean isRestrictedFileSystem();
 
     void iterateDir(LPSZ path, FindVisitor func);
