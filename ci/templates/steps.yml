@@ -48,7 +48,7 @@ steps:
   - task: Maven@3
     displayName: "Run tests with Maven"
     inputs:
-      mavenPomFile: "core/pom.xml"
+      mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "clean test"
       options: "--batch-mode --quiet -P build-web-console,use-built-in-nodejs -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
@@ -72,7 +72,7 @@ steps:
       SYSTEM_ACCESSTOKEN: $(GH_TOKEN)
       PR_ID: $(System.PullRequest.PullRequestNumber)
       SOURCES: $(Build.SourcesDirectory)
-      COVERAGE_REPORT_PATH: core/CCReport43F6D5EF/jacoco.xml
+      COVERAGE_REPORT_PATH: CCReport43F6D5EF/jacoco.xml
       DIFF_CONVER_THRESHOLD_PCT: $(DIFF_CONVER_THRESHOLD_PCT)
     condition: |
       and(
