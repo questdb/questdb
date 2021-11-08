@@ -190,6 +190,29 @@ public class FilesTest {
     }
 
     @Test
+    public void testAllocateLoop() throws Exception {
+        File temp = temporaryFolder.newFile();
+        TestUtils.writeStringToFile(temp, "abcde");
+        try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
+            Assert.assertTrue(Files.exists(path));
+            Assert.assertEquals(5, Files.length(path));
+            System.out.println(path);
+
+            long fd = Files.openRW(path);
+
+            long M16 = 19 * 1024L * 1024L;
+            try {
+                for (int i = 0; i < 100000; i++) {
+                    Files.allocate(fd, M16 + i);
+                    Assert.assertEquals(M16 + i, Files.length(path));
+                }
+            } finally {
+                Files.close(fd);
+            }
+        }
+    }
+
+    @Test
     public void testOpenCleanRWParallel() throws Exception {
         File temp = temporaryFolder.getRoot();
         int threadCount = 15;
