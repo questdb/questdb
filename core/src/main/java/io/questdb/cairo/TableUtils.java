@@ -171,6 +171,8 @@ public final class TableUtils {
             mem.putLong(structure.getCommitLag());
             mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
+            assert count > 0;
+
             for (int i = 0; i < count; i++) {
                 mem.putInt(structure.getColumnType(i));
                 long flags = 0;

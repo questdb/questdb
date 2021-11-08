@@ -150,10 +150,6 @@ public class TxReader implements Closeable {
         return structureVersion;
     }
 
-    public int getSymbolCount(int columnIndex) {
-        return roTxMem.getInt(TableUtils.getSymbolWriterTransientIndexOffset(columnIndex));
-    }
-
     public long getTransientRowCount() {
         return transientRowCount;
     }
@@ -166,69 +162,7 @@ public class TxReader implements Closeable {
         return txn;
     }
 
-    public long readFixedRowCount() {
-        return roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
-    }
-
-    public int readSymbolCount(int symbolIndex) {
-        return roTxMem.getInt(getSymbolWriterIndexOffset(symbolIndex));
-    }
-
-    public void readSymbolCounts(IntList symbolCountSnapshot) {
-        int symbolMapCount = roTxMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT);
-        if (symbolMapCount > 0) {
-            // No need to call setSize here, file mapped beyond symbol section already
-            // while reading attached partitions
-            for (int i = 0; i < symbolMapCount; i++) {
-                symbolCountSnapshot.add(roTxMem.getInt(TableUtils.getSymbolWriterIndexOffset(i)));
-            }
-        }
-    }
-
-    public int readSymbolWriterIndexOffset(int i) {
-        return roTxMem.getInt(getSymbolWriterIndexOffset(i));
-    }
-
-    public long readTxn() {
-        return roTxMem.getLong(TX_OFFSET_TXN);
-    }
-
-    public long readTxnCheck() {
-        return roTxMem.getLong(TableUtils.TX_OFFSET_TXN_CHECK);
-    }
-
-    public void readUnchecked() {
-        this.txn = roTxMem.getLong(TX_OFFSET_TXN);
-        this.transientRowCount = roTxMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
-        this.fixedRowCount = roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
-        this.minTimestamp = roTxMem.getLong(TX_OFFSET_MIN_TIMESTAMP);
-        this.maxTimestamp = roTxMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
-        this.dataVersion = roTxMem.getLong(TX_OFFSET_DATA_VERSION);
-        this.structureVersion = roTxMem.getLong(TX_OFFSET_STRUCT_VERSION);
-        final long prevSymbolCount = this.symbolColumnCount;
-        this.symbolColumnCount = roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
-        final long prevPartitionTableVersion = this.partitionTableVersion;
-        this.partitionTableVersion = roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
-        if (prevSymbolCount != symbolColumnCount) {
-            roTxMem.growToFileSize();
-        }
-        loadAttachedPartitions(prevPartitionTableVersion);
-    }
-
-    public int readWriterCount() {
-        return roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
-    }
-
-    private void copyAttachedPartitionsFromTx(int txAttachedPartitionsSize, int max) {
-        roTxMem.extend(getPartitionTableIndexOffset(symbolColumnCount, txAttachedPartitionsSize));
-        attachedPartitions.setPos(txAttachedPartitionsSize);
-        for (int i = max; i < txAttachedPartitionsSize; i++) {
-            attachedPartitions.setQuick(i, roTxMem.getLong(getPartitionTableIndexOffset(symbolColumnCount, i)));
-        }
-        attachedPartitionsSize = txAttachedPartitionsSize;
-    }
-
-    protected int findAttachedPartitionIndex(long ts) {
+    private int findAttachedPartitionIndex(long ts) {
         return findAttachedPartitionIndexByLoTimestamp(getPartitionTimestampLo(ts));
     }
 
@@ -247,12 +181,8 @@ public class TxReader implements Closeable {
         return attachedPartitions.binarySearchBlock(0, attachedPartitions.size(), LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts);
     }
 
-    long getPartitionTimestampLo(long timestamp) {
+    protected long getPartitionTimestampLo(long timestamp) {
         return timestampFloorMethod != null && timestamp != Numbers.LONG_NaN ? timestampFloorMethod.floor(timestamp) : Long.MIN_VALUE;
-    }
-
-    long getRawMemory() {
-        return roTxMem.getPageAddress(0);
     }
 
     protected void initPartitionAt(int index, long partitionTimestampLo, long partitionSize) {
@@ -262,19 +192,54 @@ public class TxReader implements Closeable {
         attachedPartitions.setQuick(index + PARTITION_DATA_TX_OFFSET, txn);
     }
 
-    private void loadAttachedPartitions(long prevPartitionTableVersion) {
+    protected MemoryMR openTxnFile(FilesFacade ff, Path path) {
+        if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
+            return Vm.getMRInstance(ff, path, ff.length(path), MemoryTag.MMAP_DEFAULT);
+        }
+        throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
+    }
+
+    protected long unsafeGetRawMemory() {
+        return roTxMem.getPageAddress(0);
+    }
+
+    void unsafeLoadAll() {
+        this.txn = roTxMem.getLong(TX_OFFSET_TXN);
+        this.transientRowCount = roTxMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
+        this.fixedRowCount = roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
+        this.minTimestamp = roTxMem.getLong(TX_OFFSET_MIN_TIMESTAMP);
+        this.maxTimestamp = roTxMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
+        this.dataVersion = roTxMem.getLong(TX_OFFSET_DATA_VERSION);
+        this.structureVersion = roTxMem.getLong(TX_OFFSET_STRUCT_VERSION);
+        final long prevSymbolCount = this.symbolColumnCount;
+        this.symbolColumnCount = roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
+        final long prevPartitionTableVersion = this.partitionTableVersion;
+        this.partitionTableVersion = roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
+        if (prevSymbolCount != symbolColumnCount) {
+            roTxMem.growToFileSize();
+        }
+        unsafeLoadPartitions(prevPartitionTableVersion);
+    }
+
+    private void unsafeLoadPartitions(long prevPartitionTableVersion) {
         if (partitionBy != PartitionBy.NONE) {
             int txAttachedPartitionsSize = roTxMem.getInt(getPartitionTableSizeOffset(symbolColumnCount)) / Long.BYTES;
             if (txAttachedPartitionsSize > 0) {
                 if (prevPartitionTableVersion != partitionTableVersion) {
                     attachedPartitions.clear();
-                    copyAttachedPartitionsFromTx(txAttachedPartitionsSize, 0);
+                    unsafeLoadPartitions0(txAttachedPartitionsSize, 0);
                 } else {
                     if (attachedPartitionsSize < txAttachedPartitionsSize) {
-                        copyAttachedPartitionsFromTx(txAttachedPartitionsSize, Math.max(attachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION, 0));
+                        unsafeLoadPartitions0(
+                                txAttachedPartitionsSize,
+                                Math.max(attachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION, 0)
+                        );
                     }
                 }
-                attachedPartitions.setQuick(txAttachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_SIZE_OFFSET, transientRowCount);
+                attachedPartitions.setQuick(
+                        txAttachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_SIZE_OFFSET,
+                        transientRowCount
+                );
             } else {
                 attachedPartitionsSize = 0;
                 attachedPartitions.clear();
@@ -286,15 +251,47 @@ public class TxReader implements Closeable {
         }
     }
 
-    protected MemoryMR openTxnFile(FilesFacade ff, Path path) {
-        if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-            return Vm.getMRInstance(ff, path, ff.length(path), MemoryTag.MMAP_DEFAULT);
+    private void unsafeLoadPartitions0(int txAttachedPartitionsSize, int max) {
+        roTxMem.extend(getPartitionTableIndexOffset(symbolColumnCount, txAttachedPartitionsSize));
+        attachedPartitions.setPos(txAttachedPartitionsSize);
+        for (int i = max; i < txAttachedPartitionsSize; i++) {
+            attachedPartitions.setQuick(i, roTxMem.getLong(getPartitionTableIndexOffset(symbolColumnCount, i)));
         }
-        throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
+        attachedPartitionsSize = txAttachedPartitionsSize;
     }
 
-    void readRowCounts() {
-        this.transientRowCount = roTxMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
-        this.fixedRowCount = roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
+    void unsafeLoadSymbolCounts(IntList symbolCountSnapshot) {
+        int symbolMapCount = roTxMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT);
+        if (symbolMapCount > 0) {
+            // No need to call setSize here, file mapped beyond symbol section already
+            // while reading attached partitions
+            for (int i = 0; i < symbolMapCount; i++) {
+                symbolCountSnapshot.add(roTxMem.getInt(TableUtils.getSymbolWriterIndexOffset(i)));
+            }
+        }
+    }
+
+    protected long unsafeReadFixedRowCount() {
+        return roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
+    }
+
+    protected int unsafeReadSymbolCount(int symbolIndex) {
+        return roTxMem.getInt(getSymbolWriterIndexOffset(symbolIndex));
+    }
+
+    protected int unsafeReadSymbolWriterIndexOffset(int denseSymbolIndex) {
+        return roTxMem.getInt(getSymbolWriterIndexOffset(denseSymbolIndex));
+    }
+
+    long unsafeReadTxn() {
+        return roTxMem.getLong(TX_OFFSET_TXN);
+    }
+
+    long unsafeReadTxnCheck() {
+        return roTxMem.getLong(TableUtils.TX_OFFSET_TXN_CHECK);
+    }
+
+    int unsafeReadWriterCount() {
+        return roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
     }
 }

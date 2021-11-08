@@ -30,19 +30,24 @@ import { formatTableSchemaQueryResult } from "./services"
 
 type Props = {
   name: string
+  partitionBy: string
 }
 
-const ContextualMenu = ({ name }: Props) => {
+const ContextualMenu = ({ name, partitionBy }: Props) => {
   const { quest } = useContext(QuestContext)
 
   const handleCopySchemaToClipboard = useCallback(() => {
     void quest.queryRaw(`table_columns('${name}')`).then((result) => {
       if (result.type === QuestDB.Type.DQL && result.count > 0) {
-        const formattedResult = formatTableSchemaQueryResult(name, result)
+        const formattedResult = formatTableSchemaQueryResult(
+          name,
+          partitionBy,
+          result,
+        )
         void navigator.clipboard.writeText(formattedResult)
       }
     })
-  }, [quest, name])
+  }, [quest, name, partitionBy])
 
   return (
     <ContextMenu id={name}>

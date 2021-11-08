@@ -29,4 +29,6 @@ export enum StoreKey {
   EDITOR_COL = "editor.col",
   NOTIFICATION_ENABLED = "notification.enabled",
   NOTIFICATION_DELAY = "notification.delay",
+  EDITOR_SPLITTER_BASIS = "splitter.editor.basis",
+  RESULTS_SPLITTER_BASIS = "splitter.results.basis",
 }
