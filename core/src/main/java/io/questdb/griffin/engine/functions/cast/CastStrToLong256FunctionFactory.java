@@ -34,8 +34,6 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
-import static io.questdb.griffin.engine.functions.cast.CastSymbolToLong256FunctionFactory.appendLong256;
-
 public class CastStrToLong256FunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
@@ -84,7 +82,7 @@ public class CastStrToLong256FunctionFactory implements FunctionFactory {
         public void getLong256(Record rec, CharSink sink) {
             final CharSequence value = arg.getStr(rec);
             if (value != null) {
-                appendLong256(value, long256builder, sink);
+                CastSymbolToLong256FunctionFactory.appendLong256(value, long256builder, sink);
             }
         }
     }

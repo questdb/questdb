@@ -26,10 +26,12 @@ package io.questdb.std;
 
 public abstract class Long256FromCharSequenceDecoder implements Long256Acceptor {
 
-    public static void decode(final CharSequence hexString,
-                              final int startPos,
-                              final int endPos,
-                              final Long256Acceptor acceptor) throws NumericException {
+    public static void decode(
+            final CharSequence hexString,
+            final int startPos,
+            final int endPos,
+            final Long256Acceptor acceptor
+    ) throws NumericException {
         final int minPos = startPos - 16;
         int lim = endPos;
         int p = lim - 16;

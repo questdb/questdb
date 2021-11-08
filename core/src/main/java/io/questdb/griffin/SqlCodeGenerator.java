@@ -960,6 +960,7 @@ public class SqlCodeGenerator implements Mutable {
         final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
         final boolean indexed = metadata.isColumnIndexed(latestByIndex);
 
+        // if there are > 1 columns in latest by statement we cannot use indexes
         if (listColumnFilterA.size() > 1 || !ColumnType.isSymbol(metadata.getColumnType(latestByIndex))) {
             return new LatestByAllFilteredRecordCursorFactory(
                     metadata,
@@ -2458,6 +2459,7 @@ public class SqlCodeGenerator implements Mutable {
                         throw SqlException.invalidColumn(latestBy.getQuick(i).position, latestBy.getQuick(i).token);
                     }
 
+                    // check the type of the column, not all are supported
                     int columnType = myMeta.getColumnType(index);
                     switch (ColumnType.tagOf(columnType)) {
                         case ColumnType.BOOLEAN:
