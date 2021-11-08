@@ -34,7 +34,7 @@ import org.junit.Test;
 
 
 public class LatestByAllIndexedFilteredBeforeRecordCursorTest extends LatestByAllIndexedFilteredRecordCursorTest {
-    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory NEEDS TO BE IMPLEMENTED")
+    @Ignore("LatestByAllIndexedFilteredBeforeRecordCursorFactory NEEDS TO BE IMPLEMENTED")
     @Test
     public void testSingleIndexedColLatestByWithWhereOnOtherCol() throws Exception {
         // id   name value   ts
@@ -59,8 +59,8 @@ public class LatestByAllIndexedFilteredBeforeRecordCursorTest extends LatestByAl
             createTable(tableName);
             insertRows(tableName);
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
-                 // TODO: replace with LatestByAllIndexedFilteredBeforeRecordCursorFactory
-                 LatestByAllIndexedFilteredAfterRecordCursorFactory factory = new LatestByAllIndexedFilteredAfterRecordCursorFactory(
+                 // TODO: implement LatestByAllIndexedFilteredBeforeRecordCursorFactory and use here
+                 LatestByAllIndexedFilteredAfterRecordCursorFactory factory = new LatestByAllIndexedFilteredAfterRecordCursorFactory( // TODO: replace
                          reader.getMetadata(),
                          configuration,
                          new FullBwdDataFrameCursorFactory(
