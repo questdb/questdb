@@ -152,6 +152,48 @@ public final class SqlParser {
         throw SqlException.$((lexer.lastTokenPosition()), "'by' expected");
     }
 
+    private void expectSample(GenericLexer lexer, QueryModel model) throws SqlException {
+        final ExpressionNode n = expr(lexer, (QueryModel) null);
+        if (isFullSampleByPeriod(n)) {
+            model.setSampleBy(n);
+            return;
+        }
+        // This is complex expression of sample by period. It must follow time unit interval
+        ExpressionNode periodUnit = expectLiteral(lexer);
+        if (periodUnit == null || periodUnit.type != ExpressionNode.LITERAL || !isValidSampleByPeriodLetter(periodUnit.token)) {
+            int lexerPosition = lexer.getUnparsed() == null ? lexer.getPosition() : lexer.lastTokenPosition();
+            throw SqlException.$(periodUnit != null ? periodUnit.position : lexerPosition, "one letter sample by period unit expected");
+        }
+        model.setSampleBy(n, periodUnit);
+    }
+
+
+    public static boolean isFullSampleByPeriod(ExpressionNode n) {
+        return n != null && (n.type == ExpressionNode.CONSTANT || (n.type == ExpressionNode.LITERAL && isValidSampleByPeriodLetter(n.token)));
+    }
+
+    private static boolean isValidSampleByPeriodLetter(CharSequence token) {
+        if (token.length() != 1) return false;
+        switch (token.charAt(0)) {
+            case 'T':
+                // millis
+            case 's':
+                // seconds
+            case 'm':
+                // minutes
+            case 'h':
+                // hours
+            case 'd':
+                // days
+            case 'M':
+                // months
+            case 'y':
+                return true;
+            default:
+                return false;
+        }
+    }
+
     private ExpressionNode expectExpr(GenericLexer lexer) throws SqlException {
         final ExpressionNode n = expr(lexer, (QueryModel) null);
         if (n != null) {
@@ -863,7 +905,7 @@ public final class SqlParser {
 
         if (tok != null && isSampleKeyword(tok)) {
             expectBy(lexer);
-            model.setSampleBy(expectLiteral(lexer));
+            expectSample(lexer, model);
             tok = optTok(lexer);
 
             if (tok != null && isFillKeyword(tok)) {

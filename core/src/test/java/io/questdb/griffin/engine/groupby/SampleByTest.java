@@ -64,6 +64,99 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBindVarsInPeriodSyntax() throws Exception {
+        testSampleByPeriodFails(
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by $1 T align to calendar",
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by $".length() - 1,
+                "sample by period must be a constant expression"
+        );
+    }
+
+    @Test
+    public void testGeohashFillNull() throws Exception {
+        assertQuery(
+                "s\tk\tfirst\tfirst1\tfirst2\tfirst3\n" +
+                        "TJW\t1970-01-03T00:00:00.000000Z\t010\tc93\tfu3r7c\t5ewm40wx\n" +
+                        "PSWH\t1970-01-03T00:00:00.000000Z\t\t\t\t\n" +
+                        "TJW\t1970-01-03T00:30:00.000000Z\t\t\t\t\n" +
+                        "PSWH\t1970-01-03T00:30:00.000000Z\t\t\t\t\n" +
+                        "TJW\t1970-01-03T01:00:00.000000Z\t\t\t\t\n" +
+                        "PSWH\t1970-01-03T01:00:00.000000Z\t110\ttk5\txn8nmw\t0n2gm6r7\n",
+                "select s, k, " +
+                        "first(g1), " +
+                        "first(g2), " +
+                        "first(g4), " +
+                        "first(g8) " +
+                        "from x sample by 30m fill(NULL)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_geohash(3) g1," +
+                        " rnd_geohash(15) g2," +
+                        " rnd_geohash(30) g4," +
+                        " rnd_geohash(40) g8," +
+                        " rnd_symbol(2,3,4,0) s, " +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(2)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
+    public void testGeohashFillPrev() throws Exception {
+        assertQuery(
+                "s\tk\tfirst\tfirst1\tfirst2\tfirst3\n" +
+                        "TJW\t1970-01-03T00:00:00.000000Z\t010\tc93\tfu3r7c\t5ewm40wx\n" +
+                        "PSWH\t1970-01-03T00:00:00.000000Z\t\t\t\t\n" +
+                        "TJW\t1970-01-03T00:30:00.000000Z\t010\tc93\tfu3r7c\t5ewm40wx\n" +
+                        "PSWH\t1970-01-03T00:30:00.000000Z\t\t\t\t\n" +
+                        "TJW\t1970-01-03T01:00:00.000000Z\t010\tc93\tfu3r7c\t5ewm40wx\n" +
+                        "PSWH\t1970-01-03T01:00:00.000000Z\t110\ttk5\txn8nmw\t0n2gm6r7\n",
+                "select s, k, " +
+                        "first(g1), " +
+                        "first(g2), " +
+                        "first(g4), " +
+                        "first(g8) " +
+                        "from x sample by 30m fill(PREV)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_geohash(3) g1," +
+                        " rnd_geohash(15) g2," +
+                        " rnd_geohash(30) g4," +
+                        " rnd_geohash(40) g8," +
+                        " rnd_symbol(2,3,4,0) s, " +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(2)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
+    public void testGeohashInterpolated() throws Exception {
+        assertFailure(
+                "select k, first(b) from x sample by 3h fill(linear)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_geohash(30) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                10,
+                "Unsupported interpolation type: GEOHASH(6c)"
+        );
+    }
+
+    @Test
     public void testGroupByAllTypes() throws Exception {
         assertQuery("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
                         "HYRX\t108.4198\t129.3991122184773\t2127224767\t95\t57207\t1696566079386694074\n" +
@@ -2088,90 +2181,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by NONE",
                 10,
                 "exception in function factory"
-        );
-    }
-
-    @Test
-    public void testGeohashInterpolated() throws Exception {
-        assertFailure(
-                "select k, first(b) from x sample by 3h fill(linear)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_geohash(30) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                10,
-                "Unsupported interpolation type: GEOHASH(6c)"
-        );
-    }
-
-    @Test
-    public void testGeohashFillPrev() throws Exception {
-        assertQuery(
-                "s\tk\tfirst\tfirst1\tfirst2\tfirst3\n" +
-                        "TJW\t1970-01-03T00:00:00.000000Z\t010\tc93\tfu3r7c\t5ewm40wx\n" +
-                        "PSWH\t1970-01-03T00:00:00.000000Z\t\t\t\t\n" +
-                        "TJW\t1970-01-03T00:30:00.000000Z\t010\tc93\tfu3r7c\t5ewm40wx\n" +
-                        "PSWH\t1970-01-03T00:30:00.000000Z\t\t\t\t\n" +
-                        "TJW\t1970-01-03T01:00:00.000000Z\t010\tc93\tfu3r7c\t5ewm40wx\n" +
-                        "PSWH\t1970-01-03T01:00:00.000000Z\t110\ttk5\txn8nmw\t0n2gm6r7\n",
-                "select s, k, " +
-                        "first(g1), " +
-                        "first(g2), " +
-                        "first(g4), " +
-                        "first(g8) " +
-                        "from x sample by 30m fill(PREV)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_geohash(3) g1," +
-                        " rnd_geohash(15) g2," +
-                        " rnd_geohash(30) g4," +
-                        " rnd_geohash(40) g8," +
-                        " rnd_symbol(2,3,4,0) s, " +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(2)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                false
-        );
-    }
-
-    @Test
-    public void testGeohashFillNull() throws Exception {
-        assertQuery(
-                "s\tk\tfirst\tfirst1\tfirst2\tfirst3\n" +
-                        "TJW\t1970-01-03T00:00:00.000000Z\t010\tc93\tfu3r7c\t5ewm40wx\n" +
-                        "PSWH\t1970-01-03T00:00:00.000000Z\t\t\t\t\n" +
-                        "TJW\t1970-01-03T00:30:00.000000Z\t\t\t\t\n" +
-                        "PSWH\t1970-01-03T00:30:00.000000Z\t\t\t\t\n" +
-                        "TJW\t1970-01-03T01:00:00.000000Z\t\t\t\t\n" +
-                        "PSWH\t1970-01-03T01:00:00.000000Z\t110\ttk5\txn8nmw\t0n2gm6r7\n",
-                "select s, k, " +
-                        "first(g1), " +
-                        "first(g2), " +
-                        "first(g4), " +
-                        "first(g8) " +
-                        "from x sample by 30m fill(NULL)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_geohash(3) g1," +
-                        " rnd_geohash(15) g2," +
-                        " rnd_geohash(30) g4," +
-                        " rnd_geohash(40) g8," +
-                        " rnd_symbol(2,3,4,0) s, " +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(2)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                false
         );
     }
 
@@ -8753,6 +8762,154 @@ public class SampleByTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testSamplePeriodInvalidWithNoUnits() throws Exception {
+        testSampleByPeriodFails(
+                "select sum(a), k from x sample by 300/10 align to calendar",
+                "select sum(a), k from x sample by 300/10 a".length() - 1,
+                "one letter sample by period unit expected"
+        );
+    }
+
+    @Test
+    public void testSamplePeriodInvalidWithNoUnits2() throws Exception {
+        testSampleByPeriodFails(
+                "select sum(a), k from x sample by 300/10",
+                "select sum(a), k from x sample by 300/10".length(),
+                "literal expected"
+        );
+    }
+
+    @Test
+    public void testSamplePeriodInvalidWithWrongUnit() throws Exception {
+        testSampleByPeriodFails(
+                "select sum(a), k from x sample by 300/10 milli",
+                "select sum(a), k from x sample by 300/10 m".length() - 1,
+                "one letter sample by period unit expected"
+        );
+    }
+
+    @Test
+    public void testSamplePeriodInvalidWithWrongUnitLetter() throws Exception {
+        testSampleByPeriodFails(
+                "select sum(a), k from x sample by 300/10 L",
+                "select sum(a), k from x sample by 300/10 L".length() - 1,
+                "one letter sample by period unit expected"
+        );
+    }
+
+    @Test
+    public void testSimpleArithmeticsInPeriod() throws Exception {
+        assertQuery("sum\tk\n",
+                "select sum(a), k from x sample by (10+20)m",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(0)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false);
+    }
+
+    @Test
+    public void testSimpleArithmeticsInPeriod2() throws Exception {
+        assertQuery("sum\tk\n" +
+                        "1592.0966416600525\t1970-01-03T00:00:00.000000Z\n" +
+                        "1566.8131178120786\t1970-01-04T06:00:00.000000Z\n" +
+                        "1393.2872924527742\t1970-01-05T12:00:00.000000Z\n" +
+                        "584.4161505427071\t1970-01-06T18:00:00.000000Z\n",
+                "select sum(a), k from x sample by (10+20) h",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false);
+    }
+
+    @Test
+    public void testSimpleArithmeticsInPeriod3() throws Exception {
+        assertQuery("sum\tk\n" +
+                        "1592.0966416600525\t1970-01-03T00:00:00.000000Z\n" +
+                        "1566.8131178120786\t1970-01-04T06:00:00.000000Z\n" +
+                        "1393.2872924527742\t1970-01-05T12:00:00.000000Z\n" +
+                        "584.4161505427071\t1970-01-06T18:00:00.000000Z\n",
+                "select sum(a), k from x sample by 300/10 h",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(100)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false);
+    }
+
+    @Test
+    public void testSimpleLongArithmeticsInPeriod() throws Exception {
+        assertQuery("sum\tk\n",
+                "select sum(a), k from x sample by (1+2)*10L m align to calendar",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(0)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false);
+    }
+
+    @Test
+    public void testWrongTypeInPeriodSyntax() throws Exception {
+        testSampleByPeriodFails(
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by 1.0*3 T",
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by 1.0*".length() - 1,
+                "sample by period must be a constant expression of INT or LONG type"
+        );
+    }
+
+    @Test
+    public void testWrongTypeInPeriodSyntax2() throws Exception {
+        testSampleByPeriodFails(
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by '1T'",
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by '".length() - 1,
+                "expected single letter qualifier"
+        );
+    }
+
+    @Test
+    public void testWrongTypeInPeriodSyntax3() throws Exception {
+        testSampleByPeriodFails(
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by '1' T",
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by '1' T".length() - 1,
+                "unexpected token: T"
+        );
+    }
+
+    @Test
+    public void testWrongTypeInUnit() throws Exception {
+        testSampleByPeriodFails(
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by 10*3 mi",
+                "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by 10*3 m".length() - 1,
+                "one letter sample by period unit expected"
+        );
+    }
+
     private void assertSampleByIndexQuery(String expected, String query, String insert) throws Exception {
         assertSampleByIndexQuery(expected, query, insert, false);
     }
@@ -8811,5 +8968,34 @@ public class SampleByTest extends AbstractGriffinTest {
                 return 0;
             }
         };
+    }
+
+    private void testSampleByPeriodFails(String query, int errorPosition, String errorContains) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table x as " +
+                            "(" +
+                            "select" +
+                            "   rnd_double(1)*180 lat," +
+                            "   rnd_double(1)*180 lon," +
+                            "   rnd_symbol('a') s," +
+                            "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                            "   from" +
+                            "   long_sequence(100)" +
+                            "), index(s) timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+            try (
+                    RecordCursorFactory ignored = compiler.compile(
+                            query,
+                            sqlExecutionContext
+                    ).getRecordCursorFactory()
+            ) {
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), errorContains);
+                Assert.assertEquals(errorPosition, ex.getPosition());
+            }
+        });
     }
 }
