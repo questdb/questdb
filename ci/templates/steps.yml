@@ -48,7 +48,7 @@ steps:
   - task: Maven@3
     displayName: "Run tests with Maven"
     inputs:
-      mavenPomFile: "core/pom.xml"
+      mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "clean test"
       options: "--batch-mode --quiet -P build-web-console,use-built-in-nodejs -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"

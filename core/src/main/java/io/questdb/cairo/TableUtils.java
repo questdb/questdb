@@ -171,6 +171,8 @@ public final class TableUtils {
             mem.putLong(structure.getCommitLag());
             mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
+            assert count > 0;
+
             for (int i = 0; i < count; i++) {
                 mem.putInt(structure.getColumnType(i));
                 long flags = 0;
@@ -468,12 +470,19 @@ public final class TableUtils {
         return mapRO(ff, fd, size, 0, memoryTag);
     }
 
+    /**
+     * Maps a file in read-only mode.
+     *
+     * Important note. Linux requires the offset to be page aligned.
+     */
     public static long mapRO(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
+        assert offset % ff.getPageSize() == 0;
         final long address = ff.mmap(fd, size, offset, Files.MAP_RO, memoryTag);
         if (address == FilesFacade.MAP_FAILED) {
             throw CairoException.instance(ff.errno())
                     .put("could not mmap ")
                     .put(" [size=").put(size)
+                    .put(", offset=").put(offset)
                     .put(", fd=").put(fd)
                     .put(", memUsed=").put(Unsafe.getMemUsed())
                     .put(", fileLen=").put(ff.length(fd))
@@ -486,7 +495,13 @@ public final class TableUtils {
         return mapRW(ff, fd, size, 0, memoryTag);
     }
 
+    /**
+     * Maps a file in read-write mode.
+     *
+     * Important note. Linux requires the offset to be page aligned.
+     */
     public static long mapRW(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
+        assert offset % ff.getPageSize() == 0;
         allocateDiskSpace(ff, fd, size + offset);
         long addr = ff.mmap(fd, size, offset, Files.MAP_RW, memoryTag);
         if (addr > -1) {
@@ -599,16 +614,6 @@ public final class TableUtils {
         } finally {
             ff.close(fd);
         }
-    }
-
-    public static long readLongOrFail(FilesFacade ff, long fd, long offset, long tempMem8b) {
-        return readLongOrFail(
-                ff,
-                fd,
-                offset,
-                tempMem8b,
-                null
-        );
     }
 
     public static long readLongOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, @Nullable Path path) {

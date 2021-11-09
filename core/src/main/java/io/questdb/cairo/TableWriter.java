@@ -315,7 +315,6 @@ public class TableWriter implements Closeable {
             configureColumnMemory();
             configureTimestampSetter();
             this.appendTimestampSetter = timestampSetter;
-            this.txWriter.readRowCounts();
             configureAppendPosition();
             purgeUnusedPartitions();
             clearTodoLog();
@@ -773,7 +772,7 @@ public class TableWriter implements Closeable {
 
     // todo: hide raw memory access from public interface when slave is able to send data over the network
     public long getRawTxnMemory() {
-        return txWriter.getRawMemory();
+        return txWriter.unsafeGetRawMemory();
     }
 
     public long getStructureVersion() {
@@ -1318,7 +1317,7 @@ public class TableWriter implements Closeable {
                     masterRef++;
                 }
                 freeColumns(false);
-                this.txWriter.readUnchecked();
+                this.txWriter.unsafeLoadAll();
                 rollbackIndexes();
                 rollbackSymbolTables();
                 purgeUnusedPartitions();
@@ -1928,7 +1927,7 @@ public class TableWriter implements Closeable {
                         configuration,
                         path.trimTo(rootLen),
                         metadata.getColumnName(i),
-                        txWriter.readSymbolCount(symbolIndex),
+                        txWriter.unsafeReadSymbolCount(symbolIndex),
                         symbolIndex,
                         txWriter
                 );
@@ -3117,19 +3116,24 @@ public class TableWriter implements Closeable {
 
                 // ensure memory is available
                 o3IndexMem.jumpTo(dstAppendOffset + (transientRowsAdded << indexShl));
+                long alignedExtraLen;
                 long srcAddress;
                 boolean isMapped = srcFixMem.isMapped(sourceOffset, sourceLen);
 
                 if (isMapped) {
+                    alignedExtraLen = 0;
                     srcAddress = srcFixMem.addressOf(sourceOffset);
                 } else {
-                    srcAddress = mapRO(ff, srcFixMem.getFd(), sourceLen, sourceOffset, MemoryTag.MMAP_TABLE_WRITER);
+                    // Linux requires the mmap offset to be page aligned
+                    long alignedOffset = Files.floorPageSize(sourceOffset);
+                    alignedExtraLen = sourceOffset - alignedOffset;
+                    srcAddress = mapRO(ff, srcFixMem.getFd(), sourceLen + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
                 }
 
                 long srcVarOffset = Unsafe.getUnsafe().getLong(srcAddress);
                 O3Utils.shiftCopyFixedSizeColumnData(
                         srcVarOffset - dstVarOffset,
-                        srcAddress + Long.BYTES,
+                        srcAddress + alignedExtraLen + Long.BYTES,
                         0,
                         transientRowsAdded - 1,
                         // copy uncommitted index over the trailing LONG
@@ -3138,7 +3142,7 @@ public class TableWriter implements Closeable {
 
                 if (!isMapped) {
                     // If memory mapping was mapped specially for this move, close it
-                    ff.munmap(srcAddress, sourceLen, MemoryTag.MMAP_TABLE_WRITER);
+                    ff.munmap(srcAddress, sourceLen + alignedExtraLen, MemoryTag.MMAP_TABLE_WRITER);
                 }
 
                 long sourceEndOffset = srcDataMem.getAppendOffset();
@@ -3153,9 +3157,12 @@ public class TableWriter implements Closeable {
                 long sourceAddress = srcDataMem.addressOf(srcFixOffset);
                 Vect.memcpy(appendAddress, sourceAddress, extendedSize);
             } else {
-                long sourceAddress = mapRO(ff, srcDataMem.getFd(), extendedSize, srcFixOffset, MemoryTag.MMAP_TABLE_WRITER);
-                Vect.memcpy(appendAddress, sourceAddress, extendedSize);
-                ff.munmap(sourceAddress, extendedSize, MemoryTag.MMAP_TABLE_WRITER);
+                // Linux requires the mmap offset to be page aligned
+                long alignedOffset = Files.floorPageSize(srcFixOffset);
+                long alignedExtraLen = srcFixOffset - alignedOffset;
+                long sourceAddress = mapRO(ff, srcDataMem.getFd(), extendedSize + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
+                Vect.memcpy(appendAddress, sourceAddress + alignedExtraLen, extendedSize);
+                ff.munmap(sourceAddress, extendedSize + alignedExtraLen, MemoryTag.MMAP_TABLE_WRITER);
             }
             srcDataMem.jumpTo(srcFixOffset);
         } else {
@@ -3167,21 +3174,26 @@ public class TableWriter implements Closeable {
             long srcFixOffset = committedTransientRowCount << shl;
             long srcFixLen = transientRowsAdded << shl;
             boolean isMapped = srcDataMem.isMapped(srcFixOffset, srcFixLen);
+            long alignedExtraLen;
             long address;
 
             if (isMapped) {
+                alignedExtraLen = 0;
                 address = srcDataMem.addressOf(srcFixOffset);
             } else {
-                address = mapRO(ff, srcDataMem.getFd(), srcFixLen, srcFixOffset, MemoryTag.MMAP_TABLE_WRITER);
+                // Linux requires the mmap offset to be page aligned
+                long alignedOffset = Files.floorPageSize(srcFixOffset);
+                alignedExtraLen = srcFixOffset - alignedOffset;
+                address = mapRO(ff, srcDataMem.getFd(), srcFixLen + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
             }
 
             for (long n = 0; n < transientRowsAdded; n++) {
-                long ts = Unsafe.getUnsafe().getLong(address + (n << shl));
+                long ts = Unsafe.getUnsafe().getLong(address + alignedExtraLen + (n << shl));
                 o3TimestampMem.putLong128(ts, o3RowCount + n);
             }
 
             if (!isMapped) {
-                ff.munmap(address, srcFixLen, MemoryTag.MMAP_TABLE_WRITER);
+                ff.munmap(address, srcFixLen + alignedExtraLen, MemoryTag.MMAP_TABLE_WRITER);
             }
 
             srcDataMem.jumpTo(srcFixOffset);
@@ -4305,7 +4317,7 @@ public class TableWriter implements Closeable {
                 path.trimTo(rootLen);
             }
 
-            final long expectedSize = txWriter.readFixedRowCount();
+            final long expectedSize = txWriter.unsafeReadFixedRowCount();
             if (expectedSize != fixedRowCount || maxTimestamp != this.txWriter.getMaxTimestamp()) {
                 LOG.info()
                         .$("actual table size has been adjusted [name=`").utf8(tableName).$('`')
@@ -4425,9 +4437,9 @@ public class TableWriter implements Closeable {
     }
 
     private void rollbackSymbolTables() {
-        int expectedMapWriters = txWriter.readWriterCount();
+        int expectedMapWriters = txWriter.unsafeReadWriterCount();
         for (int i = 0; i < expectedMapWriters; i++) {
-            denseSymbolMapWriters.getQuick(i).rollback(txWriter.readSymbolWriterIndexOffset(i));
+            denseSymbolMapWriters.getQuick(i).rollback(txWriter.unsafeReadSymbolWriterIndexOffset(i));
         }
     }
 

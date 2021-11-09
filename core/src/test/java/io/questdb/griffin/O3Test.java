@@ -30,6 +30,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
@@ -789,6 +790,11 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testWriterOpensCorrectTxnPartitionOnRestart() throws Exception {
         executeWithPool(0, O3Test::testWriterOpensCorrectTxnPartitionOnRestart0);
+    }
+
+    @Test
+    public void testWriterOpensUnmappedPage() throws Exception {
+        executeWithPool(0, O3Test::testWriterOpensUnmappedPage);
     }
 
     private static void testWriterOpensCorrectTxnPartitionOnRestart0(
@@ -6850,5 +6856,95 @@ public class O3Test extends AbstractO3Test {
                 "x"
         );
         assertXCountY(compiler, sqlExecutionContext);
+    }
+
+    private static void testWriterOpensUnmappedPage(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException, NumericException {
+        CairoConfiguration configuration = engine.getConfiguration();
+        try (TableModel tableModel = new TableModel(configuration, "x", PartitionBy.DAY)) {
+            tableModel
+                    .col("id", ColumnType.LONG)
+                    .col("str", ColumnType.STRING)
+                    .col("sym", ColumnType.SYMBOL).indexed(true, 2)
+                    .timestamp("ts");
+
+            TestUtils.createPopulateTable("x",
+                    compiler,
+                    sqlExecutionContext,
+                    tableModel,
+                    0,
+                    "2021-10-09",
+                    0
+            );
+
+            int longColIndex = -1;
+            int symColIndex = -1;
+            int strColIndex = -1;
+            for (int i = 0; i < tableModel.getColumnCount(); i++) {
+                switch (ColumnType.tagOf(tableModel.getColumnType(i))) {
+                    case ColumnType.LONG:
+                        longColIndex = i;
+                        break;
+                    case ColumnType.SYMBOL:
+                        symColIndex = i;
+                        break;
+                    case ColumnType.STRING:
+                        strColIndex = i;
+                        break;
+                }
+            }
+
+            int idBatchSize = 3 * 1024 * 1024 + 1;
+            long batchOnDiskSize = (long) ColumnType.sizeOf(ColumnType.LONG) * idBatchSize;
+            long mappedPageSize = configuration.getDataAppendPageSize();
+            Assert.assertTrue("Batch size must be greater than mapped page size", batchOnDiskSize > mappedPageSize);
+            long pageSize = configuration.getMiscAppendPageSize();
+            Assert.assertNotEquals("Batch size must be unaligned with page size", 0, batchOnDiskSize % pageSize);
+
+            long start = IntervalUtils.parseFloorPartialDate("2021-10-09T10:00:00");
+            String[] varCol = new String[]{"aldfjkasdlfkj", "2021-10-10T12:00:00", "12345678901234578"};
+
+            // Add 2 batches
+            int iterations = 2;
+            try (TableWriter o3 = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
+                for (int i = 0; i < iterations; i++) {
+                    for (int id = 0; id < idBatchSize; id++) {
+                        // We leave start + idBatchSize out to insert it O3 later
+                        long timestamp = start + i * idBatchSize + id + i;
+                        TableWriter.Row row = o3.newRow(timestamp);
+                        row.putLong(longColIndex, timestamp);
+                        row.putSym(symColIndex, "test");
+                        row.putStr(strColIndex, varCol[id % varCol.length]);
+                        row.append();
+                    }
+
+                    // Commit only the first batch
+                    if (i == 0) {
+                        o3.commit();
+                    }
+                }
+
+                // Append one more row out of order
+                long timestamp = start + idBatchSize;
+                TableWriter.Row row = o3.newRow(timestamp);
+                row.putLong(longColIndex, timestamp);
+                row.putSym(symColIndex, "test");
+                row.putStr(strColIndex, varCol[0]);
+                row.append();
+
+                o3.commit();
+            }
+
+            TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
+                    "count\n" + (2 * idBatchSize + 1) + "\n"
+            );
+            engine.releaseAllReaders();
+            try (TableWriter o3 = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
+                o3.truncate();
+            }
+        }
     }
 }
