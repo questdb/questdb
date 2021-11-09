@@ -38,6 +38,11 @@ enum data_type_t : uint8_t {
    f64,
 };
 
+enum data_kind_t : uint8_t {
+   kMemory,
+   kConst,
+};
+
 enum instruction_t : uint8_t {
     MEM_I1 = 0,
     MEM_I2 = 1,
@@ -75,6 +80,9 @@ enum instruction_t : uint8_t {
     IMM_NULL = 31,          // generic null const
 };
 
+static const int64_t long_null = 0x8000000000000000;
+static const int32_t int_null  = 0x80000000;
+
 template<typename T>
 T read_at(const uint8_t *buf, size_t size, uint32_t pos) {
     if (pos + sizeof(T) <= size)
@@ -92,13 +100,16 @@ T read(const uint8_t *buf, size_t size, uint32_t &pos) {
 struct jit_value_t {
 
     inline jit_value_t() noexcept
-            : op_(), type_() {}
+            : op_(), type_(), kind_() {}
 
     inline jit_value_t(asmjit::Operand op) noexcept
-            : op_(op), type_() {}
+            : op_(op), type_(), kind_() {}
 
     inline jit_value_t(asmjit::Operand op, data_type_t type) noexcept
-            : op_(op), type_(type) {}
+            : op_(op), type_(type), kind_() {}
+
+    inline jit_value_t(asmjit::Operand op, data_type_t type, data_kind_t kind) noexcept
+            : op_(op), type_(type), kind_(kind) {}
 
     inline jit_value_t(const jit_value_t &other) noexcept = default;
 
@@ -139,9 +150,12 @@ struct jit_value_t {
     inline const asmjit::x86::Gpq &gp() const noexcept { return op_.as<asmjit::x86::Gpq>(); }
 
     inline const data_type_t dtype() const noexcept { return type_; }
+
+    inline const data_kind_t dkind() const noexcept { return kind_; }
 private:
     asmjit::Operand op_;
     data_type_t type_;
+    data_kind_t kind_;
 };
 
 extern "C" {

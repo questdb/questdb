@@ -28,7 +28,7 @@
 
 void x86_scalar_tail(asmjit::x86::Compiler &c, const uint64_t *columns, const uint8_t *instrs, int64_t i_count,
                      std::stack<jit_value_t> &tmp, const asmjit::x86::Gp &rows_ptr, const asmjit::x86::Gp &index,
-                     const asmjit::x86::Gp &output, const int64_t stop) {
+                     const asmjit::x86::Gp &output, const int64_t stop, bool with_null_check) {
 
     asmjit::Label l_loop = c.newLabel();
     asmjit::Label l_exit = c.newLabel();
@@ -50,7 +50,7 @@ void x86_scalar_tail(asmjit::x86::Compiler &c, const uint64_t *columns, const ui
                 uint64_t column_addr = columns[column_index];
                 c.mov(col, column_addr);
                 c.movsx(col, asmjit::x86::Mem(col, index, 0, 0, 1));
-                tmp.push(col);
+                tmp.push(jit_value_t(col, i8, kMemory));
             }
                 break;
             case MEM_I2: {
@@ -59,7 +59,7 @@ void x86_scalar_tail(asmjit::x86::Compiler &c, const uint64_t *columns, const ui
                 uint64_t column_addr = columns[column_index];
                 c.mov(col, column_addr);
                 c.movsx(col, asmjit::x86::Mem(col, index, 1, 0, 2));
-                tmp.push(col);
+                tmp.push(jit_value_t(col, i16, kMemory));
             }
                 break;
             case MEM_I4: {
@@ -68,7 +68,7 @@ void x86_scalar_tail(asmjit::x86::Compiler &c, const uint64_t *columns, const ui
                 uint64_t column_addr = columns[column_index];
                 c.mov(col, column_addr);
                 c.movsxd(col, asmjit::x86::Mem(col, index, 2, 0, 4));
-                tmp.push(col);
+                tmp.push(jit_value_t(col, i32, kMemory));
             }
                 break;
             case MEM_I8: {
@@ -77,7 +77,7 @@ void x86_scalar_tail(asmjit::x86::Compiler &c, const uint64_t *columns, const ui
                 uint64_t column_addr = columns[column_index];
                 c.mov(col, column_addr);
                 c.mov(col, asmjit::x86::Mem(col, index, 3, 0, 8));
-                tmp.push(col);
+                tmp.push(jit_value_t(col, i64, kMemory));
             }
                 break;
             case MEM_F4: {
@@ -88,7 +88,7 @@ void x86_scalar_tail(asmjit::x86::Compiler &c, const uint64_t *columns, const ui
                 asmjit::x86::Xmm data = c.newXmm();
                 //                c.vmovss(data, Mem(col, index, 2, 0, 4));
                 c.cvtss2sd(data, asmjit::x86::Mem(col, index, 2, 0, 4)); // float to double
-                tmp.push(data);
+                tmp.push(jit_value_t(data, f32, kMemory));
             }
                 break;
             case MEM_F8: {
@@ -98,26 +98,51 @@ void x86_scalar_tail(asmjit::x86::Compiler &c, const uint64_t *columns, const ui
                 c.mov(col, column_addr);
                 asmjit::x86::Xmm data = c.newXmm();
                 c.vmovsd(data, asmjit::x86::Mem(col, index, 3, 0, 8));
-                tmp.push(data);
+                tmp.push(jit_value_t(data, f64, kMemory));
             }
                 break;
-            case IMM_I1:
-            case IMM_I2:
-            case IMM_I4:
+            case IMM_I1: {
+                asmjit::x86::Gp val = c.newGpq();
+                auto value = read<uint64_t>(instrs, i_count, rpos);
+                c.mov(val, value);
+                tmp.push(jit_value_t(val, i8, kConst));
+            }
+                break;
+            case IMM_I2: {
+                asmjit::x86::Gp val = c.newGpq();
+                auto value = read<uint64_t>(instrs, i_count, rpos);
+                c.mov(val, value);
+                tmp.push(jit_value_t(val, i16, kConst));
+            }
+                break;
+            case IMM_I4: {
+                asmjit::x86::Gp val = c.newGpq();
+                auto value = read<uint64_t>(instrs, i_count, rpos);
+                c.mov(val, value);
+                tmp.push(jit_value_t(val, i32, kConst));
+            }
+                break;
             case IMM_I8: {
                 asmjit::x86::Gp val = c.newGpq();
                 auto value = read<uint64_t>(instrs, i_count, rpos);
                 c.mov(val, value);
-                tmp.push(val);
+                tmp.push(jit_value_t(val, i64, kConst));
             }
                 break;
-            case IMM_F4:
+            case IMM_F4: {
+                auto value = read<double>(instrs, i_count, rpos);
+                asmjit::x86::Mem c0 = c.newDoubleConst(asmjit::ConstPool::kScopeLocal, value);
+                asmjit::x86::Xmm val = c.newXmm();
+                c.movsd(val, c0);
+                tmp.push(jit_value_t(val, f32, kConst));
+            }
+                break;
             case IMM_F8: {
                 auto value = read<double>(instrs, i_count, rpos);
                 asmjit::x86::Mem c0 = c.newDoubleConst(asmjit::ConstPool::kScopeLocal, value);
                 asmjit::x86::Xmm val = c.newXmm();
                 c.movsd(val, c0);
-                tmp.push(val);
+                tmp.push(jit_value_t(val, f64, kConst));
             }
                 break;
             case NEG: {
@@ -174,7 +199,8 @@ void x86_scalar_tail(asmjit::x86::Compiler &c, const uint64_t *columns, const ui
                         break;
                     case EQ:
                         if (lhs.isXmm()) {
-                            c.emit(asmjit::x86::Inst::kIdCmpsd, lhs.xmm(), rhs.xmm(), (uint32_t) asmjit::x86::Predicate::kCmpEQ);
+                            c.emit(asmjit::x86::Inst::kIdCmpsd, lhs.xmm(), rhs.xmm(),
+                                   (uint32_t) asmjit::x86::Predicate::kCmpEQ);
                             asmjit::x86::Gp r = c.newGpq();
                             c.vmovq(r, lhs.xmm());
                             c.and_(r, 1);
@@ -189,7 +215,8 @@ void x86_scalar_tail(asmjit::x86::Compiler &c, const uint64_t *columns, const ui
                         break;
                     case NE:
                         if (lhs.isXmm()) {
-                            c.emit(asmjit::x86::Inst::kIdCmpsd, lhs.xmm(), rhs.xmm(), (uint32_t) asmjit::x86::Predicate::kCmpNEQ);
+                            c.emit(asmjit::x86::Inst::kIdCmpsd, lhs.xmm(), rhs.xmm(),
+                                   (uint32_t) asmjit::x86::Predicate::kCmpNEQ);
                             asmjit::x86::Gp r = c.newGpq();
                             c.vmovq(r, lhs.xmm());
                             c.and_(r, 1);
@@ -204,69 +231,147 @@ void x86_scalar_tail(asmjit::x86::Compiler &c, const uint64_t *columns, const ui
                         break;
                     case GT:
                         if (lhs.isXmm()) {
-                            c.emit(asmjit::x86::Inst::kIdCmpsd, lhs.xmm(), rhs.xmm(), (uint32_t) asmjit::x86::Predicate::kCmpNLE);
+                            c.emit(asmjit::x86::Inst::kIdCmpsd, lhs.xmm(), rhs.xmm(),
+                                   (uint32_t) asmjit::x86::Predicate::kCmpNLE);
                             asmjit::x86::Gp r = c.newGpq();
                             c.vmovq(r, lhs.xmm());
                             c.and_(r, 1);
                             tmp.push(r);
                         } else {
-                            asmjit::x86::Gp t = c.newGpq();
-                            c.xor_(t, t);
-                            c.cmp(lhs.gp(), rhs.gp());
-                            c.setg(t.r8Lo());
-                            tmp.push(t);
+                            if (!with_null_check) {
+                                asmjit::x86::Gp t = c.newGpq();
+                                c.xor_(t, t);
+                                c.cmp(lhs.gp(), rhs.gp());
+                                c.setg(t.r8Lo());
+                                tmp.push(t);
+                            } else {
+                                auto nc = (lhs.dtype() == i32 || rhs.dtype() == i32) ? int_null : long_null;
+                                asmjit::x86::Gp n = c.newGpq();
+                                c.movabs(n, nc);
+                                c.cmp(rhs.gp(), n);
+                                c.setne(n.r8Lo());
+                                c.cmp(lhs.gp(), rhs.gp());
+                                asmjit::x86::Gp l = c.newGpq();
+                                c.setg(l.r8Lo());
+                                c.and_(l.r8Lo(), n.r8Lo());
+                                c.movzx(lhs.gp(), l.r8Lo());
+                                tmp.push(lhs.gp());
+                            }
                         }
                         break;
                     case GE:
                         if (lhs.isXmm()) {
-                            c.emit(asmjit::x86::Inst::kIdCmpsd, lhs.xmm(), rhs.xmm(), (uint32_t) asmjit::x86::Predicate::kCmpNLT);
+                            c.emit(asmjit::x86::Inst::kIdCmpsd, lhs.xmm(), rhs.xmm(),
+                                   (uint32_t) asmjit::x86::Predicate::kCmpNLT);
                             asmjit::x86::Gp r = c.newGpq();
                             c.vmovq(r, lhs.xmm());
                             c.and_(r, 1);
                             tmp.push(r);
                         } else {
-                            asmjit::x86::Gp t = c.newGpq();
-                            c.xor_(t, t);
-                            c.cmp(lhs.gp(), rhs.gp());
-                            c.setge(t.r8Lo());
-                            tmp.push(t);
+                            if (!with_null_check) {
+                                asmjit::x86::Gp t = c.newGpq();
+                                c.xor_(t, t);
+                                c.cmp(lhs.gp(), rhs.gp());
+                                c.setge(t.r8Lo());
+                                tmp.push(t);
+                            } else {
+                                auto nc = (lhs.dtype() == i32 || rhs.dtype() == i32) ? int_null : long_null;
+                                asmjit::x86::Gp n = c.newGpq();
+                                c.movabs(n, nc);
+                                c.cmp(lhs.gp(), n);
+                                asmjit::x86::Gp l = c.newGpq();
+                                c.setne(l.r8Lo());
+                                c.cmp(rhs.gp(), n);
+                                c.setne(n.r8Lo());
+                                c.and_(l.r8Lo(), n.r8Lo());
+                                c.cmp(lhs.gp(), rhs.gp());
+                                c.setge(n.r8Lo());
+                                c.and_(l.r8Lo(), n.r8Lo());
+                                c.movzx(lhs.gp(), l.r8Lo());
+                                tmp.push(lhs.gp());
+                            }
                         }
                         break;
                     case LT:
                         if (lhs.isXmm()) {
-                            c.emit(asmjit::x86::Inst::kIdCmpsd, lhs.xmm(), rhs.xmm(), (uint32_t) asmjit::x86::Predicate::kCmpLT);
+                            c.emit(asmjit::x86::Inst::kIdCmpsd, lhs.xmm(), rhs.xmm(),
+                                   (uint32_t) asmjit::x86::Predicate::kCmpLT);
                             asmjit::x86::Gp r = c.newGpq();
                             c.vmovq(r, lhs.xmm());
                             c.and_(r, 1);
                             tmp.push(r);
                         } else {
-                            asmjit::x86::Gp t = c.newGpq();
-                            c.xor_(t, t);
-                            c.cmp(lhs.gp(), rhs.gp());
-                            c.setl(t.r8Lo());
-                            tmp.push(t);
+                            if (!with_null_check) {
+                                asmjit::x86::Gp t = c.newGpq();
+                                c.xor_(t, t);
+                                c.cmp(lhs.gp(), rhs.gp());
+                                c.setl(t.r8Lo());
+                                tmp.push(t);
+                            } else {
+                                auto nc = (lhs.dtype() == i32 || rhs.dtype() == i32) ? int_null : long_null;
+                                asmjit::x86::Gp n = c.newGpq();
+                                c.movabs(n, nc);
+                                c.cmp(lhs.gp(), n);
+                                c.setne(n.r8Lo());
+                                c.cmp(lhs.gp(), rhs.gp());
+                                asmjit::x86::Gp l = c.newGpq();
+                                c.setl(l.r8Lo());
+                                c.and_(l.r8Lo(), n.r8Lo());
+                                c.movzx(lhs.gp(), l.r8Lo());
+                                tmp.push(lhs.gp());
+                            }
                         }
                         break;
                     case LE:
                         if (lhs.isXmm()) {
-                            c.emit(asmjit::x86::Inst::kIdCmpsd, lhs.xmm(), rhs.xmm(), (uint32_t) asmjit::x86::Predicate::kCmpLE);
+                            c.emit(asmjit::x86::Inst::kIdCmpsd, lhs.xmm(), rhs.xmm(),
+                                   (uint32_t) asmjit::x86::Predicate::kCmpLE);
                             asmjit::x86::Gp r = c.newGpq();
                             c.vmovq(r, lhs.xmm());
                             c.and_(r, 1);
                             tmp.push(r);
                         } else {
-                            asmjit::x86::Gp t = c.newGpq();
-                            c.xor_(t, t);
-                            c.cmp(lhs.gp(), rhs.gp());
-                            c.setle(t.r8Lo());
-                            tmp.push(t);
+                            if (!with_null_check) {
+                                asmjit::x86::Gp t = c.newGpq();
+                                c.xor_(t, t);
+                                c.cmp(lhs.gp(), rhs.gp());
+                                c.setle(t.r8Lo());
+                                tmp.push(t);
+                            } else {
+                                auto nc = (lhs.dtype() == i32 || rhs.dtype() == i32) ? int_null : long_null;
+                                asmjit::x86::Gp n = c.newGpq();
+                                c.movabs(n, nc);
+                                c.cmp(lhs.gp(), n);
+                                asmjit::x86::Gp l = c.newGpq();
+                                c.setne(l.r8Lo());
+                                c.cmp(rhs.gp(), n);
+                                c.setne(n.r8Lo());
+                                c.and_(l.r8Lo(), n.r8Lo());
+                                c.cmp(lhs.gp(), rhs.gp());
+                                c.setle(n.r8Lo());
+                                c.and_(l.r8Lo(), n.r8Lo());
+                                c.movzx(lhs.gp(), l.r8Lo());
+                                tmp.push(lhs.gp());
+                            }
                         }
                         break;
                     case ADD:
                         if (lhs.isXmm()) {
                             c.vaddsd(lhs.xmm(), rhs.xmm(), lhs.xmm());
                         } else {
-                            c.add(lhs.gp(), rhs.gp());
+                            if(!with_null_check) {
+                                c.add(lhs.gp(), rhs.gp());
+                            } else {
+                                auto nc = (lhs.dtype() == i32 || rhs.dtype() == i32) ? int_null : long_null;
+                                asmjit::x86::Gp n = c.newGpq();
+                                asmjit::x86::Mem m = asmjit::x86::Mem(lhs.gp(), rhs.gp(), 0, 0);
+                                c.lea(lhs.gp(), m);
+                                c.movabs(n, nc);
+                                c.cmp(lhs.gp(), n);
+                                c.cmove(lhs.gp(), lhs.gp());
+                                c.cmp(rhs.gp(), n);
+                                c.cmove(lhs.gp(), lhs.gp());
+                            }
                         }
                         tmp.push(lhs);
                         break;
@@ -274,7 +379,20 @@ void x86_scalar_tail(asmjit::x86::Compiler &c, const uint64_t *columns, const ui
                         if (lhs.isXmm()) {
                             c.vsubsd(lhs.xmm(), lhs.xmm(), rhs.xmm());
                         } else {
-                            c.sub(lhs.gp(), rhs.gp());
+                            if (!with_null_check) {
+                                c.sub(lhs.gp(), rhs.gp());
+                            } else {
+                                auto nc = (lhs.dtype() == i32 || rhs.dtype() == i32) ? int_null : long_null;
+                                asmjit::x86::Gp t = c.newGpq();
+                                c.mov(t, lhs.gp());
+                                c.sub(lhs.gp(), rhs.gp());
+                                asmjit::x86::Gp n = c.newGpq();
+                                c.movabs(n, nc);
+                                c.cmp(t, lhs.gp());
+                                c.cmove(lhs.gp(), t);
+                                c.cmp(rhs.gp(), n);
+                                c.cmove(lhs.gp(), lhs.gp());
+                            }
                         }
                         tmp.push(lhs);
                         break;
@@ -282,7 +400,20 @@ void x86_scalar_tail(asmjit::x86::Compiler &c, const uint64_t *columns, const ui
                         if (lhs.isXmm()) {
                             c.vmulsd(lhs.xmm(), rhs.xmm(), lhs.xmm());
                         } else {
-                            c.imul(lhs.gp(), rhs.gp());
+                            if (!with_null_check) {
+                                c.imul(lhs.gp(), rhs.gp());
+                            } else {
+                                auto nc = (lhs.dtype() == i32 || rhs.dtype() == i32) ? int_null : long_null;
+                                asmjit::x86::Gp t = c.newGpq();
+                                c.mov(t, lhs.gp());
+                                c.imul(lhs.gp(), rhs.gp());
+                                asmjit::x86::Gp n = c.newGpq();
+                                c.movabs(n, nc);
+                                c.cmp(t, lhs.gp());
+                                c.cmove(lhs.gp(), t);
+                                c.cmp(rhs.gp(), n);
+                                c.cmove(lhs.gp(), lhs.gp());
+                            }
                         }
                         tmp.push(lhs);
                         break;
@@ -290,17 +421,38 @@ void x86_scalar_tail(asmjit::x86::Compiler &c, const uint64_t *columns, const ui
                         if (lhs.isXmm()) {
                             c.vdivsd(lhs.xmm(), lhs.xmm(), rhs.xmm());
                         } else {
-                            asmjit::Label l_zero = c.newLabel();
-                            asmjit::x86::Gp r = c.newGpq();
-                            c.mov(r, rhs.gp());
-                            c.test(r, r);
-                            c.je(l_zero);
+                            if (!with_null_check) {
+                                asmjit::Label l_zero = c.newLabel();
+                                asmjit::x86::Gp r = c.newGpq();
+                                c.mov(r, rhs.gp());
+                                c.test(r, r);
+                                c.je(l_zero);
 
-                            c.xor_(r, r);
-                            c.idiv(r, lhs.gp(), rhs.gp());
-                            c.mov(r, lhs.gp());
-                            c.bind(l_zero);
-                            c.mov(lhs.gp(), r);
+                                c.xor_(r, r);
+                                c.idiv(r, lhs.gp(), rhs.gp());
+                                c.mov(r, lhs.gp());
+                                c.bind(l_zero);
+                                c.mov(lhs.gp(), r);
+                            } else {
+                                auto nc = (lhs.dtype() == i32 || rhs.dtype() == i32) ? int_null : long_null;
+                                asmjit::Label l_zero = c.newLabel();
+                                asmjit::x86::Gp r = c.newGpq();
+                                c.movabs(r, nc);
+                                c.cmp(r, lhs.gp());
+                                c.je(l_zero);
+                                c.cmp(r, rhs.gp());
+                                c.je(l_zero);
+                                c.mov(r, rhs.gp());
+                                c.test(r, r);
+                                c.je(l_zero);
+
+                                c.xor_(r, r);
+                                c.idiv(r, lhs.gp(), rhs.gp());
+                                c.mov(r, lhs.gp());
+
+                                c.bind(l_zero);
+                                c.mov(lhs.gp(), r);
+                            }
                         }
                         tmp.push(lhs);
                         break;
@@ -364,7 +516,7 @@ int64_t compile_x86_scalar_loop(const uint64_t *columns,
 
     Gp index = c.newGpq();
     c.mov(index, 0);
-    x86_scalar_tail(c, columns, instrs, i_count, tmp, rows_ptr, index, output, r_count);
+    x86_scalar_tail(c, columns, instrs, i_count, tmp, rows_ptr, index, output, r_count, false);
 
     c.ret(output);
     c.endFunc();
@@ -624,8 +776,7 @@ inline static void avx2_div(asmjit::x86::Compiler &c, jit_value_t &dst, jit_valu
         case i8:
         case i16:
         case i32:
-        case i64:
-        {
+        case i64: {
             uint32_t size = 0;
             uint32_t shift = 0;
             uint32_t step = 0;
@@ -680,7 +831,7 @@ inline static void avx2_div(asmjit::x86::Compiler &c, jit_value_t &dst, jit_valu
 
             c.je(l_zero);
             c.mov(a, lhs_c);
-            c.xor_(r,r);
+            c.xor_(r, r);
             c.idiv(r, a, b);
 
             c.bind(l_zero);
@@ -829,8 +980,8 @@ int64_t compile_x86_avx2_loop(const uint64_t *columns,
     JitRuntime rt;
     CodeHolder code;
     code.init(rt.environment());
-    FileLogger logger(stdout);
-    code.setLogger(&logger);
+//    FileLogger logger(stdout);
+//    code.setLogger(&logger);
     Compiler c(&code);
 
     std::stack<jit_value_t> tmp;
@@ -1059,7 +1210,7 @@ int64_t compile_x86_avx2_loop(const uint64_t *columns,
     c.jl(l_loop); // index < stop
     c.bind(l_exit);
 
-    x86_scalar_tail(c, columns, instrs, i_count, tmp, rows_ptr, index, output, r_count);
+    x86_scalar_tail(c, columns, instrs, i_count, tmp, rows_ptr, index, output, r_count, false);
 
     c.ret(output);
     c.endFunc();
@@ -1085,18 +1236,21 @@ Java_io_questdb_jit_FiltersCompiler_compile(JNIEnv *e,
                                             jlong rowsAddr,
                                             jlong rowsSize,
                                             jlong rowidStart) {
-    return compile_x86_scalar_loop(reinterpret_cast<uint64_t *>(columnsAddr),
-                                   columnsSize,
-                                   reinterpret_cast<uint8_t *>(filterAddr),
-                                   filterSize,
-                                   reinterpret_cast<int64_t *>(rowsAddr),
-                                   rowsSize,
-                                   rowidStart);
-//    return compile_x86_avx2_loop(reinterpret_cast<uint64_t *>(columnsAddr),
+    auto r = compile_x86_scalar_loop(reinterpret_cast<uint64_t *>(columnsAddr),
+                                     columnsSize,
+                                     reinterpret_cast<uint8_t *>(filterAddr),
+                                     filterSize,
+                                     reinterpret_cast<int64_t *>(rowsAddr),
+                                     rowsSize,
+                                     rowidStart);
+
+//  auto r = compile_x86_avx2_loop(reinterpret_cast<uint64_t *>(columnsAddr),
 //                                   columnsSize,
 //                                   reinterpret_cast<uint8_t *>(filterAddr),
 //                                   filterSize,
 //                                   reinterpret_cast<int64_t *>(rowsAddr),
 //                                   rowsSize,
 //                                   rowidStart, 4); //todo: pass with IR
+    std::cout << "compile done" << std::endl;
+    return r;
 }
