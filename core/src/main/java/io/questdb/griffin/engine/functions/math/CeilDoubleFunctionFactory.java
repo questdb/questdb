@@ -46,7 +46,7 @@ public class CeilDoubleFunctionFactory implements FunctionFactory {
     }
 
     private static class CeilFunction extends DoubleFunction implements UnaryFunction {
-        final Function function;
+        private final Function function;
 
         public CeilFunction(Function function) {
             this.function = function;

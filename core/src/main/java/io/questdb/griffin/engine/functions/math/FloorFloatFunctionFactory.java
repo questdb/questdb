@@ -46,7 +46,7 @@ public class FloorFloatFunctionFactory implements FunctionFactory {
     }
 
     private static class FloorFunction extends FloatFunction implements UnaryFunction {
-        final Function function;
+        private final Function function;
 
         public FloorFunction(Function function) {
             this.function = function;

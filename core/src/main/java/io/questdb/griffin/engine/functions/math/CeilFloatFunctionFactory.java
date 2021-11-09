@@ -46,7 +46,7 @@ public class CeilFloatFunctionFactory implements FunctionFactory {
     }
 
     private static class CeilFunction extends FloatFunction implements UnaryFunction {
-        final Function function;
+        private final Function function;
 
         public CeilFunction(Function function) {
             this.function = function;

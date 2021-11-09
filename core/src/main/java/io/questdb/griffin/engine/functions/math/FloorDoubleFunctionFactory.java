@@ -46,7 +46,7 @@ public class FloorDoubleFunctionFactory implements FunctionFactory {
     }
 
     private static class FloorFunction extends DoubleFunction implements UnaryFunction {
-        final Function function;
+        private final Function function;
 
         public FloorFunction(Function function) {
             this.function = function;
