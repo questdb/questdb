@@ -72,7 +72,7 @@ steps:
       SYSTEM_ACCESSTOKEN: $(GH_TOKEN)
       PR_ID: $(System.PullRequest.PullRequestNumber)
       SOURCES: $(Build.SourcesDirectory)
-      COVERAGE_REPORT_PATH: CCReport43F6D5EF/jacoco.xml
+      COVERAGE_REPORT_PATH: core/CCReport43F6D5EF/jacoco.xml
       DIFF_CONVER_THRESHOLD_PCT: $(DIFF_CONVER_THRESHOLD_PCT)
     condition: |
       and(

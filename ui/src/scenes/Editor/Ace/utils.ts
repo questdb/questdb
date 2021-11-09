@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 import * as ace from "ace-builds"
+import { IAceEditor } from "react-ace/lib/types"
 
 type Position = Readonly<{
   column: number
@@ -168,6 +169,25 @@ export const getQueryFromSelection = (
       row: start.row,
       column: start.column,
     }
+  }
+}
+
+export const getQueryRequestFromEditor = (
+  e: IAceEditor,
+): Request | undefined => {
+  if (e.getSelectedText().length === 0) {
+    return getQueryFromCursor(e)
+  }
+  return getQueryFromSelection(e)
+}
+
+export const getQueryRequestFromLastExecutedQuery = (
+  query: string,
+): Request | undefined => {
+  return {
+    query,
+    row: 0,
+    column: 0,
   }
 }
 
