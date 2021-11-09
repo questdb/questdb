@@ -205,6 +205,14 @@ $.fn.quickVis = function (msgBus) {
           }
         }
         const option = {
+          tooltip: {
+            trigger: "axis",
+            axisPointer: {
+              label: {
+                show: false,
+              },
+            },
+          },
           legend: {},
           xAxis: optionXAxis,
           yAxis: {
