@@ -26,7 +26,10 @@ import { QueryAction, QueryAT, QueryStateShape } from "types"
 
 export const initialState: QueryStateShape = {
   notifications: [],
-  running: false,
+  running: {
+    value: false,
+    isRefresh: false,
+  },
   maxNotifications: 20,
 }
 
@@ -71,14 +74,20 @@ const query = (state = initialState, action: QueryAction): QueryStateShape => {
     case QueryAT.STOP_RUNNING: {
       return {
         ...state,
-        running: false,
+        running: {
+          value: false,
+          isRefresh: false,
+        },
       }
     }
 
     case QueryAT.TOGGLE_RUNNING: {
       return {
         ...state,
-        running: !state.running,
+        running: {
+          value: !state.running.value,
+          isRefresh: action.payload.isRefresh,
+        },
       }
     }
 
