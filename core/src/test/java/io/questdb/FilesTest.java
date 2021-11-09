@@ -46,9 +46,90 @@ public class FilesTest {
     @Rule
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
-    private static void touch(File file) throws IOException {
-        FileOutputStream fos = new FileOutputStream(file);
-        fos.close();
+    @Test
+    public void testAllocate() throws Exception {
+        File temp = temporaryFolder.newFile();
+        TestUtils.writeStringToFile(temp, "abcde");
+        try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
+            Assert.assertTrue(Files.exists(path));
+            Assert.assertEquals(5, Files.length(path));
+
+            long fd = Files.openRW(path);
+            try {
+                Files.allocate(fd, 10);
+                Assert.assertEquals(10, Files.length(path));
+                Files.allocate(fd, 120);
+                Assert.assertEquals(120, Files.length(path));
+            } finally {
+                Files.close(fd);
+            }
+        }
+    }
+
+    @Test
+    public void testAllocateLoop() throws Exception {
+        File temp = temporaryFolder.newFile();
+        TestUtils.writeStringToFile(temp, "abcde");
+        try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
+            Assert.assertTrue(Files.exists(path));
+            Assert.assertEquals(5, Files.length(path));
+            long fd = Files.openRW(path);
+
+            long M50 = 100 * 1024L * 1024L;
+            try {
+                // If allocate tries to allocate by the given size
+                // instead of to the size this will allocate 2TB and suppose to fail
+                for (int i = 0; i < 20000; i++) {
+                    Files.allocate(fd, M50 + i);
+                    Assert.assertEquals(M50 + i, Files.length(path));
+                }
+            } finally {
+                Files.close(fd);
+            }
+        }
+    }
+
+    @Test
+    public void testCopy() throws Exception {
+        File temp = temporaryFolder.newFile();
+        TestUtils.writeStringToFile(temp, "abcde");
+        try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
+            Assert.assertTrue(Files.exists(path));
+            try (Path copyPath = new Path().of(temp.getAbsolutePath()).put("-copy").$()) {
+                Files.copy(path, copyPath);
+
+                Assert.assertEquals(5, Files.length(copyPath));
+                TestUtils.assertFileContentsEquals(path, copyPath);
+            }
+        }
+    }
+
+    @Test
+    public void testCopyBigFile() throws Exception {
+        File temp = temporaryFolder.newFile();
+        int fileSize = 2 * 1024 * 1024; // in MB
+        byte[] page = new byte[1024 * 64];
+        Rnd rnd = new Rnd();
+
+        for (int i = 0; i < page.length; i++) {
+            page[i] = rnd.nextByte();
+        }
+
+        try (FileOutputStream fos = new FileOutputStream(temp)) {
+            for (int i = 0; i < fileSize / page.length; i++) {
+                fos.write(page);
+            }
+        }
+
+        try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
+            Assert.assertTrue(Files.exists(path));
+            try (Path copyPath = new Path().of(temp.getAbsolutePath()).put("-copy").$()) {
+                Files.copy(path, copyPath);
+
+                Assert.assertEquals(fileSize, Files.length(copyPath));
+                TestUtils.assertFileContentsEquals(path, copyPath);
+            }
+        }
     }
 
     @Test
@@ -77,18 +158,30 @@ public class FilesTest {
     }
 
     @Test
+    public void testFailsToAllocateWhenNotEnoughSpace() throws Exception {
+        File temp = temporaryFolder.newFile();
+        TestUtils.writeStringToFile(temp, "abcde");
+        try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
+            Assert.assertTrue(Files.exists(path));
+            long fd = Files.openRW(path);
+            Assert.assertEquals(5, Files.length(path));
+
+            try {
+                long tb10 = 1024L * 1024L * 1024L * 1024L * 10; // 10TB
+                boolean success = Files.allocate(fd, tb10);
+                Assert.assertFalse("Allocation should fail on reasonable hard disk size", success);
+            } finally {
+                Files.close(fd);
+            }
+        }
+    }
+
+    @Test
     public void testLastModified() throws IOException, NumericException {
         try (Path path = new Path()) {
             assertLastModified(path, DateFormatUtils.parseUTCDate("2015-10-17T10:00:00.000Z"));
             assertLastModified(path, 122222212222L);
         }
-    }
-
-    private void assertLastModified(Path path, long t) throws IOException {
-        File f = temporaryFolder.newFile();
-        Assert.assertTrue(Files.touch(path.of(f.getAbsolutePath()).$()));
-        Assert.assertTrue(Files.setLastModified(path, t));
-        Assert.assertEquals(t, Files.getLastModified(path));
     }
 
     @Test
@@ -140,52 +233,18 @@ public class FilesTest {
     }
 
     @Test
-    public void testRemove() throws Exception {
-        try (Path path = new Path().of(temporaryFolder.newFile().getAbsolutePath()).$()) {
-            Assert.assertTrue(Files.touch(path));
+    public void testOpenCleanRWAllocatesToSize() {
+        File temp = temporaryFolder.getRoot();
+        try (Path path = new Path().of(temp.getAbsolutePath()).concat("openCleanRWParallel").$()) {
+            long fd = Files.openCleanRW(path, 1024);
             Assert.assertTrue(Files.exists(path));
-            Assert.assertTrue(Files.remove(path));
-            Assert.assertFalse(Files.exists(path));
-        }
-    }
+            Assert.assertEquals(1024, Files.length(path));
 
-    @Test
-    public void testTruncate() throws Exception {
-        File temp = temporaryFolder.newFile();
-        TestUtils.writeStringToFile(temp, "abcde");
-        try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
-            Assert.assertTrue(Files.exists(path));
-            Assert.assertEquals(5, Files.length(path));
+            long fd2 = Files.openCleanRW(path, 2048);
+            Assert.assertEquals(2048, Files.length(path));
 
-            long fd = Files.openRW(path);
-            try {
-                Files.truncate(fd, 3);
-                Assert.assertEquals(3, Files.length(path));
-                Files.truncate(fd, 0);
-                Assert.assertEquals(0, Files.length(path));
-            } finally {
-                Files.close(fd);
-            }
-        }
-    }
-
-    @Test
-    public void testAllocate() throws Exception {
-        File temp = temporaryFolder.newFile();
-        TestUtils.writeStringToFile(temp, "abcde");
-        try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
-            Assert.assertTrue(Files.exists(path));
-            Assert.assertEquals(5, Files.length(path));
-
-            long fd = Files.openRW(path);
-            try {
-                Files.allocate(fd, 10);
-                Assert.assertEquals(10, Files.length(path));
-                Files.allocate(fd, 120);
-                Assert.assertEquals(120, Files.length(path));
-            } finally {
-                Files.close(fd);
-            }
+            Files.close(fd);
+            Files.close(fd2);
         }
     }
 
@@ -230,80 +289,44 @@ public class FilesTest {
     }
 
     @Test
-    public void testOpenCleanRWAllocatesToSize() {
-        File temp = temporaryFolder.getRoot();
-        try (Path path = new Path().of(temp.getAbsolutePath()).concat("openCleanRWParallel").$()) {
-            long fd = Files.openCleanRW(path, 1024);
+    public void testRemove() throws Exception {
+        try (Path path = new Path().of(temporaryFolder.newFile().getAbsolutePath()).$()) {
+            Assert.assertTrue(Files.touch(path));
             Assert.assertTrue(Files.exists(path));
-            Assert.assertEquals(1024, Files.length(path));
-
-            long fd2 = Files.openCleanRW(path, 2048);
-            Assert.assertEquals(2048, Files.length(path));
-
-            Files.close(fd);
-            Files.close(fd2);
+            Assert.assertTrue(Files.remove(path));
+            Assert.assertFalse(Files.exists(path));
         }
     }
 
     @Test
-    public void testFailsToAllocateWhenNotEnoughSpace() throws Exception {
+    public void testTruncate() throws Exception {
         File temp = temporaryFolder.newFile();
         TestUtils.writeStringToFile(temp, "abcde");
         try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
             Assert.assertTrue(Files.exists(path));
-            long fd = Files.openRW(path);
             Assert.assertEquals(5, Files.length(path));
 
+            long fd = Files.openRW(path);
             try {
-                long tb10 = 1024L * 1024L * 1024L * 1024L * 10; // 10TB
-                boolean success = Files.allocate(fd, tb10);
-                Assert.assertFalse("Allocation should fail on reasonable hard disk size", success);
+                Files.truncate(fd, 3);
+                Assert.assertEquals(3, Files.length(path));
+                Files.truncate(fd, 0);
+                Assert.assertEquals(0, Files.length(path));
             } finally {
                 Files.close(fd);
             }
         }
     }
 
-    @Test
-    public void testCopy() throws Exception {
-        File temp = temporaryFolder.newFile();
-        TestUtils.writeStringToFile(temp, "abcde");
-        try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
-            Assert.assertTrue(Files.exists(path));
-            try (Path copyPath = new Path().of(temp.getAbsolutePath()).put("-copy").$()) {
-                Files.copy(path, copyPath);
-
-                Assert.assertEquals(5, Files.length(copyPath));
-                TestUtils.assertFileContentsEquals(path, copyPath);
-            }
-        }
+    private static void touch(File file) throws IOException {
+        FileOutputStream fos = new FileOutputStream(file);
+        fos.close();
     }
 
-    @Test
-    public void testCopyBigFile() throws Exception {
-        File temp = temporaryFolder.newFile();
-        int fileSize = 2 * 1024 * 1024; // in MB
-        byte[] page = new byte[1024 * 64];
-        Rnd rnd = new Rnd();
-
-        for(int i = 0; i < page.length; i++) {
-            page[i] = rnd.nextByte();
-        }
-
-        try (FileOutputStream fos = new FileOutputStream(temp)) {
-            for (int i = 0; i < fileSize / page.length; i++) {
-                fos.write(page);
-            }
-        }
-
-        try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
-            Assert.assertTrue(Files.exists(path));
-            try (Path copyPath = new Path().of(temp.getAbsolutePath()).put("-copy").$()) {
-                Files.copy(path, copyPath);
-
-                Assert.assertEquals(fileSize, Files.length(copyPath));
-                TestUtils.assertFileContentsEquals(path, copyPath);
-            }
-        }
+    private void assertLastModified(Path path, long t) throws IOException {
+        File f = temporaryFolder.newFile();
+        Assert.assertTrue(Files.touch(path.of(f.getAbsolutePath()).$()));
+        Assert.assertTrue(Files.setLastModified(path, t));
+        Assert.assertEquals(t, Files.getLastModified(path));
     }
 }
