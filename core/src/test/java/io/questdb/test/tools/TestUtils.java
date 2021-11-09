@@ -373,6 +373,24 @@ public final class TestUtils {
         }
     }
 
+    public static void assertIndexBlockCapacity(SqlExecutionContext sqlExecutionContext, CairoEngine engine, String tableName, String columnName) {
+
+        engine.releaseAllReaders();
+        try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            TableReaderMetadata metadata = rdr.getMetadata();
+            int symIndex = metadata.getColumnIndex(columnName);
+
+            if (metadata.isColumnIndexed(symIndex)) {
+                int expectedCapacity = metadata.getIndexValueBlockCapacity(symIndex);
+
+                for (int partitionIndex = 0; partitionIndex < rdr.getPartitionCount(); partitionIndex++) {
+                    BitmapIndexReader bitmapIndexReader = rdr.getBitmapIndexReader(0, symIndex, BitmapIndexReader.DIR_BACKWARD);
+                    Assert.assertEquals(expectedCapacity, bitmapIndexReader.getValueBlockCapacity() + 1);
+                }
+            }
+        }
+    }
+
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
         Path.clearThreadLocals();
         long mem = Unsafe.getMemUsed();
@@ -602,6 +620,33 @@ public final class TestUtils {
         return Integer.parseInt(version);
     }
 
+    @NotNull
+    public static NetworkFacade getSendDelayNetworkFacade(int startDelayDelayAfter) {
+        return new NetworkFacadeImpl() {
+            final AtomicInteger totalSent = new AtomicInteger();
+
+            @Override
+            public int send(long fd, long buffer, int bufferLen) {
+                if (startDelayDelayAfter == 0) {
+                    return super.send(fd, buffer, bufferLen);
+                }
+
+                int sentNow = totalSent.get();
+                if (bufferLen > 0) {
+                    if (sentNow >= startDelayDelayAfter) {
+                        totalSent.set(0);
+                        return 0;
+                    }
+
+                    int result = super.send(fd, buffer, Math.min(bufferLen, startDelayDelayAfter - sentNow));
+                    totalSent.addAndGet(result);
+                    return result;
+                }
+                return 0;
+            }
+        };
+    }
+
     public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
         CompiledQuery compiledQuery = compiler.compile(insertSql, sqlExecutionContext);
         Assert.assertNotNull(compiledQuery.getInsertStatement());
@@ -706,33 +751,6 @@ public final class TestUtils {
             Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
             Assert.assertEquals("Column type " + i, metadataExpected.getColumnType(i), metadataActual.getColumnType(i));
         }
-    }
-
-    @NotNull
-    public static NetworkFacade getSendDelayNetworkFacade(int startDelayDelayAfter) {
-        return new NetworkFacadeImpl() {
-            final AtomicInteger totalSent = new AtomicInteger();
-
-            @Override
-            public int send(long fd, long buffer, int bufferLen) {
-                if (startDelayDelayAfter == 0) {
-                    return super.send(fd, buffer, bufferLen);
-                }
-
-                int sentNow = totalSent.get();
-                if (bufferLen > 0) {
-                    if (sentNow >= startDelayDelayAfter) {
-                        totalSent.set(0);
-                        return 0;
-                    }
-
-                    int result = super.send(fd, buffer, Math.min(bufferLen, startDelayDelayAfter - sentNow));
-                    totalSent.addAndGet(result);
-                    return result;
-                }
-                return 0;
-            }
-        };
     }
 
     @FunctionalInterface

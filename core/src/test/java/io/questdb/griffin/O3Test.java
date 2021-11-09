@@ -1112,8 +1112,8 @@ public class O3Test extends AbstractO3Test {
 
         assertIndexConsistency(
                 compiler,
-                sqlExecutionContext
-        );
+                sqlExecutionContext,
+                engine);
 
         assertMaxTimestamp(
                 engine,
@@ -1358,7 +1358,7 @@ public class O3Test extends AbstractO3Test {
                 "x"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
 
         assertMaxTimestamp(
                 engine,
@@ -1541,7 +1541,7 @@ public class O3Test extends AbstractO3Test {
                 "x"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
     }
 
@@ -1648,7 +1648,7 @@ public class O3Test extends AbstractO3Test {
                 "x"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
 
         assertMaxTimestamp(
                 engine,
@@ -1744,7 +1744,7 @@ public class O3Test extends AbstractO3Test {
                 "x"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
 
         assertMaxTimestamp(
                 engine,
@@ -1824,7 +1824,7 @@ public class O3Test extends AbstractO3Test {
                 "insert batch 100 commitLag 300s into x select * from top"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
 
         assertMaxTimestamp(
                 engine,
@@ -2238,13 +2238,13 @@ public class O3Test extends AbstractO3Test {
     private static void testXAndIndex(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expected) throws SqlException {
         printSqlResult(compiler, sqlExecutionContext, "x");
         TestUtils.assertEquals(expected, sink);
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
 
         // test that after reader is re-opened we can still see the same data
         engine.releaseAllReaders();
         printSqlResult(compiler, sqlExecutionContext, "x");
         TestUtils.assertEquals(expected, sink);
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
     }
 
     private static void testPartitionedOODataUpdateMinTimestamp0(
@@ -2343,7 +2343,7 @@ public class O3Test extends AbstractO3Test {
                 "x"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
 
         assertMaxTimestamp(
                 engine,
@@ -2647,7 +2647,7 @@ public class O3Test extends AbstractO3Test {
                 "x"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
 
         assertMaxTimestamp(
                 engine,
@@ -2865,7 +2865,7 @@ public class O3Test extends AbstractO3Test {
                 "/o3/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
 
         // check if the same remains true when we open fresh TableReader instance
 
@@ -2876,7 +2876,7 @@ public class O3Test extends AbstractO3Test {
                 "x",
                 "/o3/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt"
         );
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
     }
 
@@ -3346,7 +3346,7 @@ public class O3Test extends AbstractO3Test {
                 "/o3/testPartitionedDataOOData.txt"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
 
         assertMaxTimestamp(
                 engine,
@@ -3423,7 +3423,7 @@ public class O3Test extends AbstractO3Test {
                 "x"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
 
         assertMaxTimestamp(
                 engine,
@@ -5004,7 +5004,7 @@ public class O3Test extends AbstractO3Test {
                 "x"
         );
 
-        assertIndexConsistency(compiler, executionContext);
+        assertIndexConsistency(compiler, executionContext, engine);
 
         // x ends with timestamp 549900000000
         // straight append
@@ -5155,7 +5155,7 @@ public class O3Test extends AbstractO3Test {
                 "x"
         );
 
-        assertIndexConsistency(compiler, executionContext);
+        assertIndexConsistency(compiler, executionContext, engine);
         assertXCountY(compiler, executionContext);
     }
 
@@ -5254,7 +5254,7 @@ public class O3Test extends AbstractO3Test {
                 "x"
         );
 
-        assertIndexConsistency(compiler, executionContext);
+        assertIndexConsistency(compiler, executionContext, engine);
         assertXCountY(compiler, executionContext);
     }
 
@@ -5912,7 +5912,7 @@ public class O3Test extends AbstractO3Test {
                 "x"
         );
 
-        assertIndexConsistency(compiler, executionContext);
+        assertIndexConsistency(compiler, executionContext, engine);
         assertXCountY(compiler, executionContext);
     }
 
@@ -6093,7 +6093,7 @@ public class O3Test extends AbstractO3Test {
                 "x"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
     }
 
@@ -6228,7 +6228,7 @@ public class O3Test extends AbstractO3Test {
                 "/o3/testColumnTopMidAppendColumn.txt"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
     }
 
@@ -6305,7 +6305,7 @@ public class O3Test extends AbstractO3Test {
                 "x"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
     }
 
@@ -6384,7 +6384,7 @@ public class O3Test extends AbstractO3Test {
                 "x"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
     }
 
@@ -6519,7 +6519,7 @@ public class O3Test extends AbstractO3Test {
                 "/o3/testColumnTopLastAppendColumn.txt"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
     }
 
@@ -6717,8 +6717,8 @@ public class O3Test extends AbstractO3Test {
 
         assertIndexConsistency(
                 compiler,
-                sqlExecutionContext
-        );
+                sqlExecutionContext,
+                engine);
 
         compiler.compile("alter table x drop column c", sqlExecutionContext);
 
@@ -6735,7 +6735,8 @@ public class O3Test extends AbstractO3Test {
         assertIndexConsistency(
                 compiler,
                 sqlExecutionContext,
-                "z"
+                "z",
+                engine
         );
 
         TestUtils.printSql(

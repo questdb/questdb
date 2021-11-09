@@ -646,7 +646,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int suffixType,
             long suffixLo,
             long suffixHi,
-            boolean isIndexed,
+            int indexBlockCapacity,
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
@@ -691,7 +691,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 srcTimestampFd,
                 srcTimestampAddr,
                 srcTimestampSize,
-                isIndexed,
+                indexBlockCapacity,
                 activeFixFd,
                 activeVarFd,
                 tableWriter,
@@ -783,7 +783,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 final CharSequence columnName = metadata.getColumnName(i);
-                final boolean isIndexed = metadata.isColumnIndexed(i);
+                final boolean indexBlockCapacity = metadata.isColumnIndexed(i);
+                final int indexValueCapacity = indexBlockCapacity ? metadata.getIndexValueBlockCapacity(i) : -1;
                 if (openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND || openColumnMode == OPEN_LAST_PARTITION_FOR_MERGE) {
                     srcDataTop = tableWriter.getColumnTop(i);
                 } else {
@@ -791,7 +792,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 final BitmapIndexWriter indexWriter;
-                if (isIndexed) {
+                if (indexBlockCapacity) {
                     indexWriter = o3Basket.nextIndexer();
                 } else {
                     indexWriter = null;
@@ -833,7 +834,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 suffixType,
                                 suffixLo,
                                 suffixHi,
-                                isIndexed,
+                                indexValueCapacity,
                                 srcTimestampFd,
                                 srcTimestampAddr,
                                 srcTimestampSize,
@@ -880,7 +881,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 srcTimestampFd,
                                 srcTimestampAddr,
                                 srcTimestampSize,
-                                isIndexed,
+                                indexValueCapacity,
                                 activeFixFd,
                                 activeVarFd,
                                 tableWriter,
@@ -948,7 +949,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
-            boolean isIndexed,
+            int indexBlockCapacity,
             long activeFixFd,
             long activeVarFd,
             TableWriter tableWriter,
@@ -992,7 +993,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     suffixType,
                     suffixLo,
                     suffixHi,
-                    isIndexed,
+                    indexBlockCapacity,
                     srcTimestampFd,
                     srcTimestampAddr,
                     srcTimestampSize,
@@ -1037,7 +1038,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     srcTimestampFd,
                     srcTimestampAddr,
                     srcTimestampSize,
-                    isIndexed,
+                    indexBlockCapacity,
                     activeFixFd,
                     activeVarFd,
                     tableWriter,

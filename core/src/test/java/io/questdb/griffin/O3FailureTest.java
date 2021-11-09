@@ -1754,7 +1754,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "create table y as (select * from top where ts >= 0 union all select * from x)",
                 "insert into x select * from top where ts >= 0"
         );
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
     }
 
@@ -1805,7 +1805,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "create table y as (select * from top where ts >= 0 union all select * from x)",
                 "insert into x select * from top where ts >= 0"
         );
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
     }
 
@@ -1884,7 +1884,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x select * from top"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
     }
 
@@ -1961,7 +1961,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x select * from append"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
     }
 
@@ -2604,7 +2604,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x select * from append"
         );
 
-        assertIndexConsistency(compiler, executionContext);
+        assertIndexConsistency(compiler, executionContext, engine);
         assertXCountY(compiler, executionContext);
     }
 
@@ -2711,7 +2711,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x select * from append"
         );
 
-        assertIndexConsistency(compiler, executionContext);
+        assertIndexConsistency(compiler, executionContext, engine);
         assertXCountY(compiler, executionContext);
     }
 
@@ -2818,7 +2818,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x select * from append"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
     }
 
@@ -2959,7 +2959,7 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
     }
 
     private static void testPartitionedDataAppendOOPrependOODataFailRetryNoReopen(
@@ -3072,8 +3072,8 @@ public class O3FailureTest extends AbstractO3Test {
 
         assertIndexConsistency(
                 compiler,
-                sqlExecutionContext
-        );
+                sqlExecutionContext,
+                engine);
 
         assertXCountY(compiler, sqlExecutionContext);
     }
@@ -3185,8 +3185,8 @@ public class O3FailureTest extends AbstractO3Test {
 
         assertIndexConsistency(
                 compiler,
-                sqlExecutionContext
-        );
+                sqlExecutionContext,
+                engine);
 
         assertXCountY(compiler, sqlExecutionContext);
     }

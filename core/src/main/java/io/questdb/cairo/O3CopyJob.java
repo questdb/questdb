@@ -90,7 +90,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVFd,
             long dstIndexOffset,
             long dstIndexAdjust,
-            boolean isIndexed,
+            int indexBlockCapacity,
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
@@ -195,7 +195,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 dstVFd,
                 dstIndexOffset,
                 dstIndexAdjust,
-                isIndexed,
+                indexBlockCapacity,
                 srcTimestampFd,
                 srcTimestampAddr,
                 srcTimestampSize,
@@ -247,7 +247,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long dskVFd = task.getDstVFd();
         final long dstIndexOffset = task.getDstIndexOffset();
         final long dstIndexAdjust = task.getDstIndexAdjust();
-        final boolean isIndexed = task.isIndexed();
+        final int indexBlockCapacity = task.getIndexBlockCapacity();
         final long srcTimestampFd = task.getSrcTimestampFd();
         final long srcTimestampAddr = task.getSrcTimestampAddr();
         final long srcTimestampSize = task.getSrcTimestampSize();
@@ -299,7 +299,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 dskVFd,
                 dstIndexOffset,
                 dstIndexAdjust,
-                isIndexed,
+                indexBlockCapacity,
                 srcTimestampFd,
                 srcTimestampAddr,
                 srcTimestampSize,
@@ -336,7 +336,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstVFd,
             long dstIndexOffset,
             long dstIndexAdjust,
-            boolean isIndexed,
+            int indexBlockCapacity,
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
@@ -346,7 +346,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     ) {
         if (partCounter == null || partCounter.decrementAndGet() == 0) {
             final FilesFacade ff = tableWriter.getFilesFacade();
-            if (isIndexed) {
+            if (indexBlockCapacity > -1) {
                 updateIndex(
                         columnCounter,
                         timestampMergeIndexAddr,
@@ -370,7 +370,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
-                        indexWriter
+                        indexWriter,
+                        indexBlockCapacity
                 );
             }
 
@@ -469,14 +470,15 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter
+            BitmapIndexWriter indexWriter,
+            int indexValueCapacity
     ) {
         // dstKFd & dstVFd are closed by the indexer
         try {
             long row = dstIndexOffset / Integer.BYTES;
             boolean closed = !indexWriter.isOpen();
             if (closed) {
-                indexWriter.of(tableWriter.getConfiguration(), dstKFd, dstVFd, row == 0);
+                indexWriter.of(tableWriter.getConfiguration(), dstKFd, dstVFd, row == 0, indexValueCapacity);
             }
             try {
                 updateIndex(dstFixAddr, dstFixSize, indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);
