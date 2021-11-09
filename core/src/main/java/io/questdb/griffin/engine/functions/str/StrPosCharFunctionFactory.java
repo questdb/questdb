@@ -32,6 +32,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -52,7 +55,29 @@ public class StrPosCharFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new Func(args.getQuick(0), args.getQuick(1));
+        final Function substrFunc = args.getQuick(1);
+        if (substrFunc.isConstant()) {
+            char substr = substrFunc.getChar(null);
+            if (substr == CharConstant.ZERO.getChar(null)) {
+                return IntConstant.NULL;
+            }
+            return new ConstFunc(args.getQuick(0), substr);
+        }
+        return new Func(args.getQuick(0), substrFunc);
+    }
+
+    private static int strpos(@NotNull CharSequence str, char substr) {
+        final int strLen = str.length();
+        if (strLen < 1) {
+            return 0;
+        }
+
+        for (int i = 0; i < strLen; i++) {
+            if (str.charAt(i) == substr) {
+                return i + 1;
+            }
+        }
+        return 0;
     }
 
     public static class Func extends IntFunction implements BinaryFunction {
@@ -72,21 +97,10 @@ public class StrPosCharFunctionFactory implements FunctionFactory {
                 return Numbers.INT_NaN;
             }
             final char substr = this.substrFunc.getChar(rec);
+            if (substr == CharConstant.ZERO.getChar(null)) {
+                return Numbers.INT_NaN;
+            }
             return strpos(str, substr);
-        }
-
-        private int strpos(@NotNull CharSequence str, char substr) {
-            final int strLen = str.length();
-            if (strLen < 1) {
-                return 0;
-            }
-
-            for (int i = 0; i < strLen; i++) {
-                if (str.charAt(i) == substr) {
-                    return i + 1;
-                }
-            }
-            return 0;
         }
 
         @Override
@@ -97,6 +111,31 @@ public class StrPosCharFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return substrFunc;
+        }
+    }
+
+    public static class ConstFunc extends IntFunction implements UnaryFunction {
+
+        private final Function strFunc;
+        private final char substr;
+
+        public ConstFunc(Function strFunc, char substr) {
+            this.strFunc = strFunc;
+            this.substr = substr;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            final CharSequence str = this.strFunc.getStr(rec);
+            if (str == null) {
+                return Numbers.INT_NaN;
+            }
+            return strpos(str, substr);
+        }
+
+        @Override
+        public Function getArg() {
+            return strFunc;
         }
     }
 }
