@@ -41,6 +41,11 @@ public class FloorDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest 
         call(-13.1).andAssert(-14.0, 0.0000000001);
     }
 
+    @Test
+    public void testNaN() throws SqlException {
+        call(Double.NaN).andAssert(Double.NaN, 0);
+    }
+    
     @Override
     protected FunctionFactory getFunctionFactory() { return new FloorDoubleFunctionFactory();
     }

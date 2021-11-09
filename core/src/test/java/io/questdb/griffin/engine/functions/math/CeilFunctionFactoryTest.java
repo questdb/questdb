@@ -79,4 +79,16 @@ public class CeilFunctionFactoryTest extends AbstractGriffinTest {
                 true
         );
     }
+
+    @Test
+    public void testNaN() throws SqlException {
+        assertQuery(
+                "ceil\n" +
+                        "NaN\n",
+                "select ceil(NaN)",
+                null,
+                true,
+                true
+        );
+    }
 }

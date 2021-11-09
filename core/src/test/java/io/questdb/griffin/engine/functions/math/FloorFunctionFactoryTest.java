@@ -79,4 +79,17 @@ public class FloorFunctionFactoryTest extends AbstractGriffinTest {
                 true
         );
     }
+
+
+    @Test
+    public void testNaN() throws SqlException {
+        assertQuery(
+                "floor\n" +
+                        "NaN\n",
+                "select floor(NaN)",
+                null,
+                true,
+                true
+        );
+    }
 }
