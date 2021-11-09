@@ -6902,7 +6902,7 @@ public class O3Test extends AbstractO3Test {
             long mappedPageSize = configuration.getDataAppendPageSize();
             Assert.assertTrue("Batch size must be greater than mapped page size", batchOnDiskSize > mappedPageSize);
             long pageSize = configuration.getMiscAppendPageSize();
-            Assert.assertTrue("Batch size must be unaligned with page size", batchOnDiskSize % pageSize != 0);
+            Assert.assertNotEquals("Batch size must be unaligned with page size", 0, batchOnDiskSize % pageSize);
 
             long start = IntervalUtils.parseFloorPartialDate("2021-10-09T10:00:00");
             String[] varCol = new String[]{"aldfjkasdlfkj", "2021-10-10T12:00:00", "12345678901234578"};
