@@ -211,6 +211,8 @@ public class ServerMain {
 
             System.gc();
 
+            log.advisory().$("enjoy").$();
+
             if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {
                 // suppress HUP signal
                 Signal.handle(new Signal("HUP"), signal -> {
