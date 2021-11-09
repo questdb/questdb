@@ -3125,7 +3125,7 @@ public class TableWriter implements Closeable {
                     srcAddress = srcFixMem.addressOf(sourceOffset);
                 } else {
                     // Linux requires the mmap offset to be page aligned
-                    long alignedOffset = ff.alignedOffset(sourceOffset);
+                    long alignedOffset = Files.floorPageSize(sourceOffset);
                     alignedExtraLen = sourceOffset - alignedOffset;
                     srcAddress = mapRO(ff, srcFixMem.getFd(), sourceLen + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
                 }
@@ -3158,11 +3158,11 @@ public class TableWriter implements Closeable {
                 Vect.memcpy(appendAddress, sourceAddress, extendedSize);
             } else {
                 // Linux requires the mmap offset to be page aligned
-                long alignedOffset = ff.alignedOffset(srcFixOffset);
-                long alignedExtraSize = srcFixOffset - alignedOffset;
-                long sourceAddress = mapRO(ff, srcDataMem.getFd(), extendedSize + alignedExtraSize, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
-                Vect.memcpy(appendAddress, sourceAddress + alignedExtraSize, extendedSize);
-                ff.munmap(sourceAddress, extendedSize + alignedExtraSize, MemoryTag.MMAP_TABLE_WRITER);
+                long alignedOffset = Files.floorPageSize(srcFixOffset);
+                long alignedExtraLen = srcFixOffset - alignedOffset;
+                long sourceAddress = mapRO(ff, srcDataMem.getFd(), extendedSize + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
+                Vect.memcpy(appendAddress, sourceAddress + alignedExtraLen, extendedSize);
+                ff.munmap(sourceAddress, extendedSize + alignedExtraLen, MemoryTag.MMAP_TABLE_WRITER);
             }
             srcDataMem.jumpTo(srcFixOffset);
         } else {
@@ -3182,7 +3182,7 @@ public class TableWriter implements Closeable {
                 address = srcDataMem.addressOf(srcFixOffset);
             } else {
                 // Linux requires the mmap offset to be page aligned
-                long alignedOffset = ff.alignedOffset(srcFixOffset);
+                long alignedOffset = Files.floorPageSize(srcFixOffset);
                 alignedExtraLen = srcFixOffset - alignedOffset;
                 address = mapRO(ff, srcDataMem.getFd(), srcFixLen + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
             }

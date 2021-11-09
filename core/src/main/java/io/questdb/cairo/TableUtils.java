@@ -476,6 +476,7 @@ public final class TableUtils {
      * Important note. Linux requires the offset to be page aligned.
      */
     public static long mapRO(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
+        assert offset % ff.getPageSize() == 0;
         final long address = ff.mmap(fd, size, offset, Files.MAP_RO, memoryTag);
         if (address == FilesFacade.MAP_FAILED) {
             throw CairoException.instance(ff.errno())
@@ -500,6 +501,7 @@ public final class TableUtils {
      * Important note. Linux requires the offset to be page aligned.
      */
     public static long mapRW(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
+        assert offset % ff.getPageSize() == 0;
         allocateDiskSpace(ff, fd, size + offset);
         long addr = ff.mmap(fd, size, offset, Files.MAP_RW, memoryTag);
         if (addr > -1) {
