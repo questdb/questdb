@@ -26,13 +26,12 @@ package org.questdb;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.str.StrPosCharFunctionFactory;
 import io.questdb.griffin.engine.functions.str.StrPosFunctionFactory;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
-import org.openjdk.jmh.profile.GCProfiler;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -49,14 +48,15 @@ public class StrPosBenchmark {
 
     private final Record[] records;
     private final String[] strings;
-    private final Function strposStrFunc;
-    private final Function strposCharFunc;
+    private final Function strFunc;
+    private final Function strConstFunc;
+    private final Function charFunc;
+    private final Function charConstFunc;
     private final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
                 .include(StrPosBenchmark.class.getSimpleName())
-                .addProfiler(GCProfiler.class)
                 .warmupIterations(2)
                 .measurementIterations(3)
                 .forks(1)
@@ -70,7 +70,7 @@ public class StrPosBenchmark {
         strings = new String[N];
         for (int i = 0; i < N; i++) {
             builder.setLength(0);
-            int startLen = rnd.nextInt(1000);
+            int startLen = rnd.nextInt(32);
             for (int j = 0; j < startLen; j++) {
                 builder.append('a');
             }
@@ -89,7 +89,7 @@ public class StrPosBenchmark {
             };
         }
 
-        Function strFunc = new StrFunction() {
+        final Function strInputFunc = new StrFunction() {
             @Override
             public CharSequence getStr(Record rec) {
                 return rec.getStr(0);
@@ -100,9 +100,28 @@ public class StrPosBenchmark {
                 return rec.getStr(0);
             }
         };
-        Function substrFunc = new CharConstant(',');
-        strposStrFunc = new StrPosFunctionFactory.Func(strFunc, substrFunc);
-        strposCharFunc = new StrPosCharFunctionFactory.Func(strFunc, substrFunc);
+        final Function substrStrInputFunc = new StrFunction() {
+            @Override
+            public CharSequence getStr(Record rec) {
+                return ",";
+            }
+
+            @Override
+            public CharSequence getStrB(Record rec) {
+                return ",";
+            }
+        };
+        final Function substrCharInputFunc = new CharFunction() {
+            @Override
+            public char getChar(Record rec) {
+                return ',';
+            }
+        };
+
+        strFunc = new StrPosFunctionFactory.Func(strInputFunc, substrStrInputFunc);
+        strConstFunc = new StrPosFunctionFactory.ConstFunc(strInputFunc, ",");
+        charFunc = new StrPosCharFunctionFactory.Func(strInputFunc, substrCharInputFunc);
+        charConstFunc = new StrPosCharFunctionFactory.ConstFunc(strInputFunc, ',');
     }
 
     @Benchmark
@@ -113,12 +132,24 @@ public class StrPosBenchmark {
     @Benchmark
     public int testStrOverload() {
         int i = rnd.nextInt(N);
-        return strposStrFunc.getInt(records[i]);
+        return strFunc.getInt(records[i]);
+    }
+
+    @Benchmark
+    public int testStrConstOverload() {
+        int i = rnd.nextInt(N);
+        return strConstFunc.getInt(records[i]);
     }
 
     @Benchmark
     public int testCharOverload() {
         int i = rnd.nextInt(N);
-        return strposCharFunc.getInt(records[i]);
+        return charFunc.getInt(records[i]);
+    }
+
+    @Benchmark
+    public int testCharConstOverload() {
+        int i = rnd.nextInt(N);
+        return charConstFunc.getInt(records[i]);
     }
 }
