@@ -66,19 +66,25 @@ const Layout = () => {
     updateSettings,
   } = useLocalStorage()
 
-  const handleEditorSplitterChange = useCallback((value) => {
-    updateSettings(StoreKey.EDITOR_SPLITTER_BASIS, value)
-    setTimeout(() => {
-      window.bus.trigger(BusEvent.MSG_ACTIVE_PANEL)
-    }, 0)
-  }, [])
+  const handleEditorSplitterChange = useCallback(
+    (value) => {
+      updateSettings(StoreKey.EDITOR_SPLITTER_BASIS, value)
+      setTimeout(() => {
+        window.bus.trigger(BusEvent.MSG_ACTIVE_PANEL)
+      }, 0)
+    },
+    [updateSettings],
+  )
 
-  const handleResultsSplitterChange = useCallback((value) => {
-    updateSettings(StoreKey.RESULTS_SPLITTER_BASIS, value)
-    setTimeout(() => {
-      window.bus.trigger(BusEvent.MSG_ACTIVE_PANEL)
-    }, 0)
-  }, [])
+  const handleResultsSplitterChange = useCallback(
+    (value) => {
+      updateSettings(StoreKey.RESULTS_SPLITTER_BASIS, value)
+      setTimeout(() => {
+        window.bus.trigger(BusEvent.MSG_ACTIVE_PANEL)
+      }, 0)
+    },
+    [updateSettings],
+  )
 
   useEffect(() => {
     window.bus.trigger(BusEvent.REACT_READY)

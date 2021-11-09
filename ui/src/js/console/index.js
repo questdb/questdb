@@ -33,7 +33,6 @@ import { setupConsoleController } from "./console-controller"
 import { setupImportController } from "./import-controller"
 
 import "../../styles/main.scss"
-import "./grid"
 import "./import"
 import "./import-detail"
 import "./quick-vis"

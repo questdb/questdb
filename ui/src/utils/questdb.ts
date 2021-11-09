@@ -23,7 +23,7 @@
  ******************************************************************************/
 import { BusEvent } from "../consts"
 
-type ColumnDefinition = Readonly<{ name: string; type: string }>
+export type ColumnDefinition = Readonly<{ name: string; type: string }>
 
 type Value = string | number | boolean
 type RawData = Record<string, Value>
@@ -41,7 +41,7 @@ export type Timings = {
   fetch: number
 }
 
-type DatasetType = Array<boolean | string | number>
+export type DatasetType = Array<boolean | string | number>
 
 type RawDqlResult = {
   columns: ColumnDefinition[]

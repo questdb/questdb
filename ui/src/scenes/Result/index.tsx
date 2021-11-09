@@ -26,7 +26,7 @@ import React, { useCallback, useEffect, useState } from "react"
 import { useSelector } from "react-redux"
 import styled from "styled-components"
 import { Download2 } from "@styled-icons/remix-line/Download2"
-import { Grid } from "@styled-icons/remix-line/Grid"
+import { Grid as GridIcon } from "@styled-icons/remix-line/Grid"
 import { PieChart } from "@styled-icons/remix-line/PieChart"
 import { Refresh } from "@styled-icons/remix-line/Refresh"
 
@@ -45,6 +45,7 @@ import { BusEvent } from "consts"
 import { selectors } from "store"
 import { color } from "utils"
 import * as QuestDB from "utils/questdb"
+import Grid from "./Grid"
 
 const Menu = styled(PaneMenu)`
   justify-content: space-between;
@@ -131,7 +132,7 @@ const Result = () => {
             onClick={handleGridClick}
             selected={selected === "grid"}
           >
-            <Grid size="18px" />
+            <GridIcon size="18px" />
             <span>Grid</span>
           </ToggleButton>
 
@@ -182,12 +183,17 @@ const Result = () => {
 
       <Content>
         <div id="grid">
-          <div className="qg-header-row" />
-          <div className="qg-viewport">
-            <div className="qg-canvas" />
-          </div>
+          <Grid
+            columns={result?.type === QuestDB.Type.DQL && result?.columns}
+            count={result?.type === QuestDB.Type.DQL && result?.count}
+            initialDataset={
+              result?.type === QuestDB.Type.DQL && result?.dataset
+            }
+            perPage={1000}
+            query={result?.query}
+            type={result?.type}
+          />
         </div>
-
         <div id="quick-vis">
           <div className="quick-vis-controls">
             <form className="v-fit" role="form">
