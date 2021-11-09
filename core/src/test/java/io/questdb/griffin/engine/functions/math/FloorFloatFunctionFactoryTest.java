@@ -32,11 +32,6 @@ import org.junit.Test;
 public class FloorFloatFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void testPositive() throws SqlException {
-        // call(13.1f).andAssert(13.0, 0.0000000001);
-    }
-
-    @Test
     public void testNegative() throws SqlException {
         call(-13.1f).andAssert(-14.0, 0.0000000001);
     }

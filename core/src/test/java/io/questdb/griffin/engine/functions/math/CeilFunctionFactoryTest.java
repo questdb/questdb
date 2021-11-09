@@ -24,24 +24,59 @@
 
 package io.questdb.griffin.engine.functions.math;
 
-import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
-public class FloorDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class CeilFunctionFactoryTest extends AbstractGriffinTest {
+
+
 
     @Test
-    public void testPositive() throws SqlException {
-        call(13.1).andAssert(13.0, 0.0000000001);
+    public void testFloatPositive() throws SqlException {
+        assertQuery(
+                "ceil\n" +
+                        "14.0000\n",
+                "select ceil(13.1f)",
+                null,
+                true,
+                true
+        );
     }
 
     @Test
-    public void testNegative() throws SqlException {
-        call(-13.1).andAssert(-14.0, 0.0000000001);
+    public void testFloatNegative() throws SqlException {
+        assertQuery(
+                "ceil\n" +
+                        "-13.0000\n",
+                "select ceil(-13.1f)",
+                null,
+                true,
+                true
+        );
     }
 
-    @Override
-    protected FunctionFactory getFunctionFactory() { return new FloorDoubleFunctionFactory();
+    @Test
+    public void testDoublePositive() throws SqlException {
+        assertQuery(
+                "ceil\n" +
+                        "14.0\n",
+                "select ceil(13.1)",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDoubleNegative() throws SqlException {
+        assertQuery(
+                "ceil\n" +
+                        "-13.0\n",
+                "select ceil(-13.1)",
+                null,
+                true,
+                true
+        );
     }
 }
