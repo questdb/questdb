@@ -22,22 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.eq;
+package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class NullIfStrFunctionFactory implements FunctionFactory {
+public class NullIfIFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "nullif(SS)";
+        return "nullif(Ii)";
     }
 
     @Override
@@ -48,54 +49,31 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function strFunc1 = args.getQuick(0);
-        Function strFunc2 = args.getQuick(1);
-        return new Func(strFunc1, strFunc2);
+        return new NullIfIFunction(args.getQuick(0), args.getQuick(1).getInt(null));
     }
 
-    private static class Func extends StrFunction implements BinaryFunction {
-        private final Function strFunc1;
-        private final Function strFunc2;
+    private static class NullIfIFunction extends IntFunction implements UnaryFunction {
+        private final Function value;
+        private final int replacement;
 
-        public Func(Function strFunc1, Function strFunc2) {
-            this.strFunc1 = strFunc1;
-            this.strFunc2 = strFunc2;
+        public NullIfIFunction(Function value, int replacement) {
+            super();
+            this.value = value;
+            this.replacement = replacement;
         }
 
         @Override
-        public Function getLeft() {
-            return strFunc1;
+        public Function getArg() {
+            return value;
         }
 
         @Override
-        public Function getRight() {
-            return strFunc2;
-        }
-
-        @Override
-        public CharSequence getStr(Record rec) {
-            CharSequence cs1 = strFunc1.getStr(rec);
-            if (cs1 == null) {
-                return null;
+        public int getInt(Record rec) {
+            final int val = value.getInt(rec);
+            if (val == Numbers.INT_NaN) {
+                return Numbers.INT_NaN;
             }
-            CharSequence cs2 = strFunc2.getStr(rec);
-            if (cs2 == null) {
-                return null;
-            }
-            return cs1.equals(cs2) ? null : cs1;
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
-            CharSequence cs1 = strFunc1.getStrB(rec);
-            if (cs1 == null) {
-                return null;
-            }
-            CharSequence cs2 = strFunc2.getStrB(rec);
-            if (cs2 == null) {
-                return null;
-            }
-            return cs1.equals(cs2) ? null : cs1;
+            return val == replacement ? Numbers.INT_NaN : val;
         }
     }
 }

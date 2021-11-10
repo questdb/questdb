@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.eq;
+package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.griffin.AbstractGriffinTest;
 import org.junit.Test;

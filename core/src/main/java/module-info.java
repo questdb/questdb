@@ -126,9 +126,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqStrGeoHashFunctionFactory,
 
             //nullif
-            io.questdb.griffin.engine.functions.eq.NullIfCharFunctionFactory,
-            io.questdb.griffin.engine.functions.eq.NullIfStrFunctionFactory,
-            io.questdb.griffin.engine.functions.eq.NullIfIFunctionFactory,
+            io.questdb.griffin.engine.functions.conditional.NullIfCharFunctionFactory,
+            io.questdb.griffin.engine.functions.conditional.NullIfIFunctionFactory,
+            io.questdb.griffin.engine.functions.conditional.NullIfStrFunctionFactory,
 
 //                   '<' operator
             io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory,

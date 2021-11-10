@@ -59,9 +59,9 @@ io.questdb.griffin.engine.functions.eq.EqGeoHashStrFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqStrGeoHashFunctionFactory
 
 # nullif
-io.questdb.griffin.engine.functions.eq.NullIfCharFunctionFactory
-io.questdb.griffin.engine.functions.eq.NullIfStrFunctionFactory
-io.questdb.griffin.engine.functions.eq.NullIfIFunctionFactory
+io.questdb.griffin.engine.functions.conditional.NullIfCharFunctionFactory
+io.questdb.griffin.engine.functions.conditional.NullIfStrFunctionFactory
+io.questdb.griffin.engine.functions.conditional.NullIfIFunctionFactory
 
 # '<' operator
 io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory
