@@ -183,6 +183,7 @@ public class TableWriter implements Closeable {
     private int rowActon = ROW_ACTION_OPEN_PARTITION;
     private final AlterStatement alterTableStatement = new AlterStatement();
     private boolean isTicking;
+    private long committedMasterRef;
 
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
@@ -693,7 +694,11 @@ public class TableWriter implements Closeable {
     }
 
     public boolean checkMaxAndCommitLag(int commitMode) {
-        if (!hasO3() || getO3RowCount0() < metadata.getMaxUncommittedRows()) {
+        final long rowsSinceCommit = (masterRef - committedMasterRef) >> 1;
+        if (rowsSinceCommit < metadata.getMaxUncommittedRows()) {
+            if ((rowsSinceCommit & configuration.getWriterTickRowsCountMod()) == 0) {
+                tick();
+            }
             return false;
         }
         commit(commitMode, metadata.getCommitLag());
@@ -1901,6 +1906,7 @@ public class TableWriter implements Closeable {
         if (inTransaction()) {
 
             if (hasO3() && o3Commit(commitLag)) {
+                this.committedMasterRef = masterRef;
                 return;
             }
 
@@ -1910,6 +1916,7 @@ public class TableWriter implements Closeable {
 
             updateIndexes();
             txWriter.commit(commitMode, this.denseSymbolMapWriters);
+            this.committedMasterRef = masterRef;
             o3ProcessPartitionRemoveCandidates();
         }
 

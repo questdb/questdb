@@ -278,6 +278,8 @@ public interface CairoConfiguration {
 
     int getWriterCommandQueueCapacity();
 
+    int getWriterTickRowsCountMod();
+
     boolean isO3QuickSortEnabled();
 
     boolean isParallelIndexingEnabled();

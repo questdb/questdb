@@ -357,6 +357,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerDataIndexKeyAppendPageSize;
     private final long writerDataIndexValueAppendPageSize;
     private long symbolCacheWaitUsBeforeReload;
+    private final int writerTockRowsCountMod;
 
     public PropServerConfiguration(
             String root,
@@ -770,6 +771,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.metricsEnabled = getBoolean(properties, env, "metrics.enabled", false);
             this.writerAsyncCommandBusyWaitTimeout = getLong(properties, env, "cairo.writer.alter.busy.wait.timeout.micro", 500_000);
+            this.writerTockRowsCountMod = Numbers.ceilPow2(getInt(properties, env, "cairo.writer.tick.rows.count", 1024)) - 1;
             this.writerAsyncCommandQueueCapcity = Numbers.ceilPow2(getInt(properties, env, "cairo.writer.command.queue.capacity", 32));
 
             this.buildInformation = buildInformation;
@@ -1834,6 +1836,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWriterCommandQueueCapacity() {
             return writerAsyncCommandQueueCapcity;
+        }
+
+        @Override
+        public int getWriterTickRowsCountMod() {
+            return writerTockRowsCountMod;
         }
 
         @Override

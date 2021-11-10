@@ -344,13 +344,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CompiledQuery cc,
             CharSequence keepAliveHeader
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, SqlException {
-        QueryFuture execution = cc.execute(state.getConsumeSequence());
-        try {
+        try (QueryFuture execution = cc.execute(state.getConsumeSequence())) {
             execution.await();
-            sendConfirmation(state, cc, keepAliveHeader);
-        } finally {
-            Misc.free(execution);
         }
+        sendConfirmation(state, cc, keepAliveHeader);
     }
 
     private void executeInsert(
@@ -358,13 +355,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CompiledQuery cc,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        QueryFuture future = cc.execute(state.getConsumeSequence());
-        try {
-            future.await();
-            sendConfirmation(state, cc, keepAliveHeader);
-        } finally {
-            Misc.free(future);
+        try (QueryFuture execution = cc.execute(state.getConsumeSequence())) {
+            execution.await();
         }
+        sendConfirmation(state, cc, keepAliveHeader);
     }
 
     private void executeNewSelect(

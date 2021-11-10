@@ -416,6 +416,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getWriterTickRowsCountMod() {
+        return 1024 - 1;
+    }
+
+    @Override
     public boolean isParallelIndexingEnabled() {
         return true;
     }

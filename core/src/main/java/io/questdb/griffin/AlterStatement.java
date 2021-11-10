@@ -146,18 +146,26 @@ public class AlterStatement implements Mutable {
 
         tableName = event.getTableName();
         long readPtr = event.getData();
+        final long hi = readPtr + event.getDataSize();
+
+        // This is not hot path, do safe deserialization
+        if (readPtr + 10 >= hi) {
+            throw CairoException.instance(0).put("invalid alter statement serialized to writer queue [1]");
+        }
         command = Unsafe.getUnsafe().getShort(readPtr);
         readPtr += 2;
         tableNamePosition = Unsafe.getUnsafe().getInt(readPtr);
         readPtr += 4;
         int longSize = Unsafe.getUnsafe().getInt(readPtr);
         readPtr += 4;
+        if (longSize < 0 || readPtr + longSize * 8L >= hi) {
+            throw CairoException.instance(0).put("invalid alter statement serialized to writer queue [2]");
+        }
         for (int i = 0; i < longSize; i++) {
             longList.add(Unsafe.getUnsafe().getLong(readPtr));
             readPtr += 8;
         }
-
-        directCharList.of(readPtr);
+        directCharList.of(readPtr, hi);
         charSequenceList = directCharList;
     }
 
@@ -474,17 +482,26 @@ public class AlterStatement implements Mutable {
             return offsets.size() / 2;
         }
 
-        public long of(long address) {
-            long initialAddress = address;
-            int size = Unsafe.getUnsafe().getInt(address);
-            address += 4;
-            for (int i = 0; i < size; i++) {
-                int stringSize = 2 * Unsafe.getUnsafe().getInt(address);
-                address += 4;
-                offsets.add(address, address + stringSize);
-                address += stringSize;
+        public long of(long lo, long hi) {
+            long initialAddress = lo;
+            if (lo + Integer.BYTES >= hi) {
+                throw CairoException.instance(0).put("invalid alter statement serialized to writer queue [11]");
             }
-            return address - initialAddress;
+            int size = Unsafe.getUnsafe().getInt(lo);
+            lo += 4;
+            for (int i = 0; i < size; i++) {
+                if (lo + Integer.BYTES >= hi) {
+                    throw CairoException.instance(0).put("invalid alter statement serialized to writer queue [12]");
+                }
+                int stringSize = 2 * Unsafe.getUnsafe().getInt(lo);
+                lo += 4;
+                if (lo + stringSize >= hi) {
+                    throw CairoException.instance(0).put("invalid alter statement serialized to writer queue [13]");
+                }
+                offsets.add(lo, lo + stringSize);
+                lo += stringSize;
+            }
+            return lo - initialAddress;
         }
     }
 }
