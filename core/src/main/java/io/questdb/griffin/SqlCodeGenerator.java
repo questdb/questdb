@@ -956,12 +956,14 @@ public class SqlCodeGenerator implements Mutable {
         // 'latest by' clause takes over the filter
         model.setWhereClause(null);
 
-        assert listColumnFilterA.size() > 0;
-        final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
+        assert model.getLatestBy() != null && model.getLatestBy().size() > 0;
+        ObjList<ExpressionNode> latestBy = model.getLatestBy();
+        final ExpressionNode latestByNode = latestBy.get(0);
+        final int latestByIndex = metadata.getColumnIndexQuiet(latestByNode.token);
         final boolean indexed = metadata.isColumnIndexed(latestByIndex);
 
         // if there are > 1 columns in latest by statement we cannot use indexes
-        if (listColumnFilterA.size() > 1 || !ColumnType.isSymbol(metadata.getColumnType(latestByIndex))) {
+        if (latestBy.size() > 1 || !ColumnType.isSymbol(metadata.getColumnType(latestByIndex))) {
             return new LatestByAllFilteredRecordCursorFactory(
                     metadata,
                     configuration,
@@ -1011,11 +1013,28 @@ public class SqlCodeGenerator implements Mutable {
 
                     if (filter == null) {
                         if (symbol == SymbolTable.VALUE_NOT_FOUND) {
-                            rcf = new LatestByValueDeferredIndexedRowCursorFactory(columnIndexes.getQuick(latestByIndex), Chars.toString(symbolValue), false);
+                            rcf = new LatestByValueDeferredIndexedRowCursorFactory(
+                                    columnIndexes.getQuick(latestByIndex),
+                                    Chars.toString(symbolValue),
+                                    false
+                            );
                         } else {
-                            rcf = new LatestByValueIndexedRowCursorFactory(columnIndexes.getQuick(latestByIndex), symbol, false);
+                            rcf = new LatestByValueIndexedRowCursorFactory(
+                                    columnIndexes.getQuick(latestByIndex),
+                                    symbol,
+                                    false
+                            );
                         }
-                        return new DataFrameRecordCursorFactory(metadata, dataFrameCursorFactory, rcf, false, null, false, columnIndexes, null);
+                        return new DataFrameRecordCursorFactory(
+                                metadata,
+                                dataFrameCursorFactory,
+                                rcf,
+                                false,
+                                null,
+                                false,
+                                columnIndexes,
+                                null
+                        );
                     }
 
                     if (symbol == SymbolTable.VALUE_NOT_FOUND) {

@@ -6597,6 +6597,103 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByTsIsPickedAtRuntimeNoDesignated() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab(" +
+                    "    id symbol, " +
+                    "    name symbol, " +
+                    "    value double, " +
+                    "    other_ts timestamp, " +
+                    "    ts timestamp" +
+                    ")", sqlExecutionContext);
+            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-15T11:31:35.878Z', '2021-10-05T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-15T12:31:35.878Z', '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-15T13:31:35.878Z', '2021-10-05T17:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.4, '2021-10-15T14:31:35.878Z', '2021-10-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.1, '2021-10-15T15:31:35.878Z', '2021-10-04T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.2, '2021-10-15T16:31:35.878Z', '2021-10-03T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.3, '2021-10-15T17:31:35.878Z', '2021-10-02T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.4, '2021-10-15T11:31:35.878Z', '2021-09-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.5, '2021-10-15T12:31:35.878Z', '2021-01-05T15:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.1, '2021-10-15T13:31:35.878Z', '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.2, '2021-10-15T14:31:35.878Z', '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.3, '2021-10-15T15:31:35.878Z', '2021-10-25T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.4, '2021-10-15T16:31:35.878Z', '2021-10-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c2', 401.1, '2021-10-16T17:31:35.878Z', '2021-10-26T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-16T11:31:35.878Z', '2021-10-06T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-16T17:31:35.878Z', '2021-10-26T15:31:35.878Z')");
+            assertSql(
+                    "(tab latest by id where name in ('c2')) timestamp(other_ts)",
+                    "id\tname\tvalue\tother_ts\tts\n" +
+                            "d1\tc2\t102.5\t2021-10-15T12:31:35.878000Z\t2021-01-05T15:31:35.878000Z\n" +
+                            "d2\tc2\t401.1\t2021-10-16T17:31:35.878000Z\t2021-10-26T11:31:35.878000Z\n");
+        });
+    }
+
+    @Ignore()
+    // TODO: if the table has a designated timestamp, it becomes sticky
+    //  on latest by, and we cannot change it explicitly.
+    //  The query: (tab latest by id where name in ('c2')) timestamp(ts)
+    //   - only interested in rows with name == 'c2'
+    //   - for these, we want the latest row based on the ts column,
+    //     using id as unique key for the whole row
+    @Test
+    public void testLatestByTsIsPickedAtRuntimeOtherThanDesignated() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab(" +
+                    "    id symbol, " +
+                    "    name symbol, " +
+                    "    value double, " +
+                    "    other_ts timestamp, " +
+                    "    ts timestamp" +
+                    ") timestamp(other_ts) partition by day", sqlExecutionContext);
+            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-15T11:31:35.878Z', '2021-10-05T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-15T12:31:35.878Z', '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-15T13:31:35.878Z', '2021-10-05T17:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.4, '2021-10-15T14:31:35.878Z', '2021-10-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.1, '2021-10-15T15:31:35.878Z', '2021-10-04T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.2, '2021-10-15T16:31:35.878Z', '2021-10-03T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.3, '2021-10-15T17:31:35.878Z', '2021-10-02T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.4, '2021-10-15T11:31:35.878Z', '2021-09-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.5, '2021-10-15T12:31:35.878Z', '2021-01-05T15:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.1, '2021-10-15T13:31:35.878Z', '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.2, '2021-10-15T14:31:35.878Z', '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.3, '2021-10-15T15:31:35.878Z', '2021-10-25T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.4, '2021-10-15T16:31:35.878Z', '2021-10-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c2', 401.1, '2021-10-16T17:31:35.878Z', '2021-10-26T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-16T11:31:35.878Z', '2021-10-06T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-16T17:31:35.878Z', '2021-10-26T15:31:35.878Z')");
+            assertSql(
+                    "(tab latest by id where name in ('c2')) timestamp(ts)",
+                    "id\tname\tvalue\tother_ts\tts\n" +
+                            "d1\tc2\t102.10000000000001\t2021-10-15T17:31:35.878000Z\t2021-10-04T11:31:35.878000Z\n" +
+                            "d2\tc2\t401.1\t2021-10-16T17:31:35.878000Z\t2021-10-26T11:31:35.878000Z\n");
+        });
+    }
+
+    @Ignore
+    // TODO: fix, where is applied after latest by, the optimized I suspect
+    @Test
+    public void testLatestByIsApplicableToSubQueriesNoDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab(" +
+                    "    id symbol, " +
+                    "    name symbol, " +
+                    "    value double, " +
+                    "    other_ts timestamp, " +
+                    "    ts timestamp" +
+                    ")", sqlExecutionContext);
+            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-15T11:31:35.878Z', '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-16T17:31:35.878Z', '2021-10-06T15:31:35.878Z')");
+            assertSql(
+                    "(tab latest by id where name in (select distinct name from tab where name != 'c2')) timestamp(other_ts)",
+                    "id\tname\tvalue\tother_ts\tts\n" +
+                            "d1\tc1\t101.4\t2021-10-15 14:31:35.878\t2021-10-05 14:31:35.878\n" +
+                            "d2\tc1\t111.7\t2021-10-16 17:31:35.878\t2021-10-06 15:31:35.878\n");
+        });
+    }
+
+    @Test
     public void testLatestByMultiColumnPlusFilter0() throws Exception {
         testLatestByMultiColumnPlusFilter("create table tab(" +
                 "    id symbol, " +
@@ -6701,7 +6798,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             executeInsert("insert into tab values ('d2', 'c2', 401.1, '2021-10-06T11:31:35.878Z')");
             executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-06T12:31:35.878Z')");
             executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-06T15:31:35.878Z')");
-
             assertSql(
                     "tab latest by id, name where id = 'd1'",
                     "id\tname\tvalue\tts\n" +
@@ -6842,7 +6938,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 false,
                 null);
     }
-
 
     private void executeInsertStatement(double d) throws SqlException {
         String ddl = "insert into x (ds) values (" + d + ")";
