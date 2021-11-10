@@ -37,7 +37,7 @@ public class O3OpenColumnTask {
     private int openColumnMode;
     private CharSequence columnName;
     private int columnType;
-    private boolean isIndexed;
+    private int indexBlockCapacity;
     private long srcTimestampFd;
     private long srcTimestampAddr;
     private long srcTimestampSize;
@@ -222,8 +222,8 @@ public class O3OpenColumnTask {
         return txn;
     }
 
-    public boolean isIndexed() {
-        return isIndexed;
+    public int getIndexBlockCapacity() {
+        return indexBlockCapacity;
     }
 
     public void of(
@@ -261,7 +261,7 @@ public class O3OpenColumnTask {
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
-            boolean isIndexed,
+            int indexBlockCapacity,
             long activeFixFd,
             long activeVarFd,
             TableWriter tableWriter,
@@ -301,7 +301,7 @@ public class O3OpenColumnTask {
         this.srcTimestampFd = srcTimestampFd;
         this.srcTimestampAddr = srcTimestampAddr;
         this.srcTimestampSize = srcTimestampSize;
-        this.isIndexed = isIndexed;
+        this.indexBlockCapacity = indexBlockCapacity;
         this.activeFixFd = activeFixFd;
         this.activeVarFd = activeVarFd;
         this.tableWriter = tableWriter;

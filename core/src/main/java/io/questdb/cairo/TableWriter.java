@@ -2661,8 +2661,8 @@ public class TableWriter implements Closeable {
                                 final boolean notTheTimestamp = i != timestampIndex;
                                 final int columnType = metadata.getColumnType(i);
                                 final CharSequence columnName = metadata.getColumnName(i);
-                                final boolean isIndexed = metadata.isColumnIndexed(i);
-                                final BitmapIndexWriter indexWriter = isIndexed ? getBitmapIndexWriter(i) : null;
+                                final int indexBlockCapacity = metadata.isColumnIndexed(i) ? metadata.getIndexValueBlockCapacity(i) : -1;
+                                final BitmapIndexWriter indexWriter = indexBlockCapacity > -1 ? getBitmapIndexWriter(i) : null;
                                 final MemoryARW oooMem1 = o3Columns.getQuick(colOffset);
                                 final MemoryARW oooMem2 = o3Columns.getQuick(colOffset + 1);
                                 final MemoryMAR mem1 = columns.getQuick(colOffset);
@@ -2702,7 +2702,7 @@ public class TableWriter implements Closeable {
                                             partitionTimestamp,
                                             srcDataTop,
                                             srcDataMax,
-                                            isIndexed,
+                                            indexBlockCapacity,
                                             dstFixMem,
                                             dstVarMem,
                                             this,
