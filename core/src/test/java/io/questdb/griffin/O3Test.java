@@ -1151,7 +1151,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_char() t," +
                         " rnd_long256() l256" +
                         " from long_sequence(510)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
+                        "), index(sym capacity 512) timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
 
@@ -1315,7 +1315,7 @@ public class O3Test extends AbstractO3Test {
                         " rnd_char() t," +
                         " rnd_long256() l256" +
                         " from long_sequence(500)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
+                        "), index(sym capacity 1024) timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
 

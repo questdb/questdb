@@ -178,11 +178,13 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         long pageSize = ff.getMapPageSize();
         boolean kFdUnassigned = true;
         boolean vFdUnassigned = true;
+        final long keyAppendPageSize = configuration.getDataIndexKeyAppendPageSize();
+        final long valueAppendPageSize = configuration.getDataIndexValueAppendPageSize();
         try {
             if (init) {
                 if (ff.truncate(keyFd, 0)) {
                     kFdUnassigned = false;
-                    this.keyMem.of(ff, keyFd, null, pageSize, MemoryTag.MMAP_INDEX_WRITER);
+                    this.keyMem.of(ff, keyFd, null, keyAppendPageSize, pageSize, MemoryTag.MMAP_INDEX_WRITER);
                     initKeyMemory(this.keyMem, indexBlockCapacity);
                 } else {
                     throw CairoException.instance(ff.errno()).put("Could not truncate [fd=").put(keyFd).put(']');
@@ -222,14 +224,14 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             if (init) {
                 if (ff.truncate(valueFd, 0)) {
                     vFdUnassigned = false;
-                    this.valueMem.of(ff, valueFd, null, pageSize, MemoryTag.MMAP_INDEX_WRITER);
+                    this.valueMem.of(ff, valueFd, null, valueAppendPageSize, pageSize, MemoryTag.MMAP_INDEX_WRITER);
                     this.valueMem.jumpTo(0);
                 } else {
                     throw CairoException.instance(ff.errno()).put("Could not truncate [fd=").put(valueFd).put(']');
                 }
             } else {
                 vFdUnassigned = false;
-                this.valueMem.of(ff, valueFd, null, this.valueMemSize, MemoryTag.MMAP_INDEX_WRITER);
+                this.valueMem.of(ff, valueFd, null, valueAppendPageSize, this.valueMemSize, MemoryTag.MMAP_INDEX_WRITER);
             }
 
             // block value count is always a power of two
