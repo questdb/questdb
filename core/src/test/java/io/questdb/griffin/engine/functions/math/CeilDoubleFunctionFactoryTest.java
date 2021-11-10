@@ -22,14 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm.api;
+package io.questdb.griffin.engine.functions.math;
 
-import io.questdb.std.FilesFacade;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-public interface MemoryMARW extends MemoryMW, MemoryARW, MemoryMA, MemoryMR {
+public class CeilDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
-    void of(FilesFacade ff, long fd, @Nullable CharSequence name, long size, int memoryTag);
+    @Test
+    public void testPositive() throws SqlException {
+        call(13.1).andAssert(14.0, 0.0000000001);
+    }
 
-    void of(FilesFacade ff, long fd, @Nullable CharSequence name, long extendSegmentSize, long size, int memoryTag);
+    @Test
+    public void testNegative() throws SqlException {
+        call(-13.1).andAssert(-13.0, 0.0000000001);
+    }
+
+    @Test
+    public void testNaN() throws SqlException {
+        call(Double.NaN).andAssert(Double.NaN, 0);
+    }
+    
+    @Override
+    protected FunctionFactory getFunctionFactory() { return new CeilDoubleFunctionFactory();
+    }
 }

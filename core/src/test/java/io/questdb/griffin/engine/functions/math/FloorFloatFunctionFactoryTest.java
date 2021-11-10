@@ -22,14 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm.api;
+package io.questdb.griffin.engine.functions.math;
 
-import io.questdb.std.FilesFacade;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-public interface MemoryMARW extends MemoryMW, MemoryARW, MemoryMA, MemoryMR {
+public class FloorFloatFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
-    void of(FilesFacade ff, long fd, @Nullable CharSequence name, long size, int memoryTag);
+    @Test
+    public void testNegative() throws SqlException {
+        call(-13.1f).andAssert(-14.0, 0.0000000001);
+    }
 
-    void of(FilesFacade ff, long fd, @Nullable CharSequence name, long extendSegmentSize, long size, int memoryTag);
+    @Override
+    protected FunctionFactory getFunctionFactory() { return new FloorFloatFunctionFactory();
+    }
 }

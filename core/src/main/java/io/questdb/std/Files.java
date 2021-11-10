@@ -333,6 +333,10 @@ public final class Files {
         return ((size + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
     }
 
+    public static long floorPageSize(long size) {
+        return size - size % PAGE_SIZE;
+    }
+
     static {
         Os.init();
         UTF_8 = StandardCharsets.UTF_8;

@@ -81,19 +81,23 @@ public class AbstractO3Test {
     protected static void assertIndexConsistency(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
-            String table
+            String table,
+            CairoEngine engine
     ) throws SqlException {
         TestUtils.assertSqlCursors(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts", "x where sym = 'googl'", LOG);
+        TestUtils.assertIndexBlockCapacity(sqlExecutionContext, engine, "x", "sym");
     }
 
     protected static void assertIndexConsistency(
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            CairoEngine engine
     ) throws SqlException {
         assertIndexConsistency(
                 compiler,
                 sqlExecutionContext,
-                "y"
+                "y",
+                engine
         );
     }
 

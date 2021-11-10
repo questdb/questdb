@@ -1001,6 +1001,23 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
+    public void testPartitionedWithAllocationCallLimit() throws Exception {
+        counter.set(0);
+        executeWithPool(0, O3FailureTest::testPartitionedWithAllocationCallLimit0, new FilesFacadeImpl() {
+            @Override
+            public boolean allocate(long fd, long size) {
+                // This tests that BitmapIndexWriter allocates value file in configured incremental pages
+                // instead of allocating block by block.
+                // If allocation block by block happens, number of calls is very big here and failure is simulated.
+                if (counter.incrementAndGet() > 200) {
+                    return false;
+                }
+                return super.allocate(fd, size);
+            }
+        });
+    }
+
+    @Test
     public void testPartitionedOpenTimestampFail() throws Exception {
         counter.set(3);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
@@ -1757,7 +1774,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "create table y as (select * from top where ts >= 0 union all select * from x)",
                 "insert into x select * from top where ts >= 0"
         );
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
     }
 
@@ -1808,7 +1825,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "create table y as (select * from top where ts >= 0 union all select * from x)",
                 "insert into x select * from top where ts >= 0"
         );
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
     }
 
@@ -1887,7 +1904,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x select * from top"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
     }
 
@@ -1964,7 +1981,47 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x select * from append"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
+        assertXCountY(compiler, sqlExecutionContext);
+    }
+
+    private static void testPartitionedWithAllocationCallLimit0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " timestamp_sequence(500000000000L,1000000L) ts" +
+                        " from long_sequence(100000L)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " timestamp_sequence(518300000010L,100000L) ts" +
+                        " from long_sequence(100)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile("insert into x select * from append", sqlExecutionContext);
+        assertO3DataConsistency(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (x union all append)",
+                "insert into x select * from append"
+        );
+
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
     }
 
@@ -2610,7 +2667,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x select * from append"
         );
 
-        assertIndexConsistency(compiler, executionContext);
+        assertIndexConsistency(compiler, executionContext, engine);
         assertXCountY(compiler, executionContext);
     }
 
@@ -2717,7 +2774,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x select * from append"
         );
 
-        assertIndexConsistency(compiler, executionContext);
+        assertIndexConsistency(compiler, executionContext, engine);
         assertXCountY(compiler, executionContext);
     }
 
@@ -2824,7 +2881,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x select * from append"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
     }
 
@@ -2965,7 +3022,7 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
     }
 
     private static void testPartitionedDataAppendOOPrependOODataFailRetryNoReopen(
@@ -3078,8 +3135,8 @@ public class O3FailureTest extends AbstractO3Test {
 
         assertIndexConsistency(
                 compiler,
-                sqlExecutionContext
-        );
+                sqlExecutionContext,
+                engine);
 
         assertXCountY(compiler, sqlExecutionContext);
     }
@@ -3191,8 +3248,8 @@ public class O3FailureTest extends AbstractO3Test {
 
         assertIndexConsistency(
                 compiler,
-                sqlExecutionContext
-        );
+                sqlExecutionContext,
+                engine);
 
         assertXCountY(compiler, sqlExecutionContext);
     }

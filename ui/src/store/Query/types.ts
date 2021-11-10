@@ -40,10 +40,15 @@ export type NotificationShape = Readonly<{
   type: NotificationType
 }>
 
+export type RunningShape = Readonly<{
+  value: boolean
+  isRefresh: boolean
+}>
+
 export type QueryStateShape = Readonly<{
   notifications: NotificationShape[]
   result?: QueryRawResult
-  running: boolean
+  running: RunningShape
   maxNotifications: number
 }>
 
@@ -81,6 +86,9 @@ type StopRunningAction = Readonly<{
 
 type ToggleRunningAction = Readonly<{
   type: QueryAT.TOGGLE_RUNNING
+  payload: Readonly<{
+    isRefresh: boolean
+  }>
 }>
 
 export type QueryAction =

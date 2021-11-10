@@ -72,7 +72,7 @@ public class O3CopyTask extends AbstractLockable {
     private long dstVFd;
     private long dstIndexOffset;
     private long dstIndexAdjust;
-    private boolean isIndexed;
+    private int indexBlockCapacity;
     private long srcTimestampFd;
     private long srcTimestampAddr;
     private long srcTimestampSize;
@@ -264,8 +264,8 @@ public class O3CopyTask extends AbstractLockable {
         return timestampMin;
     }
 
-    public boolean isIndexed() {
-        return isIndexed;
+    public int getIndexBlockCapacity() {
+        return indexBlockCapacity;
     }
 
     public boolean isPartitionMutates() {
@@ -314,7 +314,7 @@ public class O3CopyTask extends AbstractLockable {
             long dstVFd,
             long dstIndexOffset,
             long dstIndexAdjust,
-            boolean isIndexed,
+            int indexBlockCapacity,
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
@@ -363,7 +363,7 @@ public class O3CopyTask extends AbstractLockable {
         this.dstVFd = dstVFd;
         this.dstIndexOffset = dstIndexOffset;
         this.dstIndexAdjust = dstIndexAdjust;
-        this.isIndexed = isIndexed;
+        this.indexBlockCapacity = indexBlockCapacity;
         this.srcTimestampFd = srcTimestampFd;
         this.srcTimestampAddr = srcTimestampAddr;
         this.srcTimestampSize = srcTimestampSize;
