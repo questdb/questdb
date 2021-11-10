@@ -28,15 +28,29 @@ import java.io.Closeable;
 
 public interface QueryFuture extends Closeable {
     /***
-     * Blocking busy wait for query completion. Returns immediately if query has executed synchronously
+     * Blocking wait for query completion. Returns immediately if query has executed synchronously
+     * Waits in busy waiting for cairo.writer.alter.busy.wait.timeout.micro microseconds and throws timeout
      * @throws SqlException when query execution times out or fails
      */
     void await() throws SqlException;
 
+    /***
+     * Waits for completion within specified timeout. Can be called multiple times on the same QueryFuture instance.
+     * @param timeout - microseconds timeout
+     * @return true if complete, false otherwise
+     * @throws SqlException when query execution fails
+     */
     boolean await(long timeout) throws SqlException;
 
+    /***
+     * True if operation completed, false otherwise
+     * @return true when done, false if needs awaiting
+     */
     boolean isDone();
 
+    /***
+     * In case of async execution close must be called to remove sequence
+     */
     @Override
     void close();
 

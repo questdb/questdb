@@ -210,9 +210,9 @@ public class CompiledQueryImpl implements CompiledQuery {
         @Override
         public void await() throws SqlException {
             if (!await(engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout())) {
-
                 throw SqlException.$(alterStatement.getTableNamePosition(), "Timeout expired on waiting for the ALTER TABLE execution result");
             }
+            done = true;
         }
 
         @Override
@@ -220,7 +220,7 @@ public class CompiledQueryImpl implements CompiledQuery {
             if (done) {
                 return true;
             }
-            return waitWriterEvent(timeout, alterStatement.getTableNamePosition());
+            return done = waitWriterEvent(timeout, alterStatement.getTableNamePosition());
         }
 
         @Override
