@@ -70,9 +70,6 @@ public class NullIfIFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final int val = value.getInt(rec);
-            if (val == Numbers.INT_NaN) {
-                return Numbers.INT_NaN;
-            }
             return val == replacement ? Numbers.INT_NaN : val;
         }
     }
