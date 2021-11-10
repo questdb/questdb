@@ -1093,7 +1093,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     configureContextForSet();
                     break;
                 case CompiledQuery.ALTER:
-                    cc.executeAsyncWait(tempSequence);
+                   try(QueryFuture cf = cc.execute(tempSequence)) {
+                       cf.await();
+                   }
                 default:
                     // DDL SQL
                     queryTag = TAG_OK;

@@ -68,7 +68,7 @@ public class SqlCompiler implements Closeable {
     protected final CairoEngine engine;
     protected final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
     protected final CompiledQueryImpl compiledQuery;
-    protected final AlterStatementImpl alterQuery = new AlterStatementImpl();
+    protected final AlterStatement alterQuery = new AlterStatement();
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -1074,7 +1074,7 @@ public class SqlCompiler implements Closeable {
             lexer.unparse();
         }
 
-        AlterStatementAddColumnStatement addColumnStatement = alterQuery.ofAddColumn(
+        AlterStatement.AlterStatementAddColumn addColumn = alterQuery.ofAddColumn(
                 tableNamePosition,
                 tableName,
                 tableMetadata.getId());
@@ -1217,13 +1217,13 @@ public class SqlCompiler implements Closeable {
                 indexed = false;
             }
 
-            addColumnStatement = addColumnStatement.ofAddColumn(
-                columnName,
-                type,
-                Numbers.ceilPow2(symbolCapacity),
-                cache,
-                indexed,
-                Numbers.ceilPow2(indexValueBlockCapacity)
+            addColumn.ofAddColumn(
+                    columnName,
+                    type,
+                    Numbers.ceilPow2(symbolCapacity),
+                    cache,
+                    indexed,
+                    Numbers.ceilPow2(indexValueBlockCapacity)
             );
 
             if (tok == null) {
@@ -1275,7 +1275,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery alterTableDropColumn(int tableNamePosition, String tableName, TableReaderMetadata metadata) throws SqlException {
-        AlterStatementDropColumnStatement dropColumnStatement = alterQuery.ofDropColumn(tableNamePosition, tableName, metadata.getId());
+        AlterStatement.AlterStatementDropColumn dropColumnStatement = alterQuery.ofDropColumn(tableNamePosition, tableName, metadata.getId());
         int semicolonPos = -1;
         do {
             CharSequence tok = GenericLexer.unquote(maybeExpectToken(lexer, "column name", semicolonPos < 0));
@@ -1291,7 +1291,7 @@ public class SqlCompiler implements Closeable {
             }
 
             CharSequence columnName = tok;
-            dropColumnStatement = dropColumnStatement.ofDropColumn(columnName);
+            dropColumnStatement.ofDropColumn(columnName);
             tok = SqlUtil.fetchNext(lexer);
 
             if (tok == null) {
@@ -1322,7 +1322,7 @@ public class SqlCompiler implements Closeable {
             if (action != PartitionAction.DROP) {
                 throw SqlException.$(pos, "WHERE clause can only be used with DROP PARTITION command");
             }
-            AlterStatementChangePartitionStatement alterPartitionStatement = alterQuery.ofDropPartition(pos, tableName, reader.getMetadata().getId());
+            AlterStatement.AlterStatementChangePartition alterPartitionStatement = alterQuery.ofDropPartition(pos, tableName, reader.getMetadata().getId());
             ExpressionNode expr = parser.expr(lexer, (QueryModel) null);
             String designatedTimestampColumnName = null;
             int tsIndex = readerMetadata.getTimestampIndex();
@@ -1351,7 +1351,7 @@ public class SqlCompiler implements Closeable {
     public void filterPartitions(
             Function function,
             TableReader reader,
-            AlterStatementChangePartitionStatement changePartitionStatement
+            AlterStatement.AlterStatementChangePartition changePartitionStatement
     ) throws SqlException {
         // Iterate partitions in descending order so if folders are missing on disk
         // removePartition does not fail to determine next minTimestamp
@@ -1368,7 +1368,7 @@ public class SqlCompiler implements Closeable {
 
     private CompiledQuery alterTableDropOrAttachPartitionByList(TableReader reader, int pos, int action) throws SqlException {
         String tableName = reader.getTableName();
-        AlterStatementChangePartitionStatement partitions;
+        AlterStatement.AlterStatementChangePartition partitions;
         if (action == PartitionAction.DROP) {
             partitions = alterQuery.ofDropPartition(pos, tableName, reader.getMetadata().getId());
         } else {
@@ -1437,7 +1437,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery alterTableRenameColumn(int tableNamePosition, String tableName, TableReaderMetadata metadata) throws SqlException {
-        AlterStatementRenameColumnStatement renameColumnStatement = alterQuery.ofRenameColumn(tableNamePosition, tableName, metadata.getId());
+        AlterStatement.AlterStatementRenameColumn renameColumnStatement = alterQuery.ofRenameColumn(tableNamePosition, tableName, metadata.getId());
         int hadSemicolonPos = -1;
 
         do {
@@ -1473,7 +1473,7 @@ public class SqlCompiler implements Closeable {
             }
 
             CharSequence newName = GenericLexer.immutableOf(tok);
-            renameColumnStatement = renameColumnStatement.ofRenameColumn(existingName, newName);
+            renameColumnStatement.ofRenameColumn(existingName, newName);
 
             tok = SqlUtil.fetchNext(lexer);
 

@@ -345,7 +345,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         try (SqlCompiler compiler = new SqlCompiler(engine)) {
                             CompiledQuery compile = compiler.compile("alter table x add column meh symbol cache", sqlExecutionContext);
                             Assert.assertEquals(ALTER, compile.getType());
-                            compile.executeSync();
+                            compile.execute(null).await();
 
                             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                                 SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -505,7 +505,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         try (SqlCompiler compiler = new SqlCompiler(engine)) {
                             CompiledQuery cc = compiler.compile("alter table x add column meh symbol", sqlExecutionContext);
                             Assert.assertEquals(ALTER, cc.getType());
-                            cc.executeSync();
+                            cc.execute(null).await();
 
                             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                                 SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -545,7 +545,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         try (SqlCompiler compiler = new SqlCompiler(engine)) {
                             CompiledQuery cc = compiler.compile("alter table x add column meh symbol", sqlExecutionContext);
                             Assert.assertEquals(ALTER, cc.getType());
-                            cc.executeSync();
+                            cc.execute(null).await();
 
                             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                                 SymbolMapReader smr = reader.getSymbolMapReader(16);

@@ -24,10 +24,11 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.AlterStatementImpl;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
+import io.questdb.mp.FanOut;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
@@ -36,8 +37,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-
-import static io.questdb.griffin.AlterCommandExecution.*;
 
 public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
 
@@ -54,68 +53,101 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             SCSequence staleSequence = new SCSequence();
             setUpEngineAsyncWriterEventWait(engine, staleSequence);
 
+            SCSequence tempSequence = new SCSequence();
             try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
                 for (int i = 0; i < engineEventQueue; i++) {
                     CompiledQuery cc = compiler.compile("ALTER TABLE product add column column" + i + " int", sqlExecutionContext);
-                    executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext);
+                    executeNoWait(tempSequence, cc);
                     engine.tick();
                     writer.tick();
                 }
 
                 // Add column when event queue is stalled
                 CompiledQuery cc = compiler.compile("ALTER TABLE product add column column5 int", sqlExecutionContext);
-                setUpEngineAsyncWriterEventWait(engine, commandReplySequence);
-                long commandId = executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext);
-                engine.tick();
-                writer.tick();
-                SqlException exception = waitWriterEvent(engine, commandId, commandReplySequence, 500_000, 0);
-                TestUtils.assertContains(exception.getFlyweightMessage(), "Timeout expired");
+                try (QueryFuture qf = cc.execute(tempSequence)) {
+                    qf.await(0);
+                    engine.tick();
+                    writer.tick();
+                    Assert.assertFalse(qf.await(500_000));
+                }
 
                 // Remove sequence
                 stopEngineAsyncWriterEventWait(engine, staleSequence);
 
                 // Re-execute last query
-                try {
-                    setUpEngineAsyncWriterEventWait(engine, commandReplySequence);
-                    commandId = executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext);
+                try (QueryFuture qf = cc.execute(tempSequence)) {
+                    qf.await(0);
                     engine.tick();
                     writer.tick();
 
-                    exception = waitWriterEvent(engine, commandId, commandReplySequence, 500_000, 0);
-                    TestUtils.assertContains(exception.getFlyweightMessage(), "Duplicate column name: column5");
-                } finally {
-                    stopEngineAsyncWriterEventWait(engine, commandReplySequence);
+                    try {
+                        qf.await();
+                        Assert.fail();
+                    } catch (SqlException exception) {
+                        TestUtils.assertContains(exception.getFlyweightMessage(), "Duplicate column name: column5");
+                    }
                 }
             }
         });
+    }
+
+    /***
+     *
+     * @param engine Cairo Engine to consume events from
+     * @param sequence sequence to subscribe ot the events
+     */
+    private static void setUpEngineAsyncWriterEventWait(CairoEngine engine, SCSequence sequence) {
+        final FanOut writerEventFanOut = engine.getMessageBus().getTableWriterEventFanOut();
+        writerEventFanOut.and(sequence);
+    }
+
+    /***
+     * Cleans up execution wait sequence to listen to the Engine async writer events
+     * @param engine Cairo Engine subscribed to
+     * @param sequence to unsubscribe from Writer Events
+     */
+    private static void stopEngineAsyncWriterEventWait(CairoEngine engine, SCSequence sequence) {
+        engine.getMessageBus().getTableWriterEventFanOut().remove(sequence);
+        sequence.clear();
     }
 
     @Test
     public void testAsyncAlterCommandsExceedsEngineCmdQueue() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table product (timestamp timestamp)", sqlExecutionContext);
+            SCSequence tempSequence = new SCSequence();
 
             // Block table
             try (TableWriter ignored = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
 
                 for (int i = 0; i < engineCmdQueue; i++) {
                     CompiledQuery cc = compiler.compile("ALTER TABLE product add column column" + i + " int", sqlExecutionContext);
-                    executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext);
+                    executeNoWait(tempSequence, cc);
                     engine.tick();
                 }
 
                 try {
                     CompiledQuery cc = compiler.compile("ALTER TABLE product add column column5 int", sqlExecutionContext);
-                    executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext);
-                    Assert.fail();
+                    try(QueryFuture ignored1 = cc.execute(tempSequence)) {
+                        Assert.fail();
+                    }
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "Could not publish writer ALTER TABLE task [table=product]");
                 }
             } // Unblock table
 
             CompiledQuery cc = compiler.compile("ALTER TABLE product add column column5 int", sqlExecutionContext);
-            Assert.assertEquals(-1, executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext));
+            try(QueryFuture cq = cc.execute(tempSequence)) {
+                // Should execute in sync since writer is unlocked
+                Assert.assertTrue(cq.isDone());
+            }
         });
+    }
+
+    private void executeNoWait(SCSequence tempSequence, CompiledQuery cc) throws SqlException {
+        try (QueryFuture cq = cc.execute(tempSequence)) {
+            cq.await(0);
+        }
     }
 
     @Test
@@ -132,20 +164,26 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     return super.rename(from, to);
                 }
             };
-            compile("create table product as (select x, x as toremove from long_sequence(100))", sqlExecutionContext);
-            long commandId;
+            compile("create table product as (select x, x as to_remove from long_sequence(100))", sqlExecutionContext);
 
             // Block table
-            try (TableWriter ignored = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
-                CompiledQuery cc = compiler.compile("ALTER TABLE product drop column toremove", sqlExecutionContext);
-                commandId = executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext);
-                engine.tick();
-            } // Unblock table
+            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
+                CompiledQuery cc = compiler.compile("ALTER TABLE product drop column to_remove", sqlExecutionContext);
+                try (QueryFuture queryFuture = cc.execute(new SCSequence())) {
+                    engine.tick();
+                    writer.tick(true);
 
-            SqlException exception = waitWriterEvent(engine, commandId, commandReplySequence, 500_000, 0);
-            Assert.assertNotNull(exception);
-            TestUtils.assertContains(exception.getFlyweightMessage(), "cannot drop column. Try again later");
-            compile("ALTER TABLE product drop column toremove", sqlExecutionContext);
+                    try {
+                        queryFuture.await(1_000_000);
+                        Assert.fail();
+                    } catch (SqlException exception) {
+                        Assert.assertNotNull(exception);
+                        TestUtils.assertContains(exception.getFlyweightMessage(), "cannot drop column. Try again later");
+                    }
+                }
+
+            } // Unblock table
+            Assert.assertTrue(compiler.compile("ALTER TABLE product drop column to_remove", sqlExecutionContext).execute(null).isDone());
         });
     }
 
@@ -163,20 +201,24 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     return super.rename(from, to);
                 }
             };
-            compile("create table product as (select x, x as toremove from long_sequence(100))", sqlExecutionContext);
-            long commandId;
+            compile("create table product as (select x, x as to_remove from long_sequence(100))", sqlExecutionContext);
 
+            QueryFuture cf;
             // Block table
             try (TableWriter ignored = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
-                CompiledQuery cc = compiler.compile("ALTER TABLE product drop column toremove", sqlExecutionContext);
-                commandId = executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext);
+                CompiledQuery cc = compiler.compile("ALTER TABLE product drop column to_remove", sqlExecutionContext);
+                cf = cc.execute(commandReplySequence);
                 engine.tick();
             } // Unblock table
 
-            SqlException exception = waitWriterEvent(engine, commandId, commandReplySequence, 500_000, 0);
-            Assert.assertNotNull(exception);
-            TestUtils.assertContains(exception.getFlyweightMessage(), "cannot drop column. Try again later");
-            compile("ALTER TABLE product drop column toremove", sqlExecutionContext);
+            try {
+                cf.await();
+            } catch (SqlException exception) {
+                TestUtils.assertContains(exception.getFlyweightMessage(), "cannot drop column. Try again later");
+            } finally {
+                cf.close();
+            }
+            compile("ALTER TABLE product drop column to_remove", sqlExecutionContext);
         });
     }
 
@@ -184,23 +226,25 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     public void testAsyncAlterNonExistingTable() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            QueryFuture cf = null;
             try {
-                setUpEngineAsyncWriterEventWait(engine, commandReplySequence);
-                long commandId;
                 try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
-                    AlterStatementImpl creepyAlter = new AlterStatementImpl();
+                    AlterStatement creepyAlter = new AlterStatement();
                     creepyAlter.ofDropColumn(1, "product", writer.getMetadata().getId());
                     creepyAlter.ofDropColumn("timestamp");
-                    commandId = executeAlterCommandNoWait(engine, creepyAlter, sqlExecutionContext);
+                    CompiledQueryImpl cc = new CompiledQueryImpl(engine).withDefaultContext(sqlExecutionContext);
+                    cc.ofAlter(creepyAlter);
+                    cf = cc.execute(commandReplySequence);
                 }
                 compile("drop table product", sqlExecutionContext);
                 engine.tick();
 
                 // ALTER TABLE should be executed successfully on writer.close() before engine.tick()
-                SqlException exception = waitWriterEvent(engine, commandId, commandReplySequence, 500_000, 0);
-                Assert.assertNull(exception);
+                cf.await();
             } finally {
-                stopEngineAsyncWriterEventWait(engine, commandReplySequence);
+                if (cf != null) {
+                    cf.close();
+                }
             }
         });
     }
@@ -209,26 +253,26 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     public void testAsyncAlterSymbolCache() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            QueryFuture commandFuture = null;
             try {
-                setUpEngineAsyncWriterEventWait(engine, commandReplySequence);
-                long commandId;
                 try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
                     CompiledQuery cc = compiler.compile("alter table product alter column name cache", sqlExecutionContext);
-                    commandId = executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext);
+                    commandFuture = cc.execute(commandReplySequence);
                     writer.tick();
                     engine.tick();
                 }
 
-                SqlException exception = waitWriterEvent(engine, commandId, commandReplySequence, 500_000, 0);
-                Assert.assertNull(exception);
-
+                commandFuture.await();
                 engine.releaseAllReaders();
+
                 try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "product")) {
                     int colIndex = rdr.getMetadata().getColumnIndex("name");
                     Assert.assertTrue(rdr.getSymbolMapReader(colIndex).isCached());
                 }
             } finally {
-                stopEngineAsyncWriterEventWait(engine, commandReplySequence);
+                if (commandFuture != null) {
+                    commandFuture.close();
+                }
             }
         });
     }
@@ -237,9 +281,9 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     public void testAsyncRenameMultipleColumns() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            QueryFuture commandFuture = null;
             try {
-                setUpEngineAsyncWriterEventWait(engine, commandReplySequence);
-                long commandId;
+
                 try (TableWriter ignored = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
                     // Add invalid command to engine queue
                     MPSequence commandPugSeq = messageBus.getTableWriterCommandPubSeq();
@@ -249,12 +293,11 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     commandPugSeq.done(pubCursor);
 
                     CompiledQuery cc = compiler.compile("alter table product rename column name to name1, timestamp to timestamp1", sqlExecutionContext);
-                    commandId = executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext);
+                    commandFuture = cc.execute(commandReplySequence);
                 }
                 engine.tick();
 
-                SqlException exception = waitWriterEvent(engine, commandId, commandReplySequence, 500_000, 0);
-                Assert.assertNull(exception);
+                commandFuture.await();
 
                 engine.releaseAllReaders();
                 try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "product")) {
@@ -262,7 +305,9 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     Assert.assertEquals(1, rdr.getMetadata().getColumnIndex("name1"));
                 }
             } finally {
-                stopEngineAsyncWriterEventWait(engine, commandReplySequence);
+                if (commandFuture != null) {
+                    commandFuture.close();
+                }
             }
         });
     }
@@ -274,20 +319,16 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
 
             // Block event queue with stale sequence
             try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
-                try {
-                    setUpEngineAsyncWriterEventWait(engine, commandReplySequence);
-                    for (int i = 0; i < 2 * engineEventQueue; i++) {
-                        CompiledQuery cc = compiler.compile("ALTER TABLE product add column column" + i + " int", sqlExecutionContext);
-                        long commandId = executeAlterCommandNoWait(engine, cc.getAlterStatement(), sqlExecutionContext);
+                for (int i = 0; i < 2 * engineEventQueue; i++) {
+                    CompiledQuery cc = compiler.compile("ALTER TABLE product add column column" + i + " int", sqlExecutionContext);
+                    try (QueryFuture cf = cc.execute(commandReplySequence)) {
                         engine.tick();
                         writer.tick();
-                        Assert.assertNull(waitWriterEvent(engine, commandId, commandReplySequence, 500_000, 0));
+                        cf.await();
                     }
-
-                    Assert.assertEquals(2L * engineEventQueue + 1, writer.getMetadata().getColumnCount());
-                } finally {
-                    stopEngineAsyncWriterEventWait(engine, commandReplySequence);
                 }
+
+                Assert.assertEquals(2L * engineEventQueue + 1, writer.getMetadata().getColumnCount());
             }
         });
     }
@@ -298,20 +339,20 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
 
             try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
-                try {
-                    setUpEngineAsyncWriterEventWait(engine, commandReplySequence);
-
-                    AlterStatementImpl creepyAlter = new AlterStatementImpl();
-                    creepyAlter.ofDropPartition(0, "product", writer.getMetadata().getId()).ofPartition(0);
-                    long commandId = executeAlterCommandNoWait(engine, creepyAlter, sqlExecutionContext);
+                AlterStatement creepyAlter = new AlterStatement();
+                creepyAlter.ofDropPartition(0, "product", writer.getMetadata().getId()).ofPartition(0);
+                CompiledQueryImpl cc = new CompiledQueryImpl(engine).withDefaultContext(sqlExecutionContext);
+                cc.ofAlter(creepyAlter);
+                try (QueryFuture cf = cc.execute(commandReplySequence)) {
                     engine.tick();
                     writer.tick();
 
-                    SqlException exception = waitWriterEvent(engine, commandId, commandReplySequence, 500_000, 0);
-                    Assert.assertNotNull(exception);
-                    TestUtils.assertContains(exception.getFlyweightMessage(), "could not remove partition 'default'");
-                } finally {
-                    stopEngineAsyncWriterEventWait(engine, commandReplySequence);
+                    try {
+                        cf.await();
+                        Assert.fail();
+                    } catch (SqlException exception) {
+                        TestUtils.assertContains(exception.getFlyweightMessage(), "could not remove partition 'default'");
+                    }
                 }
             }
         });
@@ -323,21 +364,22 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
 
             try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
-                try {
-                    setUpEngineAsyncWriterEventWait(engine, commandReplySequence);
 
-                    AlterStatementImpl creepyAlter = new AlterStatementImpl();
-                    creepyAlter.ofDropColumn(1, "product", writer.getMetadata().getId());
-                    creepyAlter.ofDropColumn("timestamp").ofDropColumn("timestamp");
-                    long commandId = executeAlterCommandNoWait(engine, creepyAlter, sqlExecutionContext);
+                AlterStatement creepyAlter = new AlterStatement();
+                creepyAlter.ofDropColumn(1, "product", writer.getMetadata().getId());
+                creepyAlter.ofDropColumn("timestamp").ofDropColumn("timestamp");
+                CompiledQueryImpl cc = new CompiledQueryImpl(engine).withDefaultContext(sqlExecutionContext);
+                cc.ofAlter(creepyAlter);
+
+                try (QueryFuture commandFuture = cc.execute(commandReplySequence)) {
                     engine.tick();
                     writer.tick(true);
-
-                    SqlException exception = waitWriterEvent(engine, commandId, commandReplySequence, 500_000, 0);
-                    Assert.assertNotNull(exception);
-                    TestUtils.assertContains(exception.getFlyweightMessage(), "Invalid column: timestamp");
-                } finally {
-                    stopEngineAsyncWriterEventWait(engine, commandReplySequence);
+                    try {
+                        commandFuture.await();
+                        Assert.fail();
+                    } catch (SqlException exception) {
+                        TestUtils.assertContains(exception.getFlyweightMessage(), "Invalid column: timestamp");
+                    }
                 }
             }
         });

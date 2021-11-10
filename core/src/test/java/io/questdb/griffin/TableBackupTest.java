@@ -241,8 +241,8 @@ public class TableBackupTest {
                     " rnd_geohash(15) g2," +
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(2)) timestamp(ts)", mainSqlExecutionContext);
-            mainCompiler.compile("alter table tb1 add g4 geohash(30b)", mainSqlExecutionContext).executeSync();
-            mainCompiler.compile("alter table tb1 add g8 geohash(32b)", mainSqlExecutionContext).executeSync();
+            mainCompiler.compile("alter table tb1 add g4 geohash(30b)", mainSqlExecutionContext).execute(null).await(0);
+            mainCompiler.compile("alter table tb1 add g8 geohash(32b)", mainSqlExecutionContext).execute(null).await(0);
 
             mainCompiler.compile("insert into tb1 " +
                     " select " +

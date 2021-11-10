@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
+import io.questdb.griffin.AlterStatement;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
@@ -180,7 +181,7 @@ public class TableWriter implements Closeable {
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
     private int rowActon = ROW_ACTION_OPEN_PARTITION;
-    private final AlterStatementImpl alterTableStatement = new AlterStatementImpl();
+    private final AlterStatement alterTableStatement = new AlterStatement();
     private boolean isTicking;
 
 

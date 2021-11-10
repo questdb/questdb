@@ -28,7 +28,6 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.AlterStatement;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.model.IntervalUtils;
@@ -55,7 +54,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public static final int WAIT_ENGINE_TABLE_RELEASE = 0x1;
     public static final int WAIT_ILP_TABLE_RELEASE = 0x2;
     public static final int WAIT_ALTER_TABLE_RELEASE = 0x4;
-    private volatile long alterCommandId;
+    private volatile QueryFuture alterCommandQueryFuture;
     private final SCSequence scSequence  = new SCSequence();
 
     @Test
@@ -315,25 +314,18 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 // Wait in parallel thead
                 try {
                     startBarrier.await();
-                    waited = true;
-                    LOG.info().$("Busy waiting for writer ASYNC event ").$(alterCommandId).$();
-                    sqlException = AlterCommandExecution.waitWriterEvent(
-                            engine,
-                            alterCommandId,
-                            scSequence,
-                            10_000_000,  // 1s
-                            -1
-                    );
+                    LOG.info().$("Busy waiting for writer ASYNC event ").$(alterCommandQueryFuture).$();
+                    alterCommandQueryFuture.await(10_000_000);
+                } catch (SqlException exception) {
+                    sqlException = exception;
                 } catch (Throwable e) {
                     LOG.error().$(e).$();
                 } finally {
                     // exit this method if alter executed
                     releaseLatch.countDown();
-                    if (waited) {
-                        LOG.info().$("Stopped waiting for writer ASYNC event").$();
-                        // If subscribed to global writer event queue, unsubscribe here
-                        AlterCommandExecution.stopEngineAsyncWriterEventWait(engine, scSequence);
-                    }
+                    LOG.info().$("Stopped waiting for writer ASYNC event").$();
+                    // If subscribed to global writer event queue, unsubscribe here
+                    alterCommandQueryFuture.close();
                 }
             }).start();
         }
@@ -354,7 +346,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                                     if (alterTableCommand != null) {
                                         try {
                                             // Execute ALTER in parallel thread
-                                            alterCommandId = executeAlterSql(alterTableCommand);
+                                            alterCommandQueryFuture = executeAlterSql(alterTableCommand);
                                             startBarrier.await();
                                         } catch (BrokenBarrierException | InterruptedException e) {
                                             e.printStackTrace();
@@ -409,14 +401,12 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     server.setSchedulerListener(null);
                     break;
             }
-            AlterCommandExecution.stopEngineAsyncWriterEventWait(engine, scSequence);
         }
         return null;
     }
 
-    private long executeAlterSql(String sql) throws SqlException {
+    private QueryFuture executeAlterSql(String sql) throws SqlException {
         // Subscribe local writer even queue to the global engine writer response queue
-        AlterCommandExecution.setUpEngineAsyncWriterEventWait(engine, scSequence);
         LOG.info().$("Started waiting for writer ASYNC event").$();
         try (SqlCompiler compiler = new SqlCompiler(engine);
              SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
@@ -432,7 +422,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             AlterStatement alterStatement = cc.getAlterStatement();
             assert alterStatement != null;
 
-            return cc.executeAsyncNoWait();
+            return cc.execute(scSequence);
         }
     }
 

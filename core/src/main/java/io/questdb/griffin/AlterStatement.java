@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,10 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin;
 
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.SqlException;
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -33,22 +33,37 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
 
-public class AlterStatementImpl implements AlterStatement, AlterStatementAddColumnStatement, AlterStatementRenameColumnStatement, AlterStatementDropColumnStatement, AlterStatementChangePartitionStatement, Mutable {
-    private final static Log LOG = LogFactory.getLog(AlterStatementImpl.class);
-    private short command;
-    private String tableName;
-    private int tableId;
-    private int tableNamePosition;
-    private CharSequenceList charSequenceList;
+public class AlterStatement implements Mutable {
 
+    public final static short DO_NOTHING = 1;
+    public final static short ADD_COLUMN = 3;
+    public final static short DROP_PARTITION = 4;
+    public final static short ATTACH_PARTITION = 5;
+    public final static short ADD_INDEX = 6;
+    public final static short ADD_SYMBOL_CACHE = 7;
+    public final static short REMOVE_SYMBOL_CACHE = 8;
+    public final static short DROP_COLUMN = 9;
+    public final static short RENAME_COLUMN = 10;
+    public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = 11;
+    public final static short SET_PARAM_COMMIT_LAG = 12;
+
+    private final static Log LOG = LogFactory.getLog(AlterStatement.class);
     private final ObjCharSequenceList objCharList = new ObjCharSequenceList();
     private final DirectCharSequenceList directCharList = new DirectCharSequenceList();
     private final LongList longList = new LongList();
     // This is only used to serialize Partition name in form 2020-02-12 or 2020-02 or 2020
     // to exception message using TableUtils.setSinkForPartition
     private final ExceptionSinkAdapter exceptionSinkAdapter = new ExceptionSinkAdapter();
+    private final AlterStatementAddColumn alterStatementAddColumnStatement = new AlterStatementAddColumn();
+    private final AlterStatementChangePartition alterStatementChangePartition = new AlterStatementChangePartition();
+    private final AlterStatementDropColumn alterStatementDropColumn = new AlterStatementDropColumn();
+    private final AlterStatementRenameColumn alterStatementRenameColumn = new AlterStatementRenameColumn();
+    private short command;
+    private String tableName;
+    private int tableId;
+    private int tableNamePosition;
+    private CharSequenceList charSequenceList;
 
-    @Override
     public void apply(TableWriter tableWriter, boolean acceptStructureChange) throws SqlException, TableStructureChangesException {
         try {
             switch (command) {
@@ -119,16 +134,6 @@ public class AlterStatementImpl implements AlterStatement, AlterStatementAddColu
         longList.clear();
     }
 
-    @Override
-    public CharSequence getTableName() {
-        return tableName;
-    }
-
-    @Override
-    public int getTableNamePosition() {
-        return tableNamePosition;
-    }
-
     public void deserialize(TableWriterTask event) {
         clear();
 
@@ -140,7 +145,7 @@ public class AlterStatementImpl implements AlterStatement, AlterStatementAddColu
         readPtr += 4;
         int longSize = Unsafe.getUnsafe().getInt(readPtr);
         readPtr += 4;
-        for(int i = 0; i < longSize; i++) {
+        for (int i = 0; i < longSize; i++) {
             longList.add(Unsafe.getUnsafe().getLong(readPtr));
             readPtr += 8;
         }
@@ -149,23 +154,15 @@ public class AlterStatementImpl implements AlterStatement, AlterStatementAddColu
         charSequenceList = directCharList;
     }
 
-    @Override
-    public void serialize(TableWriterTask event) {
-        event.of(TableWriterTask.TSK_ALTER_TABLE, tableId, tableName);
-        event.putShort(command);
-        event.putInt(tableNamePosition);
-        event.putInt(longList.size());
-        for(int i = 0, n = longList.size(); i < n; i++) {
-            event.put(longList.getQuick(i));
-        }
-
-        event.putInt(objCharList.size());
-        for(int i = 0, n = objCharList.size(); i < n; i++) {
-            event.putStr(objCharList.getStrA(i));
-        }
+    public CharSequence getTableName() {
+        return tableName;
     }
 
-    public AlterStatementAddColumnStatement ofAddColumn(
+    public int getTableNamePosition() {
+        return tableNamePosition;
+    }
+
+    public AlterStatementAddColumn ofAddColumn(
             int tableNamePosition,
             String tableName,
             int tableId
@@ -174,19 +171,7 @@ public class AlterStatementImpl implements AlterStatement, AlterStatementAddColu
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;
-        return this;
-    }
-
-    @Override
-    public AlterStatementAddColumnStatement ofAddColumn(CharSequence columnName, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity) {
-        assert columnName != null && columnName.length() > 0;
-        this.objCharList.add(columnName);
-        this.longList.add(type);
-        this.longList.add(symbolCapacity);
-        this.longList.add(cache ? 1 : -1);
-        this.longList.add(indexed ? 1 : -1);
-        this.longList.add(indexValueBlockCapacity);
-        return this;
+        return alterStatementAddColumnStatement;
     }
 
     public AlterStatement ofAddIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName, int indexValueBlockSize) {
@@ -199,12 +184,12 @@ public class AlterStatementImpl implements AlterStatement, AlterStatementAddColu
         return this;
     }
 
-    public AlterStatementChangePartitionStatement ofAttachPartition(int tableNamePosition, String tableName, int tableId) {
+    public AlterStatementChangePartition ofAttachPartition(int tableNamePosition, String tableName, int tableId) {
         this.command = ATTACH_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;
-        return this;
+        return alterStatementChangePartition;
     }
 
     public AlterStatement ofCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
@@ -216,39 +201,26 @@ public class AlterStatementImpl implements AlterStatement, AlterStatementAddColu
         return this;
     }
 
-    @Override
-    public void ofPartition(long timestamp) {
-        this.longList.add(timestamp);
-    }
-
-    @Override
-    public AlterStatementRenameColumnStatement ofRenameColumn(CharSequence columnName, CharSequence newName) {
-        this.objCharList.add(columnName);
-        this.objCharList.add(newName);
-        return this;
-    }
-
-    @Override
-    public AlterStatementDropColumnStatement ofDropColumn(CharSequence columnName) {
+    public AlterStatementDropColumn ofDropColumn(CharSequence columnName) {
         assert columnName != null && columnName.length() > 0;
         this.objCharList.add(columnName);
-        return this;
+        return alterStatementDropColumn;
     }
 
-    public AlterStatementDropColumnStatement ofDropColumn(int tableNamePosition, String tableName, int tableId) {
+    public AlterStatementDropColumn ofDropColumn(int tableNamePosition, String tableName, int tableId) {
         this.command = DROP_COLUMN;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;
-        return this;
+        return alterStatementDropColumn;
     }
 
-    public AlterStatementChangePartitionStatement ofDropPartition(int tableNamePosition, String tableName, int tableId) {
+    public AlterStatementChangePartition ofDropPartition(int tableNamePosition, String tableName, int tableId) {
         this.command = DROP_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;
-        return this;
+        return alterStatementChangePartition;
     }
 
     public AlterStatement ofRemoveCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
@@ -261,12 +233,12 @@ public class AlterStatementImpl implements AlterStatement, AlterStatementAddColu
         return this;
     }
 
-    public AlterStatementRenameColumnStatement ofRenameColumn(int tableNamePosition, String tableName, int tableId) {
+    public AlterStatementRenameColumn ofRenameColumn(int tableNamePosition, String tableName, int tableId) {
         this.command = RENAME_COLUMN;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;
-        return this;
+        return alterStatementRenameColumn;
     }
 
     public AlterStatement ofSetParamCommitLag(String tableName, int tableId, long commitLag) {
@@ -283,6 +255,21 @@ public class AlterStatementImpl implements AlterStatement, AlterStatementAddColu
         this.longList.add(maxUncommittedRows);
         this.tableId = tableId;
         return this;
+    }
+
+    public void serialize(TableWriterTask event) {
+        event.of(TableWriterTask.TSK_ALTER_TABLE, tableId, tableName);
+        event.putShort(command);
+        event.putInt(tableNamePosition);
+        event.putInt(longList.size());
+        for (int i = 0, n = longList.size(); i < n; i++) {
+            event.put(longList.getQuick(i));
+        }
+
+        event.putInt(objCharList.size());
+        for (int i = 0, n = objCharList.size(); i < n; i++) {
+            event.putStr(objCharList.getStrA(i));
+        }
     }
 
     private void applyAddColumn(TableWriter tableWriter) throws SqlException {
@@ -371,11 +358,6 @@ public class AlterStatementImpl implements AlterStatement, AlterStatementAddColu
         }
     }
 
-    private SqlException putPartitionName(SqlException ex, int partitionBy, long timestamp) {
-        TableUtils.setSinkForPartition(exceptionSinkAdapter.of(ex), partitionBy, timestamp, false);
-        return ex;
-    }
-
     private void applyDropColumn(TableWriter writer) throws SqlException {
         for (int i = 0, n = charSequenceList.size(); i < n; i++) {
             CharSequence columnName = charSequenceList.getStrA(i);
@@ -448,15 +430,23 @@ public class AlterStatementImpl implements AlterStatement, AlterStatementAddColu
         tableWriter.changeCacheFlag(columnIndex, isCacheOn);
     }
 
+    private SqlException putPartitionName(SqlException ex, int partitionBy, long timestamp) {
+        TableUtils.setSinkForPartition(exceptionSinkAdapter.of(ex), partitionBy, timestamp, false);
+        return ex;
+    }
+
+    interface CharSequenceList extends Mutable {
+        CharSequence getStrA(int i);
+
+        CharSequence getStrB(int i);
+
+        int size();
+    }
+
     // This is only used to serialize Partition name in form 2020-02-12 or 2020-02 or 2020
     // to exception message using TableUtils.setSinkForPartition
     private static class ExceptionSinkAdapter implements CharSink {
         private SqlException ex;
-
-        ExceptionSinkAdapter of(SqlException ex) {
-            this.ex = ex;
-            return this;
-        }
 
         @Override
         public int encodeSurrogate(char c, CharSequence in, int pos, int hi) {
@@ -481,22 +471,21 @@ public class AlterStatementImpl implements AlterStatement, AlterStatementAddColu
         }
 
         @Override
-        public CharSink put(long c) {
+        public CharSink put(int c) {
             ex.put(c);
             return this;
         }
 
         @Override
-        public CharSink put(int c) {
+        public CharSink put(long c) {
             ex.put(c);
             return this;
         }
-    }
 
-    interface CharSequenceList extends Mutable {
-        CharSequence getStrA(int i);
-        CharSequence getStrB(int i);
-        int size();
+        ExceptionSinkAdapter of(SqlException ex) {
+            this.ex = ex;
+            return this;
+        }
     }
 
     private static class ObjCharSequenceList implements CharSequenceList {
@@ -536,19 +525,6 @@ public class AlterStatementImpl implements AlterStatement, AlterStatementAddColu
             offsets.clear();
         }
 
-        public long of(long address) {
-            long initialAddress = address;
-            int size = Unsafe.getUnsafe().getInt(address);
-            address += 4;
-            for(int i = 0; i < size; i++) {
-                int stringSize = 2 * Unsafe.getUnsafe().getInt(address);
-                address += 4;
-                offsets.add(address, address + stringSize);
-                address += stringSize;
-            }
-            return address - initialAddress;
-        }
-
         public CharSequence getStrA(int i) {
             long lo = offsets.get(i * 2);
             long hi = offsets.get(i * 2 + 1);
@@ -567,6 +543,58 @@ public class AlterStatementImpl implements AlterStatement, AlterStatementAddColu
         @Override
         public int size() {
             return offsets.size() / 2;
+        }
+
+        public long of(long address) {
+            long initialAddress = address;
+            int size = Unsafe.getUnsafe().getInt(address);
+            address += 4;
+            for (int i = 0; i < size; i++) {
+                int stringSize = 2 * Unsafe.getUnsafe().getInt(address);
+                address += 4;
+                offsets.add(address, address + stringSize);
+                address += stringSize;
+            }
+            return address - initialAddress;
+        }
+    }
+
+    public class AlterStatementRenameColumn {
+        public void ofRenameColumn(CharSequence columnName, CharSequence newName) {
+            objCharList.add(columnName);
+            objCharList.add(newName);
+        }
+    }
+
+    public class AlterStatementDropColumn {
+        public void ofDropColumn(CharSequence columnName) {
+            assert columnName != null && columnName.length() > 0;
+            objCharList.add(columnName);
+        }
+    }
+
+    public class AlterStatementChangePartition {
+        public void ofPartition(long timestamp) {
+            longList.add(timestamp);
+        }
+    }
+
+    public class AlterStatementAddColumn {
+        public void ofAddColumn(
+                CharSequence columnName,
+                int type,
+                int symbolCapacity,
+                boolean cache,
+                boolean indexed,
+                int indexValueBlockCapacity
+        ) {
+            assert columnName != null && columnName.length() > 0;
+            objCharList.add(columnName);
+            longList.add(type);
+            longList.add(symbolCapacity);
+            longList.add(cache ? 1 : -1);
+            longList.add(indexed ? 1 : -1);
+            longList.add(indexValueBlockCapacity);
         }
     }
 }

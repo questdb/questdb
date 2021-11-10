@@ -143,7 +143,7 @@ public class WriterPool extends AbstractPool {
                     throw e.ex;
                 }
             }
-            LOG.error().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(']').$();
+            LOG.info().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(']').$();
             throw EntryUnavailableException.instance(e.ownershipReason);
         }
     }
