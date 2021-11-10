@@ -182,7 +182,7 @@ public class PrefixedClassCatalogueFunctionFactoryTest extends AbstractGriffinTe
                         "  pg_catalog.pg_get_userbyid(c.relowner) as \"Owner\"\n" +
                         "FROM pg_catalog.pg_class c\n" +
                         "     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n" +
-                        "WHERE c.relkind IN ('r','p','v','m','S','f','')\n" +
+                        "WHERE c.relkind IN ('r','p','v','m','S','f',cast('' as char))\n" +
                         "      AND n.nspname <> 'pg_catalog'\n" +
                         "      AND n.nspname <> 'information_schema'\n" +
                         "      AND n.nspname !~ '^pg_toast'\n" +
