@@ -2009,9 +2009,7 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
         compiler.compile("insert into x select * from append", sqlExecutionContext);
-
         assertO3DataConsistency(
                 engine,
                 compiler,
