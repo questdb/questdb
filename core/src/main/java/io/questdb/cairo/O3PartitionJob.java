@@ -783,8 +783,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 final CharSequence columnName = metadata.getColumnName(i);
-                final boolean indexBlockCapacity = metadata.isColumnIndexed(i);
-                final int indexValueCapacity = indexBlockCapacity ? metadata.getIndexValueBlockCapacity(i) : -1;
+                final boolean isIndexed = metadata.isColumnIndexed(i);
+                final int indexBlockCapacity = isIndexed ? metadata.getIndexValueBlockCapacity(i) : -1;
                 if (openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND || openColumnMode == OPEN_LAST_PARTITION_FOR_MERGE) {
                     srcDataTop = tableWriter.getColumnTop(i);
                 } else {
@@ -792,7 +792,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 final BitmapIndexWriter indexWriter;
-                if (indexBlockCapacity) {
+                if (isIndexed) {
                     indexWriter = o3Basket.nextIndexer();
                 } else {
                     indexWriter = null;
@@ -834,7 +834,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 suffixType,
                                 suffixLo,
                                 suffixHi,
-                                indexValueCapacity,
+                                indexBlockCapacity,
                                 srcTimestampFd,
                                 srcTimestampAddr,
                                 srcTimestampSize,
@@ -881,7 +881,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 srcTimestampFd,
                                 srcTimestampAddr,
                                 srcTimestampSize,
-                                indexValueCapacity,
+                                indexBlockCapacity,
                                 activeFixFd,
                                 activeVarFd,
                                 tableWriter,

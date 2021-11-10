@@ -471,14 +471,14 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
-            int indexValueCapacity
+            int indexBlockCapacity
     ) {
         // dstKFd & dstVFd are closed by the indexer
         try {
             long row = dstIndexOffset / Integer.BYTES;
             boolean closed = !indexWriter.isOpen();
             if (closed) {
-                indexWriter.of(tableWriter.getConfiguration(), dstKFd, dstVFd, row == 0, indexValueCapacity);
+                indexWriter.of(tableWriter.getConfiguration(), dstKFd, dstVFd, row == 0, indexBlockCapacity);
             }
             try {
                 updateIndex(dstFixAddr, dstFixSize, indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);
