@@ -506,6 +506,12 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.RoundDownDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.RoundUpDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.RoundHalfEvenDoubleFunctionFactory,
+//                  ceil()
+            io.questdb.griffin.engine.functions.math.CeilDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.CeilFloatFunctionFactory,
+//                  floor()
+            io.questdb.griffin.engine.functions.math.FloorDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.FloorFloatFunctionFactory,            
 //                  case conditional statement
             io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory,
             io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory,
