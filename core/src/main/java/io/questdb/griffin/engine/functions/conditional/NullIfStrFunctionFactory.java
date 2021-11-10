@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -82,7 +83,7 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
             if (cs2 == null) {
                 return null;
             }
-            return cs1.equals(cs2) ? null : cs1;
+            return Chars.equals(cs1, cs2) ? null : cs1;
         }
 
         @Override
@@ -95,7 +96,7 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
             if (cs2 == null) {
                 return null;
             }
-            return cs1.equals(cs2) ? null : cs1;
+            return Chars.equals(cs1, cs2) ? null : cs1;
         }
     }
 }
