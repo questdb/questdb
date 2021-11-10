@@ -48,21 +48,27 @@ public class AlterStatement implements Mutable {
     public final static short SET_PARAM_COMMIT_LAG = 12;
 
     private final static Log LOG = LogFactory.getLog(AlterStatement.class);
-    private final ObjCharSequenceList objCharList = new ObjCharSequenceList();
+
+    private final ObjCharSequenceList objCharList;
     private final DirectCharSequenceList directCharList = new DirectCharSequenceList();
-    private final LongList longList = new LongList();
+    private final LongList longList;
     // This is only used to serialize Partition name in form 2020-02-12 or 2020-02 or 2020
     // to exception message using TableUtils.setSinkForPartition
     private final ExceptionSinkAdapter exceptionSinkAdapter = new ExceptionSinkAdapter();
-    private final AlterStatementAddColumn alterStatementAddColumnStatement = new AlterStatementAddColumn();
-    private final AlterStatementChangePartition alterStatementChangePartition = new AlterStatementChangePartition();
-    private final AlterStatementDropColumn alterStatementDropColumn = new AlterStatementDropColumn();
-    private final AlterStatementRenameColumn alterStatementRenameColumn = new AlterStatementRenameColumn();
     private short command;
     private String tableName;
     private int tableId;
     private int tableNamePosition;
     private CharSequenceList charSequenceList;
+
+    public AlterStatement() {
+        this(new LongList(), new ObjList<>());
+    }
+
+    public AlterStatement(LongList longList, ObjList<CharSequence> charSequenceObjList) {
+        this.longList = longList;
+        this.objCharList = new ObjCharSequenceList(charSequenceObjList);
+    }
 
     public void apply(TableWriter tableWriter, boolean acceptStructureChange) throws SqlException, TableStructureChangesException {
         try {
@@ -104,7 +110,8 @@ public class AlterStatement implements Mutable {
                     applyParamCommitLag(tableWriter);
                     break;
                 default:
-                    throw CairoException.instance(0).put("Invalid alter table command [code=").put(command).put(']');
+                    LOG.error().$("Invalid alter table command [code=").$(command).$(" ,table=").$(tableName).I$();
+                    throw SqlException.$(tableNamePosition, "Invalid alter table command [code=").put(command).put(']');
             }
         } catch (EntryUnavailableException | SqlException ex) {
             throw ex;
@@ -162,98 +169,16 @@ public class AlterStatement implements Mutable {
         return tableNamePosition;
     }
 
-    public AlterStatementAddColumn ofAddColumn(
-            int tableNamePosition,
+    public AlterStatement of(
+            short command,
             String tableName,
-            int tableId
+            int tableId,
+            int tableNamePosition
     ) {
-        this.command = ADD_COLUMN;
+        this.command = command;
+        this.tableName = tableName;
+        this.tableId = tableId;
         this.tableNamePosition = tableNamePosition;
-        this.tableName = tableName;
-        this.tableId = tableId;
-        return alterStatementAddColumnStatement;
-    }
-
-    public AlterStatement ofAddIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName, int indexValueBlockSize) {
-        this.command = ADD_INDEX;
-        this.tableNamePosition = tableNamePosition;
-        this.tableName = tableName;
-        this.tableId = tableId;
-        this.objCharList.add(columnName);
-        this.longList.add(indexValueBlockSize);
-        return this;
-    }
-
-    public AlterStatementChangePartition ofAttachPartition(int tableNamePosition, String tableName, int tableId) {
-        this.command = ATTACH_PARTITION;
-        this.tableNamePosition = tableNamePosition;
-        this.tableName = tableName;
-        this.tableId = tableId;
-        return alterStatementChangePartition;
-    }
-
-    public AlterStatement ofCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
-        this.command = ADD_SYMBOL_CACHE;
-        this.tableNamePosition = tableNamePosition;
-        this.tableName = tableName;
-        this.tableId = tableId;
-        this.objCharList.add(columnName);
-        return this;
-    }
-
-    public AlterStatementDropColumn ofDropColumn(CharSequence columnName) {
-        assert columnName != null && columnName.length() > 0;
-        this.objCharList.add(columnName);
-        return alterStatementDropColumn;
-    }
-
-    public AlterStatementDropColumn ofDropColumn(int tableNamePosition, String tableName, int tableId) {
-        this.command = DROP_COLUMN;
-        this.tableNamePosition = tableNamePosition;
-        this.tableName = tableName;
-        this.tableId = tableId;
-        return alterStatementDropColumn;
-    }
-
-    public AlterStatementChangePartition ofDropPartition(int tableNamePosition, String tableName, int tableId) {
-        this.command = DROP_PARTITION;
-        this.tableNamePosition = tableNamePosition;
-        this.tableName = tableName;
-        this.tableId = tableId;
-        return alterStatementChangePartition;
-    }
-
-    public AlterStatement ofRemoveCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
-        assert columnName != null && columnName.length() > 0;
-        this.command = REMOVE_SYMBOL_CACHE;
-        this.tableNamePosition = tableNamePosition;
-        this.tableName = tableName;
-        this.tableId = tableId;
-        this.objCharList.add(columnName);
-        return this;
-    }
-
-    public AlterStatementRenameColumn ofRenameColumn(int tableNamePosition, String tableName, int tableId) {
-        this.command = RENAME_COLUMN;
-        this.tableNamePosition = tableNamePosition;
-        this.tableName = tableName;
-        this.tableId = tableId;
-        return alterStatementRenameColumn;
-    }
-
-    public AlterStatement ofSetParamCommitLag(String tableName, int tableId, long commitLag) {
-        this.command = SET_PARAM_COMMIT_LAG;
-        this.tableName = tableName;
-        this.longList.add(commitLag);
-        this.tableId = tableId;
-        return this;
-    }
-
-    public AlterStatement ofSetParamUncommittedRows(String tableName, int tableId, int maxUncommittedRows) {
-        this.command = SET_PARAM_MAX_UNCOMMITTED_ROWS;
-        this.tableName = tableName;
-        this.longList.add(maxUncommittedRows);
-        this.tableId = tableId;
         return this;
     }
 
@@ -489,7 +414,11 @@ public class AlterStatement implements Mutable {
     }
 
     private static class ObjCharSequenceList implements CharSequenceList {
-        private final ObjList<CharSequence> strings = new ObjList<>();
+        private final ObjList<CharSequence> strings;
+
+        public ObjCharSequenceList(ObjList<CharSequence> strings) {
+            this.strings = strings;
+        }
 
         public void add(CharSequence ch) {
             strings.add(ch);
@@ -556,45 +485,6 @@ public class AlterStatement implements Mutable {
                 address += stringSize;
             }
             return address - initialAddress;
-        }
-    }
-
-    public class AlterStatementRenameColumn {
-        public void ofRenameColumn(CharSequence columnName, CharSequence newName) {
-            objCharList.add(columnName);
-            objCharList.add(newName);
-        }
-    }
-
-    public class AlterStatementDropColumn {
-        public void ofDropColumn(CharSequence columnName) {
-            assert columnName != null && columnName.length() > 0;
-            objCharList.add(columnName);
-        }
-    }
-
-    public class AlterStatementChangePartition {
-        public void ofPartition(long timestamp) {
-            longList.add(timestamp);
-        }
-    }
-
-    public class AlterStatementAddColumn {
-        public void ofAddColumn(
-                CharSequence columnName,
-                int type,
-                int symbolCapacity,
-                boolean cache,
-                boolean indexed,
-                int indexValueBlockCapacity
-        ) {
-            assert columnName != null && columnName.length() > 0;
-            objCharList.add(columnName);
-            longList.add(type);
-            longList.add(symbolCapacity);
-            longList.add(cache ? 1 : -1);
-            longList.add(indexed ? 1 : -1);
-            longList.add(indexValueBlockCapacity);
         }
     }
 }
