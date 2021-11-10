@@ -27,7 +27,6 @@ package io.questdb.std;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
