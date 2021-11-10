@@ -29,6 +29,8 @@ import { delay, startWith } from "rxjs/operators"
 import styled from "styled-components"
 import { Loader4 } from "@styled-icons/remix-line/Loader4"
 import {
+  Tree,
+  TreeInterface,
   collapseTransition,
   spinAnimation,
   TransitionDuration,
@@ -95,6 +97,10 @@ const Loader = styled(Loader4)`
   ${spinAnimation};
 `
 
+// for demoing async loading
+const wait = async (ms: number): Promise<void> =>
+  await new Promise((resolve) => setTimeout(resolve, ms))
+
 const Table = ({
   description,
   expanded,
@@ -125,6 +131,15 @@ const Table = ({
       })
     }
   }, [expanded, refresh, quest, name])
+
+  const onLeafOpen = useCallback(async (payload: unknown): Promise<
+    TreeInterface[]
+  > => {
+    // quest.showColumns(name)
+    // depending on payload type call related endpoint
+    await wait(1000)
+    return [{ name: `children of ${name}`, payload: [] }]
+  }, [])
 
   const handleClick = useCallback(
     (e) => {
@@ -157,6 +172,14 @@ const Table = ({
         unmountOnExit
       >
         <Columns>
+          <Tree
+            onLeafOpen={onLeafOpen}
+            root={(columns ?? []).map((column) => ({
+              name: column.column,
+              payload: column,
+            }))}
+          />
+
           {columns?.map((column) => (
             <Row
               {...column}
