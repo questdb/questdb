@@ -115,14 +115,9 @@ const Schema = ({
   const [loadingError, setLoadingError] = useState<ErrorResult | null>(null)
   const errorRef = useRef<ErrorResult | null>(null)
   const [tables, setTables] = useState<QuestDB.Table[]>()
-  const [opened, setOpened] = useState<string>()
   const [refresh, setRefresh] = useState(Date.now())
   const [isScrolling, setIsScrolling] = useState(false)
   const { readOnly } = useSelector(selectors.console.getConfig)
-
-  const handleChange = useCallback((name: string) => {
-    setOpened(name)
-  }, [])
 
   const handleScrollingStateChange = useCallback(
     (isScrolling) => {
@@ -139,18 +134,16 @@ const Schema = ({
         return (
           <Table
             designatedTimestamp={table.designatedTimestamp}
-            expanded={table.name === opened}
             isScrolling={isScrolling}
             key={table.name}
             name={table.name}
-            onChange={handleChange}
             partitionBy={table.partitionBy}
             refresh={refresh}
           />
         )
       }
     },
-    [handleChange, isScrolling, opened, refresh, tables],
+    [isScrolling, refresh, tables],
   )
 
   const fetchTables = useCallback(() => {
