@@ -317,8 +317,11 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
     }
 
     void truncate() {
+        // todo: test that after we truncated partitioned table we're able to insert
+        //       the same symbol values again without errors
+        offsetMem.truncate();
         offsetMem.jumpTo(keyToOffset(0) + Long.BYTES);
-        charMem.jumpTo(0);
+        charMem.truncate();
         indexWriter.truncate();
         if (cache != null) {
             cache.clear();

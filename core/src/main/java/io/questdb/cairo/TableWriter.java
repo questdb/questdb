@@ -518,11 +518,13 @@ public class TableWriter implements Closeable {
                 if (partitionBy != PartitionBy.NONE) {
                     // run indexer for the whole table
                     final long timestamp = indexHistoricPartitions(indexer, columnName, indexValueBlockSize);
-                    if (timestamp == Numbers.LONG_NaN) {
-                        return;
+                    // todo: test that we can create index on partitioned table without any data
+                    //      this specifically didn't work if we populate table, truncate and then add index
+                    //      also inserting rows after index or multiple indexes were added need testing
+                    if (timestamp != Numbers.LONG_NaN) {
+                        path.trimTo(rootLen);
+                        setStateForTimestamp(path, timestamp, true);
                     }
-                    path.trimTo(rootLen);
-                    setStateForTimestamp(path, timestamp, true);
                 } else {
                     setStateForTimestamp(path, 0, false);
                 }
@@ -572,8 +574,8 @@ public class TableWriter implements Closeable {
         }
 
         txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
-
-        indexers.extendAndSet((columnIndex) / 2, indexer);
+        // todo: test that we can add index on adjacent columns and ingestion works
+        indexers.extendAndSet(columnIndex, indexer);
         populateDenseIndexerList();
 
         TableColumnMetadata columnMetadata = metadata.getColumnQuick(columnIndex);
@@ -1408,6 +1410,13 @@ public class TableWriter implements Closeable {
      */
     public final void truncate() {
 
+        // todo: test that truncate works in the middle of transaction
+        //     - regular in-order transaction
+        //     - out of order transaction
+        //     - mod-row
+        // todo: test that truncate can work when there are active indexers
+        rollback();
+
         // we do this before size check so that "old" corrupt symbol tables are brought back in line
         for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
             denseSymbolMapWriters.getQuick(i).truncate();
@@ -1429,6 +1438,33 @@ public class TableWriter implements Closeable {
         // ensure file is closed with correct length
         todoMem.jumpTo(48);
 
+        if (partitionBy != PartitionBy.NONE) {
+            freeColumns(false);
+            if (indexers != null) {
+                for (int i = 0, n = indexers.size(); i < n; i++) {
+                    Misc.free(indexers.getQuick(i));
+                }
+            }
+            truncateColumns();
+            removePartitionDirectories();
+            rowActon = ROW_ACTION_OPEN_PARTITION;
+        } else {
+            truncateColumns();
+        }
+
+        txWriter.resetTimestamp();
+        txWriter.truncate();
+        row = regularRow;
+        try {
+            clearTodoLog();
+        } catch (CairoException err) {
+            throwDistressException(err);
+        }
+
+        LOG.info().$("truncated [name=").$(tableName).$(']').$();
+    }
+
+    private void truncateColumns() {
         for (int i = 0; i < columnCount; i++) {
             getPrimaryColumn(i).truncate();
             MemoryMA mem = getSecondaryColumn(i);
@@ -1437,32 +1473,6 @@ public class TableWriter implements Closeable {
                 mem.putLong(0);
             }
         }
-
-        if (partitionBy != PartitionBy.NONE) {
-            freeColumns(false);
-            if (indexers != null) {
-                for (int i = 0, n = indexers.size(); i < n; i++) {
-                    Misc.free(indexers.getQuick(i));
-                }
-            }
-            removePartitionDirectories();
-            rowActon = ROW_ACTION_OPEN_PARTITION;
-        }
-
-        txWriter.resetTimestamp();
-        txWriter.truncate();
-
-        // todo: check and clear O3 memory
-        row = regularRow;
-
-        // todo: implement switching off the transaction log
-        try {
-            clearTodoLog();
-        } catch (CairoException err) {
-            throwDistressException(err);
-        }
-
-        LOG.info().$("truncated [name=").$(tableName).$(']').$();
     }
 
     /**
