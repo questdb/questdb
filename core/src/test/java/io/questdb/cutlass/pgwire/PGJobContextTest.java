@@ -3211,10 +3211,10 @@ nodejs code:
                         "qdb", null, null, null
                 )) {
                     assertResultSet(
-                            "TABLE_CAT[VARCHAR],TABLE_SCHEM[VARCHAR],TABLE_NAME[VARCHAR],TABLE_TYPE[VARCHAR],REMARKS[VARCHAR],TYPE_CAT[CHAR],TYPE_SCHEM[CHAR],TYPE_NAME[CHAR],SELF_REFERENCING_COL_NAME[CHAR],REF_GENERATION[CHAR]\n" +
-                                    "pg_catalog,pg_catalog,pg_class,SYSTEM TABLE,null,null,null,null,null,null\n" +
-                                    "public,public,test,TABLE,null,null,null,null,null,null\n" +
-                                    "public,public,test2,TABLE,null,null,null,null,null,null\n",
+                            "TABLE_CAT[VARCHAR],TABLE_SCHEM[VARCHAR],TABLE_NAME[VARCHAR],TABLE_TYPE[VARCHAR],REMARKS[VARCHAR],TYPE_CAT[VARCHAR],TYPE_SCHEM[VARCHAR],TYPE_NAME[VARCHAR],SELF_REFERENCING_COL_NAME[VARCHAR],REF_GENERATION[VARCHAR]\n" +
+                                    "pg_catalog,pg_catalog,pg_class,SYSTEM TABLE,null,,,,,\n" +
+                                    "public,public,test,TABLE,null,,,,,\n" +
+                                    "public,public,test2,TABLE,null,,,,,\n",
                             sink,
                             rs
                     );
