@@ -933,7 +933,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                 Unsafe.getUnsafe().loadFence();
                 // ok, we have snapshot, check if our snapshot is stable
-                if (txn == txFile.getTxn()) {
+                if (txn == txFile.unsafeReadTxn()) {
                     // good, very stable, congrats
                     if (active) {
                         txnScoreboard.releaseTxn(this.txn);

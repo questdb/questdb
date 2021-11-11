@@ -1386,31 +1386,6 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCharToStrConstZero() throws Exception {
-        assertQuery(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast('' as string) from long_sequence(10)",
-                "a\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n",
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testCharToStrSort() throws Exception {
         assertQuery(
                 "x\n" +
@@ -4568,6 +4543,31 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "K\n" +
                         "A\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testStrConstZeroToChar() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a char)",
+                null,
+                "insert into tab select cast('' as char) from long_sequence(10)",
+                "a\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n",
                 true,
                 true,
                 true

@@ -420,7 +420,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
             if (len == 2) {
                 // empty
-                return CharConstant.ZERO;
+                return StrConstant.EMPTY;
             }
             return new StrConstant(tok);
         }
