@@ -30,7 +30,7 @@ import org.junit.Test;
 public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
-    public void testVarStr() throws Exception {
+    public void testStrVar() throws Exception {
         assertQuery(
                 "substr\tstr\tstrpos\n" +
                         "XYZ\tABC XYZ XYZ\t5\n" +
@@ -62,7 +62,7 @@ public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testVarStrConstSubstr() throws Exception {
+    public void testStrVarConst() throws Exception {
         assertQuery(
                 "str\tstrpos\n" +
                         "ABC XYZ XYZ\t5\n" +
@@ -83,7 +83,7 @@ public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testVarChar() throws Exception {
+    public void testCharVar() throws Exception {
         assertQuery(
                 "substr\tstr\tstrpos\n" +
                         "T\tTEST\t1\n" +
@@ -115,7 +115,7 @@ public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testVarCharConstSubstr() throws Exception {
+    public void testCharVarConst() throws Exception {
         assertQuery(
                 "str\tstrpos\n" +
                         "ABC XYZ XYZ\t3\n" +
@@ -153,8 +153,7 @@ public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
     public void testConstantEmptyString() throws Exception {
         assertQuery(
                 "pos1\tpos2\tpos3\n" +
-                        // TODO(puzpuzpuz): fix the empty string literal, so that the result is "0\t1\t1\n"
-                        "NaN\tNaN\tNaN\n",
+                        "0\t1\t1\n",
                 "select strpos('','a') pos1, strpos('a',cast('' as string)) pos2, strpos('','') pos3",
                 null,
                 null,
