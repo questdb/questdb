@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 /*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
@@ -22,19 +23,13 @@
  *
  ******************************************************************************/
 
-import React, { useCallback, useEffect, useState, useRef } from "react"
-import { CSSTransition } from "react-transition-group"
+import React, { useEffect, useState, useRef } from "react"
 import { from, combineLatest, of } from "rxjs"
 import { delay, startWith } from "rxjs/operators"
 import styled from "styled-components"
 import { Loader4 } from "@styled-icons/remix-line/Loader4"
-import {
-  Tree,
-  TreeInterface,
-  collapseTransition,
-  spinAnimation,
-  TransitionDuration,
-} from "components"
+import { Tree, collapseTransition, spinAnimation } from "components"
+import type { TreeNode, TreeNodeRenderParams } from "components"
 import { ContextMenuTrigger } from "components/ContextMenu"
 import { color } from "utils"
 import * as QuestDB from "utils/questdb"
@@ -44,10 +39,8 @@ import ContextualMenu from "./ContextualMenu"
 type Props = QuestDB.Table &
   Readonly<{
     designatedTimestamp: string
-    expanded: boolean
     description?: string
     isScrolling: boolean
-    onChange: (table: string) => void
     refresh: number
     name: string
     partitionBy: string
@@ -77,14 +70,14 @@ const Title = styled(Row)`
 const Columns = styled.div`
   position: relative;
   display: flex;
-  margin-left: 3rem;
+  margin-left: 2rem;
   flex-direction: column;
 
   &:before {
     position: absolute;
     height: 100%;
     width: 2px;
-    left: -1.2rem;
+    left: -0.4rem;
     top: 0;
     content: "";
     background: ${color("gray1")};
@@ -97,15 +90,25 @@ const Loader = styled(Loader4)`
   ${spinAnimation};
 `
 
-// for demoing async loading
-const wait = async (ms: number): Promise<void> =>
-  await new Promise((resolve) => setTimeout(resolve, ms))
+const columnRender = ({
+  column,
+  designatedTimestamp,
+}: {
+  column: QuestDB.Column
+  designatedTimestamp: string
+}) => ({ toggleOpen }: TreeNodeRenderParams) => (
+  <Row
+    {...column}
+    designatedTimestamp={designatedTimestamp}
+    kind="column"
+    name={column.column}
+    onClick={() => toggleOpen()}
+  />
+)
 
 const Table = ({
   description,
-  expanded,
   isScrolling,
-  onChange,
   refresh,
   designatedTimestamp,
   name,
@@ -117,82 +120,80 @@ const Table = ({
   const [columns, setColumns] = useState<QuestDB.Column[]>()
 
   useEffect(() => {
-    if (expanded) {
-      combineLatest(
-        from(quest.showColumns(name)).pipe(startWith(null)),
-        of(true).pipe(delay(1000), startWith(false)),
-      ).subscribe(([response, loading]) => {
-        if (response && response.type === QuestDB.Type.DQL) {
-          setColumns(response.data)
-          setLoading(false)
-        } else {
-          setLoading(loading)
-        }
-      })
-    }
-  }, [expanded, refresh, quest, name])
+    combineLatest(
+      from(quest.showColumns(name)).pipe(startWith(null)),
+      of(true).pipe(delay(1000), startWith(false)),
+    ).subscribe(([response, loading]) => {
+      if (response && response.type === QuestDB.Type.DQL) {
+        setColumns(response.data)
+        setLoading(false)
+      } else {
+        setLoading(loading)
+      }
+    })
+  }, [refresh, quest, name])
 
-  const onLeafOpen = useCallback(async (payload: unknown): Promise<
-    TreeInterface[]
-  > => {
-    // quest.showColumns(name)
-    // depending on payload type call related endpoint
-    await wait(1000)
-    return [{ name: `children of ${name}`, payload: [] }]
-  }, [])
+  const tree: TreeNode[] = [
+    {
+      name,
+      kind: "table",
+      render({ toggleOpen }) {
+        return (
+          <ContextMenuTrigger id={name}>
+            <Title
+              description={description}
+              kind="table"
+              name={name}
+              onClick={() => toggleOpen()}
+              partitionBy={partitionBy}
+              suffix={loading && <Loader size="18px" />}
+              tooltip={!!description}
+            />
+          </ContextMenuTrigger>
+        )
+      },
 
-  const handleClick = useCallback(
-    (e) => {
-      onChange(expanded ? "" : name)
+      children: [
+        {
+          name: "Columns",
+          initiallyOpen: true,
+          async onOpen() {
+            const response = await quest.showColumns(name)
+
+            if (response && response.type === QuestDB.Type.DQL) {
+              return response.data.map((column: QuestDB.Column) => ({
+                name: column.column,
+                render: columnRender({ column, designatedTimestamp }),
+              }))
+            }
+
+            return []
+          },
+          render({ toggleOpen, isOpen }) {
+            return (
+              <Row
+                expanded={isOpen}
+                kind="folder"
+                name="Columns"
+                onClick={() => toggleOpen()}
+              />
+            )
+          },
+          wrapper: Columns,
+          children: (columns ?? []).map((column: QuestDB.Column) => ({
+            name: column.column,
+            render: columnRender({ column, designatedTimestamp }),
+          })),
+        },
+      ],
     },
-    [expanded, onChange, name],
-  )
+  ]
 
   return (
     <Wrapper _height={columns ? columns.length * 30 : 0} ref={ref}>
-      <ContextMenuTrigger id={name}>
-        <Title
-          description={description}
-          expanded={expanded}
-          kind="table"
-          name={name}
-          onClick={handleClick}
-          partitionBy={partitionBy}
-          suffix={loading && <Loader size="18px" />}
-          tooltip={!!description}
-        />
-      </ContextMenuTrigger>
-
       {!isScrolling && <ContextualMenu name={name} partitionBy={partitionBy} />}
 
-      <CSSTransition
-        classNames="collapse"
-        in={expanded}
-        timeout={TransitionDuration.REG}
-        unmountOnExit
-      >
-        <Columns>
-          <Tree
-            onLeafOpen={onLeafOpen}
-            root={(columns ?? []).map((column) => ({
-              name: column.column,
-              payload: column,
-            }))}
-          />
-
-          {columns?.map((column) => (
-            <Row
-              {...column}
-              designatedTimestamp={designatedTimestamp}
-              key={`${column.column}-${column.type}${
-                column.indexed ? "-i" : ""
-              }`}
-              kind="column"
-              name={column.column}
-            />
-          ))}
-        </Columns>
-      </CSSTransition>
+      <Tree root={tree} />
     </Wrapper>
   )
 }
