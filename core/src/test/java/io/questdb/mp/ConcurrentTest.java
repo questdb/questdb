@@ -28,7 +28,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
-import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
@@ -144,7 +143,7 @@ public class ConcurrentTest {
 
                         pingPong.add(pingCursor);
 
-                        System.out.println("* ping " + requestId);
+                        LOG.info().$("testFanOutPingPongStableSequences: ").$("ping: ").$(requestId);
 
                         long pongCursor;
                         while ((pongCursor = pongPubSeq.next()) < 0) {
@@ -154,7 +153,7 @@ public class ConcurrentTest {
                         pongPubSeq.done(pongCursor);
                         pingPong.add(pongCursor);
 
-                        System.out.println("* pong " + requestId);
+                        LOG.info().$("testFanOutPingPongStableSequences: ").$("pong: ").$(requestId);
                         i++;
                     } else {
                         LockSupport.parkNanos(10);
@@ -185,7 +184,8 @@ public class ConcurrentTest {
 
                     for (int i = 0; i < iterations; i++) {
                         // Put local response sequence into response FanOut
-                        System.out.println("thread:" + threadId + ", added at " + pingPubSeq.value);
+                        LOG.info().$("testFanOutPingPongStableSequences: ")
+                                .$("thread: ").$(threadId).$(", added at: ").$(pingPubSeq.value);
 
                         // Send next request
                         long requestId = idGen.incrementAndGet();
@@ -197,7 +197,8 @@ public class ConcurrentTest {
                         pingPubSeq.done(pingCursor);
                         pingPong.add(pingCursor);
 
-                        System.out.println("thread:" + threadId + ", ask: " + requestId);
+                        LOG.info().$("testFanOutPingPongStableSequences: ")
+                                .$("thread: ").$(threadId).$(", ask: ").$(requestId);
 
                         // Wait for response
                         long responseId, pongCursor;
@@ -209,10 +210,12 @@ public class ConcurrentTest {
                             responseId = pongQueue.get(pongCursor).correlationId;
                             pongSubSeq.done(pongCursor);
                             pingPong.add(pongCursor);
-                            System.out.println("thread:" + threadId + ", ping: " + responseId + ", expected: " + requestId);
+                            LOG.info().$("testFanOutPingPongStableSequences: ")
+                                    .$("thread: ").$(threadId).$(", ping: ").$(responseId).$(", expected: ").$(requestId);
                         } while (responseId != requestId);
 
-                        System.out.println("thread " + threadId + ", pong " + requestId);
+                        LOG.info().$("testFanOutPingPongStableSequences: ")
+                                .$("thread: ").$(threadId).$(", pong: ").$(requestId);
                         // Remove local response sequence from response FanOut
                     }
                     pongSubFo.remove(pongSubSeq);
@@ -701,62 +704,6 @@ public class ConcurrentTest {
         }
     }
 
-    @Test
-    public void testOneToParallelSubscriber() throws Exception {
-        LOG.info().$("testOneToParallelSubscriber").$();
-        int cycle = 1024;
-        int size = 1024 * cycle;
-        RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
-        SPSequence pubSeq = new SPSequence(cycle);
-        Sequence sub1 = new SCSequence();
-        Sequence sub2 = new SCSequence();
-        FanOut fanOut = FanOut.to(sub1).and(sub2);
-        pubSeq.then(fanOut).then(pubSeq);
-
-        CyclicBarrier barrier = new CyclicBarrier(4);
-        CountDownLatch latch = new CountDownLatch(3);
-
-        BusyConsumer[] consumers = new BusyConsumer[2];
-        consumers[0] = new BusyConsumer(size, sub1, queue, barrier, latch);
-        consumers[1] = new BusyConsumer(size, sub2, queue, barrier, latch);
-
-        BusySubscriber subscriber = new BusySubscriber(queue, barrier, latch, fanOut);
-        subscriber.start();
-
-        consumers[0].start();
-        consumers[1].start();
-
-        barrier.await();
-        int i = 0;
-        while (true) {
-            long cursor = pubSeq.next();
-            if (cursor < 0) {
-                continue;
-            }
-            queue.get(cursor).value = i++;
-            pubSeq.done(cursor);
-
-            if (i == size) {
-                break;
-            }
-        }
-
-        publishEOE(queue, pubSeq);
-        publishEOE(queue, pubSeq);
-
-        latch.await();
-
-        for (int k = 0; k < 2; k++) {
-            for (i = 0; i < consumers[k].buf.length; i++) {
-                Assert.assertEquals(i, consumers[k].buf[i]);
-            }
-        }
-
-        for (i = 0; i < subscriber.buf.length; i++) {
-            Assert.assertTrue(subscriber.buf[i] > 0);
-        }
-    }
-
     static void publishEOE(RingQueue<Event> queue, Sequence sequence) {
         long cursor = sequence.nextBully();
         queue.get(cursor).value = Integer.MIN_VALUE;
@@ -772,15 +719,15 @@ public class ConcurrentTest {
         private final int[] buf;
         private final RingQueue<Event> queue;
         private final CyclicBarrier barrier;
-        private final CountDownLatch latch;
+        private final CountDownLatch doneLatch;
         private volatile int finalIndex = 0;
 
-        BusyConsumer(int cycle, Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch latch) {
+        BusyConsumer(int cycle, Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch doneLatch) {
             this.sequence = sequence;
             this.buf = new int[cycle];
             this.queue = queue;
             this.barrier = barrier;
-            this.latch = latch;
+            this.doneLatch = doneLatch;
         }
 
         @Override
@@ -804,56 +751,7 @@ public class ConcurrentTest {
                 }
 
                 finalIndex = p;
-                latch.countDown();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
-    }
-
-    private static class BusySubscriber extends Thread {
-        private final int[] buf;
-        private final RingQueue<Event> queue;
-        private final CyclicBarrier barrier;
-        private final CountDownLatch latch;
-        private final FanOut fanOut;
-
-        BusySubscriber(RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch latch, FanOut fanOut) {
-            this.buf = new int[20];
-            this.queue = queue;
-            this.barrier = barrier;
-            this.latch = latch;
-            this.fanOut = fanOut;
-        }
-
-        @Override
-        public void run() {
-            try {
-                barrier.await();
-                Os.sleep(10);
-
-                // subscribe
-                Sequence sequence = new SCSequence(0);
-                fanOut.and(sequence);
-                int p = 0;
-                while (p < buf.length) {
-                    long cursor = sequence.next();
-                    if (cursor < 0) {
-                        LockSupport.parkNanos(1);
-                        continue;
-                    }
-                    int v = queue.get(cursor).value;
-                    sequence.done(cursor);
-
-                    if (v == Integer.MIN_VALUE) {
-                        break;
-                    }
-                    buf[p++] = v;
-                }
-
-                fanOut.remove(sequence);
-
-                latch.countDown();
+                doneLatch.countDown();
             } catch (Exception e) {
                 e.printStackTrace();
             }
