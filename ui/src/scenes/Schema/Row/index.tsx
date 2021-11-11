@@ -242,7 +242,7 @@ const Row = ({
           </PartitionByWrapper>
         )}
 
-        {kind === "column" && (
+        {["column", "table"].includes(kind) && (
           <PlusButton
             onClick={handlePlusButtonClick}
             size="sm"
