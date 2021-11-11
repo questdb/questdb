@@ -22,55 +22,54 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class NullIfIFunctionFactory implements FunctionFactory {
+public class NullIfCharFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "nullif(Ii)";
+        return "nullif(AA)";
     }
 
     @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) {
-        return new NullIfIFunction(args.getQuick(0), args.getQuick(1).getInt(null));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        Function chrFunc1 = args.getQuick(0);
+        Function chrFunc2 = args.getQuick(1);
+
+        return new Func(chrFunc1, chrFunc2);
     }
 
-    private static class NullIfIFunction extends IntFunction implements UnaryFunction {
-        private final Function value;
-        private final int replacement;
+    private static class Func extends CharFunction implements BinaryFunction {
+        private final Function chrFunc1;
+        private final Function chrFunc2;
 
-        public NullIfIFunction(Function value, int replacement) {
-            super();
-            this.value = value;
-            this.replacement = replacement;
+        public Func(Function chrFunc1, Function chrFunc2) {
+            this.chrFunc1 = chrFunc1;
+            this.chrFunc2 = chrFunc2;
         }
 
         @Override
-        public Function getArg() {
-            return value;
+        public Function getLeft() {
+            return chrFunc1;
         }
 
         @Override
-        public int getInt(Record rec) {
-            final int val = value.getInt(rec);
-            return val != Numbers.INT_NaN ? val : replacement;
+        public Function getRight() {
+            return chrFunc2;
+        }
+
+        @Override
+        public char getChar(Record rec) {
+            return chrFunc1.getChar(rec) == chrFunc2.getChar(rec) ? Character.MIN_VALUE : chrFunc1.getChar(rec);
         }
     }
 }
