@@ -24,13 +24,12 @@
 
 package io.questdb.griffin.model;
 
-public interface ExecutionModel {
-    int QUERY = 1;
-    int CREATE_TABLE = 2;
-    int RENAME_TABLE = 3;
-    int INSERT = 4;
-    int COPY = 5;
-    int UPDATE = 6;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 
-    int getModelType();
+public interface QueryWithClauseModel {
+    void addWithClause(CharSequence token, WithClauseModel wcm);
+
+    WithClauseModel getWithClause(CharSequence token);
+
+    LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses();
 }

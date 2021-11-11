@@ -32,7 +32,7 @@ import java.util.ArrayDeque;
 
 import static io.questdb.griffin.SqlKeywords.isAndKeyword;
 
-public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sinkable {
+public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, QueryWithClauseModel, Sinkable {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
     public static final int ORDER_DIRECTION_ASCENDING = 0;
     public static final int ORDER_DIRECTION_DESCENDING = 1;

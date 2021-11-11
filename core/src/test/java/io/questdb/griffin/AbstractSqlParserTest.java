@@ -154,6 +154,10 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
         assertModel(expected, query, ExecutionModel.QUERY, tableModels);
     }
 
+    protected void assertUpdate(String expected, String query, TableModel... tableModels) throws SqlException {
+        assertModel(expected, query, ExecutionModel.UPDATE, tableModels);
+    }
+
     private void createModelsAndRun(SqlParserTest.CairoAware runnable, TableModel... tableModels) throws SqlException {
         try {
             for (int i = 0, n = tableModels.length; i < n; i++) {

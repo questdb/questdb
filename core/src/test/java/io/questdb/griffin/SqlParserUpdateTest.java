@@ -22,15 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.model;
+package io.questdb.griffin;
 
-public interface ExecutionModel {
-    int QUERY = 1;
-    int CREATE_TABLE = 2;
-    int RENAME_TABLE = 3;
-    int INSERT = 4;
-    int COPY = 5;
-    int UPDATE = 6;
+import io.questdb.cairo.ColumnType;
+import org.junit.Test;
 
-    int getModelType();
+public class SqlParserUpdateTest extends AbstractSqlParserTest {
+    @Test
+    public void testTimestampWithTimezoneConstPrefixInsideCast() throws Exception {
+        assertUpdate("",
+                "update x set tt = t where t > '2005-04-02 12:00:00-07'",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
 }

@@ -43,6 +43,7 @@ public final class SqlParser {
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionTreeBuilder expressionTreeBuilder;
     private final ObjectPool<QueryModel> queryModelPool;
+    private final UpdateModel updateModelPool;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<AnalyticColumn> analyticColumnPool;
     private final ObjectPool<CreateTableModel> createTableModelPool;
@@ -70,11 +71,13 @@ public final class SqlParser {
             ObjectPool<ExpressionNode> expressionNodePool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
+            UpdateModel updateModel,
             PostOrderTreeTraversalAlgo traversalAlgo
     ) {
         this.expressionNodePool = expressionNodePool;
         this.queryModelPool = queryModelPool;
         this.queryColumnPool = queryColumnPool;
+        this.updateModelPool = updateModel;
         this.expressionTreeBuilder = new ExpressionTreeBuilder();
         this.analyticColumnPool = new ObjectPool<>(AnalyticColumn.FACTORY, configuration.getAnalyticColumnPoolCapacity());
         this.createTableModelPool = new ObjectPool<>(CreateTableModel.FACTORY, configuration.getCreateTableModelPoolCapacity());
@@ -376,6 +379,10 @@ public final class SqlParser {
 
         if (isCreateKeyword(tok)) {
             return parseCreateStatement(lexer, executionContext);
+        }
+
+        if (isUpdateKeyword(tok)) {
+            return parseUpdate(lexer);
         }
 
         if (isRenameKeyword(tok)) {
@@ -861,6 +868,93 @@ public final class SqlParser {
         return model;
     }
 
+    private UpdateModel parseDmlUpdate(GenericLexer lexer, @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses) throws SqlException {
+        CharSequence tok;
+        final int modelPosition = lexer.getPosition();
+
+        UpdateModel updateModel = this.updateModelPool;
+        updateModel.setModelPosition(modelPosition);
+        if (withClauses != null) {
+            updateModel.addWithClauses(withClauses);
+        }
+
+        tok = tok(lexer, "UPDATE, WITH or table name expected");
+
+        if (isWithKeyword(tok)) {
+            parseWithClauses(lexer, updateModel);
+            tok = tok(lexer, "SELECT or table name expected");
+        }
+
+        // [update]
+        if (isUpdateKeyword(tok)) {
+            parseUpdateClause(lexer, updateModel);
+
+            QueryModel nestedModel = queryModelPool.next();
+            nestedModel.setModelPosition(modelPosition);
+
+            tok = optTok(lexer);
+            if (tok != null && isFromKeyword(tok)) {
+                // [from]
+                parseSelectFrom(lexer, nestedModel, updateModel);
+                tok = setModelAliasAndTimestamp(lexer, nestedModel);
+
+                // expect multiple [[inner | outer | cross] join]
+                int joinType;
+                while (tok != null && (joinType = joinStartSet.get(tok)) != -1) {
+                    nestedModel.addJoinModel(parseJoin(lexer, tok, joinType, updateModel));
+                    tok = optTok(lexer);
+                }
+            } else if (tok != null && !isWhereKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "FROM, WHERE or EOF expected");
+            }
+
+            // expect [where]
+            if (tok != null && isWhereKeyword(tok)) {
+                ExpressionNode expr = expr(lexer, nestedModel);
+                if (expr != null) {
+                    nestedModel.setWhereClause(expr);
+                    tok = optTok(lexer);
+                } else {
+                    throw SqlException.$((lexer.lastTokenPosition()), "empty where clause");
+                }
+            }
+
+            updateModel.setFromModel(nestedModel);
+            final ExpressionNode n = nestedModel.getAlias();
+            if (n != null) {
+                updateModel.setAlias(n);
+            }
+        }
+        return updateModel;
+    }
+
+    private void parseUpdateClause(GenericLexer lexer, UpdateModel updateModel) throws SqlException {
+        CharSequence tok = tok(lexer, "table name or alias");
+        updateModel.withTableName(tok);
+
+        while (true) {
+            tok = tok(lexer, "set");
+            if (!isSetKeyword(tok)) {
+                throw SqlException.$(lexer.getPosition(), "expected SET keyword");
+            }
+
+            CharSequence col = GenericLexer.immutableOf(GenericLexer.unquote(tok(lexer, "column name")));
+            expectTok(lexer, "=");
+            ExpressionNode expr = expr(lexer, (QueryModel) null);
+            updateModel.withSet(col, expr);
+
+            tok = tok(lexer, "separator, EOF");
+            if (tok == null) {
+                break;
+            }
+
+            if (tok.length() != 1 || tok.charAt(1) != ',') {
+                lexer.unparse();
+                break;
+            }
+        }
+    }
+
     private void parseFromClause(GenericLexer lexer, QueryModel model, QueryModel masterModel) throws SqlException {
         CharSequence tok = expectTableNameOrSubQuery(lexer);
         // expect "(" in case of sub-query
@@ -1112,7 +1206,7 @@ public final class SqlParser {
         throw err(lexer, "'select' or 'values' expected");
     }
 
-    private QueryModel parseJoin(GenericLexer lexer, CharSequence tok, int joinType, QueryModel parent) throws SqlException {
+    private QueryModel parseJoin(GenericLexer lexer, CharSequence tok, int joinType, QueryWithClauseModel parent) throws SqlException {
         QueryModel joinModel = queryModelPool.next();
 
         int errorPos = lexer.lastTokenPosition();
@@ -1374,7 +1468,7 @@ public final class SqlParser {
         }
     }
 
-    private void parseSelectFrom(GenericLexer lexer, QueryModel model, QueryModel masterModel) throws SqlException {
+    private void parseSelectFrom(GenericLexer lexer, QueryModel model, QueryWithClauseModel masterModel) throws SqlException {
         final ExpressionNode expr = expr(lexer, model);
         if (expr == null) {
             throw SqlException.position(lexer.lastTokenPosition()).put("table name expected");
@@ -1434,7 +1528,7 @@ public final class SqlParser {
         return m;
     }
 
-    private void parseWithClauses(GenericLexer lexer, QueryModel model) throws SqlException {
+    private void parseWithClauses(GenericLexer lexer, QueryWithClauseModel model) throws SqlException {
         do {
             ExpressionNode name = expectLiteral(lexer);
 
@@ -1463,6 +1557,16 @@ public final class SqlParser {
         model.setSampleByOffset(expectExpr(lexer));
         tok = optTok(lexer);
         return tok;
+    }
+
+    private ExecutionModel parseUpdate(GenericLexer lexer) throws SqlException {
+        lexer.unparse();
+        final UpdateModel model = parseDmlUpdate(lexer, null);
+        final CharSequence tok = optTok(lexer);
+        if (tok == null || Chars.equals(tok, ';')) {
+            return model;
+        }
+        throw errUnexpected(lexer, tok);
     }
 
     private ExpressionNode rewriteCase(ExpressionNode parent) throws SqlException {

@@ -74,6 +74,7 @@ public class SqlCompiler implements Closeable {
     private final CharacterStore characterStore;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
+    private final UpdateModel updateModel;
     private final SqlCodeGenerator codeGenerator;
     private final CairoConfiguration configuration;
     private final Path renamePath = new Path();
@@ -105,6 +106,7 @@ public class SqlCompiler implements Closeable {
         this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
         this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
         this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
+        this.updateModel = new UpdateModel();
         this.characterStore = new CharacterStore(
                 configuration.getSqlCharacterStoreCapacity(),
                 configuration.getSqlCharacterStoreSequencePoolCapacity());
@@ -178,6 +180,7 @@ public class SqlCompiler implements Closeable {
                 sqlNodePool,
                 queryColumnPool,
                 queryModelPool,
+                updateModel,
                 postOrderTreeTraversalAlgo
         );
         this.textLoader = new TextLoader(engine);
@@ -1391,6 +1394,7 @@ public class SqlCompiler implements Closeable {
         characterStore.clear();
         queryColumnPool.clear();
         queryModelPool.clear();
+        updateModel.clear();
         optimiser.clear();
         parser.clear();
         backupAgent.clear();
