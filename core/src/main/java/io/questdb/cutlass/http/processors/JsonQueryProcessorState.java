@@ -71,7 +71,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final NanosecondClock nanosecondClock;
     private final int floatScale;
     private final int doubleScale;
-    private final SCSequence tempConsumeSequence = new SCSequence();
+    private final SCSequence eventSubSequence = new SCSequence();
     private Rnd rnd;
     private RecordCursorFactory recordCursorFactory;
     private RecordCursor cursor;
@@ -172,8 +172,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return rnd;
     }
 
-    public SCSequence getConsumeSequence() {
-        return tempConsumeSequence;
+    public SCSequence getEventSubSequence() {
+        return eventSubSequence;
     }
 
     public void setRnd(Rnd rnd) {

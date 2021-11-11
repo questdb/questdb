@@ -439,10 +439,9 @@ public class WriterPool extends AbstractPool {
         final long thread = Thread.currentThread().getId();
         final CharSequence name = e.writer.getTableName();
         try {
-            // We can apply structure changing ALTER TABLE before it returns to the pool
-            // without tick() call rollback() will only allow non-structure changes
-            e.writer.tick(true);
             e.writer.rollback();
+            // We can apply structure changing ALTER TABLE before writer returns to the pool
+            e.writer.tick(true);
         } catch (Throwable ex) {
             // We are here because of a systemic issues of some kind
             // one of the known issues is "disk is full" so we could not rollback properly.

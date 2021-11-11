@@ -268,7 +268,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         header(socket, keepAliveHeader);
-        socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}').put("\n");
+        socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}').put('\n');
         socket.sendChunk(true);
         readyForNextRequest(context);
     }
@@ -344,7 +344,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CompiledQuery cc,
             CharSequence keepAliveHeader
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, SqlException {
-        try (QueryFuture execution = cc.execute(state.getConsumeSequence())) {
+        try (QueryFuture execution = cc.execute(state.getEventSubSequence())) {
             execution.await();
         }
         sendConfirmation(state, cc, keepAliveHeader);
@@ -355,7 +355,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CompiledQuery cc,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        try (QueryFuture execution = cc.execute(state.getConsumeSequence())) {
+        try (QueryFuture execution = cc.execute(state.getEventSubSequence())) {
             execution.await();
         }
         sendConfirmation(state, cc, keepAliveHeader);

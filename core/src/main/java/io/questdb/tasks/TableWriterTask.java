@@ -173,7 +173,7 @@ public class TableWriterTask implements Closeable {
         appendPtr += 2;
     }
 
-    public void put(long value) {
+    public void putLong(long value) {
         ensureCapacity(8);
         Unsafe.getUnsafe().putLong(appendPtr, value);
         appendPtr += 8;

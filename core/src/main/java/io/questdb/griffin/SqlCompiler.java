@@ -917,7 +917,7 @@ public class SqlCompiler implements Closeable {
             tableExistsOrFail(tableNamePosition, tok, executionContext);
 
             CharSequence name = GenericLexer.immutableOf(tok);
-            try (TableReader reader = getAlterTableReader(executionContext, name)) {
+            try (TableReader reader = getTableReaderForAlterTable(executionContext, name)) {
                 String tableName = reader.getTableName();
                 TableReaderMetadata tableMetadata = reader.getMetadata();
                 tok = expectToken(lexer, "'add', 'alter' or 'drop'");
@@ -1020,7 +1020,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private TableReader getAlterTableReader(SqlExecutionContext executionContext, CharSequence tableName) {
+    private TableReader getTableReaderForAlterTable(SqlExecutionContext executionContext, CharSequence tableName) {
         try {
             return engine.getReader(executionContext.getCairoSecurityContext(), tableName);
         } catch (CairoException ex) {

@@ -189,9 +189,9 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public long publishTableWriterCommand(AlterStatement alterTableStatement) {
         CharSequence tableName = alterTableStatement.getTableName();
+        final MPSequence commandPubSeq = messageBus.getTableWriterCommandPubSeq();
 
         while (true) {
-            MPSequence commandPubSeq = messageBus.getTableWriterCommandPubSeq();
             long pubCursor = commandPubSeq.next();
             long correlationId = alterCommandCommandCorrelationId.incrementAndGet();
             if (pubCursor > -1) {

@@ -61,10 +61,10 @@ public interface CompiledQuery {
      * If execution is done in sync returns an instance of QueryFuture where isDone() is true.
      * If execution happened async, QueryFuture.await() method should be called for blocking wait
      * or QueryFuture.await(long) for wait with specified timeout.
-     * @param tempSequence - temporary SCSequence instance to track completion of async ALTER command
+     * @param eventSubSeq - temporary SCSequence instance to track completion of async ALTER command
      * @throws SqlException - throws exception if command execution fails
      */
-    QueryFuture execute(SCSequence tempSequence) throws SqlException;
+    QueryFuture execute(SCSequence eventSubSeq) throws SqlException;
 }
 
 

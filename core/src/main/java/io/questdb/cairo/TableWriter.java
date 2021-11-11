@@ -182,7 +182,6 @@ public class TableWriter implements Closeable {
     private ObjList<Runnable> activeNullSetters;
     private int rowActon = ROW_ACTION_OPEN_PARTITION;
     private final AlterStatement alterTableStatement = new AlterStatement();
-    private boolean isTicking;
     private long committedMasterRef;
 
 
@@ -490,7 +489,7 @@ public class TableWriter implements Closeable {
         final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
 
         if (columnIndex == -1) {
-            throw CairoException.instance(0).put("column \"").put(columnName).put("\" does not exist");
+            throw CairoException.instance(0).put("column '").put(columnName).put("' does not exist");
         }
 
         commit();
@@ -693,16 +692,8 @@ public class TableWriter implements Closeable {
         txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
     }
 
-    public boolean checkMaxAndCommitLag(int commitMode) {
-        final long rowsSinceCommit = (masterRef - committedMasterRef) >> 1;
-        if (rowsSinceCommit < metadata.getMaxUncommittedRows()) {
-            if ((rowsSinceCommit & configuration.getWriterTickRowsCountMod()) == 0) {
-                tick();
-            }
-            return false;
-        }
-        commit(commitMode, metadata.getCommitLag());
-        return true;
+    public long getUncommittedRowCount() {
+        return (masterRef - committedMasterRef) >> 1;
     }
 
     @Override
@@ -737,7 +728,7 @@ public class TableWriter implements Closeable {
         if (index > -1) {
             return index;
         }
-        throw CairoException.instance(0).put("column \"").put(name).put("\" does not exist");
+        throw CairoException.instance(0).put("column '").put(name).put("' does not exist");
     }
 
     public String getDesignatedTimestampColumnName() {
@@ -1386,8 +1377,6 @@ public class TableWriter implements Closeable {
                 LOG.error().$("could not perform rollback [name=").$(tableName).$(", msg=").$(e.getMessage()).$(']').$();
                 distressed = true;
             }
-        } else {
-            tick();
         }
     }
 
@@ -1442,22 +1431,25 @@ public class TableWriter implements Closeable {
         return txWriter.getRowCount() + getO3RowCount();
     }
 
+    /***
+     * Processes writer command queue to execute writer async commands such as replication and table alters.
+     * Does not accept structure changes, e.g. equivalent to tick(false)
+     * Some tick calls can result into transaction commit.
+     */
     public void tick() {
         tick(false);
     }
 
+    /***
+     * Processes writer command queue to execute writer async commands such as replication and table alters.
+     * Some tick calls can result into transaction commit.
+     * @param acceptStructureChange If true accpets any Alter table command, if false does not accept significant table
+     *                             structure changes like column drop, rename
+     */
     public void tick(boolean acceptStructureChange) {
         // Some alter table trigger commit() which trigger tick()
         // If already inside the tick(), do not re-enter it.
-        if (isTicking) {
-            return;
-        }
-        try {
-            isTicking = true;
-            processCommandQueue(acceptStructureChange);
-        } finally {
-            isTicking = false;
-        }
+        processCommandQueue(acceptStructureChange);
     }
 
     @Override
@@ -1906,6 +1898,7 @@ public class TableWriter implements Closeable {
         if (inTransaction()) {
 
             if (hasO3() && o3Commit(commitLag)) {
+                // Bookmark masterRef to track how many rows is in uncommitted state
                 this.committedMasterRef = masterRef;
                 return;
             }
@@ -1916,11 +1909,11 @@ public class TableWriter implements Closeable {
 
             updateIndexes();
             txWriter.commit(commitMode, this.denseSymbolMapWriters);
+
+            // Bookmark masterRef to track how many rows is in uncommitted state
             this.committedMasterRef = masterRef;
             o3ProcessPartitionRemoveCandidates();
         }
-
-        tick();
     }
 
     private void configureAppendPosition() {
@@ -3165,7 +3158,6 @@ public class TableWriter implements Closeable {
             final long columnTop = columnTops.getQuick(colIndex);
 
             if (columnTop > 0) {
-                //noinspection SuspiciousNameCombination
                 LOG.debug()
                         .$("move uncommitted [columnTop=").$(columnTop)
                         .$(", columnIndex=").$(colIndex)

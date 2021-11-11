@@ -197,6 +197,37 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsyncAlterDoesNotCommitUncommittedRowsOnWriterClose() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table product (timestamp timestamp, name symbol nocache) timestamp(timestamp)", sqlExecutionContext);
+            QueryFuture commandFuture = null;
+            try {
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
+                    CompiledQuery cc = compiler.compile("alter table product alter column name cache", sqlExecutionContext);
+                    commandFuture = cc.execute(commandReplySequence);
+
+                    // Add 1 row
+                    TableWriter.Row row = writer.newRow(0);
+                    row.putSym(1, "s");
+                    row.append();
+                    // No commit
+                }
+
+                commandFuture.await();
+                engine.releaseAllReaders();
+
+                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "product")) {
+                    Assert.assertEquals(0, rdr.size());
+                }
+            } finally {
+                if (commandFuture != null) {
+                    commandFuture.close();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAsyncAlterNonExistingTable() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);

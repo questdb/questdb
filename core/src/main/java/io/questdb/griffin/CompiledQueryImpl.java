@@ -85,9 +85,9 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     @Override
-    public QueryFuture execute(SCSequence tempSequence) throws SqlException {
+    public QueryFuture execute(SCSequence eventSubSeq) throws SqlException {
         if (type == INSERT) {
-            exeucteInsert();
+            executeInsert();
             return QueryFuture.DONE;
         }
 
@@ -102,10 +102,11 @@ public class CompiledQueryImpl implements CompiledQuery {
                 alterStatement.apply(writer, true);
                 return QueryFuture.DONE;
             } catch (EntryUnavailableException busyException) {
-                if (tempSequence == null) {
+                if (eventSubSeq == null) {
                     throw busyException;
                 }
-                return alterFuture.of(tempSequence);
+                alterFuture.of(eventSubSeq);
+                return alterFuture;
             } catch (TableStructureChangesException e) {
                 assert false : "This must never happen when parameter acceptChange=true";
             }
@@ -133,7 +134,7 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
-    private void exeucteInsert() throws SqlException {
+    private void executeInsert() throws SqlException {
         try (InsertMethod insertMethod = insertStatement.createMethod(defaultSqlExecutionContext)) {
             insertMethod.execute();
             insertMethod.commit();
@@ -203,7 +204,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     private class AlterTableQueryFuture implements QueryFuture {
-        private SCSequence waitSequence;
+        private SCSequence eventSubSeq;
         private boolean done;
         private long commandId;
 
@@ -220,7 +221,7 @@ public class CompiledQueryImpl implements CompiledQuery {
             if (done) {
                 return true;
             }
-            return done = waitWriterEvent(timeout, alterStatement.getTableNamePosition());
+            return done = awaitWriterEvent(timeout, alterStatement.getTableNamePosition());
         }
 
         @Override
@@ -230,21 +231,25 @@ public class CompiledQueryImpl implements CompiledQuery {
 
         @Override
         public void close() {
-            if (waitSequence != null) {
-                engine.getMessageBus().getTableWriterEventFanOut().remove(waitSequence);
-                waitSequence.clear();
-                waitSequence = null;
+            if (eventSubSeq != null) {
+                engine.getMessageBus().getTableWriterEventFanOut().remove(eventSubSeq);
+                eventSubSeq.clear();
+                eventSubSeq = null;
                 commandId = -1;
             }
         }
 
-        public QueryFuture of(SCSequence waitSequence) {
-            assert waitSequence != null : "No sequence to wait on";
+        /***
+         * Initializes instance of AlterTableQueryFuture with the parameters to wait for the new command
+         * @param eventSubSeq - event sequence used to wait for the command execution to be signaled as complete
+         */
+        public void of(SCSequence eventSubSeq) {
+            assert eventSubSeq != null : "event subscriber sequence must be provided";
 
             // Set up execution wait sequence to listen to the Engine async writer events
             final FanOut writerEventFanOut = engine.getMessageBus().getTableWriterEventFanOut();
-            writerEventFanOut.and(waitSequence);
-            this.waitSequence = waitSequence;
+            writerEventFanOut.and(eventSubSeq);
+            this.eventSubSeq = eventSubSeq;
 
             try {
                 // Publish new command and get published Command Id
@@ -254,17 +259,16 @@ public class CompiledQueryImpl implements CompiledQuery {
                 close();
                 throw ex;
             }
-            return this;
         }
 
-        private boolean waitWriterEvent(
+        private boolean awaitWriterEvent(
                 long writerAsyncCommandBusyWaitTimeout,
                 int queryTableNamePosition
         ) throws SqlException {
             if (writerAsyncCommandBusyWaitTimeout < 1) {
                 return false;
             }
-            assert waitSequence != null : "No sequence to wait on";
+            assert eventSubSeq != null : "No sequence to wait on";
             assert commandId > -1 : "No command id to wait for";
 
             final MicrosecondClock clock = engine.getConfiguration().getMicrosecondClock();
@@ -272,7 +276,7 @@ public class CompiledQueryImpl implements CompiledQuery {
             final RingQueue<TableWriterTask> tableWriterEventQueue = engine.getMessageBus().getTableWriterEventQueue();
 
             while (true) {
-                long seq = waitSequence.next();
+                long seq = eventSubSeq.next();
                 if (seq < 0) {
                     // Queue is empty, check if the execution blocked for too long
                     if (clock.getTicks() - start > writerAsyncCommandBusyWaitTimeout) {
@@ -289,7 +293,7 @@ public class CompiledQueryImpl implements CompiledQuery {
                             .$(", type=").$(event.getType())
                             .$(", expectedInstance=").$(commandId)
                             .I$();
-                    waitSequence.done(seq);
+                    eventSubSeq.done(seq);
                     LockSupport.parkNanos(1);
                     continue;
                 }
@@ -301,7 +305,7 @@ public class CompiledQueryImpl implements CompiledQuery {
                 if (strLen != 0) {
                     result = SqlException.$(queryTableNamePosition, event.getData() + 4L, event.getData() + 4L + 2L * strLen);
                 }
-                waitSequence.done(seq);
+                eventSubSeq.done(seq);
                 LOG.info().$("writer command response received [instance=").$(commandId).I$();
                 if (result != null) {
                     throw result;

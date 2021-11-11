@@ -196,7 +196,7 @@ public class AlterStatement implements Mutable {
         event.putInt(tableNamePosition);
         event.putInt(longList.size());
         for (int i = 0, n = longList.size(); i < n; i++) {
-            event.put(longList.getQuick(i));
+            event.putLong(longList.getQuick(i));
         }
 
         event.putInt(objCharList.size());
