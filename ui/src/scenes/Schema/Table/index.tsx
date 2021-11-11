@@ -44,6 +44,8 @@ type Props = QuestDB.Table &
     refresh: number
     name: string
     partitionBy: string
+    open?: boolean
+    onChange?: (name: string) => void
   }>
 
 const Wrapper = styled.div`
@@ -113,6 +115,8 @@ const Table = ({
   designatedTimestamp,
   name,
   partitionBy,
+  open = false,
+  onChange = () => {},
 }: Props) => {
   const ref = useRef<HTMLDivElement>(null)
   const [quest] = useState(new QuestDB.Client())
@@ -137,6 +141,11 @@ const Table = ({
     {
       name,
       kind: "table",
+      initiallyOpen: open,
+      onOpen: () => {
+        onChange(name)
+        return undefined // to make typescript happy
+      },
       render({ toggleOpen }) {
         return (
           <ContextMenuTrigger id={name}>

@@ -44,7 +44,7 @@ export type TreeNode = {
   render?: TreeNodeRender
   initiallyOpen?: boolean
   wrapper?: React.FunctionComponent
-  onOpen?: (leaf: TreeNode) => Promise<TreeNode[]>
+  onOpen?: (leaf: TreeNode) => Promise<TreeNode[]> | undefined
   children?: TreeNode[]
 }
 
@@ -82,7 +82,11 @@ const Leaf = (leaf: TreeNode) => {
   const loadNewContent = useCallback(async () => {
     if (typeof onOpen === "function") {
       setLoading(true)
-      setContent(await onOpen(leaf))
+      const onOpenCandidate = onOpen(leaf)
+      if (onOpenCandidate instanceof Promise) {
+        const newContent = await onOpenCandidate
+        setContent(newContent ?? [])
+      }
       setLoading(false)
     }
   }, [leaf, onOpen])
@@ -104,7 +108,11 @@ const Leaf = (leaf: TreeNode) => {
         loadInitialContent()
       }
     }
-  })
+  }, [])
+
+  useEffect(() => {
+    setOpen(initiallyOpen ?? false)
+  }, [initiallyOpen])
 
   return (
     <Li>
