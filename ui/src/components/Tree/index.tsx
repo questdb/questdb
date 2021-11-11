@@ -22,81 +22,118 @@
  *
  ******************************************************************************/
 
-import React, { useState, useCallback } from "react"
-import { CSSTransition } from "react-transition-group"
+import React, { useState, useCallback, useEffect } from "react"
+import Row from "../../scenes/Schema/Row"
 import styled from "styled-components"
 
-import { Text, TransitionDuration } from "components"
+export type TreeNodeKind = "column" | "table" | "folder"
 
-export type TreeInterface = {
-  name: string
-  payload: unknown
-  children?: TreeInterface[]
+export type TreeNodeRenderParams = {
+  toggleOpen: () => void
+  isOpen: boolean
 }
 
-type Props = {
-  root: TreeInterface[]
-  onLeafOpen: (payload: unknown) => Promise<TreeInterface[]>
+export type TreeNodeRender = ({
+  toggleOpen,
+  isOpen,
+}: TreeNodeRenderParams) => React.ReactElement
+
+export type TreeNode = {
+  name: string
+  kind?: TreeNodeKind
+  render?: TreeNodeRender
+  initiallyOpen?: boolean
+  wrapper?: React.FunctionComponent
+  onOpen?: (leaf: TreeNode) => Promise<TreeNode[]>
+  children?: TreeNode[]
 }
 
 const Ul = styled.ul`
-  padding: 0.5rem 0;
-  margin-left: 0;
+  padding: 0;
+  margin: 0;
 `
 
 const Li = styled.li`
   list-style: none;
-  padding-left: 1rem;
+  padding: 0 0 0 1rem;
 `
 
-const Leaf = ({
-  label,
-  payload,
-  onOpen,
-}: {
-  label: string
-  payload: unknown
-  onOpen: (payload: unknown) => Promise<TreeInterface[]>
-}) => {
-  const [open, setOpen] = useState(false)
+const WrapWithIf: React.FunctionComponent<{
+  condition: boolean
+  wrapper: (children: React.ReactElement) => JSX.Element
+  children: React.ReactElement
+}> = ({ condition, wrapper, children }) =>
+  condition ? wrapper(children) : children
+
+const Leaf = (leaf: TreeNode) => {
+  const {
+    name,
+    kind,
+    initiallyOpen,
+    onOpen,
+    render,
+    children = [],
+    wrapper,
+  } = leaf
+  const [open, setOpen] = useState(initiallyOpen ?? false)
   const [loading, setLoading] = useState(false)
-  const [content, setContent] = useState<TreeInterface[]>([])
+  const [content, setContent] = useState<TreeNode[]>([])
 
-  const toggleOpen = useCallback(async () => {
-    setLoading(true)
+  const loadNewContent = useCallback(async () => {
+    if (typeof onOpen === "function") {
+      setLoading(true)
+      setContent(await onOpen(leaf))
+      setLoading(false)
+    }
+  }, [leaf, onOpen])
 
+  const toggleOpen: () => void = useCallback(async () => {
     if (!loading && !open) {
-      setContent(await onOpen(payload))
+      await loadNewContent()
+    }
+    setOpen(!open)
+  }, [open, loading, loadNewContent])
+
+  useEffect(() => {
+    const loadInitialContent: () => void = async () => {
+      await loadNewContent()
     }
 
-    setLoading(false)
-    setOpen(!open)
-  }, [open, loading, onOpen, payload])
+    if (open && typeof onOpen === "function" && content.length === 0) {
+      if (!loading) {
+        loadInitialContent()
+      }
+    }
+  })
 
   return (
     <Li>
-      <Text color="draculaForeground" ellipsis onClick={toggleOpen}>
-        {label}
-      </Text>
+      {typeof render === "function" ? (
+        render({ toggleOpen, isOpen: open })
+      ) : (
+        <Row kind={kind ?? "folder"} name={name} />
+      )}
 
-      <CSSTransition
-        classNames="collapse"
-        in={open && content.length > 0}
-        timeout={TransitionDuration.REG}
-        unmountOnExit
-      >
-        <Tree onLeafOpen={onOpen} root={content} />
-      </CSSTransition>
+      {open && (
+        <WrapWithIf
+          condition={Boolean(wrapper)}
+          wrapper={(children) =>
+            React.createElement(wrapper ?? React.Fragment, {}, children)
+          }
+        >
+          <Tree root={content.length > 0 ? content : children} />
+        </WrapWithIf>
+      )}
     </Li>
   )
 }
 
-export const Tree: React.FunctionComponent<Props> = ({ root, onLeafOpen }) => {
-  return (
-    <Ul>
-      {root.map(({ name, payload }) => (
-        <Leaf key={name} label={name} onOpen={onLeafOpen} payload={payload} />
-      ))}
-    </Ul>
-  )
-}
+export const Tree: React.FunctionComponent<{
+  root: TreeNode[]
+}> = ({ root }) => (
+  <Ul>
+    {root.map((leaf: TreeNode) => (
+      <Leaf key={leaf.name} {...leaf} />
+    ))}
+  </Ul>
+)
