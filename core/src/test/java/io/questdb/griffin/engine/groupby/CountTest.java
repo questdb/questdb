@@ -154,7 +154,7 @@ public class CountTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIntConst() throws Exception {
+    public void testLongConst() throws Exception {
         assertQuery("cnt_1\tcnt_42\n" +
                         "20\t20\n",
                 "select count(1) cnt_1, count(42) cnt_42 from x",
@@ -187,7 +187,7 @@ public class CountTest extends AbstractGriffinTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testIntNull() throws Exception {
+    public void testConstNull() throws Exception {
         assertQuery("cnt_1\tcnt_42\n" +
                         "20\t20\n",
                 "select count(NULL) from x",

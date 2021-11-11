@@ -493,7 +493,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.MinDateGroupByFunctionFactory,
 //                  'count' group by function
             io.questdb.griffin.engine.functions.groupby.CountGroupByFunctionFactory,
-            io.questdb.griffin.engine.functions.groupby.CountIntGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.CountLongGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountStringGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountSymbolGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunctionFactory,

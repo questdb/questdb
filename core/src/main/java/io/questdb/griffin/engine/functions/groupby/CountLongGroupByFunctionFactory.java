@@ -33,11 +33,11 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class CountIntGroupByFunctionFactory implements FunctionFactory {
+public class CountLongGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "count(i)";
+        return "count(l)";
     }
 
     @Override
