@@ -31,7 +31,10 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.network.Net;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 
@@ -150,7 +153,7 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
 
             String req = "POST /api/v1/alerts HTTP/1.1\r\n" +
                     "Host: localhost:9093\r\n" +
-                    "User-Agent: curl/7.71.1\r\n" +
+                    "User-Agent: QuestDB/7.71.1\r\n" +
                     "Accept: */*\r\n" +
                     "Content-Type: application/json\r\n" +
                     "Content-Length: ";
@@ -202,7 +205,24 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
 
             p += len;
 
-            Net.send(fd, buf, (int) (p - buf));
+            int remaining = (int) (p - buf);
+            p = buf;
+            while (remaining > 0) {
+                int n = Net.send(fd, p, remaining);
+                if (n > 0) {
+                    remaining -= n;
+                    p += n;
+                } else {
+                    System.out.println("could not send [n="+n+", errno="+ff.errno());
+                }
+            }
+            // now read
+
+            p = buf;
+            int n = Net.recv(fd, p, (int) lim);
+            System.out.println(n);
+
+            Net.dumpAscii(p, n);
         }
     }
 

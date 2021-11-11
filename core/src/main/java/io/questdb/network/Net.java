@@ -99,6 +99,16 @@ public final class Net {
         }
     }
 
+    public static void dumpAscii(long buffer, int len) {
+        if (len > 0) {
+            for (int i = 0; i < len; i++) {
+                StdoutSink.INSTANCE.put((char) Unsafe.getUnsafe().getByte(buffer + i));
+            }
+            StdoutSink.INSTANCE.put('\n');
+            StdoutSink.INSTANCE.flush();
+        }
+    }
+
     public static native void freeMsgHeaders(long msgHeaders);
 
     public native static void freeSockAddr(long sockaddr);
