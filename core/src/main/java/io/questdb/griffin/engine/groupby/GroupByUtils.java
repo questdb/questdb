@@ -74,7 +74,7 @@ public class GroupByUtils {
                 );
 
                 // configure map value columns for group-by functions
-                // some functions may need more than one column in values
+                // some functions may need more than one column in values,
                 // so we have them do all the work
                 assert function instanceof GroupByFunction;
                 GroupByFunction func = (GroupByFunction) function;
