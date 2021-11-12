@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -1560,6 +1561,14 @@ public class TableWriterTest extends AbstractCairoTest {
             create(FF, PartitionBy.DAY, N);
             Rnd rnd = new Rnd();
             long increment = 60000L * 1000;
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public long getDataAppendPageSize() {
+                    return 1024 * 1024;//1MB
+                }
+
+
+            };
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
 
                 long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
@@ -1593,28 +1602,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
                 return super.findNext(findPtr);
             }
-        }, true);
-    }
-
-    @Test
-    public void testDayPartitionTruncateError() throws Exception {
-        testTruncate(new CountingFilesFacade() {
-            @Override
-            public boolean truncate(long fd, long size) {
-                return --count != 0 && super.truncate(fd, size);
-            }
-        }, true);
-    }
-
-    @Test
-    public void testDayPartitionTruncateErrorConstructorRecovery() throws Exception {
-        class X extends CountingFilesFacade {
-            @Override
-            public boolean truncate(long fd, long size) {
-                return --count != 0 && super.truncate(fd, size);
-            }
-        }
-        testTruncate(new X(), false);
+        });
     }
 
     @Test
@@ -1723,8 +1711,24 @@ public class TableWriterTest extends AbstractCairoTest {
             Assert.assertFalse(w.getMetadata().isColumnIndexed(2));
 
             // here we reset random to ensure we re-insert the same values
+            rnd.reset();
             testIndexIsAddedToTableAppendData(N, rnd, t, increment, w);
             w.commit();
+
+            Assert.assertEquals(1, w.getPartitionCount());
+
+            // ensure indexes can be read
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "test")) {
+                final TableReaderRecord record = (TableReaderRecord) reader.getCursor().getRecord();
+                assertIndex(reader, record, 0);
+                assertIndex(reader, record, 1);
+
+                // check if we can still truncate the writer
+                w.truncate();
+                Assert.assertEquals(0, w.size());
+                Assert.assertTrue(reader.reload());
+                Assert.assertEquals(0, reader.size());
+            }
         }
     }
 
@@ -1773,7 +1777,22 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testO3AferRowCancel() throws Exception {
+    public void testO3AfterReopen() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            CairoTestUtils.createAllTableWithTimestamp(configuration, PartitionBy.NONE);
+            Rnd rnd = new Rnd();
+            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            testAppendNulls(rnd, ts);
+            try {
+                testAppendNulls(rnd, ts);
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
+        });
+    }
+
+    @Test
+    public void testO3AfterRowCancel() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, "weather", PartitionBy.DAY)
                     .col("windspeed", ColumnType.DOUBLE)
@@ -1815,21 +1834,6 @@ public class TableWriterTest extends AbstractCairoTest {
                     Assert.assertEquals("Row " + i, expectedTs[i++], r.getTimestamp(col));
                 }
                 Assert.assertEquals(expectedTs.length, i);
-            }
-        });
-    }
-
-    @Test
-    public void testO3AfterReopen() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTableWithTimestamp(configuration, PartitionBy.NONE);
-            Rnd rnd = new Rnd();
-            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-            testAppendNulls(rnd, ts);
-            try {
-                testAppendNulls(rnd, ts);
-                Assert.fail();
-            } catch (CairoException ignore) {
             }
         });
     }
@@ -2911,6 +2915,25 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
+    private void assertIndex(TableReader reader, TableReaderRecord record, int columnIndex) {
+        final int partitionIndex = 0;
+        reader.openPartition(partitionIndex);
+        final BitmapIndexReader indexReader = reader.getBitmapIndexReader(partitionIndex, columnIndex, BitmapIndexReader.DIR_FORWARD);
+        final SymbolMapReader r = reader.getSymbolMapReader(columnIndex);
+        final int symbolCount = r.getSymbolCount();
+
+        long calculatedRowCount = 0;
+        for (int i = 0; i < symbolCount; i++) {
+            final RowCursor rowCursor = indexReader.getCursor(true, i + 1, 0, Long.MAX_VALUE);
+            while (rowCursor.hasNext()) {
+                record.setRecordIndex(Rows.toRowID(partitionIndex, rowCursor.next()));
+                Assert.assertEquals(i, record.getInt(columnIndex));
+                calculatedRowCount++;
+            }
+        }
+        Assert.assertEquals(reader.size(), calculatedRowCount);
+    }
+
     private void create(FilesFacade ff, int partitionBy, int N) {
         try (TableModel model = new TableModel(new DefaultCairoConfiguration(root) {
             @Override
@@ -3326,6 +3349,17 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
+    private void testIndexIsAddedToTableAppendData(int N, Rnd rnd, long t, long increment, TableWriter w) {
+        for (int i = 0; i < N; i++) {
+            TableWriter.Row r = w.newRow(t);
+            r.putSym(0, rnd.nextString(5));
+            r.putSym(1, rnd.nextString(5));
+            r.putSym(2, rnd.nextString(5));
+            t += increment;
+            r.append();
+        }
+    }
+
     private void testO3RecordsFail(int N) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
@@ -3689,7 +3723,7 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
-    private void testTruncate(CountingFilesFacade ff, boolean retry) throws Exception {
+    private void testTruncate(CountingFilesFacade ff) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 200;
             create(ff, PartitionBy.DAY, N);
@@ -3699,6 +3733,11 @@ public class TableWriterTest extends AbstractCairoTest {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
+                }
+
+                @Override
+                public long getMiscAppendPageSize() {
+                    return 1024 * 1024;
                 }
             };
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
@@ -3721,12 +3760,7 @@ public class TableWriterTest extends AbstractCairoTest {
                         LOG.info().$((Sinkable) e).$();
                     }
 
-                    if (retry) {
-                        // retry
-                        writer.truncate();
-                    } else {
-                        break;
-                    }
+                    writer.truncate();
                 }
             }
 
@@ -3864,17 +3898,6 @@ public class TableWriterTest extends AbstractCairoTest {
                     Assert.fail();
                 }
             }
-        }
-    }
-
-    private void testIndexIsAddedToTableAppendData(int N, Rnd rnd, long t, long increment, TableWriter w) {
-        for (int i = 0; i < N; i++) {
-            TableWriter.Row r = w.newRow(t);
-            r.putSym(0, rnd.nextString(5));
-            r.putSym(1, rnd.nextString(5));
-            r.putSym(2, rnd.nextString(5));
-            t += increment;
-            r.append();
         }
     }
 

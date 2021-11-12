@@ -2692,7 +2692,7 @@ public class SqlCodeGenerator implements Mutable {
 
                     } else if (
                             intrinsicModel.keyExcludedValues.size() > 0
-                                    && reader.getSymbolMapReader(keyColumnIndex).size() < configuration.getMaxSymbolNotEqualsCount()
+                                    && reader.getSymbolMapReader(keyColumnIndex).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()
                     ) {
                         symbolValueList.clear();
                         for (int i = 0, n = intrinsicModel.keyExcludedValues.size(); i < n; i++) {

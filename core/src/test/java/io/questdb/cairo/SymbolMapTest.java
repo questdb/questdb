@@ -397,7 +397,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                         Assert.assertEquals(i, reader.keyOf(cs));
                     }
 
-                    Assert.assertEquals(N, reader.size());
+                    Assert.assertEquals(N, reader.getSymbolCount());
                     Assert.assertNull(reader.valueOf(-1));
                     Assert.assertNull(reader.valueOf(N));
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.keyOf("hola"));

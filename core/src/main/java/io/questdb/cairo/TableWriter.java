@@ -571,7 +571,6 @@ public class TableWriter implements Closeable {
         }
 
         txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
-        // todo: test that we can add index on adjacent columns and ingestion works
         indexers.extendAndSet(columnIndex, indexer);
         populateDenseIndexerList();
 
@@ -1442,7 +1441,6 @@ public class TableWriter implements Closeable {
                     Misc.free(indexers.getQuick(i));
                 }
             }
-            truncateColumns();
             removePartitionDirectories();
             rowActon = ROW_ACTION_OPEN_PARTITION;
         } else {

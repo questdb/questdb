@@ -295,16 +295,13 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
         try (Path path = new Path().of(root).concat("tmp1").$()) {
             ff.touch(path);
             final long fd = TableUtils.openRW(ff, path, LOG);
-            try {
-                MemoryMARW mem = Vm.getMARWInstance();
+            try (MemoryMARW mem = Vm.getMARWInstance()) {
                 mem.of(ff, fd, null, -1, MemoryTag.MMAP_DEFAULT);
 
                 mem.extend(ff.getMapPageSize() * 2);
 
                 mem.putLong(ff.getMapPageSize(), 999);
                 Assert.assertEquals(999, mem.getLong(ff.getMapPageSize()));
-            } finally {
-                ff.close(fd);
             }
         }
     }

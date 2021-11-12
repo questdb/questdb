@@ -99,7 +99,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
             excludedValues.add(Chars.toString(keyExcludedValueFunctions.getQuick(i).getStr(null)));
         }
         final SymbolMapReaderImpl symbolMapReader = (SymbolMapReaderImpl) tableReader.getSymbolMapReader(columnIndex);
-        for (int i = 0; i < symbolMapReader.size(); i++) {
+        for (int i = 0; i < symbolMapReader.getSymbolCount(); i++) {
             final CharSequence symbol = symbolMapReader.valueOf(i);
             if (excludedValues.indexOf(symbol) < 0 && includedValues.indexOf(symbol) < 0) {
                 final RowCursorFactory rowCursorFactory;
@@ -119,7 +119,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext)
             throws SqlException {
         try (TableReader reader = dataFrameCursor.getTableReader()) {
-            if (reader.getSymbolMapReader(columnIndex).size() > maxSymbolNotEqualsCount) {
+            if (reader.getSymbolMapReader(columnIndex).getSymbolCount() > maxSymbolNotEqualsCount) {
                 throw ReaderOutOfDateException.of(reader.getTableName());
             }
             Function.init(keyExcludedValueFunctions, reader, executionContext);
