@@ -962,7 +962,7 @@ public class SqlCodeGenerator implements Mutable {
         final int latestByIndex = metadata.getColumnIndexQuiet(latestByNode.token);
         final boolean indexed = metadata.isColumnIndexed(latestByIndex);
 
-        // if there are > 1 columns in latest by statement we cannot use indexes
+        // if there are > 1 columns in the latest by statement we cannot use indexes
         if (latestBy.size() > 1 || !ColumnType.isSymbol(metadata.getColumnType(latestByIndex))) {
             return new LatestByAllFilteredRecordCursorFactory(
                     metadata,
@@ -1112,7 +1112,7 @@ public class SqlCodeGenerator implements Mutable {
         // we select all values of "latest by" column
 
         assert intrinsicModel.keyValues.size() == 0;
-        // get latest rows for all values of "latest by" column
+        // get the latest rows for all values of "latest by" column
 
         if (indexed) {
             return new LatestByAllIndexedFilteredAfterRecordCursorFactory(
@@ -2473,9 +2473,10 @@ public class SqlCodeGenerator implements Mutable {
                 // validate the latest by against current reader
                 // first check if column is valid
                 for (int i = 0; i < latestByColumnCount; i++) {
-                    final int index = myMeta.getColumnIndexQuiet(latestBy.getQuick(i).token);
+                    final ExpressionNode latestByNode = latestBy.getQuick(i);
+                    final int index = myMeta.getColumnIndexQuiet(latestByNode.token);
                     if (index == -1) {
-                        throw SqlException.invalidColumn(latestBy.getQuick(i).position, latestBy.getQuick(i).token);
+                        throw SqlException.invalidColumn(latestByNode.position, latestByNode.token);
                     }
 
                     // check the type of the column, not all are supported
@@ -2498,8 +2499,8 @@ public class SqlCodeGenerator implements Mutable {
 
                         default:
                             throw SqlException
-                                    .position(latestBy.getQuick(i).position)
-                                    .put(latestBy.getQuick(i).token)
+                                    .position(latestByNode.position)
+                                    .put(latestByNode.token)
                                     .put(" (")
                                     .put(ColumnType.nameOf(columnType))
                                     .put("): invalid type, only [BOOLEAN, SHORT, INT, LONG, LONG256, CHAR, STRING, SYMBOL] are supported in LATEST BY");
@@ -2524,7 +2525,7 @@ public class SqlCodeGenerator implements Mutable {
 
                 CharSequence preferredKeyColumn = null;
 
-                if (listColumnFilterA.size() == 1) {
+                if (latestByColumnCount == 1) {
                     final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
 
                     if (ColumnType.isSymbol(myMeta.getColumnType(latestByIndex))) {
@@ -2542,7 +2543,7 @@ public class SqlCodeGenerator implements Mutable {
                         functionParser,
                         myMeta,
                         executionContext,
-                        listColumnFilterA.size() > 1
+                        latestByColumnCount > 1
                 );
 
                 // intrinsic parser can collapse where clause when removing parts it can replace
@@ -2834,7 +2835,8 @@ public class SqlCodeGenerator implements Mutable {
                 );
             }
 
-            if (listColumnFilterA.size() == 1 && myMeta.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(0))) {
+            // listColumnFilterA = latest by column indexes
+            if (latestByColumnCount == 1 && myMeta.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(0))) {
                 return new LatestByAllIndexedFilteredAfterRecordCursorFactory(
                         myMeta,
                         configuration,

@@ -94,7 +94,8 @@ public class CastSymbolToLong256FunctionFactory implements FunctionFactory {
                     long256Builder.getLong1(),
                     long256Builder.getLong2(),
                     long256Builder.getLong3(),
-                    sink);
+                    sink
+            );
         }
     }
 }

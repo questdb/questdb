@@ -67,8 +67,10 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         compiler.close();
     }
 
+    @Override
     @Before
-    public void setUp1() {
+    public void setUp() {
+        super.setUp();
         bindVariableService.clear();
     }
 

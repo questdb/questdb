@@ -61,7 +61,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private SqlExecutionContext sqlExecutionContext;
 
     @BeforeClass
-    public static void setUp2() {
+    public static void setUpStatic() {
+        AbstractCairoTest.setUpStatic();
         try (TableModel model = new TableModel(configuration, "w", PartitionBy.NONE)) {
             model.col("sym", ColumnType.SYMBOL)
                     .col("bid", ColumnType.DOUBLE)
@@ -124,7 +125,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @AfterClass
-    public static void tearDown2() {
+    public static void tearDownStatic() {
+        AbstractCairoTest.tearDownStatic();
         reader.close();
         noTimestampReader.close();
         unindexedReader.close();
@@ -132,7 +134,9 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Before
-    public void setUp1() {
+    @Override
+    public void setUp() {
+        super.setUp();
         CairoEngine engine = new CairoEngine(configuration);
         bindVariableService = new BindVariableServiceImpl(configuration);
         compiler = new SqlCompiler(new CairoEngine(configuration));
