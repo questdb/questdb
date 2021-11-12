@@ -518,20 +518,17 @@ public class TableWriter implements Closeable {
                 if (partitionBy != PartitionBy.NONE) {
                     // run indexer for the whole table
                     final long timestamp = indexHistoricPartitions(indexer, columnName, indexValueBlockSize);
-                    // todo: test that we can create index on partitioned table without any data
-                    //      this specifically didn't work if we populate table, truncate and then add index
-                    //      also inserting rows after index or multiple indexes were added need testing
                     if (timestamp != Numbers.LONG_NaN) {
                         path.trimTo(rootLen);
                         setStateForTimestamp(path, timestamp, true);
+                        // create index in last partition
+                        indexLastPartition(indexer, columnName, columnIndex, indexValueBlockSize);
                     }
                 } else {
                     setStateForTimestamp(path, 0, false);
+                    // create index in last partition
+                    indexLastPartition(indexer, columnName, columnIndex, indexValueBlockSize);
                 }
-
-                // create index in last partition
-                indexLastPartition(indexer, columnName, columnIndex, indexValueBlockSize);
-
             } finally {
                 path.trimTo(rootLen);
             }

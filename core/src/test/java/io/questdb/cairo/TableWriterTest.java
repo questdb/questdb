@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
@@ -1370,7 +1371,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean allocate(long fd, long size) {
-                if (this.fd == fd){
+                if (this.fd == fd) {
                     return false;
                 }
                 return super.allocate(fd, size);
@@ -1687,6 +1688,44 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertTrue(writer.isOpen());
             }
         });
+    }
+
+    @Test
+    public void testIndexIsAddedToTable() throws NumericException {
+        int partitionBy = PartitionBy.DAY;
+        int N = 1000;
+        try (TableModel model = new TableModel(configuration, "test", partitionBy)) {
+            model.col("sym1", ColumnType.SYMBOL);
+            model.col("sym2", ColumnType.SYMBOL);
+            model.col("sym3", ColumnType.SYMBOL);
+            model.timestamp();
+
+            CairoTestUtils.create(model);
+        }
+
+        // insert data
+        final Rnd rnd = new Rnd();
+        long t = TimestampFormatUtils.parseTimestamp("2019-03-22T00:00:00.000000Z");
+        long increment = 2_000_000;
+        try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "test", "test reason")) {
+            testIndexIsAddedToTableAppendData(N, rnd, t, increment, w);
+            w.commit();
+
+            // truncate writer
+            w.truncate();
+
+            // add a couple of indexes
+            w.addIndex("sym1", 1024);
+            w.addIndex("sym2", 1024);
+
+            Assert.assertTrue(w.getMetadata().isColumnIndexed(0));
+            Assert.assertTrue(w.getMetadata().isColumnIndexed(1));
+            Assert.assertFalse(w.getMetadata().isColumnIndexed(2));
+
+            // here we reset random to ensure we re-insert the same values
+            testIndexIsAddedToTableAppendData(N, rnd, t, increment, w);
+            w.commit();
+        }
     }
 
     @Test
@@ -3825,6 +3864,17 @@ public class TableWriterTest extends AbstractCairoTest {
                     Assert.fail();
                 }
             }
+        }
+    }
+
+    private void testIndexIsAddedToTableAppendData(int N, Rnd rnd, long t, long increment, TableWriter w) {
+        for (int i = 0; i < N; i++) {
+            TableWriter.Row r = w.newRow(t);
+            r.putSym(0, rnd.nextString(5));
+            r.putSym(1, rnd.nextString(5));
+            r.putSym(2, rnd.nextString(5));
+            t += increment;
+            r.append();
         }
     }
 
