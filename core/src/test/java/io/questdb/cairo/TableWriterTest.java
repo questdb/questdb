@@ -2686,6 +2686,21 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncateMidRowAppend() throws NumericException {
+        testTruncate(TableWriterTest::danglingRowModifier);
+    }
+
+    @Test
+    public void testTruncateMidTransaction() throws NumericException {
+        testTruncate(TableWriterTest::danglingTransactionModifier);
+    }
+
+    @Test
+    public void testTruncateMidO3Transaction() throws NumericException {
+        testTruncate(TableWriterTest::danglingO3TransactionModifier);
+    }
+
+    @Test
     public void testTwoByteUtf8() {
         String name = "соотечественник";
         try (TableModel model = new TableModel(configuration, name, PartitionBy.NONE)
@@ -2759,6 +2774,31 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testUnCachedSymbol() {
         testSymbolCacheFlag(false);
+    }
+
+    private static void danglingRowModifier(TableWriter w, Rnd rnd, long timestamp, long increment) {
+        TableWriter.Row r = w.newRow(timestamp);
+        r.putSym(0, rnd.nextString(5));
+        r.putSym(1, rnd.nextString(5));
+    }
+
+    private static void danglingTransactionModifier(TableWriter w, Rnd rnd, long timestamp, long increment) {
+        TableWriter.Row r = w.newRow(timestamp);
+        r.putSym(0, rnd.nextString(5));
+        r.putSym(1, rnd.nextString(5));
+        r.append();
+    }
+
+    private static void danglingO3TransactionModifier(TableWriter w, Rnd rnd, long timestamp, long increment) {
+        TableWriter.Row r = w.newRow(timestamp - increment * 4);
+        r.putSym(0, rnd.nextString(5));
+        r.putSym(1, rnd.nextString(5));
+        r.append();
+
+        r = w.newRow(timestamp - increment * 8);
+        r.putSym(0, rnd.nextString(5));
+        r.putSym(1, rnd.nextString(5));
+        r.append();
     }
 
     private static long populateRow(TableWriter writer, Rnd rnd, long ts, long increment) {
@@ -3721,6 +3761,98 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
+    private void testTruncate(TruncateModifier modifier) throws NumericException {
+        int partitionBy = PartitionBy.DAY;
+        int N = 1000;
+        try (TableModel model = new TableModel(configuration, "test", partitionBy)) {
+            model.col("sym1", ColumnType.SYMBOL);
+            model.col("sym2", ColumnType.SYMBOL);
+            model.col("sym3", ColumnType.SYMBOL);
+            model.timestamp();
+
+            CairoTestUtils.create(model);
+        }
+
+        // insert data
+        final Rnd rnd = new Rnd();
+        long t = TimestampFormatUtils.parseTimestamp("2019-03-22T00:00:00.000000Z");
+        long increment = 2_000_000;
+        try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "test", "test reason")) {
+            testIndexIsAddedToTableAppendData(N, rnd, t, increment, w);
+            w.commit();
+
+            long t1 = t;
+            for (int i = 0; i < N / 2; i++) {
+                TableWriter.Row r = w.newRow(t1);
+                r.putSym(0, rnd.nextString(5));
+                r.putSym(1, rnd.nextString(5));
+                r.putSym(2, rnd.nextString(5));
+                t1 += increment;
+                r.append();
+            }
+
+            // modifier enters TableWriter in different states from which
+            // truncate() call must be able to recover
+            modifier.modify(w, rnd, t1, increment);
+
+            // truncate writer mid-row-append
+            w.truncate();
+
+            // add a couple of indexes
+            w.addIndex("sym1", 1024);
+            w.addIndex("sym2", 1024);
+
+            Assert.assertTrue(w.getMetadata().isColumnIndexed(0));
+            Assert.assertTrue(w.getMetadata().isColumnIndexed(1));
+            Assert.assertFalse(w.getMetadata().isColumnIndexed(2));
+
+            // here we reset random to ensure we re-insert the same values
+            rnd.reset();
+
+            testIndexIsAddedToTableAppendData(N, rnd, t, increment, w);
+            w.commit();
+
+            Assert.assertEquals(1, w.getPartitionCount());
+
+            // ensure indexes can be read
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "test")) {
+                final TableReaderRecord record = (TableReaderRecord) reader.getCursor().getRecord();
+                assertIndex(reader, record, 0);
+                assertIndex(reader, record, 1);
+
+                // check if we can still truncate the writer
+                w.truncate();
+                Assert.assertEquals(0, w.size());
+                Assert.assertTrue(reader.reload());
+                Assert.assertEquals(0, reader.size());
+            }
+
+            // truncate again with indexers present
+            w.truncate();
+
+            // add the same data again and check indexes
+            rnd.reset();
+
+            testIndexIsAddedToTableAppendData(N, rnd, t, increment, w);
+            w.commit();
+
+            Assert.assertEquals(1, w.getPartitionCount());
+
+            // ensure indexes can be read
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "test")) {
+                final TableReaderRecord record = (TableReaderRecord) reader.getCursor().getRecord();
+                assertIndex(reader, record, 0);
+                assertIndex(reader, record, 1);
+
+                // check if we can still truncate the writer
+                w.truncate();
+                Assert.assertEquals(0, w.size());
+                Assert.assertTrue(reader.reload());
+                Assert.assertEquals(0, reader.size());
+            }
+        }
+    }
+
     private void testTruncate(CountingFilesFacade ff) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 200;
@@ -3897,6 +4029,11 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    @FunctionalInterface
+    private interface TruncateModifier {
+        void modify(TableWriter w, Rnd rnd, long timestamp, long increment);
     }
 
     private static class SwapMetaRenameDenyingFacade extends TestFilesFacade {

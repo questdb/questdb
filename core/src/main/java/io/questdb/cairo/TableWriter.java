@@ -1321,6 +1321,8 @@ public class TableWriter implements Closeable {
                 purgeUnusedPartitions();
                 configureAppendPosition();
                 o3InError = false;
+                // when we rolled transaction back, hasO3() has to be false
+                o3MasterRef = -1;
                 LOG.info().$("tx rollback complete [name=").$(tableName).$(']').$();
                 processCommandQueue();
             } catch (Throwable e) {
@@ -1405,12 +1407,6 @@ public class TableWriter implements Closeable {
      * and likely to cause segmentation fault. When table re-opens any partial truncate will be retried.
      */
     public final void truncate() {
-
-        // todo: test that truncate works in the middle of transaction
-        //     - regular in-order transaction
-        //     - out of order transaction
-        //     - mod-row
-        // todo: test that truncate can work when there are active indexers
         rollback();
 
         // we do this before size check so that "old" corrupt symbol tables are brought back in line
