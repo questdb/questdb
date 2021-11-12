@@ -1871,6 +1871,12 @@ class SqlOptimiser {
         }
     }
 
+    void optimise(UpdateModel updateModel, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        assert updateModel.getQueryModel() != null;
+        QueryModel optimizedModel = optimise(updateModel.getQueryModel(), sqlExecutionContext);
+        updateModel.setFromModel(optimizedModel);
+    }
+
     QueryModel optimise(QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final QueryModel rewrittenModel;
         try {

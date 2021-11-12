@@ -29,9 +29,47 @@ import org.junit.Test;
 
 public class SqlParserUpdateTest extends AbstractSqlParserTest {
     @Test
-    public void testTimestampWithTimezoneConstPrefixInsideCast() throws Exception {
-        assertUpdate("",
-                "update x set tt = t where t > '2005-04-02 12:00:00-07'",
+    public void testUpdateSingleTableWithWhere() throws Exception {
+        assertUpdate("update x set tt = t from (x where t > '2005-04-02T12:00:00')",
+                "update x set tt = t where t > '2005-04-02T12:00:00'",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testUpdateSingleTableToConst() throws Exception {
+        assertUpdate("update x set tt = 1 from (x)",
+                "update x set tt = 1",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testUpdateSingleTableWithAlias() throws Exception {
+        assertUpdate("update tblx as x set tt = tt + 1 from (tblx x where t = NULL)",
+                "update tblx x set tt = tt + 1 WHERE x.t = NULL",
+                modelOf("tblx").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
+    public void testUpdateSingleTableWithJoinInFrom() throws Exception {
+        assertUpdate("update tblx set tt = 1 from (tblx join tbly y on y = x where x > 10)",
+                "update tblx set tt = 1 from tbly y where x = y and x > 10",
+                modelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
+                modelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+    }
+
+    @Test
+    public void testSelectSingleTableWithJoinInFrom() throws Exception {
+        assertQuery("select-virtual rowid() rowid, 1 tt from (select [x] from tblx x join select [y] from tbly y on y.y = x.x where x > 10) x",
+                "select rowid(), 1 as tt from tblx x, tbly y where x.x = y.y and x > 10",
+                modelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
+                modelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+    }
+
+    @Test
+    public void testUpdateWithJoinAndTableAlias() throws Exception {
+        assertUpdate("update tblx as xx set tt = 1 from (tblx xx join tbly y on y = xx.x where x > 10)",
+                "update tblx as xx set tt = 1 from tbly y where xx.x = y and x > 10",
+                modelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
+                modelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
     }
 }

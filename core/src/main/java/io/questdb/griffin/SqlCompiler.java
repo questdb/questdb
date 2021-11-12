@@ -1412,6 +1412,9 @@ public class SqlCompiler implements Closeable {
                 } else {
                     return lightlyValidateInsertModel(insertModel);
                 }
+            case ExecutionModel.UPDATE:
+                UpdateModel updateModel = (UpdateModel) model;
+                optimiser.optimise(updateModel, executionContext);
             default:
                 return model;
         }
