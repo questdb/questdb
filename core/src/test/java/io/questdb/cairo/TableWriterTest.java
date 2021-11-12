@@ -1564,10 +1564,8 @@ public class TableWriterTest extends AbstractCairoTest {
             CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                 @Override
                 public long getDataAppendPageSize() {
-                    return 1024 * 1024;//1MB
+                    return 1024 * 1024; //1MB
                 }
-
-
             };
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
 

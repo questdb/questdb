@@ -1444,7 +1444,15 @@ public class TableWriter implements Closeable {
             removePartitionDirectories();
             rowActon = ROW_ACTION_OPEN_PARTITION;
         } else {
-            truncateColumns();
+            // truncate columns, we cannot remove them
+            for (int i = 0; i < columnCount; i++) {
+                getPrimaryColumn(i).truncate();
+                MemoryMA mem = getSecondaryColumn(i);
+                if (mem != null && mem.isOpen()) {
+                    mem.truncate();
+                    mem.putLong(0);
+                }
+            }
         }
 
         txWriter.resetTimestamp();
@@ -1457,17 +1465,6 @@ public class TableWriter implements Closeable {
         }
 
         LOG.info().$("truncated [name=").$(tableName).$(']').$();
-    }
-
-    private void truncateColumns() {
-        for (int i = 0; i < columnCount; i++) {
-            getPrimaryColumn(i).truncate();
-            MemoryMA mem = getSecondaryColumn(i);
-            if (mem != null && mem.isOpen()) {
-                mem.truncate();
-                mem.putLong(0);
-            }
-        }
     }
 
     /**
