@@ -143,7 +143,8 @@ public class ConcurrentTest {
 
                         pingPong.add(pingCursor);
 
-                        LOG.info().$("testFanOutPingPongStableSequences: ").$("ping: ").$(requestId);
+                        // Uncomment this and the following lines when in need for debugging
+                        // System.out.println("* ping " + requestId);
 
                         long pongCursor;
                         while ((pongCursor = pongPubSeq.next()) < 0) {
@@ -153,7 +154,7 @@ public class ConcurrentTest {
                         pongPubSeq.done(pongCursor);
                         pingPong.add(pongCursor);
 
-                        LOG.info().$("testFanOutPingPongStableSequences: ").$("pong: ").$(requestId);
+                        // System.out.println("* pong " + requestId);
                         i++;
                     } else {
                         LockSupport.parkNanos(10);
@@ -184,8 +185,7 @@ public class ConcurrentTest {
 
                     for (int i = 0; i < iterations; i++) {
                         // Put local response sequence into response FanOut
-                        LOG.info().$("testFanOutPingPongStableSequences: ")
-                                .$("thread: ").$(threadId).$(", added at: ").$(pingPubSeq.value);
+                        // System.out.println("thread:" + threadId + ", added at " + pingPubSeq.value);
 
                         // Send next request
                         long requestId = idGen.incrementAndGet();
@@ -197,8 +197,7 @@ public class ConcurrentTest {
                         pingPubSeq.done(pingCursor);
                         pingPong.add(pingCursor);
 
-                        LOG.info().$("testFanOutPingPongStableSequences: ")
-                                .$("thread: ").$(threadId).$(", ask: ").$(requestId);
+                        // System.out.println("thread:" + threadId + ", ask: " + requestId);
 
                         // Wait for response
                         long responseId, pongCursor;
@@ -210,12 +209,10 @@ public class ConcurrentTest {
                             responseId = pongQueue.get(pongCursor).correlationId;
                             pongSubSeq.done(pongCursor);
                             pingPong.add(pongCursor);
-                            LOG.info().$("testFanOutPingPongStableSequences: ")
-                                    .$("thread: ").$(threadId).$(", ping: ").$(responseId).$(", expected: ").$(requestId);
+                            // System.out.println("thread:" + threadId + ", ping: " + responseId + ", expected: " + requestId);
                         } while (responseId != requestId);
 
-                        LOG.info().$("testFanOutPingPongStableSequences: ")
-                                .$("thread: ").$(threadId).$(", pong: ").$(requestId);
+                        // System.out.println("thread " + threadId + ", pong " + requestId);
                         // Remove local response sequence from response FanOut
                     }
                     pongSubFo.remove(pongSubSeq);
@@ -270,7 +267,8 @@ public class ConcurrentTest {
                         long requestId = msg.correlationId;
                         pingSubSeq.done(seq);
 
-                        LOG.info().$("ping received ").$(requestId).$();
+                        // Uncomment this and the following lines when in need for debugging
+                        // LOG.info().$("ping received ").$(requestId).$();
 
                         long resp;
                         while ((resp = pongPubSeq.next()) < 0) {
@@ -279,7 +277,7 @@ public class ConcurrentTest {
                         pongQueue.get(resp).correlationId = requestId;
                         pongPubSeq.done(resp);
 
-                        LOG.info().$("pong sent ").$(requestId).$();
+                        // LOG.info().$("pong sent ").$(requestId).$();
                         i++;
                     } else {
                         LockSupport.parkNanos(10);
@@ -310,7 +308,7 @@ public class ConcurrentTest {
                         }
                         pingQueue.get(reqSeq).correlationId = requestId;
                         pingPubSeq.done(reqSeq);
-                        LOG.info().$(threadId).$(", ping sent ").$(requestId).$();
+                        // LOG.info().$(threadId).$(", ping sent ").$(requestId).$();
 
                         // Wait for response
                         long responseId, respCursor;
@@ -322,7 +320,7 @@ public class ConcurrentTest {
                             pongSubSeq.done(respCursor);
                         } while (responseId != requestId);
 
-                        LOG.info().$(threadId).$(", pong received ").$(requestId).$();
+                        // LOG.info().$(threadId).$(", pong received ").$(requestId).$();
 
                         // Remove local response sequence from response FanOut
                         pongSubFo.remove(pongSubSeq);
