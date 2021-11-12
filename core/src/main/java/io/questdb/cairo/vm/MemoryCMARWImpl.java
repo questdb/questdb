@@ -227,6 +227,12 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
+    public void of(FilesFacade ff, long fd, @Nullable CharSequence name, long extendSegmentSize, long size, int memoryTag) {
+        this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
+        of(ff, fd, null, size, memoryTag);
+    }
+
+    @Override
     public void replacePage(long address, long size) {
         long appendOffset = getAppendOffset();
         this.pageAddress = this.appendAddress = address;

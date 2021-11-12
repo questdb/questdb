@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.eq;
+package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
@@ -34,7 +34,7 @@ import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class NullIfCharCharFunctionFactory implements FunctionFactory {
+public class NullIfCharFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "nullif(AA)";
@@ -42,7 +42,6 @@ public class NullIfCharCharFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-
         Function chrFunc1 = args.getQuick(0);
         Function chrFunc2 = args.getQuick(1);
 

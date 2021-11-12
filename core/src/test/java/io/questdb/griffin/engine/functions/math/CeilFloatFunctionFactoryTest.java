@@ -22,27 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.eq;
+package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
-public class NullIfCharCharFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class CeilFloatFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void testNullIfWhenDifferent() throws SqlException {
-        call('A', 'B').andAssert('A');
-    }
-
-    @Test
-    public void testNullIfWhenEquals() throws SqlException {
-        call('A', 'A').andAssert(Character.MIN_VALUE);
+    public void testNegative() throws SqlException {
+        call(-13.1f).andAssert(-13.0, 0.0000000001);
     }
 
     @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new NullIfCharCharFunctionFactory();
+    protected FunctionFactory getFunctionFactory() { return new CeilFloatFunctionFactory();
     }
 }

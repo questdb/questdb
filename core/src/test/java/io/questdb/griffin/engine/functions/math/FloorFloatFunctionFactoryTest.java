@@ -22,33 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.str;
+package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
-public class LengthSymbolVFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class FloorFloatFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void testEmpty() throws SqlException {
-        call("").andAssert(0);
-    }
-
-    @Test
-    public void testNull() throws SqlException {
-        call((Object) null).andAssert(-1);
-    }
-
-    @Test
-    public void testSimple() throws SqlException {
-        call("xyz").andAssert(3);
+    public void testNegative() throws SqlException {
+        call(-13.1f).andAssert(-14.0, 0.0000000001);
     }
 
     @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new LengthSymbolFunctionFactory();
+    protected FunctionFactory getFunctionFactory() { return new FloorFloatFunctionFactory();
     }
-
 }

@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -64,6 +65,12 @@ public class InCharFunctionFactory implements FunctionFactory {
             Function func = args.getQuick(i);
             if (ColumnType.isChar(func.getType())) {
                 set.add(func.getChar(null));
+            } else if (ColumnType.isString(func.getType())) {
+                // Implicitly cast empty string literal ('') to zero char
+                if (func.getStrLen(null) != 0) {
+                    throw SqlException.$(argPositions.getQuick(i), "CHAR constant expected");
+                }
+                set.add(CharConstant.ZERO.getChar(null));
             } else {
                 throw SqlException.$(argPositions.getQuick(i), "CHAR constant expected");
             }

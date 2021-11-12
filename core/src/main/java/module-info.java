@@ -126,7 +126,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqStrGeoHashFunctionFactory,
 
             //nullif
-            io.questdb.griffin.engine.functions.eq.NullIfCharCharFunctionFactory,
+            io.questdb.griffin.engine.functions.conditional.NullIfCharFunctionFactory,
+            io.questdb.griffin.engine.functions.conditional.NullIfIFunctionFactory,
+            io.questdb.griffin.engine.functions.conditional.NullIfStrFunctionFactory,
 
 //                   '<' operator
             io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory,
@@ -506,6 +508,12 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.RoundDownDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.RoundUpDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.RoundHalfEvenDoubleFunctionFactory,
+//                  ceil()
+            io.questdb.griffin.engine.functions.math.CeilDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.CeilFloatFunctionFactory,
+//                  floor()
+            io.questdb.griffin.engine.functions.math.FloorDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.FloorFloatFunctionFactory,            
 //                  case conditional statement
             io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory,
             io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory,
@@ -536,7 +544,6 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetPartKeyDefFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSITExprFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSIExprFunctionFactory,
-            io.questdb.griffin.engine.functions.catalogue.NullIfIFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.FormatTypeFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.ProcCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.RangeCatalogueFunctionFactory,

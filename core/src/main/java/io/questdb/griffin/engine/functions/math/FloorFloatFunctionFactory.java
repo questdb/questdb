@@ -22,55 +22,45 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class NullIfIFunctionFactory implements FunctionFactory {
+public class FloorFloatFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "nullif(Ii)";
+        return "floor(F)";
     }
 
     @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) {
-        return new NullIfIFunction(args.getQuick(0), args.getQuick(1).getInt(null));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new FloorFunction(args.getQuick(0));
     }
 
-    private static class NullIfIFunction extends IntFunction implements UnaryFunction {
-        private final Function value;
-        private final int replacement;
+    private static class FloorFunction extends FloatFunction implements UnaryFunction {
+        private final Function function;
 
-        public NullIfIFunction(Function value, int replacement) {
-            super();
-            this.value = value;
-            this.replacement = replacement;
+        public FloorFunction(Function function) {
+            this.function = function;
         }
 
         @Override
         public Function getArg() {
-            return value;
+            return function;
         }
 
         @Override
-        public int getInt(Record rec) {
-            final int val = value.getInt(rec);
-            return val != Numbers.INT_NaN ? val : replacement;
+        public float getFloat(Record rec) {
+            float value = function.getFloat(rec);
+            return (float) Math.floor(value);
         }
     }
 }

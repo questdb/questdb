@@ -189,15 +189,24 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_truncate
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
         (JNIEnv *e, jclass cl, jlong fd, jlong len) {
-    // F_ALLOCATECONTIG - try to allocate continuous space.
-    fstore_t flags = {F_ALLOCATECONTIG, F_PEOFPOSMODE, 0, len, 0};
-    int result = fcntl(fd, F_PREALLOCATE, &flags);
-    if (result == -1) {
-        // F_ALLOCATEALL - try to allocate non-continuous space.
-        flags.fst_flags = F_ALLOCATEALL;
-        result = fcntl(fd, F_PREALLOCATE, &flags);
+    // MACOS allocates additional space. Check what size the file currently is
+    struct stat st;
+    if (fstat((int) fd, &st) != 0) {
+        return JNI_FALSE;
+    }
+    const jlong  fileLen = st.st_blksize * st.st_blocks;
+    jlong deltaLen = len - fileLen;
+    if (deltaLen > 0) {
+        // F_ALLOCATECONTIG - try to allocate continuous space.
+        fstore_t flags = {F_ALLOCATECONTIG, F_PEOFPOSMODE, 0, deltaLen, 0};
+        int result = fcntl(fd, F_PREALLOCATE, &flags);
         if (result == -1) {
-            return JNI_FALSE;
+            // F_ALLOCATEALL - try to allocate non-continuous space.
+            flags.fst_flags = F_ALLOCATEALL;
+            result = fcntl(fd, F_PREALLOCATE, &flags);
+            if (result == -1) {
+                return JNI_FALSE;
+            }
         }
     }
     return ftruncate(fd, len) == 0;
