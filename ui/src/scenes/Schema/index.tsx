@@ -139,11 +139,11 @@ const Schema = ({
         return (
           <Table
             designatedTimestamp={table.designatedTimestamp}
+            expanded={table.name === opened}
             isScrolling={isScrolling}
             key={table.name}
             name={table.name}
             onChange={handleChange}
-            open={table.name === opened}
             partitionBy={table.partitionBy}
             refresh={refresh}
           />

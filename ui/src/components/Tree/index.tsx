@@ -22,21 +22,30 @@
  *
  ******************************************************************************/
 
-import React, { useState, useCallback, useEffect } from "react"
+import React, { useState, useCallback, useEffect, useRef } from "react"
 import Row from "../../scenes/Schema/Row"
 import styled from "styled-components"
+import { WrapWithIf } from "components"
 
 export type TreeNodeKind = "column" | "table" | "folder"
 
 export type TreeNodeRenderParams = {
-  toggleOpen: () => void
+  toggleOpen: ToggleOpen
   isOpen: boolean
+  isLoading: boolean
 }
 
 export type TreeNodeRender = ({
   toggleOpen,
   isOpen,
+  isLoading,
 }: TreeNodeRenderParams) => React.ReactElement
+
+type ToggleOpen = () => void
+
+type OnOpen = (onOpenApi: {
+  setChildren: (children: TreeNode[]) => void
+}) => Promise<void> | void
 
 export type TreeNode = {
   name: string
@@ -44,7 +53,7 @@ export type TreeNode = {
   render?: TreeNodeRender
   initiallyOpen?: boolean
   wrapper?: React.FunctionComponent
-  onOpen?: (leaf: TreeNode) => Promise<TreeNode[]> | undefined
+  onOpen?: OnOpen
   children?: TreeNode[]
 }
 
@@ -58,13 +67,6 @@ const Li = styled.li`
   padding: 0 0 0 1rem;
 `
 
-const WrapWithIf: React.FunctionComponent<{
-  condition: boolean
-  wrapper: (children: React.ReactElement) => JSX.Element
-  children: React.ReactElement
-}> = ({ condition, wrapper, children }) =>
-  condition ? wrapper(children) : children
-
 const Leaf = (leaf: TreeNode) => {
   const {
     name,
@@ -72,26 +74,36 @@ const Leaf = (leaf: TreeNode) => {
     initiallyOpen,
     onOpen,
     render,
-    children = [],
+    children: initialChildren = [],
     wrapper,
   } = leaf
   const [open, setOpen] = useState(initiallyOpen ?? false)
   const [loading, setLoading] = useState(false)
-  const [content, setContent] = useState<TreeNode[]>([])
+  const [children, setChildren] = useState<TreeNode[]>(initialChildren)
+  const isMounted = useRef(true)
 
   const loadNewContent = useCallback(async () => {
+    const onOpenApi = {
+      setChildren: (newChildren: TreeNode[]) => {
+        // ensure state is changed only for mounted component
+        if (isMounted.current) {
+          setChildren(newChildren)
+        }
+      },
+    }
+
     if (typeof onOpen === "function") {
       setLoading(true)
-      const onOpenCandidate = onOpen(leaf)
-      if (onOpenCandidate instanceof Promise) {
-        const newContent = await onOpenCandidate
-        setContent(newContent ?? [])
-      }
-      setLoading(false)
-    }
-  }, [leaf, onOpen])
+      await onOpen(onOpenApi)
 
-  const toggleOpen: () => void = useCallback(async () => {
+      // ensure state is changed only for mounted component
+      if (isMounted.current) {
+        setLoading(false)
+      }
+    }
+  }, [onOpen])
+
+  const toggleOpen: ToggleOpen = useCallback(async () => {
     if (!loading && !open) {
       await loadNewContent()
     }
@@ -100,13 +112,22 @@ const Leaf = (leaf: TreeNode) => {
 
   useEffect(() => {
     const loadInitialContent: () => void = async () => {
-      await loadNewContent()
+      if (isMounted.current) {
+        await loadNewContent()
+      }
     }
 
-    if (open && typeof onOpen === "function" && content.length === 0) {
-      if (!loading) {
-        loadInitialContent()
-      }
+    if (
+      open &&
+      typeof onOpen === "function" &&
+      children.length === 0 &&
+      !loading
+    ) {
+      loadInitialContent()
+    }
+
+    return () => {
+      isMounted.current = false
     }
   }, [])
 
@@ -117,9 +138,13 @@ const Leaf = (leaf: TreeNode) => {
   return (
     <Li>
       {typeof render === "function" ? (
-        render({ toggleOpen, isOpen: open })
+        render({ toggleOpen, isOpen: open, isLoading: loading })
       ) : (
-        <Row kind={kind ?? "folder"} name={name} />
+        <Row
+          kind={kind ?? "folder"}
+          name={name}
+          onClick={() => setOpen(!open)}
+        />
       )}
 
       {open && (
@@ -129,7 +154,7 @@ const Leaf = (leaf: TreeNode) => {
             React.createElement(wrapper ?? React.Fragment, {}, children)
           }
         >
-          <Tree root={content.length > 0 ? content : children} />
+          <Tree root={children} />
         </WrapWithIf>
       )}
     </Li>

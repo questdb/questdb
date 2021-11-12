@@ -27,7 +27,6 @@ import styled from "styled-components"
 import { Rocket } from "@styled-icons/boxicons-regular/Rocket"
 import { SortDown } from "@styled-icons/boxicons-regular/SortDown"
 import { RightArrow } from "@styled-icons/boxicons-regular/RightArrow"
-import { DownArrow } from "@styled-icons/boxicons-regular/DownArrow"
 import { CheckboxBlankCircle } from "@styled-icons/remix-line/CheckboxBlankCircle"
 import { CodeSSlash } from "@styled-icons/remix-line/CodeSSlash"
 import { Information } from "@styled-icons/remix-line/Information"
@@ -132,10 +131,11 @@ const RightArrowIcon = styled(RightArrow)`
   cursor: pointer;
 `
 
-const DownArrowIcon = styled(DownArrow)`
+const DownArrowIcon = styled(RightArrow)`
   color: ${color("gray2")};
   margin-right: 0.8rem;
   cursor: pointer;
+  transform: rotateZ(90deg);
 `
 
 const DotIcon = styled(CheckboxBlankCircle)`

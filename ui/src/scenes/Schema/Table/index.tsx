@@ -44,7 +44,7 @@ type Props = QuestDB.Table &
     refresh: number
     name: string
     partitionBy: string
-    open?: boolean
+    expanded?: boolean
     onChange?: (name: string) => void
   }>
 
@@ -115,7 +115,7 @@ const Table = ({
   designatedTimestamp,
   name,
   partitionBy,
-  open = false,
+  expanded = false,
   onChange = () => {},
 }: Props) => {
   const ref = useRef<HTMLDivElement>(null)
@@ -123,6 +123,9 @@ const Table = ({
   const [loading, setLoading] = useState(false)
   const [columns, setColumns] = useState<QuestDB.Column[]>()
 
+  // The following `useEffect` should be removed.
+  // Currently it is loading columns, but that's already covered by `onOpen` in <Tree/> below.
+  // however, it can only be removed once `refresh` is handled elsewhere.
   useEffect(() => {
     combineLatest(
       from(quest.showColumns(name)).pipe(startWith(null)),
@@ -141,10 +144,9 @@ const Table = ({
     {
       name,
       kind: "table",
-      initiallyOpen: open,
+      initiallyOpen: expanded,
       onOpen: () => {
         onChange(name)
-        return undefined // to make typescript happy
       },
       render({ toggleOpen }) {
         return (
@@ -166,33 +168,30 @@ const Table = ({
         {
           name: "Columns",
           initiallyOpen: true,
-          async onOpen() {
+          async onOpen({ setChildren }) {
             const response = await quest.showColumns(name)
 
             if (response && response.type === QuestDB.Type.DQL) {
-              return response.data.map((column: QuestDB.Column) => ({
-                name: column.column,
-                render: columnRender({ column, designatedTimestamp }),
-              }))
+              setChildren(
+                response.data.map((column: QuestDB.Column) => ({
+                  name: column.column,
+                  render: columnRender({ column, designatedTimestamp }),
+                })),
+              )
             }
-
-            return []
           },
-          render({ toggleOpen, isOpen }) {
+          render({ toggleOpen, isOpen, isLoading }) {
             return (
               <Row
                 expanded={isOpen}
                 kind="folder"
                 name="Columns"
                 onClick={() => toggleOpen()}
+                suffix={isLoading && <Loader size="18px" />}
               />
             )
           },
           wrapper: Columns,
-          children: (columns ?? []).map((column: QuestDB.Column) => ({
-            name: column.column,
-            render: columnRender({ column, designatedTimestamp }),
-          })),
         },
       ],
     },
