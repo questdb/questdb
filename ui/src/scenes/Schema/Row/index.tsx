@@ -131,10 +131,7 @@ const RightArrowIcon = styled(RightArrow)`
   cursor: pointer;
 `
 
-const DownArrowIcon = styled(RightArrow)`
-  color: ${color("gray2")};
-  margin-right: 0.8rem;
-  cursor: pointer;
+const DownArrowIcon = styled(RightArrowIcon)`
   transform: rotateZ(90deg);
 `
 
