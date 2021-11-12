@@ -242,7 +242,7 @@ const Ace = () => {
     editor.commands.addCommand({
       bindKey: "F9",
       name: Command.EXECUTE,
-      exec: () => toggleRunning,
+      exec: () => toggleRunning(),
     })
 
     editor.commands.addCommand({
@@ -250,7 +250,7 @@ const Ace = () => {
         mac: "Command-Enter",
         win: "Ctrl-Enter",
       },
-      exec: () => toggleRunning,
+      exec: () => toggleRunning(),
       name: Command.EXECUTE_AT,
     })
 
