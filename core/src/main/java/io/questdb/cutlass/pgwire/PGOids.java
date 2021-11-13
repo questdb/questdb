@@ -27,7 +27,6 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
-import io.questdb.std.Long256;
 
 public class PGOids {
 
@@ -38,7 +37,6 @@ public class PGOids {
     public static final int PG_INT4 = 23;
     public static final int PG_INT2 = 21;
     public static final int PG_INT8 = 20;
-    public static final int PG_NUMERIC = 1700;
     public static final int PG_BOOL = 16;
     public static final int PG_CHAR = 18;
     public static final int PG_DATE = 1082;
@@ -46,7 +44,7 @@ public class PGOids {
     private static final IntList TYPE_OIDS = new IntList();
     public static final IntList PG_TYPE_OIDS = new IntList();
     public static final IntIntHashMap PG_TYPE_TO_SIZE_MAP = new IntIntHashMap();
-    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[12];
+    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[11];
 
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_FLOAT8 = ((PG_FLOAT8 >> 24) & 0xff) | ((PG_FLOAT8 << 8) & 0xff0000) | ((PG_FLOAT8 >> 8) & 0xff00) | ((PG_FLOAT8 << 24) & 0xff000000);
@@ -133,7 +131,7 @@ public class PGOids {
         TYPE_OIDS.extendAndSet(ColumnType.BOOLEAN, PG_BOOL); // BOOL
         TYPE_OIDS.extendAndSet(ColumnType.DATE, PG_TIMESTAMP); // DATE
         TYPE_OIDS.extendAndSet(ColumnType.BINARY, PG_BYTEA); // BYTEA
-        TYPE_OIDS.extendAndSet(ColumnType.LONG256, PG_NUMERIC); // NUMERIC
+        TYPE_OIDS.extendAndSet(ColumnType.LONG256, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.GEOBYTE, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.GEOSHORT, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.GEOINT, PG_VARCHAR); // VARCHAR
@@ -149,7 +147,6 @@ public class PGOids {
         PG_TYPE_OIDS.add(PG_INT8);
         PG_TYPE_OIDS.add(PG_BOOL);
         PG_TYPE_OIDS.add(PG_BYTEA);
-        PG_TYPE_OIDS.add(PG_NUMERIC);
         PG_TYPE_OIDS.add(PG_DATE);
 
         PG_TYPE_TO_SIZE_MAP.put(PG_FLOAT8, Double.BYTES);
@@ -159,7 +156,6 @@ public class PGOids {
         PG_TYPE_TO_SIZE_MAP.put(PG_CHAR, Character.BYTES);
         PG_TYPE_TO_SIZE_MAP.put(PG_INT8, Long.BYTES);
         PG_TYPE_TO_SIZE_MAP.put(PG_BOOL, Byte.BYTES);
-        PG_TYPE_TO_SIZE_MAP.put(PG_NUMERIC, Long256.BYTES);
 
         PG_TYPE_TO_NAME[0] = "varchar";
         PG_TYPE_TO_NAME[1] = "timestamp";
@@ -171,7 +167,6 @@ public class PGOids {
         PG_TYPE_TO_NAME[7] = "int8";
         PG_TYPE_TO_NAME[8] = "bool";
         PG_TYPE_TO_NAME[9] = "binary";
-        PG_TYPE_TO_NAME[10] = "numeric";
-        PG_TYPE_TO_NAME[11] = "date";
+        PG_TYPE_TO_NAME[10] = "date";
     }
 }
