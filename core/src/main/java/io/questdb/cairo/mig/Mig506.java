@@ -94,7 +94,7 @@ final class Mig506 {
                     tempMem8b,
                     path
             );
-            if (partitionBy != PartitionBy.NONE) {
+            if (PartitionBy.isPartitioned(partitionBy)) {
                 path.trimTo(pathDirLen);
                 writeAttachedPartitions(ff, tempMem8b, path, txMem, partitionBy, symbolColumnCount, txFileUpdate);
             }
@@ -131,10 +131,14 @@ final class Mig506 {
         long maxTimestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
         long transientCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
 
-        Timestamps.TimestampFloorMethod timestampFloorMethod = getPartitionFloor(partitionBy);
-        Timestamps.TimestampAddMethod timestampAddMethod = getPartitionAdd(partitionBy);
+        final Timestamps.TimestampFloorMethod timestampFloorMethod = PartitionBy.getPartitionFloor(partitionBy);
+        assert timestampFloorMethod != null;
+
+        final Timestamps.TimestampAddMethod timestampAddMethod = PartitionBy.getPartitionAdd(partitionBy);
+        assert timestampAddMethod != null;
 
         final long tsLimit = timestampFloorMethod.floor(maxTimestamp);
+
         for (long ts = timestampFloorMethod.floor(minTimestamp); ts < tsLimit; ts = timestampAddMethod.calculate(ts, 1)) {
             path.trimTo(rootLen);
             setPathForPartition(path, partitionBy, ts, false);

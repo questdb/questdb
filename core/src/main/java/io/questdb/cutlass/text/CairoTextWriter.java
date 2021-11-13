@@ -333,7 +333,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                             !Chars.equalsNc(importedTimestampColumnName, designatedTimestampColumnName)) {
                         warnings |= TextLoadWarning.TIMESTAMP_MISMATCH;
                     }
-                    if (partitionBy != PartitionBy.NONE && partitionBy != writer.getPartitionBy()) {
+                    if (PartitionBy.isPartitioned(partitionBy) && partitionBy != writer.getPartitionBy()) {
                         warnings |= TextLoadWarning.PARTITION_TYPE_MISMATCH;
                     }
                     partitionBy = writer.getPartitionBy();
@@ -344,17 +344,17 @@ public class CairoTextWriter implements Closeable, Mutable {
                 throw CairoException.instance(0).put("name is reserved [table=").put(tableName).put(']');
         }
         if (canUpdateMetadata) {
-            if (partitionBy == PartitionBy.NONE && (commitLag >= 0 || maxUncommittedRows >= 0)) {
-                LOG.info().$("parameters commitLag and maxUncommittedRows have no effect when partitionBy is NONE").$();
-            } else {
-                if (commitLag >= 0) {
+            if (PartitionBy.isPartitioned(partitionBy) || (commitLag < 0 && maxUncommittedRows < 0)) {
+                if (commitLag > -1) {
                     writer.setMetaCommitLag(commitLag);
                     LOG.info().$("updating metadata attribute commitLag to ").$(commitLag).$(", table=").utf8(tableName).$();
                 }
-                if (maxUncommittedRows >= 0) {
+                if (maxUncommittedRows > -1) {
                     writer.setMetaMaxUncommittedRows(maxUncommittedRows);
                     LOG.info().$("updating metadata attribute maxUncommittedRows to ").$(maxUncommittedRows).$(", table=").utf8(tableName).$();
                 }
+            } else {
+                LOG.info().$("parameters commitLag and maxUncommittedRows have no effect when partitionBy is NONE").$();
             }
         } else {
             LOG.info().$("cannot update metadata attributes commitLag and maxUncommittedRows when the table exists and parameter overwrite is false").$();

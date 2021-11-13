@@ -99,8 +99,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             readTxnSlow();
             openSymbolMaps();
             partitionCount = txFile.getPartitionCount();
-            partitionFormat = TableUtils.getPartitionDateFmt(partitionBy);
-            timestampFloorMethod = partitionBy == PartitionBy.NONE ? null : TableUtils.getPartitionFloor(partitionBy);
+            partitionFormat = PartitionBy.getPartitionDateFmt(partitionBy);
+            timestampFloorMethod = PartitionBy.getPartitionFloor(partitionBy);
 
             int capacity = getColumnBase(partitionCount);
             this.columns = new ObjList<>(capacity);
@@ -853,7 +853,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
             LOG.error().$("open partition failed, partition does not exist on the disk. [path=").utf8(path.$()).I$();
 
-            if (getPartitionedBy() != PartitionBy.NONE) {
+            if (PartitionBy.isPartitioned(getPartitionedBy())) {
                 CairoException exception = CairoException.instance(0).put("Partition '");
                 formatPartitionDirName(partitionIndex, exception.message);
                 TableUtils.txnPartitionConditionally(exception.message, partitionNameTxn);

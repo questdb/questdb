@@ -2412,7 +2412,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 Assert.assertEquals(N * N_PARTITIONS, writer.size());
 
-                DateFormat fmt = TableWriter.selectPartitionDirFmt(PartitionBy.DAY);
+                DateFormat fmt = PartitionBy.getPartitionDateFmt(PartitionBy.DAY);
                 assert fmt != null;
                 final long timestamp = fmt.parse("2017-12-14", null);
 
@@ -3510,9 +3510,9 @@ public class TableReaderTest extends AbstractCairoTest {
         writer.commit();
 
         if (testPartitionSwitch == MUST_SWITCH) {
-            Assert.assertFalse(TableUtils.isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
+            Assert.assertFalse(PartitionBy.isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
         } else if (testPartitionSwitch == MUST_NOT_SWITCH) {
-            Assert.assertTrue(TableUtils.isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
+            Assert.assertTrue(PartitionBy.isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
         }
 
         Assert.assertEquals(size + count, writer.size());
@@ -3832,8 +3832,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.assertEquals(500, totalCount);
 
 
-                    DateFormat fmt = TableWriter.selectPartitionDirFmt(partitionBy);
-                    assert fmt != null;
+                    DateFormat fmt = PartitionBy.getPartitionDateFmt(partitionBy);
                     Assert.assertFalse(
                             writer.removePartition(fmt.parse(partitionNameToDelete, null))
                     );
@@ -3889,8 +3888,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 Assert.assertEquals(N * N_PARTITIONS, writer.size());
 
-                DateFormat fmt = TableWriter.selectPartitionDirFmt(partitionBy);
-                assert fmt != null;
+                DateFormat fmt = PartitionBy.getPartitionDateFmt(partitionBy);
                 final long timestamp = fmt.parse(partitionNameToDelete, null);
 
                 Assert.assertTrue(writer.removePartition(timestamp));
@@ -3973,8 +3971,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.assertEquals(N * N_PARTITIONS, totalCount);
 
 
-                    DateFormat fmt = TableWriter.selectPartitionDirFmt(partitionBy);
-                    assert fmt != null;
+                    DateFormat fmt = PartitionBy.getPartitionDateFmt(partitionBy);
                     Assert.assertTrue(
                             writer.removePartition(fmt.parse(partitionNameToDelete, null))
                     );

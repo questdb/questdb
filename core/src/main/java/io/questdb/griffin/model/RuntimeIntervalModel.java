@@ -75,16 +75,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
     @Override
     public boolean allIntervalsHitOnePartition(int partitionBy) {
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                return allIntervalsHitOnePartition(Timestamps.FLOOR_DD);
-            case PartitionBy.MONTH:
-                return allIntervalsHitOnePartition(Timestamps.FLOOR_MM);
-            case PartitionBy.YEAR:
-                return allIntervalsHitOnePartition(Timestamps.FLOOR_YYYY);
-            default:
-                return true;
-        }
+        return !PartitionBy.isPartitioned(partitionBy) || allIntervalsHitOnePartition(PartitionBy.getPartitionFloor(partitionBy));
     }
 
     private boolean allIntervalsHitOnePartition(Timestamps.TimestampFloorMethod floorMethod) {

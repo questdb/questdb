@@ -527,8 +527,9 @@ public final class TestUtils {
         long fromTimestamp = IntervalUtils.parseFloorPartialDate(startDate);
 
         long increment = 0;
-        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
-            Timestamps.TimestampAddMethod partitionAdd = TableUtils.getPartitionAdd(tableModel.getPartitionBy());
+        if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
+            final Timestamps.TimestampAddMethod partitionAdd = PartitionBy.getPartitionAdd(tableModel.getPartitionBy());
+            assert partitionAdd != null;
             long toTs = partitionAdd.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
             increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
         }
@@ -592,7 +593,7 @@ public final class TestUtils {
             CharSequence timestampCol = tableModel.getColumnName(tableModel.getTimestampIndex());
             sql.append(" timestamp(").append(timestampCol).append(")");
         }
-        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
+        if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
             sql.append(" Partition By ").append(PartitionBy.toString(tableModel.getPartitionBy()));
         }
         compiler.compile(sql.toString(), sqlExecutionContext);

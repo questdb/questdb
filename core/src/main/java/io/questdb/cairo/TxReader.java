@@ -57,7 +57,7 @@ public class TxReader implements Closeable {
     public TxReader(FilesFacade ff, @Transient Path path, int partitionBy) {
         try {
             roTxMem = openTxnFile(ff, path);
-            this.timestampFloorMethod = partitionBy != PartitionBy.NONE ? getPartitionFloor(partitionBy) : null;
+            this.timestampFloorMethod = PartitionBy.getPartitionFloor(partitionBy);
             this.partitionBy = partitionBy;
         } catch (Throwable e) {
             close();
@@ -222,7 +222,7 @@ public class TxReader implements Closeable {
     }
 
     private void unsafeLoadPartitions(long prevPartitionTableVersion) {
-        if (partitionBy != PartitionBy.NONE) {
+        if (PartitionBy.isPartitioned(partitionBy)) {
             int txAttachedPartitionsSize = roTxMem.getInt(getPartitionTableSizeOffset(symbolColumnCount)) / Long.BYTES;
             if (txAttachedPartitionsSize > 0) {
                 if (prevPartitionTableVersion != partitionTableVersion) {
