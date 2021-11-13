@@ -172,9 +172,9 @@ void x86_scalar_tail(asmjit::x86::Compiler &c, const uint64_t *columns, const ui
             }
                 break;
             default:
-                auto rhs = tmp.top();
-                tmp.pop();
                 auto lhs = tmp.top();
+                tmp.pop();
+                auto rhs = tmp.top();
                 tmp.pop();
                 if (rhs.isXmm() && !lhs.isXmm()) {
                     // lhs long to double
@@ -1140,9 +1140,9 @@ int64_t compile_x86_avx2_loop(const uint64_t *columns,
             }
                 break;
             default:
-                auto rhs = tmp.top();
-                tmp.pop();
                 auto lhs = tmp.top();
+                tmp.pop();
+                auto rhs = tmp.top();
                 tmp.pop();
                 switch (ic) {
                     case AND:

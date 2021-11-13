@@ -46,7 +46,6 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private PageFrameCursor pageFrameCursor;
     private RecordMetadata metadata;
 
-
     private DirectLongList rows;
     private DirectLongList columns;
 
@@ -137,6 +136,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
                 final long columnBaseAddress = frame.getPageAddress(columnIndex);
                 columns.add(columnBaseAddress);
             }
+            // TODO try to reuse
             rows.extend(frame.getPartitionHi());
             this.current = 0;
             this.hi = FiltersCompiler.compile(columns.getAddress(),
@@ -417,7 +417,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
             return null;
         }
 
-        class ByteSequenceView implements BinarySequence {
+        static class ByteSequenceView implements BinarySequence {
             private long address;
             private long len = -1;
 
@@ -445,7 +445,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
             }
         }
 
-        class CharSequenceView extends AbstractCharSequence {
+        static class CharSequenceView extends AbstractCharSequence {
             private int len;
             private long address;
 

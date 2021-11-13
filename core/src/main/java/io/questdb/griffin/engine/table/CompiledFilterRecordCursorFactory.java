@@ -36,8 +36,8 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
     private final RecordCursorFactory factory;
     private final CompiledFilterRecordCursor cursor;
     private final MemoryAR filter;
-    private DirectLongList rows;
-    private DirectLongList columns;
+    private final DirectLongList rows;
+    private final DirectLongList columns;
 
     public CompiledFilterRecordCursorFactory(RecordCursorFactory factory, @NotNull IntList columnIndexes, MemoryAR filter) {
         assert !(factory instanceof FilteredRecordCursorFactory);
