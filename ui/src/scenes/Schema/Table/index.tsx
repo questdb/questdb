@@ -119,7 +119,6 @@ const Table = ({
   onChange = () => {},
 }: Props) => {
   const [quest] = useState(new QuestDB.Client())
-  const [loading, setLoading] = useState(false)
   const [columns, setColumns] = useState<QuestDB.Column[]>()
 
   // The following `useEffect` should be removed.
@@ -129,12 +128,9 @@ const Table = ({
     combineLatest(
       from(quest.showColumns(name)).pipe(startWith(null)),
       of(true).pipe(delay(1000), startWith(false)),
-    ).subscribe(([response, loading]) => {
+    ).subscribe(([response]) => {
       if (response && response.type === QuestDB.Type.DQL) {
         setColumns(response.data)
-        setLoading(false)
-      } else {
-        setLoading(loading)
       }
     })
   }, [refresh, quest, name])
@@ -147,7 +143,7 @@ const Table = ({
       onOpen: () => {
         onChange(name)
       },
-      render({ toggleOpen }) {
+      render({ toggleOpen, isLoading }) {
         return (
           <ContextMenuTrigger id={name}>
             <Title
@@ -156,7 +152,7 @@ const Table = ({
               name={name}
               onClick={() => toggleOpen()}
               partitionBy={partitionBy}
-              suffix={loading && <Loader size="18px" />}
+              suffix={isLoading && <Loader size="18px" />}
               tooltip={!!description}
             />
           </ContextMenuTrigger>
