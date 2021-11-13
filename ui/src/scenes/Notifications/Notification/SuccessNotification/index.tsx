@@ -32,6 +32,7 @@ import { Timestamp } from "../Timestamp"
 
 const CheckmarkOutlineIcon = styled(CheckmarkOutline)`
   color: ${color("draculaGreen")};
+  flex-shrink: 0;
 `
 
 export const SuccessNotification = (props: NotificationShape) => {

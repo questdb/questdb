@@ -41,7 +41,6 @@ public class DBeaverTest extends AbstractGriffinTest {
                         "public\t20\t2200\tint8\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
                         "public\t16\t2200\tbool\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
                         "public\t17\t2200\tbinary\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t1700\t2200\tnumeric\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
                         "public\t1082\t2200\tdate\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n",
                 "SELECT ns.nspname, typ_and_elem_type.*,\n" +
                         "   CASE\n" +
@@ -176,8 +175,7 @@ public class DBeaverTest extends AbstractGriffinTest {
                         "701\t701\tfloat8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
                         "1043\t1043\tvarchar\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
                         "1082\t1082\tdate\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "1114\t1114\ttimestamp\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n" +
-                        "1700\t1700\tnumeric\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n",
+                        "1114\t1114\ttimestamp\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\t\t\t\n",
                 "SELECT t.oid,t.*,c.relkind,format_type(nullif(t.typbasetype, 0), t.typtypmod) as base_type_name, d.description\n" +
                         "FROM pg_catalog.pg_type t\n" +
                         "LEFT OUTER JOIN pg_catalog.pg_class c ON c.oid=t.typrelid\n" +

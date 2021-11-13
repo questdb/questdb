@@ -72,6 +72,25 @@ public class NumbersTest {
     }
 
     @Test
+    public void testLong256() throws NumericException {
+        CharSequence tok = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
+        Long256Impl long256 = new Long256Impl();
+        Long256FromCharSequenceDecoder.decode(tok, 2, tok.length(), long256);
+        long256.toSink(sink);
+        CharSequence tokLong256 = sink.toString();
+        Assert.assertEquals(tok, tokLong256);
+
+        Long256Impl long256a = new Long256Impl();
+        Numbers.parseLong256(tok, tok.length(), long256a);
+        sink.clear();
+        long256a.toSink(sink);
+        CharSequence tokLong256a = sink.toString();
+        Assert.assertEquals(tok, tokLong256a);
+
+        Assert.assertEquals(tokLong256, tokLong256a);
+    }
+
+    @Test
     public void testCeilPow2() {
         Assert.assertEquals(16, Numbers.ceilPow2(15));
         Assert.assertEquals(16, Numbers.ceilPow2(16));

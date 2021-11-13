@@ -36,6 +36,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.BeforeClass;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
@@ -46,6 +47,34 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected static SqlCompiler compiler;
     protected static Metrics metrics = Metrics.enabled();
     private static final SCSequence tempSequence = new SCSequence();
+
+    @BeforeClass
+    public static void setUpStatic() {
+        AbstractCairoTest.setUpStatic();
+        compiler = new SqlCompiler(engine);
+        bindVariableService = new BindVariableServiceImpl(configuration);
+        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                .with(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService,
+                        null,
+                        -1,
+                        null);
+        bindVariableService.clear();
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        AbstractCairoTest.tearDownStatic();
+        compiler.close();
+    }
+
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        bindVariableService.clear();
+    }
 
     public static void assertReader(String expected, CharSequence tableName) {
         try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
@@ -103,27 +132,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
     public static void executeInsert(String insertSql) throws SqlException {
         TestUtils.insert(compiler, sqlExecutionContext, insertSql);
-    }
-
-    @BeforeClass
-    public static void setUpStatic() {
-        AbstractCairoTest.setUpStatic();
-        compiler = new SqlCompiler(engine);
-        bindVariableService = new BindVariableServiceImpl(configuration);
-        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService,
-                        null,
-                        -1,
-                        null);
-        bindVariableService.clear();
-    }
-
-    @AfterClass
-    public static void tearDownStatic() {
-        AbstractCairoTest.tearDownStatic();
-        compiler.close();
     }
 
     protected static void assertQuery(
