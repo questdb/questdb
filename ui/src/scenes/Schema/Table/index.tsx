@@ -118,6 +118,7 @@ const Table = ({
   expanded = false,
   onChange = () => {},
 }: Props) => {
+  const currentName = useRef(name)
   const [quest] = useState(new QuestDB.Client())
   const [columns, setColumns] = useState<QuestDB.Column[]>()
 
@@ -125,6 +126,9 @@ const Table = ({
   // Currently it is loading columns, but that's already covered by `onOpen` in <Tree/> below.
   // however, it can only be removed once `refresh` is handled elsewhere.
   useEffect(() => {
+    if (name === currentName.current) {
+      return
+    }
     combineLatest(
       from(quest.showColumns(name)).pipe(startWith(null)),
       of(true).pipe(delay(1000), startWith(false)),
