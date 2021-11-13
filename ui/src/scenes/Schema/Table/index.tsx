@@ -118,7 +118,6 @@ const Table = ({
   expanded = false,
   onChange = () => {},
 }: Props) => {
-  const ref = useRef<HTMLDivElement>(null)
   const [quest] = useState(new QuestDB.Client())
   const [loading, setLoading] = useState(false)
   const [columns, setColumns] = useState<QuestDB.Column[]>()
@@ -198,7 +197,7 @@ const Table = ({
   ]
 
   return (
-    <Wrapper _height={columns ? columns.length * 30 : 0} ref={ref}>
+    <Wrapper _height={columns ? columns.length * 30 : 0}>
       {!isScrolling && <ContextualMenu name={name} partitionBy={partitionBy} />}
 
       <Tree root={tree} />
