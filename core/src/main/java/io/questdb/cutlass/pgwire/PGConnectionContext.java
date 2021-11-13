@@ -668,7 +668,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             responseAsciiSink.setNullValue();
         } else {
             final long a = responseAsciiSink.skip();
-            Numbers.appendLong256(long256Value.getLong0(), long256Value.getLong1(), long256Value.getLong2(), long256Value.getLong3(), responseAsciiSink);
+            Numbers.appendLong256(
+                    long256Value.getLong0(),
+                    long256Value.getLong1(),
+                    long256Value.getLong2(),
+                    long256Value.getLong3(),
+                    responseAsciiSink);
             responseAsciiSink.putLenEx(a);
         }
     }

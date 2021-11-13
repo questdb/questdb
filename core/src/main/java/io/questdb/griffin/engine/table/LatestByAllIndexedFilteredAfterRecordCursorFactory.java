@@ -24,62 +24,51 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
-import io.questdb.std.Rows;
-import io.questdb.std.Vect;
+import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-class LatestByAllIndexedFilteredRecordCursor extends LatestByAllIndexedRecordCursor {
-    protected final Function filter;
+public class LatestByAllIndexedFilteredAfterRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
+    protected final DirectLongList prefixes;
 
-    public LatestByAllIndexedFilteredRecordCursor(
+    public LatestByAllIndexedFilteredAfterRecordCursorFactory(
+            @NotNull RecordMetadata metadata,
+            @NotNull CairoConfiguration configuration,
+            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
-            @NotNull DirectLongList rows,
-            @NotNull Function filter,
+            @Nullable Function filter,
             @NotNull IntList columnIndexes,
-            @NotNull DirectLongList prefixes
+            @NotNull LongList prefixes
     ) {
-        super(columnIndex, rows, columnIndexes, prefixes);
-        this.filter = filter;
+        super(metadata, dataFrameCursorFactory, configuration);
+        this.prefixes = new DirectLongList(Math.max(2, prefixes.size()));
+
+        // copy into owned direct memory
+        for (int i = 0; i < prefixes.size(); i++) {
+            this.prefixes.add(prefixes.get(i));
+        }
+
+        if (filter == null) {
+            this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, rows, columnIndexes, this.prefixes);
+        } else {
+            this.cursor = new LatestByAllIndexedFilteredAfterRecordCursor(columnIndex, rows, filter, columnIndexes, this.prefixes);
+        }
     }
 
     @Override
     public void close() {
-        filter.close();
         super.close();
+        prefixes.close();
     }
 
     @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
-        filter.init(this, executionContext);
-        super.buildTreeMap(executionContext);
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
     }
-
-    @Override
-    protected void postProcessRows() {
-        final long rowCount = aLimit;
-        rows.setPos(rowCount);
-
-        for (long r = 0; r < rowCount; ++r) {
-            long row = rows.get(r) - 1;
-            recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
-            if (!filter.getBool(recordA)) {
-                rows.set(r, 0); // clear row id
-            }
-        }
-
-        Vect.sortULongAscInPlace(rows.getAddress(), rowCount);
-
-        while (rows.get(indexShift) <= 0) {
-            indexShift++;
-        }
-
-        aLimit = rowCount;
-        aIndex = indexShift;
-    }
-
 }

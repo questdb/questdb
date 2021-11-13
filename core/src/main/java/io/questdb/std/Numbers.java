@@ -69,6 +69,7 @@ public final class Numbers {
     static final long EXP_ONE = ((long) EXP_BIAS) << EXP_SHIFT; // exponent of 1.0
     private static final long FRACT_HOB = (1L << EXP_SHIFT); // assumed High-Order bit
     private static final int[] insignificantDigitsNumber = new int[]{0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 9, 9, 10, 10, 10, 11, 11, 11, 12, 12, 12, 12, 13, 13, 13, 14, 14, 14, 15, 15, 15, 15, 16, 16, 16, 17, 17, 17, 18, 18, 18, 19};
+
     private Numbers() {
     }
 
@@ -418,17 +419,17 @@ public final class Numbers {
             return;
         }
         sink.put("0x");
-        if (d != 0) {
+        if (d != 0L) {
             appendLong256Four(a, b, c, d, sink);
             return;
         }
 
-        if (c != 0) {
+        if (c != 0L) {
             appendLong256Three(a, b, c, sink);
             return;
         }
 
-        if (b != 0) {
+        if (b != 0L) {
             appendLong256Two(a, b, sink);
             return;
         }
@@ -994,6 +995,17 @@ public final class Numbers {
         return parseLong0(sequence, p, lim);
     }
 
+    public static boolean extractLong256(CharSequence value, int len, Long256Acceptor acceptor) {
+        if (len > 2 && ((len & 1) == 0) && len < 67 && value.charAt(0) == '0' && value.charAt(1) == 'x') {
+            try {
+                Long256FromCharSequenceDecoder.decode(value, 2, len, acceptor);
+                return true;
+            } catch (NumericException ignored) {
+            }
+        }
+        return false;
+    }
+
     public static long spreadBits(long v) {
         v = (v | (v << 16)) & 0X0000FFFF0000FFFFL;
         v = (v | (v << 8)) & 0X00FF00FF00FF00FFL;
@@ -1009,27 +1021,7 @@ public final class Numbers {
 
     @NotNull
     public static Long256Impl parseLong256(CharSequence text, int len, Long256Impl long256) {
-        if (Long256Util.isValidString(text, len)) {
-            try {
-                final long a = parseHexLong(text, 2, Math.min(len, 18));
-                long b = 0;
-                long c = 0;
-                long d = 0;
-                if (len > 18) {
-                    b = parseHexLong(text, 18, Math.min(len, 34));
-                }
-                if (len > 34) {
-                    c = parseHexLong(text, 34, Math.min(len, 42));
-                }
-                if (len > 42) {
-                    d = parseHexLong(text, 42, Math.min(len, 66));
-                }
-                long256.setAll(a, b, c, d);
-                return long256;
-            } catch (NumericException ignored) {
-            }
-        }
-        return Long256Impl.NULL_LONG256;
+        return extractLong256(text, len, long256) ? long256 : Long256Impl.NULL_LONG256;
     }
 
     public static long parseLongQuiet(CharSequence sequence) {

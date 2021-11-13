@@ -181,7 +181,7 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                             "public\ty\te\t18\tfalse\t0\t2\t0\t4\t\t\t\t0\tb\n" +
                             "public\ty\tf\t1043\tfalse\t0\t-1\t0\t5\t\t\t\t0\tb\n" +
                             "public\ty\tg\t16\tfalse\t0\t1\t0\t6\t\t\t\t0\tb\n" +
-                            "public\ty\th\t1700\tfalse\t0\t32\t0\t7\t\t\t\t0\tb\n" +
+                            "public\ty\th\t1043\tfalse\t0\t-1\t0\t7\t\t\t\t0\tb\n" +
                             "public\ty\ti\t700\tfalse\t0\t4\t0\t8\t\t\t\t0\tb\n" +
                             "public\ty\tj\t701\tfalse\t0\t8\t0\t9\t\t\t\t0\tb\n" +
                             "public\ty\tk\t1114\tfalse\t0\t-1\t0\t10\t\t\t\t0\tb\n" +
@@ -245,7 +245,7 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                             "public\ty\te\t18\tfalse\t0\t2\t0\t4\t\t\t\t0\tb\n" +
                             "public\ty\tf\t1043\tfalse\t0\t-1\t0\t5\t\t\t\t0\tb\n" +
                             "public\ty\tg\t16\tfalse\t0\t1\t0\t6\t\t\t\t0\tb\n" +
-                            "public\ty\th\t1700\tfalse\t0\t32\t0\t7\t\t\t\t0\tb\n" +
+                            "public\ty\th\t1043\tfalse\t0\t-1\t0\t7\t\t\t\t0\tb\n" +
                             "public\ty\ti\t700\tfalse\t0\t4\t0\t8\t\t\t\t0\tb\n" +
                             "public\ty\tj\t701\tfalse\t0\t8\t0\t9\t\t\t\t0\tb\n" +
                             "public\ty\tk\t1114\tfalse\t0\t-1\t0\t10\t\t\t\t0\tb\n" +
