@@ -523,14 +523,15 @@ public final class TestUtils {
             TableModel tableModel,
             int totalRows,
             String startDate,
-            int partitionCount) throws NumericException, SqlException {
+            int partitionCount
+    ) throws NumericException, SqlException {
         long fromTimestamp = IntervalUtils.parseFloorPartialDate(startDate);
 
         long increment = 0;
         if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
-            final Timestamps.TimestampAddMethod partitionAdd = PartitionBy.getPartitionAdd(tableModel.getPartitionBy());
-            assert partitionAdd != null;
-            long toTs = partitionAdd.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
+            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
+            assert partitionAddMethod != null;
+            long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
             increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
         }
 

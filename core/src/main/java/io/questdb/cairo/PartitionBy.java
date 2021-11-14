@@ -36,7 +36,9 @@ import io.questdb.std.str.CharSink;
 import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
 
 /**
- * Setting partition type on JournalKey to override default settings.
+ * Collection of static assets to provide time partitioning API. It should be
+ * possible to express any time partitioning strategy via this API alone.
+ * The rest of QuestDB should just pick it up natively.
  */
 public final class PartitionBy {
 
@@ -49,6 +51,7 @@ public final class PartitionBy {
      * all data is stored in a single directory
      */
     public static final int NONE = 3;
+
     private final static LowerCaseCharSequenceIntHashMap nameToIndexMap = new LowerCaseCharSequenceIntHashMap();
     private static final DateFormat fmtDay;
     private static final DateFormat fmtMonth;
@@ -59,15 +62,11 @@ public final class PartitionBy {
     private PartitionBy() {
     }
 
-    public static boolean isPartitioned(int partitionBy) {
-        return partitionBy != NONE;
-    }
-
     public static int fromString(CharSequence name) {
         return nameToIndexMap.get(name);
     }
 
-    public static Timestamps.TimestampAddMethod getPartitionAdd(int partitionBy) {
+    public static PartitionAddMethod getPartitionAddMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
                 return Timestamps.ADD_DD;
@@ -82,7 +81,7 @@ public final class PartitionBy {
         }
     }
 
-    public static DateFormat getPartitionDateFmt(int partitionBy) {
+    public static DateFormat getPartitionDirFormatMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
                 return fmtDay;
@@ -99,7 +98,7 @@ public final class PartitionBy {
         }
     }
 
-    public static Timestamps.TimestampFloorMethod getPartitionFloor(int partitionBy) {
+    public static PartitionFloorMethod getPartitionFloorMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
                 return Timestamps.FLOOR_DD;
@@ -114,13 +113,13 @@ public final class PartitionBy {
         }
     }
 
+    public static boolean isPartitioned(int partitionBy) {
+        return partitionBy != NONE;
+    }
+
     public static long parsePartitionDirName(CharSequence partitionName, int partitionBy) {
         try {
-            if (partitionBy != NONE) {
-                return getPartitionDateFmt(partitionBy).parse(partitionName, null);
-            } else {
-                throw CairoException.instance(0).put("table is not partitioned");
-            }
+            return getPartitionDirFormatMethod(partitionBy).parse(partitionName, null);
         } catch (NumericException e) {
             final CairoException ee = CairoException.instance(0);
             switch (partitionBy) {
@@ -130,27 +129,15 @@ public final class PartitionBy {
                 case MONTH:
                     ee.put("'YYYY-MM'");
                     break;
-                default:
+                case YEAR:
                     ee.put("'YYYY'");
+                    break;
+                case HOUR:
+                    ee.put("'YYYY-MM-DDTHH'");
                     break;
             }
             ee.put(" expected");
             throw ee;
-        }
-    }
-
-    public static DateFormat selectPartitionDirFmt(int partitionBy) {
-        switch (partitionBy) {
-            case DAY:
-                return fmtDay;
-            case MONTH:
-                return fmtMonth;
-            case YEAR:
-                return fmtYear;
-            case HOUR:
-                return fmtHour;
-            default:
-                return null;
         }
     }
 
@@ -240,7 +227,7 @@ public final class PartitionBy {
         }
     }
 
-    static Timestamps.TimestampCeilMethod getPartitionCeil(int partitionBy) {
+    static PartitionCeilMethod getPartitionCeilMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
                 return Timestamps.CEIL_DD;
@@ -255,21 +242,20 @@ public final class PartitionBy {
         }
     }
 
-    static boolean isSamePartition(long timestampA, long timestampB, int partitionBy) {
-        switch (partitionBy) {
-            case NONE:
-                return true;
-            case DAY:
-                return Timestamps.floorDD(timestampA) == Timestamps.floorDD(timestampB);
-            case MONTH:
-                return Timestamps.floorMM(timestampA) == Timestamps.floorMM(timestampB);
-            case YEAR:
-                return Timestamps.floorYYYY(timestampA) == Timestamps.floorYYYY(timestampB);
-            case HOUR:
-                return Timestamps.floorHH(timestampA) == Timestamps.floorHH(timestampB);
-            default:
-                throw CairoException.instance(0).put("Cannot compare timestamps for unsupported partition type: [").put(partitionBy).put(']');
-        }
+    @FunctionalInterface
+    public interface PartitionFloorMethod {
+        long floor(long timestamp);
+    }
+
+    @FunctionalInterface
+    public interface PartitionCeilMethod {
+        // returns exclusive ceiling for the give timestamp
+        long ceil(long timestamp);
+    }
+
+    @FunctionalInterface
+    public interface PartitionAddMethod {
+        long calculate(long timestamp, int increment);
     }
 
     static {
@@ -294,7 +280,7 @@ public final class PartitionBy {
 
             @Override
             public long parse(CharSequence in, DateLocale locale) {
-                return 0;
+                return parse(in, 0, in.length(), locale);
             }
 
             @Override

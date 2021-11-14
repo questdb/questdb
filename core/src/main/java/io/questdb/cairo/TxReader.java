@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -40,7 +39,7 @@ public class TxReader implements Closeable {
     protected static final int PARTITION_NAME_TX_OFFSET = 2;
     protected static final int PARTITION_DATA_TX_OFFSET = 3;
     protected final LongList attachedPartitions = new LongList();
-    private final Timestamps.TimestampFloorMethod timestampFloorMethod;
+    private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
     protected long minTimestamp;
     protected long maxTimestamp;
     protected long txn;
@@ -57,7 +56,7 @@ public class TxReader implements Closeable {
     public TxReader(FilesFacade ff, @Transient Path path, int partitionBy) {
         try {
             roTxMem = openTxnFile(ff, path);
-            this.timestampFloorMethod = PartitionBy.getPartitionFloor(partitionBy);
+            this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
             this.partitionBy = partitionBy;
         } catch (Throwable e) {
             close();
@@ -182,7 +181,7 @@ public class TxReader implements Closeable {
     }
 
     protected long getPartitionTimestampLo(long timestamp) {
-        return timestampFloorMethod != null && timestamp != Numbers.LONG_NaN ? timestampFloorMethod.floor(timestamp) : Long.MIN_VALUE;
+        return partitionFloorMethod != null && timestamp != Numbers.LONG_NaN ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE;
     }
 
     protected void initPartitionAt(int index, long partitionTimestampLo, long partitionSize) {

@@ -112,9 +112,8 @@ public class TableWriter implements Closeable {
     private final MessageBus messageBus;
     private final MessageBus ownMessageBus;
     private final boolean parallelIndexerEnabled;
-    private final Timestamps.TimestampFloorMethod timestampFloorMethod;
-    private final Timestamps.TimestampCeilMethod timestampCeilMethod;
-    private final Timestamps.TimestampAddMethod timestampAddMethod;
+    private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
+    private final PartitionBy.PartitionCeilMethod partitionCeilMethod;
     private final int defaultCommitMode;
     private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
     private final int o3ColumnMemorySize;
@@ -300,11 +299,10 @@ public class TableWriter implements Closeable {
             this.o3NullSetters = new ObjList<>(columnCount);
             this.activeNullSetters = nullSetters;
             this.columnTops = new LongList(columnCount);
-            this.timestampFloorMethod = PartitionBy.getPartitionFloor(partitionBy);
-            this.timestampCeilMethod = PartitionBy.getPartitionCeil(partitionBy);
-            this.timestampAddMethod = PartitionBy.getPartitionAdd(partitionBy);
+            this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
+            this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
             if (PartitionBy.isPartitioned(partitionBy)) {
-                partitionDirFmt = PartitionBy.getPartitionDateFmt(partitionBy);
+                partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
             } else {
                 partitionDirFmt = null;
             }
@@ -2251,7 +2249,7 @@ public class TableWriter implements Closeable {
     }
 
     private long getPartitionLo(long timestamp) {
-        return timestampFloorMethod.floor(timestamp);
+        return partitionFloorMethod.floor(timestamp);
     }
 
     long getPartitionNameTxnByIndex(int index) {
@@ -2283,7 +2281,7 @@ public class TableWriter implements Closeable {
     private long indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize) {
         final long ts = this.txWriter.getMaxTimestamp();
         if (ts > Numbers.LONG_NaN) {
-            final long maxTimestamp = timestampFloorMethod.floor(ts);
+            final long maxTimestamp = partitionFloorMethod.floor(ts);
             long timestamp = txWriter.getMinTimestamp();
             try (final MemoryMR roMem = indexMem) {
 
@@ -2319,7 +2317,7 @@ public class TableWriter implements Closeable {
                             }
                         }
                     }
-                    timestamp = timestampAddMethod.calculate(timestamp, 1);
+                    timestamp = partitionCeilMethod.ceil(timestamp);
                 }
             } finally {
                 indexer.close();
@@ -2393,8 +2391,10 @@ public class TableWriter implements Closeable {
         long o3LagRowCount = 0;
         long maxUncommittedRows = metadata.getMaxUncommittedRows();
         final int timestampIndex = metadata.getTimestampIndex();
-        this.lastPartitionTimestamp = timestampFloorMethod.floor(partitionTimestampHi);
-        long activePartitionTimestampCeil = timestampCeilMethod.ceil(partitionTimestampHi);
+        this.lastPartitionTimestamp = partitionFloorMethod.floor(partitionTimestampHi);
+        // we will check new partitionTimestampHi value against the limit to see if the writer
+        // will have to switch partition internally
+        long partitionTimestampHiLimit = partitionCeilMethod.ceil(partitionTimestampHi) - 1;
         try {
             o3RowCount += o3MoveUncommitted(timestampIndex);
             final long transientRowCount = txWriter.transientRowCount;
@@ -2521,7 +2521,7 @@ public class TableWriter implements Closeable {
                         final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
                         final long srcOooHi;
                         // keep ceil inclusive in the interval
-                        final long srcOooTimestampCeil = timestampCeilMethod.ceil(o3Timestamp) - 1;
+                        final long srcOooTimestampCeil = partitionCeilMethod.ceil(o3Timestamp) - 1;
                         if (srcOooTimestampCeil < o3TimestampMax) {
                             srcOooHi = Vect.boundedBinarySearchIndexT(
                                     sortedTimestampsAddr,
@@ -2534,7 +2534,7 @@ public class TableWriter implements Closeable {
                             srcOooHi = srcOooMax - 1;
                         }
 
-                        final long partitionTimestamp = timestampFloorMethod.floor(o3Timestamp);
+                        final long partitionTimestamp = partitionFloorMethod.floor(o3Timestamp);
                         final boolean last = partitionTimestamp == lastPartitionTimestamp;
                         srcOoo = srcOooHi + 1;
 
@@ -2755,7 +2755,7 @@ public class TableWriter implements Closeable {
             }
         }
 
-        if (!columns.getQuick(0).isOpen() || partitionTimestampHi > activePartitionTimestampCeil) {
+        if (!columns.getQuick(0).isOpen() || partitionTimestampHi > partitionTimestampHiLimit) {
             openPartition(txWriter.getMaxTimestamp());
         }
 
@@ -4211,8 +4211,8 @@ public class TableWriter implements Closeable {
             long transientRowCount = this.txWriter.getTransientRowCount();
             long maxTimestamp = this.txWriter.getMaxTimestamp();
             try {
-                final long tsLimit = timestampFloorMethod.floor(this.txWriter.getMaxTimestamp());
-                for (long ts = getPartitionLo(txWriter.getMinTimestamp()); ts < tsLimit; ts = timestampAddMethod.calculate(ts, 1)) {
+                final long tsLimit = partitionFloorMethod.floor(this.txWriter.getMaxTimestamp());
+                for (long ts = getPartitionLo(txWriter.getMinTimestamp()); ts < tsLimit; ts = partitionCeilMethod.ceil(ts)) {
                     path.trimTo(rootLen);
                     setStateForTimestamp(path, ts, false);
                     int p = path.length();

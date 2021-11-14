@@ -30,7 +30,6 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.*;
@@ -131,15 +130,15 @@ final class Mig506 {
         long maxTimestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
         long transientCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
 
-        final Timestamps.TimestampFloorMethod timestampFloorMethod = PartitionBy.getPartitionFloor(partitionBy);
-        assert timestampFloorMethod != null;
+        final PartitionBy.PartitionFloorMethod partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
+        assert partitionFloorMethod != null;
 
-        final Timestamps.TimestampAddMethod timestampAddMethod = PartitionBy.getPartitionAdd(partitionBy);
-        assert timestampAddMethod != null;
+        final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(partitionBy);
+        assert partitionAddMethod != null;
 
-        final long tsLimit = timestampFloorMethod.floor(maxTimestamp);
+        final long tsLimit = partitionFloorMethod.floor(maxTimestamp);
 
-        for (long ts = timestampFloorMethod.floor(minTimestamp); ts < tsLimit; ts = timestampAddMethod.calculate(ts, 1)) {
+        for (long ts = partitionFloorMethod.floor(minTimestamp); ts < tsLimit; ts = partitionAddMethod.calculate(ts, 1)) {
             path.trimTo(rootLen);
             setPathForPartition(path, partitionBy, ts, false);
             if (ff.exists(path.concat(TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME).$())) {

@@ -1542,6 +1542,23 @@ public class TableReaderTest extends AbstractCairoTest {
         testConcurrentReloadMultiplePartitions(PartitionBy.MONTH, 12 * 3000000);
     }
 
+    static boolean isSamePartition(long timestampA, long timestampB, int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.NONE:
+                return true;
+            case PartitionBy.DAY:
+                return Timestamps.floorDD(timestampA) == Timestamps.floorDD(timestampB);
+            case PartitionBy.MONTH:
+                return Timestamps.floorMM(timestampA) == Timestamps.floorMM(timestampB);
+            case PartitionBy.YEAR:
+                return Timestamps.floorYYYY(timestampA) == Timestamps.floorYYYY(timestampB);
+            case PartitionBy.HOUR:
+                return Timestamps.floorHH(timestampA) == Timestamps.floorHH(timestampB);
+            default:
+                throw CairoException.instance(0).put("Cannot compare timestamps for unsupported partition type: [").put(partitionBy).put(']');
+        }
+    }
+
     private void testConcurrentReloadMultiplePartitions(int partitionBy, long stride) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 1024_0000;
@@ -2412,7 +2429,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 Assert.assertEquals(N * N_PARTITIONS, writer.size());
 
-                DateFormat fmt = PartitionBy.getPartitionDateFmt(PartitionBy.DAY);
+                DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(PartitionBy.DAY);
                 assert fmt != null;
                 final long timestamp = fmt.parse("2017-12-14", null);
 
@@ -3510,9 +3527,9 @@ public class TableReaderTest extends AbstractCairoTest {
         writer.commit();
 
         if (testPartitionSwitch == MUST_SWITCH) {
-            Assert.assertFalse(PartitionBy.isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
+            Assert.assertFalse(isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
         } else if (testPartitionSwitch == MUST_NOT_SWITCH) {
-            Assert.assertTrue(PartitionBy.isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
+            Assert.assertTrue(isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
         }
 
         Assert.assertEquals(size + count, writer.size());
@@ -3832,7 +3849,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.assertEquals(500, totalCount);
 
 
-                    DateFormat fmt = PartitionBy.getPartitionDateFmt(partitionBy);
+                    DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
                     Assert.assertFalse(
                             writer.removePartition(fmt.parse(partitionNameToDelete, null))
                     );
@@ -3888,7 +3905,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 Assert.assertEquals(N * N_PARTITIONS, writer.size());
 
-                DateFormat fmt = PartitionBy.getPartitionDateFmt(partitionBy);
+                DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
                 final long timestamp = fmt.parse(partitionNameToDelete, null);
 
                 Assert.assertTrue(writer.removePartition(timestamp));
@@ -3971,7 +3988,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.assertEquals(N * N_PARTITIONS, totalCount);
 
 
-                    DateFormat fmt = PartitionBy.getPartitionDateFmt(partitionBy);
+                    DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
                     Assert.assertTrue(
                             writer.removePartition(fmt.parse(partitionNameToDelete, null))
                     );
