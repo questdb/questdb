@@ -51,7 +51,18 @@ public final class PartitionBy {
      * all data is stored in a single directory
      */
     public static final int NONE = 3;
-
+    private static final PartitionCeilMethod CEIL_DD = Timestamps::ceilDD;
+    private static final PartitionCeilMethod CEIL_YYYY = Timestamps::ceilYYYY;
+    private static final PartitionCeilMethod CEIL_HH = Timestamps::ceilHH;
+    private static final PartitionFloorMethod FLOOR_MM = Timestamps::floorMM;
+    private static final PartitionCeilMethod CEIL_MM = Timestamps::ceilMM;
+    private static final PartitionAddMethod ADD_MM = Timestamps::addMonths;
+    private static final PartitionAddMethod ADD_YYYY = Timestamps::addYear;
+    private static final PartitionAddMethod ADD_HH = Timestamps::addHours;
+    private static final PartitionFloorMethod FLOOR_DD = Timestamps::floorDD;
+    private static final PartitionAddMethod ADD_DD = Timestamps::addDays;
+    private static final PartitionFloorMethod FLOOR_YYYY = Timestamps::floorYYYY;
+    private static final PartitionFloorMethod FLOOR_HH = Timestamps::floorHH;
     private final static LowerCaseCharSequenceIntHashMap nameToIndexMap = new LowerCaseCharSequenceIntHashMap();
     private static final DateFormat fmtDay;
     private static final DateFormat fmtMonth;
@@ -69,13 +80,13 @@ public final class PartitionBy {
     public static PartitionAddMethod getPartitionAddMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
-                return Timestamps.ADD_DD;
+                return ADD_DD;
             case MONTH:
-                return Timestamps.ADD_MM;
+                return ADD_MM;
             case YEAR:
-                return Timestamps.ADD_YYYY;
+                return ADD_YYYY;
             case HOUR:
-                return Timestamps.ADD_HH;
+                return ADD_HH;
             default:
                 return null;
         }
@@ -101,13 +112,13 @@ public final class PartitionBy {
     public static PartitionFloorMethod getPartitionFloorMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
-                return Timestamps.FLOOR_DD;
+                return FLOOR_DD;
             case MONTH:
-                return Timestamps.FLOOR_MM;
+                return FLOOR_MM;
             case YEAR:
-                return Timestamps.FLOOR_YYYY;
+                return FLOOR_YYYY;
             case HOUR:
-                return Timestamps.FLOOR_HH;
+                return FLOOR_HH;
             default:
                 return null;
         }
@@ -230,13 +241,13 @@ public final class PartitionBy {
     static PartitionCeilMethod getPartitionCeilMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
-                return Timestamps.CEIL_DD;
+                return CEIL_DD;
             case MONTH:
-                return Timestamps.CEIL_MM;
+                return CEIL_MM;
             case YEAR:
-                return Timestamps.CEIL_YYYY;
+                return CEIL_YYYY;
             case HOUR:
-                return Timestamps.CEIL_HH;
+                return CEIL_HH;
             default:
                 return null;
         }

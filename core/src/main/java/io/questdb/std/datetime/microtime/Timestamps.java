@@ -24,7 +24,6 @@
 
 package io.questdb.std.datetime.microtime;
 
-import io.questdb.cairo.PartitionBy;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -53,8 +52,6 @@ final public class Timestamps {
     public static final int STATE_END = 6;
     public static final int STATE_SIGN = 7;
     public static final long O3_MIN_TS = 0L;
-    public static final PartitionBy.PartitionFloorMethod FLOOR_DD = Timestamps::floorDD;
-    public static final PartitionBy.PartitionAddMethod ADD_DD = Timestamps::addDays;
     private static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
     private static final long HALF_YEAR_MICROS = AVG_YEAR_MICROS / 2;
     private static final long EPOCH_MICROS = 1970L * AVG_YEAR_MICROS;
@@ -65,21 +62,11 @@ final public class Timestamps {
     private static final int HOUR_MINUTES = 60;
     private static final int MINUTE_SECONDS = 60;
     private static final int DAYS_0000_TO_1970 = 719527;
-    public static final PartitionBy.PartitionFloorMethod FLOOR_YYYY = Timestamps::floorYYYY;
-    public static final PartitionBy.PartitionFloorMethod FLOOR_HH = Timestamps::floorHH;
     private static final int[] DAYS_PER_MONTH = {
             31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
     };
     private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long[] MAX_MONTH_OF_YEAR_MICROS = new long[12];
-    public static final PartitionBy.PartitionCeilMethod CEIL_DD = Timestamps::ceilDD;
-    public static final PartitionBy.PartitionCeilMethod CEIL_YYYY = Timestamps::ceilYYYY;
-    public static final PartitionBy.PartitionCeilMethod CEIL_HH = Timestamps::ceilHH;
-    public static final PartitionBy.PartitionFloorMethod FLOOR_MM = Timestamps::floorMM;
-    public static final PartitionBy.PartitionCeilMethod CEIL_MM = Timestamps::ceilMM;
-    public static final PartitionBy.PartitionAddMethod ADD_MM = Timestamps::addMonths;
-    public static final PartitionBy.PartitionAddMethod ADD_YYYY = Timestamps::addYear;
-    public static final PartitionBy.PartitionAddMethod ADD_HH = Timestamps::addHours;
     private static final char BEFORE_ZERO = '0' - 1;
     private static final char AFTER_NINE = '9' + 1;
 
