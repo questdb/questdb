@@ -69,7 +69,7 @@ final class Mig607 {
                 final long transientRowCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
 
 
-                if (partitionBy != PartitionBy.NONE) {
+                if (PartitionBy.isPartitioned(partitionBy)) {
                     for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
                         final long partitionDataOffset = partitionCountOffset + Integer.BYTES + partitionIndex * 8L * LONGS_PER_TX_ATTACHED_PARTITION;
 

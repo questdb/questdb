@@ -2562,28 +2562,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSelectPartitionDirFmt() {
-        Assert.assertNull(TableWriter.selectPartitionDirFmt(PartitionBy.NONE));
-        sink.clear();
-        DateFormat fmt = TableWriter.selectPartitionDirFmt(PartitionBy.DAY);
-        Assert.assertNotNull(fmt);
-        fmt.format(0, DateFormatUtils.enLocale, "Z", sink);
-        Assert.assertEquals("1970-01-01", sink.toString());
-
-        sink.clear();
-        fmt = TableWriter.selectPartitionDirFmt(PartitionBy.MONTH);
-        Assert.assertNotNull(fmt);
-        fmt.format(0, DateFormatUtils.enLocale, "Z", sink);
-        Assert.assertEquals("1970-01", sink.toString());
-
-        sink.clear();
-        fmt = TableWriter.selectPartitionDirFmt(PartitionBy.YEAR);
-        Assert.assertNotNull(fmt);
-        fmt.format(0, DateFormatUtils.enLocale, "Z", sink);
-        Assert.assertEquals("1970", sink.toString());
-    }
-
-    @Test
     public void testSetAppendPositionFailureBin2() throws Exception {
         testSetAppendPositionFailure();
     }

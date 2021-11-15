@@ -44,8 +44,6 @@ import java.util.concurrent.locks.LockSupport;
 
 public class WriterPoolTest extends AbstractCairoTest {
 
-    private static final DefaultCairoConfiguration CONFIGURATION;
-
     @Before
     public void setUpInstance() {
         try (TableModel model = new TableModel(configuration, "z", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
@@ -769,7 +767,7 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     private void assertWithPool(PoolAwareCode code) throws Exception {
-        assertWithPool(code, CONFIGURATION);
+        assertWithPool(code, configuration);
     }
 
     private void populate(TableWriter w) {
@@ -782,9 +780,5 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     private interface PoolAwareCode {
         void run(WriterPool pool) throws Exception;
-    }
-
-    static {
-        CONFIGURATION = new DefaultCairoConfiguration(root);
     }
 }

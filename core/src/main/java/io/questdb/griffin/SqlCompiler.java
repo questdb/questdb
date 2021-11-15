@@ -1270,7 +1270,7 @@ public class SqlCompiler implements Closeable {
 
             final long timestamp;
             try {
-                timestamp = writer.partitionNameToTimestamp(unquoted);
+                timestamp = PartitionBy.parsePartitionDirName(unquoted, writer.getPartitionBy());
             } catch (CairoException e) {
                 throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage())
                         .put("[errno=").put(e.getErrno()).put(']');
@@ -2336,7 +2336,7 @@ public class SqlCompiler implements Closeable {
             throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(metadata.getColumnType(timestamp.token))).put(']');
         }
 
-        if (model.getPartitionBy() != PartitionBy.NONE && model.getTimestampIndex() == -1 && metadata.getTimestampIndex() == -1) {
+        if (PartitionBy.isPartitioned(model.getPartitionBy()) && model.getTimestampIndex() == -1 && metadata.getTimestampIndex() == -1) {
             throw SqlException.position(0).put("timestamp is not defined");
         }
     }
