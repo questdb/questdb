@@ -175,7 +175,6 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     final public void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int indexBlockCapacity) {
         close();
         final FilesFacade ff = configuration.getFilesFacade();
-        long pageSize = ff.getMapPageSize();
         boolean kFdUnassigned = true;
         boolean vFdUnassigned = true;
         final long keyAppendPageSize = configuration.getDataIndexKeyAppendPageSize();
@@ -184,7 +183,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             if (init) {
                 if (ff.truncate(keyFd, 0)) {
                     kFdUnassigned = false;
-                    this.keyMem.of(ff, keyFd, null, keyAppendPageSize, pageSize, MemoryTag.MMAP_INDEX_WRITER);
+                    this.keyMem.of(ff, keyFd, null, keyAppendPageSize, keyAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);
                     initKeyMemory(this.keyMem, indexBlockCapacity);
                 } else {
                     throw CairoException.instance(ff.errno()).put("Could not truncate [fd=").put(keyFd).put(']');
@@ -224,7 +223,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             if (init) {
                 if (ff.truncate(valueFd, 0)) {
                     vFdUnassigned = false;
-                    this.valueMem.of(ff, valueFd, null, valueAppendPageSize, pageSize, MemoryTag.MMAP_INDEX_WRITER);
+                    this.valueMem.of(ff, valueFd, null, valueAppendPageSize, valueAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);
                     this.valueMem.jumpTo(0);
                 } else {
                     throw CairoException.instance(ff.errno()).put("Could not truncate [fd=").put(valueFd).put(']');
