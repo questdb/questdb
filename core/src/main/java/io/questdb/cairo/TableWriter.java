@@ -435,7 +435,7 @@ public class TableWriter implements Closeable {
         columnTops.extendAndSet(columnCount - 1, txWriter.getTransientRowCount());
 
         // create column files
-        if (txWriter.getTransientRowCount() > 0 || partitionBy == PartitionBy.NONE) {
+        if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
             try {
                 openNewColumnFiles(name, isIndexed, indexValueBlockCapacity);
             } catch (CairoException e) {

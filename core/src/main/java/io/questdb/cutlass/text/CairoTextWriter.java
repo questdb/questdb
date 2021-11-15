@@ -272,7 +272,7 @@ public class CairoTextWriter implements Closeable, Mutable {
             final int detectedType = detectedAdapter.getType();
             if (detectedType != columnType) {
                 // when DATE type is mis-detected as STRING we
-                // wouldn't have neither date format nor locale to
+                // would not have either date format nor locale to
                 // use when populating this field
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.DATE:
@@ -344,7 +344,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 throw CairoException.instance(0).put("name is reserved [table=").put(tableName).put(']');
         }
         if (canUpdateMetadata) {
-            if (PartitionBy.isPartitioned(partitionBy) || (commitLag < 0 && maxUncommittedRows < 0)) {
+            if (PartitionBy.isPartitioned(partitionBy)) {
                 if (commitLag > -1) {
                     writer.setMetaCommitLag(commitLag);
                     LOG.info().$("updating metadata attribute commitLag to ").$(commitLag).$(", table=").utf8(tableName).$();
@@ -353,8 +353,6 @@ public class CairoTextWriter implements Closeable, Mutable {
                     writer.setMetaMaxUncommittedRows(maxUncommittedRows);
                     LOG.info().$("updating metadata attribute maxUncommittedRows to ").$(maxUncommittedRows).$(", table=").utf8(tableName).$();
                 }
-            } else {
-                LOG.info().$("parameters commitLag and maxUncommittedRows have no effect when partitionBy is NONE").$();
             }
         } else {
             LOG.info().$("cannot update metadata attributes commitLag and maxUncommittedRows when the table exists and parameter overwrite is false").$();
