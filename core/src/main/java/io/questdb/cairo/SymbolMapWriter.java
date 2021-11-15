@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -86,7 +85,8 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
             // we left off. Where we left off is stored externally to symbol map
             this.offsetMem = Vm.getWholeMARWInstance(ff, path, mapPageSize, MemoryTag.MMAP_INDEX_WRITER);
             // formula for calculating symbol capacity needs to be in agreement with symbol reader
-            final int symbolCapacity = getSymbolCapacity(configuration, offsetMem);
+            final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
+            assert symbolCapacity > 0;
             final boolean useCache = offsetMem.getBool(HEADER_CACHE_ENABLED);
             this.offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
 
@@ -131,10 +131,6 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
         } finally {
             path.trimTo(plen);
         }
-    }
-
-    static int getSymbolCapacity(CairoConfiguration configuration, MemoryR offsetMem) {
-        return Math.max(configuration.getDefaultSymbolCapacity(), offsetMem.getInt(HEADER_CAPACITY));
     }
 
     public static Path charFileName(Path path, CharSequence columnName) {
@@ -293,7 +289,9 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
     }
 
     void truncate() {
+        final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
         offsetMem.truncate();
+        offsetMem.putInt(HEADER_CAPACITY, symbolCapacity);
         offsetMem.jumpTo(keyToOffset(0) + Long.BYTES);
         charMem.truncate();
         indexWriter.truncate();

@@ -2288,7 +2288,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
             SymbolMapReader symbolMapReader = reader.getSymbolMapReader(reader.getMetadata().getColumnIndexQuiet("x"));
             Assert.assertNotNull(symbolMapReader);
-            Assert.assertEquals(configuration.getDefaultSymbolCapacity(), symbolMapReader.getSymbolCapacity());
+            Assert.assertEquals(16, symbolMapReader.getSymbolCapacity());
             Assert.assertTrue(symbolMapReader.isCached());
         }
     }
@@ -2325,7 +2325,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
             SymbolMapReader symbolMapReader = reader.getSymbolMapReader(reader.getMetadata().getColumnIndexQuiet("x"));
             Assert.assertNotNull(symbolMapReader);
-            Assert.assertEquals(configuration.getDefaultSymbolCapacity(), symbolMapReader.getSymbolCapacity());
+            Assert.assertEquals(16, symbolMapReader.getSymbolCapacity());
             Assert.assertTrue(symbolMapReader.isCached());
         }
     }
@@ -2363,7 +2363,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
             SymbolMapReader symbolMapReader = reader.getSymbolMapReader(reader.getMetadata().getColumnIndexQuiet("x"));
             Assert.assertNotNull(symbolMapReader);
-            Assert.assertEquals(configuration.getDefaultSymbolCapacity(), symbolMapReader.getSymbolCapacity());
+            Assert.assertEquals(16, symbolMapReader.getSymbolCapacity());
             Assert.assertTrue(symbolMapReader.isCached());
         }
     }
@@ -2402,7 +2402,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
             SymbolMapReader symbolMapReader = reader.getSymbolMapReader(reader.getMetadata().getColumnIndexQuiet("x"));
             Assert.assertNotNull(symbolMapReader);
-            Assert.assertEquals(configuration.getDefaultSymbolCapacity(), symbolMapReader.getSymbolCapacity());
+            Assert.assertEquals(16, symbolMapReader.getSymbolCapacity());
             Assert.assertFalse(symbolMapReader.isCached());
         }
     }
@@ -2441,7 +2441,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
             SymbolMapReader symbolMapReader = reader.getSymbolMapReader(reader.getMetadata().getColumnIndexQuiet("x"));
             Assert.assertNotNull(symbolMapReader);
-            Assert.assertEquals(configuration.getDefaultSymbolCapacity(), symbolMapReader.getSymbolCapacity());
+            Assert.assertEquals(16, symbolMapReader.getSymbolCapacity());
             Assert.assertTrue(symbolMapReader.isCached());
         }
     }
