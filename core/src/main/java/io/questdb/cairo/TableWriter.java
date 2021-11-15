@@ -518,18 +518,17 @@ public class TableWriter implements Closeable {
                 if (partitionBy != PartitionBy.NONE) {
                     // run indexer for the whole table
                     final long timestamp = indexHistoricPartitions(indexer, columnName, indexValueBlockSize);
-                    if (timestamp == Numbers.LONG_NaN) {
-                        return;
+                    if (timestamp != Numbers.LONG_NaN) {
+                        path.trimTo(rootLen);
+                        setStateForTimestamp(path, timestamp, true);
+                        // create index in last partition
+                        indexLastPartition(indexer, columnName, columnIndex, indexValueBlockSize);
                     }
-                    path.trimTo(rootLen);
-                    setStateForTimestamp(path, timestamp, true);
                 } else {
                     setStateForTimestamp(path, 0, false);
+                    // create index in last partition
+                    indexLastPartition(indexer, columnName, columnIndex, indexValueBlockSize);
                 }
-
-                // create index in last partition
-                indexLastPartition(indexer, columnName, columnIndex, indexValueBlockSize);
-
             } finally {
                 path.trimTo(rootLen);
             }
@@ -572,8 +571,7 @@ public class TableWriter implements Closeable {
         }
 
         txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
-
-        indexers.extendAndSet((columnIndex) / 2, indexer);
+        indexers.extendAndSet(columnIndex, indexer);
         populateDenseIndexerList();
 
         TableColumnMetadata columnMetadata = metadata.getColumnQuick(columnIndex);
@@ -1323,6 +1321,8 @@ public class TableWriter implements Closeable {
                 purgeUnusedPartitions();
                 configureAppendPosition();
                 o3InError = false;
+                // when we rolled transaction back, hasO3() has to be false
+                o3MasterRef = -1;
                 LOG.info().$("tx rollback complete [name=").$(tableName).$(']').$();
                 processCommandQueue();
             } catch (Throwable e) {
@@ -1407,6 +1407,7 @@ public class TableWriter implements Closeable {
      * and likely to cause segmentation fault. When table re-opens any partial truncate will be retried.
      */
     public final void truncate() {
+        rollback();
 
         // we do this before size check so that "old" corrupt symbol tables are brought back in line
         for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
@@ -1429,15 +1430,6 @@ public class TableWriter implements Closeable {
         // ensure file is closed with correct length
         todoMem.jumpTo(48);
 
-        for (int i = 0; i < columnCount; i++) {
-            getPrimaryColumn(i).truncate();
-            MemoryMA mem = getSecondaryColumn(i);
-            if (mem != null && mem.isOpen()) {
-                mem.truncate();
-                mem.putLong(0);
-            }
-        }
-
         if (partitionBy != PartitionBy.NONE) {
             freeColumns(false);
             if (indexers != null) {
@@ -1447,15 +1439,21 @@ public class TableWriter implements Closeable {
             }
             removePartitionDirectories();
             rowActon = ROW_ACTION_OPEN_PARTITION;
+        } else {
+            // truncate columns, we cannot remove them
+            for (int i = 0; i < columnCount; i++) {
+                getPrimaryColumn(i).truncate();
+                MemoryMA mem = getSecondaryColumn(i);
+                if (mem != null && mem.isOpen()) {
+                    mem.truncate();
+                    mem.putLong(0);
+                }
+            }
         }
 
         txWriter.resetTimestamp();
         txWriter.truncate();
-
-        // todo: check and clear O3 memory
         row = regularRow;
-
-        // todo: implement switching off the transaction log
         try {
             clearTodoLog();
         } catch (CairoException err) {

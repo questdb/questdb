@@ -132,7 +132,7 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
         public void of(TableReader reader, int columnIndex) {
             this.reader = reader;
             this.symbolMapReader = reader.getSymbolMapReader(columnIndex);
-            this.numberOfSymbols = symbolMapReader.size() + (symbolMapReader.containsNullValue() ? 1 : 0);
+            this.numberOfSymbols = symbolMapReader.getSymbolCount() + (symbolMapReader.containsNullValue() ? 1 : 0);
             this.recordA.reset();
         }
 

@@ -99,15 +99,29 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
             excludedValues.add(Chars.toString(keyExcludedValueFunctions.getQuick(i).getStr(null)));
         }
         final SymbolMapReaderImpl symbolMapReader = (SymbolMapReaderImpl) tableReader.getSymbolMapReader(columnIndex);
-        for (int i = 0; i < symbolMapReader.size(); i++) {
+        for (int i = 0, n = symbolMapReader.getSymbolCount(); i < n; i++) {
             final CharSequence symbol = symbolMapReader.valueOf(i);
             if (excludedValues.indexOf(symbol) < 0 && includedValues.indexOf(symbol) < 0) {
                 final RowCursorFactory rowCursorFactory;
                 int symbolKey = symbolMapReader.keyOf(symbol);
                 if (filter == null) {
-                    rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, cursorFactories.size() == 0, indexDirection, null);
+                    rowCursorFactory = new SymbolIndexRowCursorFactory(
+                            columnIndex,
+                            symbolKey,
+                            cursorFactories.size() == 0,
+                            indexDirection,
+                            null
+                    );
                 } else {
-                    rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, cursorFactories.size() == 0, indexDirection, columnIndexes, null);
+                    rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(
+                            columnIndex,
+                            symbolKey,
+                            filter,
+                            cursorFactories.size() == 0,
+                            indexDirection,
+                            columnIndexes,
+                            null
+                    );
                 }
                 includedValues.add(Chars.toString(symbol));
                 cursorFactories.add(rowCursorFactory);
@@ -119,7 +133,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext)
             throws SqlException {
         try (TableReader reader = dataFrameCursor.getTableReader()) {
-            if (reader.getSymbolMapReader(columnIndex).size() > maxSymbolNotEqualsCount) {
+            if (reader.getSymbolMapReader(columnIndex).getSymbolCount() > maxSymbolNotEqualsCount) {
                 throw ReaderOutOfDateException.of(reader.getTableName());
             }
             Function.init(keyExcludedValueFunctions, reader, executionContext);
