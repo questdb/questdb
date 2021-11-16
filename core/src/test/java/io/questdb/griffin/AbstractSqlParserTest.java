@@ -54,8 +54,8 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
                     compiler.compile(query, sqlExecutionContext);
                     Assert.fail("Exception expected");
                 } catch (SqlException e) {
-                    Assert.assertEquals(position, e.getPosition());
                     TestUtils.assertContains(e.getFlyweightMessage(), contains);
+                    Assert.assertEquals(position, e.getPosition());
                 }
             });
         } finally {

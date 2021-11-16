@@ -24,14 +24,19 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.pool.ResourcePool;
+import io.questdb.cairo.sql.Record;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+
+import java.io.Closeable;
 
 import static io.questdb.griffin.model.QueryModel.*;
 
 public class UpdateModel implements Mutable, ExecutionModel, QueryWithClauseModel, Sinkable {
     private ExpressionNode updateTableAlias;
-    private final ObjList<CharSequence> updatedColumns = new ObjList<>();
+    private final ObjList<ExpressionNode> updatedColumns = new ObjList<>();
     private final ObjList<ExpressionNode> updateColumnExpressions = new ObjList<>();
     private QueryModel fromModel;
     private int position;
@@ -41,8 +46,20 @@ public class UpdateModel implements Mutable, ExecutionModel, QueryWithClauseMode
     public void addWithClause(CharSequence token, WithClauseModel wcm) {
     }
 
+    public int getPosition() {
+        return position;
+    }
+
     public QueryModel getQueryModel() {
         return fromModel;
+    }
+
+    public ObjList<ExpressionNode> getUpdateColumnExpressions() {
+        return updateColumnExpressions;
+    }
+
+    public ObjList<ExpressionNode> getUpdateColumns() {
+        return updatedColumns;
     }
 
     @Override
@@ -85,9 +102,6 @@ public class UpdateModel implements Mutable, ExecutionModel, QueryWithClauseMode
     }
 
     public void setFromModel(QueryModel nestedModel) {
-        for (int i = 0, n = updatedColumns.size(); i < n; i++) {
-            nestedModel.setSelectModelType(QueryModel.SELECT_MODEL_CURSOR);
-        }
         this.fromModel = nestedModel;
     }
 
@@ -301,7 +315,7 @@ public class UpdateModel implements Mutable, ExecutionModel, QueryWithClauseMode
         }
     }
 
-    public void withSet(CharSequence col, ExpressionNode expr) {
+    public void withSet(ExpressionNode col, ExpressionNode expr) {
         this.updatedColumns.add(col);
         this.updateColumnExpressions.add(expr);
     }

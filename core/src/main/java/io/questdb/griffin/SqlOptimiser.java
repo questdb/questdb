@@ -1874,44 +1874,43 @@ class SqlOptimiser {
     void optimise(UpdateModel updateModel, SqlExecutionContext sqlExecutionContext) throws SqlException {
         assert updateModel.getQueryModel() != null;
         QueryModel optimizedModel = optimise(updateModel.getQueryModel(), sqlExecutionContext);
-        verifyValidUpdate(optimizedModel, false);
         updateModel.setFromModel(optimizedModel);
+        validateUpdateColumns(updateModel, sqlExecutionContext);
     }
 
-    private void verifyValidUpdate(QueryModel queryModel, boolean isJoined) throws SqlException {
-//        if (queryModel.getUnionModel() != null) {
-//            throw SqlException.$(queryModel.getUnionModel().getModelPosition(), "UNION cannot be used with UPDATE");
-//        }
-//        if (queryModel.getSampleBy() != null) {
-//            throw SqlException.$(queryModel.getSampleBy().position, "SAMPLE BY cannot be used with UPDATE");
-//        }
-//        if (queryModel.getLatestBy() != null && queryModel.getLatestBy().size() > 0) {
-//            throw SqlException.$(queryModel.getModelPosition(), "LATEST BY cannot be used with UPDATE");
-//        }
-//        if (queryModel.isDistinct()) {
-//            throw SqlException.$(queryModel.getModelPosition(), "DISTINCT cannot be used with UPDATE");
-//        }
-//        if (queryModel.isNestedModelIsSubQuery()) {
-//            throw SqlException.$(queryModel.getModelPosition(), "SUBQUERIES cannot be used with UPDATE");
-//        }
-//        if (queryModel.getGroupBy() != null && queryModel.getGroupBy().size() > 0) {
-//            throw SqlException.$(queryModel.getModelPosition(), "GROUP BY cannot be used with UPDATE");
-//        }
-//        if (!isJoined && (queryModel.getLimitHi() != null || queryModel.getLimitLo() != null)) {
-//            throw SqlException.$(queryModel.getModelPosition(), "LIMIT cannot be used with UPDATE");
-//        }
-//        if (queryModel.getOrderBy() != null && queryModel.getOrderBy().size() > 0) {
-//            throw SqlException.$(queryModel.getModelPosition(), "ORDER BY cannot be used with UPDATE");
-//        }
-//        if (queryModel.getNestedModel() != null) {
-//            verifyValidUpdate(queryModel.getNestedModel(), isJoined);
-//        }
-//        for(int i = 0, n = queryModel.getJoinModels().size(); i < n; i++) {
-//            QueryModel joinModel = queryModel.getJoinModels().get(i);
-//            if (joinModel != queryModel) {
-//                verifyValidUpdate(joinModel, true);
-//            }
-//        }
+    private void validateUpdateColumns(UpdateModel updateModel, SqlExecutionContext executionContext) throws SqlException {
+        try (
+                TableReader r = engine.getReader(
+                        executionContext.getCairoSecurityContext(),
+                        updateModel.getUpdateTableName(),
+                        TableUtils.ANY_TABLE_ID,
+                        TableUtils.ANY_TABLE_VERSION
+                )
+        ) {
+            TableReaderMetadata metadata = r.getMetadata();
+            if (metadata.getPartitionBy() == PartitionBy.NONE) {
+                throw SqlException.$(updateModel.getPosition(), "UPDATE query can only be executed on partitioned tables");
+            }
+
+            for(int i = 0, n = updateModel.getUpdateColumns().size(); i < n; i++) {
+
+                ExpressionNode lhs = updateModel.getUpdateColumns().get(i);
+                if (metadata.getColumnIndexQuiet(lhs.token) < 0) {
+                    throw SqlException.invalidColumn(lhs.position, lhs.token);
+                }
+
+                ExpressionNode rhs = updateModel.getUpdateColumnExpressions().get(i);
+                if (rhs.type == FUNCTION) {
+                    if (functionParser.isGroupBy(rhs.token)) {
+                        throw SqlException.$(rhs.position, "Unsupported function in SET clause");
+                    }
+                }
+            }
+        } catch (EntryLockedException e) {
+            throw SqlException.position(updateModel.getPosition()).put("table is locked: ").put(tableLookupSequence);
+        } catch (CairoException e) {
+            throw SqlException.position(updateModel.getPosition()).put(e);
+        }
     }
 
     QueryModel optimise(QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {

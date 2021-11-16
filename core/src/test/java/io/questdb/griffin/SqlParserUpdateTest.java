@@ -25,89 +25,98 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableModel;
 import org.junit.Test;
 
 public class SqlParserUpdateTest extends AbstractSqlParserTest {
     @Test
-    public void testUpdateSingleTableWithWhere() throws Exception {
-        assertUpdate("update x set tt = t from (x where t > '2005-04-02T12:00:00')",
-                "update x set tt = t where t > '2005-04-02T12:00:00'",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    public void testSelectSingleTableWithJoinInFrom() throws Exception {
+        assertQuery("select-virtual rowid() rowid, 1 tt from (select [x] from tblx x join select [y] from tbly y on y.y = x.x where x > 10) x",
+                "select rowid(), 1 as tt from tblx x, tbly y where x.x = y.y and x > 10",
+                partitionedModelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
+                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+    }
+
+    @Test
+    public void testUpdateNonPartitionedTableFails() throws Exception {
+        assertSyntaxError(
+                "update tblx set x = 1",
+                0,
+                "UPDATE query can only be executed on partitioned tables",
+                modelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL)
+        );
     }
 
     @Test
     public void testUpdateSingleTableToConst() throws Exception {
         assertUpdate("update x set tt = 1 from (x)",
                 "update x set tt = 1",
-                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+                partitionedModelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
     }
 
     @Test
     public void testUpdateSingleTableWithAlias() throws Exception {
         assertUpdate("update tblx as x set tt = tt + 1 from (tblx x where t = NULL)",
                 "update tblx x set tt = tt + 1 WHERE x.t = NULL",
-                modelOf("tblx").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+                partitionedModelOf("tblx").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
     }
 
     @Test
     public void testUpdateSingleTableWithJoinInFrom() throws Exception {
         assertUpdate("update tblx set tt = 1 from (tblx join tbly y on y = x where x > 10)",
                 "update tblx set tt = 1 from tbly y where x = y and x > 10",
-                modelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
-                modelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("tt", ColumnType.INT),
+                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
     }
 
     @Test
-    public void testSelectSingleTableWithJoinInFrom() throws Exception {
-        assertQuery("select-virtual rowid() rowid, 1 tt from (select [x] from tblx x join select [y] from tbly y on y.y = x.x where x > 10) x",
-                "select rowid(), 1 as tt from tblx x, tbly y where x.x = y.y and x > 10",
-                modelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
-                modelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+    public void testUpdateSingleTableWithWhere() throws Exception {
+        assertUpdate("update x set tt = t from (x where t > '2005-04-02T12:00:00')",
+                "update x set tt = t where t > '2005-04-02T12:00:00'",
+                partitionedModelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
     }
 
     @Test
-    public void testUpdateWithJoinAndTableAlias() throws Exception {
-        assertUpdate("update tblx as xx set tt = 1 from (tblx xx join tbly y on y = xx.x where x > 10)",
-                "update tblx as xx set tt = 1 from tbly y where xx.x = y and x > 10",
-                modelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
-                modelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
-    }
-
-    @Test
-    public void testUpdateWithLimitFails() throws Exception {
+    public void testUpdateWithAggregatesFails() throws Exception {
         assertSyntaxError(
-                "update tblx as xx set tt = 1 from tbly y where xx.x = y and x > 10 LIMIT 10",
-                "update tblx as xx set tt = 1 from tbly y where xx.x = y and x > 10 ".length(),
-                "unexpected token: LIMIT",
-                modelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
-                modelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+                "update tblx as xx set tt = count() where x > 10",
+                "update tblx as xx set tt = ".length(),
+                "Unsupported function in SET clause",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("tt", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL)
+        );
     }
 
     @Test
-    public void testUpdateWithLimitInJoin() throws Exception {
-        assertUpdate("update tblx as xx set tt = 1 from (tblx xx join ((tbly) limit 10) y on y = xx.x where x > 10)",
-                "update tblx as xx set tt = 1 from (tbly LIMIT 10) y where xx.x = y and x > 10",
-                modelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
-                modelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
-    }
-
-    @Test
-    public void testUpdateWithSampleByFails() throws Exception {
+    public void testUpdateWithInvalidColumnInSetLeftFails() throws Exception {
         assertSyntaxError(
-                "update tblx as xx set tt = 1 where x > 10 SAMPLE BY 1h",
-                "update tblx as xx set tt = 1 where x > 10 ".length(),
-                "unexpected token: SAMPLE",
-                modelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
-                modelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+                "update tblx as xx set invalidcol = t where x > 10",
+                "update tblx as xx set ".length(),
+                "Invalid column: invalidcol",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL)
+        );
     }
 
     @Test
-    public void testUpdateWithLatestByFails() throws Exception {
+    public void testUpdateWithInvalidColumnInSetRightFails() throws Exception {
         assertSyntaxError(
-                "update tblx as xx set tt = 1 where x > 10 LATEST BY s",
-                "update tblx as xx set tt = 1 where x > 10 ".length(),
-                "unexpected token: LATEST",
-                modelOf("tblx")
+                "update tblx as xx set t = invalidcol where x > 10",
+                "update tblx as xx set t = ".length(),
+                "Invalid column: invalidcol",
+                partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
                         .col("s", ColumnType.SYMBOL)
@@ -118,9 +127,9 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
     public void testUpdateWithInvalidColumnInWhereFails() throws Exception {
         assertSyntaxError(
                 "update tblx as xx set tt = t + 1 where invalidcol > 10",
-                "update tblx as xx set tt = count() where ".length(),
+                "update tblx as xx set tt = t + 1 where ".length(),
                 "Invalid column: invalidcol",
-                modelOf("tblx")
+                partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
                         .col("s", ColumnType.SYMBOL)
@@ -128,28 +137,61 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testUpdateWithInvalidColumnInSetFails() throws Exception {
-        assertSyntaxError(
-                "update tblx as xx set invalidcol = t + 1 where x > 10",
-                "update tblx as xx set ".length(),
-                "Invalid column: invalidcol",
-                modelOf("tblx")
+    public void testUpdateWithJoinAndTableAlias() throws Exception {
+        assertUpdate("update tblx as xx set tt = 1 from (tblx xx join tbly y on y = xx.x where x > 10)",
+                "update tblx as xx set tt = 1 from tbly y where xx.x = y and x > 10",
+                partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
-                        .col("s", ColumnType.SYMBOL)
-        );
+                        .col("tt", ColumnType.INT),
+                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
     }
 
     @Test
-    public void testUpdateWithAggregatesFails() throws Exception {
+    public void testUpdateWithLatestByFails() throws Exception {
         assertSyntaxError(
-                "update tblx as xx set tt = count() where x > 10",
-                "update tblx as xx set tt = count() where x > 10".length(),
+                "update tblx as xx set tt = 1 where x > 10 LATEST BY s",
+                "update tblx as xx set tt = 1 where x > 10 ".length(),
                 "unexpected token: LATEST",
-                modelOf("tblx")
+                partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
                         .col("s", ColumnType.SYMBOL)
         );
+    }
+
+    @Test
+    public void testUpdateWithLimitFails() throws Exception {
+        assertSyntaxError(
+                "update tblx as xx set tt = 1 from tbly y where xx.x = y and x > 10 LIMIT 10",
+                "update tblx as xx set tt = 1 from tbly y where xx.x = y and x > 10 ".length(),
+                "unexpected token: LIMIT",
+                partitionedModelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
+                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+    }
+
+    @Test
+    public void testUpdateWithLimitInJoin() throws Exception {
+        assertUpdate("update tblx as xx set tt = 1 from (tblx xx join ((tbly) limit 10) y on y = xx.x where x > 10)",
+                "update tblx as xx set tt = 1 from (tbly LIMIT 10) y where xx.x = y and x > 10",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("tt", ColumnType.INT),
+                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+    }
+
+    @Test
+    public void testUpdateWithSampleByFails() throws Exception {
+        assertSyntaxError(
+                "update tblx as xx set tt = 1 where x > 10 SAMPLE BY 1h",
+                "update tblx as xx set tt = 1 where x > 10 ".length(),
+                "unexpected token: SAMPLE",
+                partitionedModelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
+                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+    }
+
+    private static TableModel partitionedModelOf(String tableName) {
+        return new TableModel(configuration, tableName, PartitionBy.DAY);
     }
 }

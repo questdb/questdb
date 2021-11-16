@@ -949,11 +949,12 @@ public final class SqlParser {
 
             // Add next column
             CharSequence col = GenericLexer.immutableOf(GenericLexer.unquote(tok(lexer, "column name")));
+            int colPosition = lexer.lastTokenPosition();
             expectTok(lexer, "=");
             ExpressionNode expr = expr(lexer, (QueryModel) null);
 
             QueryColumn valueColumn = queryColumnPool.next().of(col, expr);
-            updateModel.withSet(col, expr);
+            updateModel.withSet(expressionNodePool.next().of(ExpressionNode.LITERAL, col, 0, colPosition), expr);
             nestedModel.addBottomUpColumn(valueColumn);
 
             tok = optTok(lexer);
