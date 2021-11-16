@@ -28,10 +28,12 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.log.Log;
@@ -41,9 +43,14 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class EmbeddedApiTest {
     @Rule
@@ -157,5 +164,130 @@ public class EmbeddedApiTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testConcurrentReadsAndCreateTableIfNotExists() throws Exception {
+        final int N = 100;
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                // Create table upfront, so that reader sees it
+                try (
+                        final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
+                        final SqlCompiler compiler = new SqlCompiler(engine)
+                ) {
+                    compiler.compile("create table if not exists abc (a int, b byte, ts timestamp) timestamp(ts)", ctx);
+                }
+
+                // Now start single reader and writer
+                AtomicInteger errors = new AtomicInteger();
+                CyclicBarrier barrier = new CyclicBarrier(2);
+                CountDownLatch latch = new CountDownLatch(2);
+                Reader reader = new Reader(engine, errors, barrier, latch, N);
+                reader.start();
+                Writer writer = new Writer(engine, errors, barrier, latch, N);
+                writer.start();
+
+                latch.await();
+
+                Assert.assertEquals(0, errors.get());
+            }
+        });
+    }
+
+    private static class Reader extends Thread {
+
+        private final CairoEngine engine;
+        private final AtomicInteger errors;
+        private final CyclicBarrier barrier;
+        private final CountDownLatch latch;
+        private final int iterations;
+
+        private Reader(CairoEngine engine, AtomicInteger errors, CyclicBarrier barrier, CountDownLatch latch, int iterations) {
+            this.engine = engine;
+            this.errors = errors;
+            this.barrier = barrier;
+            this.latch = latch;
+            this.iterations = iterations;
+        }
+
+        @Override
+        public void run() {
+            try {
+                barrier.await();
+                for (int i = 0; i < iterations; i++) {
+                    try (
+                            final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
+                            final SqlCompiler compiler = new SqlCompiler(engine)
+                    ) {
+                        try (RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory()) {
+                            try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                final Record record = cursor.getRecord();
+                                //noinspection StatementWithEmptyBody
+                                while (cursor.hasNext()) {
+                                    // access 'record' instance for field values
+                                }
+                            }
+                        }
+                    } catch (SqlException | EntryLockedException e) {
+                        errors.incrementAndGet();
+                        e.printStackTrace();
+                    }
+                }
+                latch.countDown();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private static class Writer extends Thread {
+
+        private final CairoEngine engine;
+        private final AtomicInteger errors;
+        private final CyclicBarrier barrier;
+        private final CountDownLatch latch;
+        private final int iterations;
+
+        private Writer(CairoEngine engine, AtomicInteger errors, CyclicBarrier barrier, CountDownLatch latch, int iterations) {
+            this.engine = engine;
+            this.errors = errors;
+            this.barrier = barrier;
+            this.latch = latch;
+            this.iterations = iterations;
+        }
+
+        @Override
+        public void run() {
+            try {
+                barrier.await();
+                for (int i = 0; i < iterations; i++) {
+                    try (
+                            final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
+                            final SqlCompiler compiler = new SqlCompiler(engine)
+                    ) {
+                        compiler.compile("create table if not exists abc (a int, b byte, ts timestamp) timestamp(ts)", ctx);
+                        try (TableWriter writer = engine.getWriter(ctx.getCairoSecurityContext(), "abc", "testing")) {
+                            for (int j = 0; j < 100; j++) {
+                                TableWriter.Row row = writer.newRow(Os.currentTimeMicros());
+                                row.putInt(0, j);
+                                row.putByte(1, (byte) j);
+                                row.putDate(2, System.currentTimeMillis());
+                                row.append();
+                            }
+                            writer.commit();
+                        }
+                    } catch (SqlException e) {
+                        errors.incrementAndGet();
+                        e.printStackTrace();
+                    }
+                }
+                latch.countDown();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
     }
 }
