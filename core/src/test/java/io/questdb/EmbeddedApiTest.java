@@ -28,12 +28,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.log.Log;
@@ -220,25 +218,22 @@ public class EmbeddedApiTest {
                 for (int i = 0; i < iterations; i++) {
                     try (
                             final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
-                            final SqlCompiler compiler = new SqlCompiler(engine)
+                            final SqlCompiler compiler = new SqlCompiler(engine);
+                            final RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory();
+                            final RecordCursor cursor = factory.getCursor(ctx)
                     ) {
-                        try (RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory()) {
-                            try (RecordCursor cursor = factory.getCursor(ctx)) {
-                                final Record record = cursor.getRecord();
-                                //noinspection StatementWithEmptyBody
-                                while (cursor.hasNext()) {
-                                    // access 'record' instance for field values
-                                }
-                            }
+                        final Record record = cursor.getRecord();
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // access 'record' instance for field values
                         }
-                    } catch (SqlException | EntryLockedException e) {
-                        errors.incrementAndGet();
-                        e.printStackTrace();
                     }
                 }
-                latch.countDown();
             } catch (Exception e) {
                 e.printStackTrace();
+                errors.incrementAndGet();
+            } finally {
+                latch.countDown();
             }
         }
     }
@@ -279,14 +274,13 @@ public class EmbeddedApiTest {
                             }
                             writer.commit();
                         }
-                    } catch (SqlException e) {
-                        errors.incrementAndGet();
-                        e.printStackTrace();
                     }
                 }
-                latch.countDown();
             } catch (Exception e) {
                 e.printStackTrace();
+                errors.incrementAndGet();
+            } finally {
+                latch.countDown();
             }
         }
     }
