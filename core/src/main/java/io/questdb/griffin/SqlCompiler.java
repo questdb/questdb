@@ -1638,14 +1638,21 @@ public class SqlCompiler implements Closeable {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final ExpressionNode name = createTableModel.getName();
 
+        // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
+        if (createTableModel.isIgnoreIfExists()
+                &&
+                engine.getStatus(executionContext.getCairoSecurityContext(), path,
+                        name.token, 0, name.token.length()) != TableUtils.TABLE_DOES_NOT_EXIST) {
+            return compiledQuery.ofCreateTable();
+        }
+
+        // Slow path with lock attempt
         CharSequence lockedReason = engine.lock(executionContext.getCairoSecurityContext(), name.token, "createTable");
         if (null == lockedReason) {
             TableWriter writer = null;
             boolean newTable = false;
             try {
-                if (engine.getStatus(
-                        executionContext.getCairoSecurityContext(),
-                        path,
+                if (engine.getStatus(executionContext.getCairoSecurityContext(), path,
                         name.token, 0, name.token.length()) != TableUtils.TABLE_DOES_NOT_EXIST) {
                     if (createTableModel.isIgnoreIfExists()) {
                         return compiledQuery.ofCreateTable();
