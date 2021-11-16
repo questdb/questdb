@@ -39,7 +39,6 @@ public class UpdateModel implements Mutable, ExecutionModel, QueryWithClauseMode
 
     @Override
     public void addWithClause(CharSequence token, WithClauseModel wcm) {
-
     }
 
     public QueryModel getQueryModel() {
@@ -307,7 +306,11 @@ public class UpdateModel implements Mutable, ExecutionModel, QueryWithClauseMode
         this.updateColumnExpressions.add(expr);
     }
 
-    public void withTableName(CharSequence tableName) {
+    public void setUpdateTableName(CharSequence tableName) {
         this.updateTableName = tableName;
+    }
+
+    public CharSequence getUpdateTableName() {
+        return updateTableName;
     }
 }

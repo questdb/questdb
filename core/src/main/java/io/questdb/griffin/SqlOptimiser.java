@@ -1874,7 +1874,44 @@ class SqlOptimiser {
     void optimise(UpdateModel updateModel, SqlExecutionContext sqlExecutionContext) throws SqlException {
         assert updateModel.getQueryModel() != null;
         QueryModel optimizedModel = optimise(updateModel.getQueryModel(), sqlExecutionContext);
+        verifyValidUpdate(optimizedModel, false);
         updateModel.setFromModel(optimizedModel);
+    }
+
+    private void verifyValidUpdate(QueryModel queryModel, boolean isJoined) throws SqlException {
+//        if (queryModel.getUnionModel() != null) {
+//            throw SqlException.$(queryModel.getUnionModel().getModelPosition(), "UNION cannot be used with UPDATE");
+//        }
+//        if (queryModel.getSampleBy() != null) {
+//            throw SqlException.$(queryModel.getSampleBy().position, "SAMPLE BY cannot be used with UPDATE");
+//        }
+//        if (queryModel.getLatestBy() != null && queryModel.getLatestBy().size() > 0) {
+//            throw SqlException.$(queryModel.getModelPosition(), "LATEST BY cannot be used with UPDATE");
+//        }
+//        if (queryModel.isDistinct()) {
+//            throw SqlException.$(queryModel.getModelPosition(), "DISTINCT cannot be used with UPDATE");
+//        }
+//        if (queryModel.isNestedModelIsSubQuery()) {
+//            throw SqlException.$(queryModel.getModelPosition(), "SUBQUERIES cannot be used with UPDATE");
+//        }
+//        if (queryModel.getGroupBy() != null && queryModel.getGroupBy().size() > 0) {
+//            throw SqlException.$(queryModel.getModelPosition(), "GROUP BY cannot be used with UPDATE");
+//        }
+//        if (!isJoined && (queryModel.getLimitHi() != null || queryModel.getLimitLo() != null)) {
+//            throw SqlException.$(queryModel.getModelPosition(), "LIMIT cannot be used with UPDATE");
+//        }
+//        if (queryModel.getOrderBy() != null && queryModel.getOrderBy().size() > 0) {
+//            throw SqlException.$(queryModel.getModelPosition(), "ORDER BY cannot be used with UPDATE");
+//        }
+//        if (queryModel.getNestedModel() != null) {
+//            verifyValidUpdate(queryModel.getNestedModel(), isJoined);
+//        }
+//        for(int i = 0, n = queryModel.getJoinModels().size(); i < n; i++) {
+//            QueryModel joinModel = queryModel.getJoinModels().get(i);
+//            if (joinModel != queryModel) {
+//                verifyValidUpdate(joinModel, true);
+//            }
+//        }
     }
 
     QueryModel optimise(QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {

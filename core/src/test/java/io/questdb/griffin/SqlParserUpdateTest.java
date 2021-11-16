@@ -72,4 +72,84 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
                 modelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
                 modelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
     }
+
+    @Test
+    public void testUpdateWithLimitFails() throws Exception {
+        assertSyntaxError(
+                "update tblx as xx set tt = 1 from tbly y where xx.x = y and x > 10 LIMIT 10",
+                "update tblx as xx set tt = 1 from tbly y where xx.x = y and x > 10 ".length(),
+                "unexpected token: LIMIT",
+                modelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
+                modelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+    }
+
+    @Test
+    public void testUpdateWithLimitInJoin() throws Exception {
+        assertUpdate("update tblx as xx set tt = 1 from (tblx xx join ((tbly) limit 10) y on y = xx.x where x > 10)",
+                "update tblx as xx set tt = 1 from (tbly LIMIT 10) y where xx.x = y and x > 10",
+                modelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
+                modelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+    }
+
+    @Test
+    public void testUpdateWithSampleByFails() throws Exception {
+        assertSyntaxError(
+                "update tblx as xx set tt = 1 where x > 10 SAMPLE BY 1h",
+                "update tblx as xx set tt = 1 where x > 10 ".length(),
+                "unexpected token: SAMPLE",
+                modelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
+                modelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+    }
+
+    @Test
+    public void testUpdateWithLatestByFails() throws Exception {
+        assertSyntaxError(
+                "update tblx as xx set tt = 1 where x > 10 LATEST BY s",
+                "update tblx as xx set tt = 1 where x > 10 ".length(),
+                "unexpected token: LATEST",
+                modelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
+    public void testUpdateWithInvalidColumnInWhereFails() throws Exception {
+        assertSyntaxError(
+                "update tblx as xx set tt = t + 1 where invalidcol > 10",
+                "update tblx as xx set tt = count() where ".length(),
+                "Invalid column: invalidcol",
+                modelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
+    public void testUpdateWithInvalidColumnInSetFails() throws Exception {
+        assertSyntaxError(
+                "update tblx as xx set invalidcol = t + 1 where x > 10",
+                "update tblx as xx set ".length(),
+                "Invalid column: invalidcol",
+                modelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
+    public void testUpdateWithAggregatesFails() throws Exception {
+        assertSyntaxError(
+                "update tblx as xx set tt = count() where x > 10",
+                "update tblx as xx set tt = count() where x > 10".length(),
+                "unexpected token: LATEST",
+                modelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL)
+        );
+    }
 }

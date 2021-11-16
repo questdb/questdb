@@ -1450,6 +1450,10 @@ public class SqlCompiler implements Closeable {
                 final RenameTableModel rtm = (RenameTableModel) executionModel;
                 engine.rename(executionContext.getCairoSecurityContext(), path, GenericLexer.unquote(rtm.getFrom().token), renamePath, GenericLexer.unquote(rtm.getTo().token));
                 return compiledQuery.ofRenameTable();
+            case ExecutionModel.UPDATE:
+                final UpdateModel upd = (UpdateModel) executionModel;
+                RecordCursorFactory updateRecords = generateUpdate(upd, executionContext);
+                return compiledQuery.ofUpdate(new UpdateStatement(upd.getUpdateTableName(), updateRecords));
             default:
                 InsertModel insertModel = (InsertModel) executionModel;
                 if (insertModel.getQueryModel() != null) {
@@ -1776,6 +1780,10 @@ public class SqlCompiler implements Closeable {
         } while (attemptsLeft > 0);
 
         throw SqlException.position(0).put("underlying cursor is extremely volatile");
+    }
+
+    RecordCursorFactory generateUpdate(UpdateModel updateModel, SqlExecutionContext executionContext) throws SqlException {
+        return codeGenerator.generate(updateModel.getQueryModel(), executionContext);
     }
 
     RecordCursorFactory generate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {
