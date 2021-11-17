@@ -81,10 +81,29 @@ public class ColumnVersionWriter {
                         store(columnVersions, entryCount, aOffset);
                     } else {
                         // 'A' is at the start of the file, and it is small
-                        // we need to relocate i
-                    }
-                }
+                        // we need to relocate 'A'
+                        long bOffset = mem.getLong(32);
+                        long bSize = mem.getLong(40);
 
+                        // position 'A' behind B
+                        aOffset = bOffset + bSize;
+                        mem.setSize(aOffset + areaSize);
+
+                        // resize memory to ensure we have somewhere to write
+                        store(columnVersions, entryCount, aOffset);
+
+                        // update offsets of 'A'
+                        mem.putLong(8, aOffset);
+                        mem.putLong(16, areaSize);
+
+                        // switch to 'A'
+                        mem.putLong(0, (byte) 'A');
+                    }
+                } else {
+                    // 'A' is moved somewhere, we need to see if we can bring it back up
+                }
+            } else {
+                // current is 'A'
             }
         }
     }

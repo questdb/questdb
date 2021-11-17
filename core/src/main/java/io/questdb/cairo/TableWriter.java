@@ -77,7 +77,6 @@ public class TableWriter implements Closeable {
     private final static RemoveFileLambda REMOVE_OR_EXCEPTION = TableWriter::removeOrException;
     final ObjList<MemoryMAR> columns;
     private final ObjList<MemoryMA> logColumns;
-    //    private final ObjList<MemoryLogA<MemoryA>> replSpliceColumns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
     private final ObjList<ColumnIndexer> indexers;
@@ -2335,10 +2334,6 @@ public class TableWriter implements Closeable {
         // set indexer up to continue functioning as normal
         indexer.configureFollowerAndWriter(configuration, path.trimTo(plen), columnName, getPrimaryColumn(columnIndex), columnTop);
         indexer.refreshSourceAndIndex(0, txWriter.getTransientRowCount());
-    }
-
-    boolean isSymbolMapWriterCached(int columnIndex) {
-        return symbolMapWriters.getQuick(columnIndex).isCached();
     }
 
     private void lock() {
