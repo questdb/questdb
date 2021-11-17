@@ -1891,12 +1891,20 @@ class SqlOptimiser {
             if (metadata.getPartitionBy() == PartitionBy.NONE) {
                 throw SqlException.$(updateModel.getPosition(), "UPDATE query can only be executed on partitioned tables");
             }
+            int timestampIndex = metadata.getTimestampIndex();
+            if (timestampIndex < 0) {
+                throw SqlException.$(updateModel.getPosition(), "UPDATE query can only be executed on partitioned tables");
+            }
 
             for(int i = 0, n = updateModel.getUpdateColumns().size(); i < n; i++) {
 
                 ExpressionNode lhs = updateModel.getUpdateColumns().get(i);
-                if (metadata.getColumnIndexQuiet(lhs.token) < 0) {
+                int columnIndex = metadata.getColumnIndexQuiet(lhs.token);
+                if (columnIndex < 0) {
                     throw SqlException.invalidColumn(lhs.position, lhs.token);
+                }
+                if (columnIndex == timestampIndex) {
+                    throw SqlException.$(lhs.position, "Designated timestamp column cannot be updated");
                 }
 
                 ExpressionNode rhs = updateModel.getUpdateColumnExpressions().get(i);

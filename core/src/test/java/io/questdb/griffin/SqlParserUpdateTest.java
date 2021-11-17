@@ -53,34 +53,55 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
 
     @Test
     public void testUpdateSingleTableToConst() throws Exception {
-        assertUpdate("update x set tt = 1 from (x)",
+        assertUpdate("update x set tt = 1 from (x timestamp (timestamp))",
                 "update x set tt = 1",
-                partitionedModelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+                partitionedModelOf("x")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("tt", ColumnType.TIMESTAMP)
+                        .timestamp());
     }
 
     @Test
     public void testUpdateSingleTableWithAlias() throws Exception {
-        assertUpdate("update tblx as x set tt = tt + 1 from (tblx x where t = NULL)",
+        assertUpdate("update tblx as x set tt = tt + 1 from (tblx x timestamp (timestamp) where t = NULL)",
                 "update tblx x set tt = tt + 1 WHERE x.t = NULL",
-                partitionedModelOf("tblx").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("tt", ColumnType.TIMESTAMP)
+                        .timestamp());
     }
 
     @Test
     public void testUpdateSingleTableWithJoinInFrom() throws Exception {
-        assertUpdate("update tblx set tt = 1 from (tblx join tbly y on y = x where x > 10)",
+        assertUpdate("update tblx set tt = 1 from (tblx timestamp (timestamp) join tbly y on y = x where x > 10)",
                 "update tblx set tt = 1 from tbly y where x = y and x > 10",
                 partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
-                        .col("tt", ColumnType.INT),
+                        .col("tt", ColumnType.INT)
+                        .timestamp(),
                 partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
     }
 
     @Test
     public void testUpdateSingleTableWithWhere() throws Exception {
-        assertUpdate("update x set tt = t from (x where t > '2005-04-02T12:00:00')",
+        assertUpdate("update x set tt = t from (x timestamp (timestamp) where t > '2005-04-02T12:00:00')",
                 "update x set tt = t where t > '2005-04-02T12:00:00'",
-                partitionedModelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+                partitionedModelOf("x")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("tt", ColumnType.TIMESTAMP)
+                        .timestamp()
+        );
+    }
+
+    @Test
+    public void testUpdateDesignatedTimestampFails() throws Exception {
+        assertSyntaxError("update x set tt = 1",
+                13,
+                "Designated timestamp column cannot be updated",
+                partitionedModelOf("x")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .timestamp("tt"));
     }
 
     @Test
@@ -94,6 +115,7 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
                         .col("x", ColumnType.INT)
                         .col("tt", ColumnType.INT)
                         .col("s", ColumnType.SYMBOL)
+                        .timestamp()
         );
     }
 
@@ -107,6 +129,7 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
                         .col("s", ColumnType.SYMBOL)
+                        .timestamp()
         );
     }
 
@@ -120,6 +143,7 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
                         .col("s", ColumnType.SYMBOL)
+                        .timestamp()
         );
     }
 
@@ -133,17 +157,19 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
                         .col("s", ColumnType.SYMBOL)
+                        .timestamp()
         );
     }
 
     @Test
     public void testUpdateWithJoinAndTableAlias() throws Exception {
-        assertUpdate("update tblx as xx set tt = 1 from (tblx xx join tbly y on y = xx.x where x > 10)",
+        assertUpdate("update tblx as xx set tt = 1 from (tblx xx timestamp (timestamp) join tbly y on y = xx.x where x > 10)",
                 "update tblx as xx set tt = 1 from tbly y where xx.x = y and x > 10",
                 partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
-                        .col("tt", ColumnType.INT),
+                        .col("tt", ColumnType.INT)
+                        .timestamp(),
                 partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
     }
 
@@ -157,6 +183,7 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
                         .col("s", ColumnType.SYMBOL)
+                        .timestamp()
         );
     }
 
@@ -172,12 +199,13 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
 
     @Test
     public void testUpdateWithLimitInJoin() throws Exception {
-        assertUpdate("update tblx as xx set tt = 1 from (tblx xx join ((tbly) limit 10) y on y = xx.x where x > 10)",
+        assertUpdate("update tblx as xx set tt = 1 from (tblx xx timestamp (timestamp) join ((tbly) limit 10) y on y = xx.x where x > 10)",
                 "update tblx as xx set tt = 1 from (tbly LIMIT 10) y where xx.x = y and x > 10",
                 partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
-                        .col("tt", ColumnType.INT),
+                        .col("tt", ColumnType.INT)
+                        .timestamp(),
                 partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
     }
 

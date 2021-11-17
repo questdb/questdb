@@ -56,8 +56,14 @@ public class CompiledQueryImpl implements CompiledQuery {
         return type;
     }
 
+    @Override
+    public UpdateStatement getUpdateStatement() {
+        return updateStatement;
+    }
+
     public CompiledQuery ofUpdate(UpdateStatement updateStatement) {
         this.updateStatement = updateStatement;
+        this.type = UPDATE;
         return this;
     }
 

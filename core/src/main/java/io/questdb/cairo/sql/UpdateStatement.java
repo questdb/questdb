@@ -32,4 +32,12 @@ public class UpdateStatement {
         this.tableName = tableName;
         this.records = records;
     }
+
+    public RecordCursorFactory getRecordCursorFactory() {
+        return records;
+    }
+
+    public CharSequence getUpdateTableName() {
+        return tableName;
+    }
 }

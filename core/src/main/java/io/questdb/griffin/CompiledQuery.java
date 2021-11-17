@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.UpdateStatement;
 import io.questdb.cutlass.text.TextLoader;
 
 public interface CompiledQuery {
@@ -42,6 +43,7 @@ public interface CompiledQuery {
     short COPY_REMOTE = 11;
     short RENAME_TABLE = 12;
     short BACKUP_TABLE = 13;
+    short UPDATE = 14;
 
     RecordCursorFactory getRecordCursorFactory();
 
@@ -50,4 +52,6 @@ public interface CompiledQuery {
     TextLoader getTextLoader();
 
     short getType();
+
+    UpdateStatement getUpdateStatement();
 }

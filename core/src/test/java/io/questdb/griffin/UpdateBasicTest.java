@@ -24,11 +24,28 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.UpdateStatement;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class UpdateBasicTest extends AbstractGriffinTest {
     @Test
-    public void testUpdateNoFilter() {
-//        compiler.compile("create table ")
+    public void testUpdateNoFilter() throws SqlException {
+        compiler.compile("create table up as" +
+                " (select timestamp_sequence(0, 1000000) ts," +
+                " x" +
+                " from long_sequence(100))" +
+                " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+        CompiledQuery cc = compiler.compile("UPDATE up SET x = 1", sqlExecutionContext);
+        Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
+        applyUpdate(cc.getUpdateStatement());
+    }
+
+    private void applyUpdate(UpdateStatement updateStatement) throws SqlException {
+        try(TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), updateStatement.getUpdateTableName(), "UPDATE")) {
+            tableWriter.executeUpdate(updateStatement, sqlExecutionContext);
+        }
     }
 }

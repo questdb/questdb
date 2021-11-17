@@ -26,14 +26,12 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -723,6 +721,68 @@ public class TableWriter implements Closeable {
 
     public void commitWithLag(int commitMode) {
         commit(commitMode, metadata.getCommitLag());
+    }
+
+    // This is very hacky way to update in place for testing only
+    // TODO: rewrite to production grade
+    public void executeUpdate(UpdateStatement updateStatement, SqlExecutionContext executionContext) throws SqlException {
+        RecordCursorFactory recordFactory = updateStatement.getRecordCursorFactory();
+        RecordMetadata updateMetadata = recordFactory.getMetadata();
+        IntList updateToColumnMap = new IntList(updateMetadata.getColumnCount());
+        for(int i = 0, n = updateMetadata.getColumnCount(); i < n; i++) {
+            CharSequence columnName = updateMetadata.getColumnName(i);
+            int tableColumnIndex = metadata.getColumnIndex(columnName);
+            assert tableColumnIndex >= 0;
+            if (updateMetadata.getColumnType(i) != metadata.getColumnType(tableColumnIndex)) {
+                throw SqlException.inconvertibleTypes(0, metadata.getColumnType(tableColumnIndex), columnName, updateMetadata.getColumnType(i), columnName);
+            }
+            updateToColumnMap.add(tableColumnIndex);
+        }
+
+        try(RecordCursor recordCursor = recordFactory.getCursor(executionContext)) {
+            Record record =  recordCursor.getRecord();
+            int columnCount = updateMetadata.getColumnCount();
+            long currentPartitionIndex = -1L;
+            ObjList<MemoryCMARW> updateMemory = getUpdateColumnsMemory(columnCount);
+
+            while (recordCursor.hasNext()) {
+                long rowId = record.getRowId();
+                int partitionIndex = Rows.toPartitionIndex(rowId);
+                if (partitionIndex != currentPartitionIndex) {
+                    openPartitionColumnsForUpdate(updateMemory, partitionIndex, updateToColumnMap);
+                    currentPartitionIndex = partitionIndex;
+                }
+
+                for(int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                    int tableColumnIndex = updateToColumnMap.get(columnIndex);
+
+                }
+            }
+        }
+    }
+
+    private ObjList<MemoryCMARW> getUpdateColumnsMemory(int columnCount) {
+        ObjList<MemoryCMARW> tempList = new ObjList<>();
+        for(int i = 0; i < columnCount; i++) {
+            tempList.add(Vm.getCMARWInstance());
+        }
+        return tempList;
+    }
+
+    private void openPartitionColumnsForUpdate(ObjList<MemoryCMARW> updateMemory, int partitionIndex, IntList columnMap) {
+        long partitionTimestamp = txWriter.getPartitionTimestamp(partitionIndex);
+        try {
+            setStateForTimestamp(path, partitionTimestamp, false);
+            int pathTrimToLen = path.length();
+
+            for (int i = 0, n = columnMap.size(); i < n; i++) {
+                CharSequence name = metadata.getColumnName(columnMap.get(i));
+                MemoryCMARW colMem = updateMemory.get(i);
+                colMem.of(ff, dFile(path.trimTo(pathTrimToLen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
     }
 
     public int getColumnIndex(CharSequence name) {
@@ -3679,17 +3739,17 @@ public class TableWriter implements Closeable {
         o3TimestampMem.putLong128(timestamp, getO3RowCount0());
     }
 
-    private void openColumnFiles(CharSequence name, int i, int plen) {
-        MemoryMAR mem1 = getPrimaryColumn(i);
-        MemoryMAR mem2 = getSecondaryColumn(i);
+    private void openColumnFiles(CharSequence name, int columnIndex, int pathTrimToLen) {
+        MemoryMAR mem1 = getPrimaryColumn(columnIndex);
+        MemoryMAR mem2 = getSecondaryColumn(columnIndex);
 
         try {
-            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+            mem1.of(ff, dFile(path.trimTo(pathTrimToLen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
             if (mem2 != null) {
-                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+                mem2.of(ff, iFile(path.trimTo(pathTrimToLen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
             }
         } finally {
-            path.trimTo(plen);
+            path.trimTo(pathTrimToLen);
         }
     }
 
