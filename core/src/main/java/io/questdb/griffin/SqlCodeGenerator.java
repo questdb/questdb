@@ -681,8 +681,8 @@ public class SqlCodeGenerator implements Mutable {
         queryModel.getNestedModel().setIsUpdate(true);
 
         // Expect record factory to be UpdateStatementBuilder
-        UpdateStatementBuilder finalRecordSet = (UpdateStatementBuilder) generate(queryModel, executionContext);
-        return finalRecordSet;
+        RecordCursorFactory finalRecordSet = generate(queryModel, executionContext);
+        return (UpdateStatementBuilder) finalRecordSet;
     }
 
     RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {

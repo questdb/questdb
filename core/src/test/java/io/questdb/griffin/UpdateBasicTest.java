@@ -94,6 +94,32 @@ public class UpdateBasicTest extends AbstractGriffinTest {
                 "1970-01-01T00:00:04.000000Z\t5\t5\n");
     }
 
+    @Test
+    public void testUpdateWithJoin() throws SqlException {
+        compiler.compile("create table up as" +
+                " (select timestamp_sequence(0, 1000000) ts," +
+                " x" +
+                " from long_sequence(5))" +
+                " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+        compiler.compile("create table down as" +
+                " (select timestamp_sequence(0, 1000000) ts," +
+                " x * 100 as y" +
+                " from long_sequence(5))" +
+                " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+        executeUpdate("UPDATE up SET x = y" +
+                " FROM down " +
+                " WHERE up.ts = down.ts and x > 1 and x < 4");
+
+        assertSql("up", "ts\tx\ty\n" +
+                "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                "1970-01-01T00:00:01.000000Z\t2\t20\n" +
+                "1970-01-01T00:00:02.000000Z\t3\t30\n" +
+                "1970-01-01T00:00:03.000000Z\t4\t4\n" +
+                "1970-01-01T00:00:04.000000Z\t5\t5\n");
+    }
+
     private void applyUpdate(UpdateStatement updateStatement) throws SqlException {
         try (TableWriter tableWriter = engine.getWriter(
                 sqlExecutionContext.getCairoSecurityContext(),
