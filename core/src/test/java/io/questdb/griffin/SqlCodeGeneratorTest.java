@@ -4263,6 +4263,88 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByFilteredBySymbolIn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x (\n" +
+                    "  ts timestamp,\n" +
+                    "  node symbol,\n" +
+                    "  metric symbol,\n" +
+                    "  value long) \n" +
+                    "  timestamp(ts) partition by day", sqlExecutionContext);
+
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 100)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'cpu', 75)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'memory', 2000)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'memory', 3000)");
+
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "select metric, sum(value) from x latest by node \n" +
+                            "where node in ('node1', 'node2') and metric in ('cpu')",
+                    sink,
+                    "metric\tsum\n" +
+                            "cpu\t175\n"
+            );
+        });
+    }
+
+    @Test
+    public void testLatestByAllIndexedFilteredBySymbolIn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x (\n" +
+                    "  ts timestamp,\n" +
+                    "  node symbol index,\n" +
+                    "  metric symbol index,\n" +
+                    "  value long) \n" +
+                    "  timestamp(ts) partition by day", sqlExecutionContext);
+
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 100)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'cpu', 75)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'memory', 2000)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'memory', 3000)");
+
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "select metric, sum(value) from x latest by node \n" +
+                            "where node in ('node1', 'node2') and metric in ('cpu')",
+                    sink,
+                    "metric\tsum\n" +
+                            "cpu\t75\n"
+            );
+        });
+    }
+
+    @Test
+    public void testLatestByAllFilteredBySymbolIn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x (\n" +
+                    "  ts timestamp,\n" +
+                    "  node symbol,\n" +
+                    "  metric symbol,\n" +
+                    "  value long) \n" +
+                    "  timestamp(ts) partition by day", sqlExecutionContext);
+
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 100)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'cpu', 75)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'memory', 2000)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'memory', 3000)");
+
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "select * from x latest by node, metric \n" +
+                            "where node in ('node2') and metric in ('cpu', 'memory')",
+                    sink,
+                    "ts\tnode\tmetric\tvalue\n" +
+                            "2021-11-17T17:35:01.000000Z\tnode2\tcpu\t75\n" +
+                            "2021-11-17T17:35:02.000000Z\tnode2\tmemory\t3000\n"
+            );
+        });
+    }
+
+    @Test
     public void testLeftJoinDoesNotRequireTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("CREATE TABLE sensors (ID LONG, make STRING, city STRING);", sqlExecutionContext);
