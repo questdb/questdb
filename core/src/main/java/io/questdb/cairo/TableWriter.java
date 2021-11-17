@@ -2336,6 +2336,10 @@ public class TableWriter implements Closeable {
         indexer.refreshSourceAndIndex(0, txWriter.getTransientRowCount());
     }
 
+    boolean isSymbolMapWriterCached(int columnIndex) {
+        return symbolMapWriters.getQuick(columnIndex).isCached();
+    }
+
     private void lock() {
         try {
             path.trimTo(rootLen);

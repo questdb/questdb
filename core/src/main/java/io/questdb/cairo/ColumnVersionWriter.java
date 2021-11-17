@@ -31,7 +31,14 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.LPSZ;
 
-public class ColumnVersionWriter {
+import java.io.Closeable;
+
+public class ColumnVersionWriter implements Closeable {
+    public static final int OFFSET_AREA = 0;
+    public static final int OFFSET_OFFSET_A = 8;
+    public static final int OFFSET_SIZE_A = 16;
+    public static final int OFFSET_OFFSET_B = 24;
+    public static final int OFFSET_SIZE_B = 32;
     private final MemoryMARW mem;
     private long size;
 
@@ -41,6 +48,11 @@ public class ColumnVersionWriter {
     public ColumnVersionWriter(FilesFacade ff, LPSZ fileName, long size) {
         this.mem = new MemoryCMARWImpl(ff, fileName, ff.getPageSize(), size, MemoryTag.MMAP_TABLE_READER);
         this.size = size;
+    }
+
+    @Override
+    public void close() {
+        mem.close();
     }
 
     public void commit(LongList columnVersions) {
@@ -58,54 +70,85 @@ public class ColumnVersionWriter {
 
         if (size == 0) {
             // This is initial write, include header size into the resize
-            mem.setSize(areaSize + headerSize);
+            bumpFileSize(headerSize + areaSize);
             // writing A group
             store(columnVersions, entryCount, headerSize);
-            mem.putLong(0, (byte) 'A');
-            mem.putLong(8, headerSize);
-            mem.putLong(16, areaSize);
-            mem.putLong(32, 0); // 'B' offset, 0 - no 'B' area
-            mem.putLong(40, 0); // 'B' length, 0 - no 'B' area
+            updateA(headerSize, areaSize);
+            updateB(headerSize + areaSize, 0);
+            switchToA();
             this.size = areaSize + headerSize;
         } else {
-            char current = (char) mem.getByte(0);
-            if (current == 'B') {
+            long aOffset = getOffsetA();
+            final long aSize = getSizeA();
+            long bOffset = getOffsetB();
+            final long bSize = getSizeB();
+
+            if (isB()) {
                 // we have to write 'A' area, which may not be big enough
-                long aOffset = mem.getLong(8);
-                long aSize = mem.getLong(16);
 
-                // is area 'A' at top of file ?
-                if (aOffset == headerSize) {
-                    if (aSize > areaSize) {
-                        // happy days, 'A' is at start of the file, and it is large enough
-                        store(columnVersions, entryCount, aOffset);
+                // is area 'A' above 'B' ?
+                if (aOffset < bOffset) {
+                    if (aSize <= bOffset - headerSize) {
+                        aOffset = headerSize;
                     } else {
-                        // 'A' is at the start of the file, and it is small
-                        // we need to relocate 'A'
-                        long bOffset = mem.getLong(32);
-                        long bSize = mem.getLong(40);
-
-                        // position 'A' behind B
                         aOffset = bOffset + bSize;
-                        mem.setSize(aOffset + areaSize);
-
-                        // resize memory to ensure we have somewhere to write
-                        store(columnVersions, entryCount, aOffset);
-
-                        // update offsets of 'A'
-                        mem.putLong(8, aOffset);
-                        mem.putLong(16, areaSize);
-
-                        // switch to 'A'
-                        mem.putLong(0, (byte) 'A');
+                        bumpFileSize(aOffset + areaSize);
                     }
-                } else {
-                    // 'A' is moved somewhere, we need to see if we can bring it back up
                 }
+                store(columnVersions, entryCount, aOffset);
+                // update offsets of 'A'
+                updateA(aOffset, areaSize);
+                // switch to 'A'
+                switchToA();
             } else {
                 // current is 'A'
+                // check if 'A' wound up below 'B'
+                if (aOffset > bOffset) {
+                    // check if 'B' bits between top and 'A'
+                    if (areaSize <= aOffset - headerSize) {
+                        bOffset = headerSize;
+                    } else {
+                        // 'B' does not fit between top and 'A'
+                        bOffset = aOffset + aSize;
+                        bumpFileSize(bOffset + areaSize);
+                    }
+                } else {
+                    // check if file is big enough
+                    if (bSize < areaSize) {
+                        bumpFileSize(bOffset + areaSize);
+                    }
+                }
+                // if 'B' is last we just overwrite it
+                store(columnVersions, entryCount, bOffset);
+                updateB(bOffset, areaSize);
+                switchToB();
             }
         }
+    }
+
+    public long getOffsetA() {
+        return mem.getLong(OFFSET_OFFSET_A);
+    }
+
+    public long getOffsetB() {
+        return mem.getLong(OFFSET_OFFSET_B);
+    }
+
+    public long getSizeA() {
+        return mem.getLong(OFFSET_SIZE_A);
+    }
+
+    public long getSizeB() {
+        return mem.getLong(OFFSET_SIZE_B);
+    }
+
+    public boolean isB() {
+        return (char) mem.getByte(OFFSET_AREA) == 'B';
+    }
+
+    private void bumpFileSize(long size) {
+        mem.setSize(size);
+        this.size = size;
     }
 
     private void store(LongList columnVersions, int entryCount, long offset) {
@@ -116,5 +159,23 @@ public class ColumnVersionWriter {
             mem.putLong(offset + 16, columnVersions.getQuick(x + 2));
             offset += 24;
         }
+    }
+
+    private void switchToA() {
+        mem.putLong(OFFSET_AREA, (byte) 'A');
+    }
+
+    private void switchToB() {
+        mem.putLong(OFFSET_AREA, (byte) 'B');
+    }
+
+    private void updateA(long aOffset, long aSize) {
+        mem.putLong(OFFSET_OFFSET_A, aOffset);
+        mem.putLong(OFFSET_SIZE_A, aSize);
+    }
+
+    private void updateB(long bOffset, long bSize) {
+        mem.putLong(OFFSET_OFFSET_B, bOffset);
+        mem.putLong(OFFSET_SIZE_B, bSize);
     }
 }

@@ -27,10 +27,13 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.LPSZ;
 
-public class ColumnVersionReader {
+import java.io.Closeable;
+
+public class ColumnVersionReader implements Closeable {
     private final MemoryCMR mem;
 
     // size should be read from the transaction file
@@ -38,5 +41,50 @@ public class ColumnVersionReader {
     // data branch
     public ColumnVersionReader(FilesFacade ff, LPSZ fileName, long size) {
         this.mem = new MemoryCMRImpl(ff, fileName, size, MemoryTag.MMAP_TABLE_READER);
+    }
+
+    @Override
+    public void close() {
+        mem.close();
+    }
+
+    public long getOffsetA() {
+        return mem.getLong(ColumnVersionWriter.OFFSET_OFFSET_A);
+    }
+
+    public long getOffsetB() {
+        return mem.getLong(ColumnVersionWriter.OFFSET_OFFSET_B);
+    }
+
+    public long getSizeA() {
+        return mem.getLong(ColumnVersionWriter.OFFSET_SIZE_A);
+    }
+
+    public long getSizeB() {
+        return mem.getLong(ColumnVersionWriter.OFFSET_SIZE_B);
+    }
+
+    public boolean isB() {
+        return (char) mem.getLong(ColumnVersionWriter.OFFSET_AREA) == 'B';
+    }
+
+    public void load(LongList columnVersions, long offset, long areaSize) {
+        long p = offset;
+        int i = 0;
+        long lim = offset + areaSize;
+        columnVersions.setPos((int) ((areaSize / (3 * 8)) * 4));
+
+        while (p < lim) {
+            columnVersions.setQuick(i, mem.getLong(p));
+            columnVersions.setQuick(i + 1, mem.getLong(p + 8));
+            columnVersions.setQuick(i + 2, mem.getLong(p + 16));
+            columnVersions.setQuick(i + 3, 0);
+            i += 4;
+            p += 24;
+        }
+    }
+
+    public void resize(long size) {
+        mem.resize(size);
     }
 }
