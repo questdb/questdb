@@ -267,11 +267,11 @@ class Logger implements LogRecord, Log {
     }
 
     public LogRecord xerror() {
-        return next(errorSeq, errorRing, LogLevel.LOG_LEVEL_ERROR);
+        return next(errorSeq, errorRing, LogLevel.ERROR);
     }
 
     public LogRecord xinfo() {
-        return next(infoSeq, infoRing, LogLevel.LOG_LEVEL_INFO);
+        return next(infoSeq, infoRing, LogLevel.INFO);
     }
 
     /**
@@ -281,28 +281,28 @@ class Logger implements LogRecord, Log {
      * @return log record API
      */
     public LogRecord xInfoW() {
-        return nextWaiting(infoSeq, infoRing, LogLevel.LOG_LEVEL_INFO);
+        return nextWaiting(infoSeq, infoRing, LogLevel.INFO);
     }
 
     public LogRecord xdebug() {
-        return next(debugSeq, debugRing, LogLevel.LOG_LEVEL_DEBUG);
+        return next(debugSeq, debugRing, LogLevel.DEBUG);
     }
 
     @Override
     public LogRecord xadvisory() {
-        return next(advisorySeq, advisoryRing, LogLevel.LOG_LEVEL_ADVISORY);
+        return next(advisorySeq, advisoryRing, LogLevel.ADVISORY);
     }
 
     public LogRecord xAdvisoryW() {
-        return nextWaiting(infoSeq, infoRing, LogLevel.LOG_LEVEL_ADVISORY);
+        return nextWaiting(infoSeq, infoRing, LogLevel.ADVISORY);
     }
 
     public LogRecord xDebugW() {
-        return nextWaiting(infoSeq, infoRing, LogLevel.LOG_LEVEL_DEBUG);
+        return nextWaiting(infoSeq, infoRing, LogLevel.DEBUG);
     }
 
     public LogRecord xErrorW() {
-        return nextWaiting(infoSeq, infoRing, LogLevel.LOG_LEVEL_ERROR);
+        return nextWaiting(infoSeq, infoRing, LogLevel.ERROR);
     }
 
     private LogRecord addTimestamp(LogRecord rec, String level) {

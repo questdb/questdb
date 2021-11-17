@@ -68,7 +68,7 @@ public class LogBenchmark {
     }
 
     static {
-        LogFactory.INSTANCE.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO, (queue, subSeq, level) -> {
+        LogFactory.INSTANCE.add(new LogWriterConfig(LogLevel.INFO, (queue, subSeq, level) -> {
             LogRollingFileWriter w = new LogRollingFileWriter(queue, subSeq, level);
             w.setLocation("log-bench1.log");
             return w;

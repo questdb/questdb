@@ -109,4 +109,9 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Clo
         }
         return this;
     }
+
+    public CharSink replace(int start, int end, String str) {
+        builder.replace(start, end, str);
+        return this;
+    }
 }

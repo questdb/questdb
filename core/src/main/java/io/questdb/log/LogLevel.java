@@ -27,13 +27,13 @@ package io.questdb.log;
 import io.questdb.std.Numbers;
 
 public final class LogLevel {
-    public static final int LOG_LEVEL_DEBUG = 1;
-    public static final int LOG_LEVEL_INFO = 2;
-    public static final int LOG_LEVEL_ERROR = 4;
-    public static final int LOG_LEVEL_ADVISORY = 16;
-    public static final int LOG_LEVEL_ALL = LOG_LEVEL_DEBUG | LOG_LEVEL_INFO | LOG_LEVEL_ERROR | LOG_LEVEL_ADVISORY;
-    public static final int LOG_LEVEL_MAX = Numbers.msb(LogLevel.LOG_LEVEL_ADVISORY) + 1;
-    public static final int LOG_LEVEL_MASK = ~(-1 << (LOG_LEVEL_MAX));
+    public static final int DEBUG = 1;
+    public static final int INFO = 2;
+    public static final int ERROR = 4;
+    public static final int ADVISORY = 16;
+    public static final int ALL = DEBUG | INFO | ERROR | ADVISORY;
+    public static final int MAX = Numbers.msb(LogLevel.ADVISORY) + 1;
+    public static final int MASK = ~(-1 << (MAX));
 
     private LogLevel() {
     }

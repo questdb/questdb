@@ -52,7 +52,7 @@ public final class Chars {
             } else {
                 pad++;
             }
-            if (i + 2 <len) {
+            if (i + 2 < len) {
                 b |= (sequence.byteAt(i + 2) & 0xFF);
             } else {
                 pad++;
@@ -401,11 +401,11 @@ public final class Chars {
     }
 
     public static boolean isQuoted(CharSequence s) {
-        if (s == null || s.length() == 0) {
+        if (s == null || s.length() < 2) {
             return false;
         }
 
-        return isQuote(s.charAt(0));
+        return isQuote(s.charAt(0)) && isQuote(s.charAt(s.length() - 1));
     }
 
     public static int lastIndexOf(CharSequence s, char c) {

@@ -25,11 +25,12 @@
 package io.questdb.log;
 
 import io.questdb.std.Chars;
+import io.questdb.std.Sinkable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 
-public class LogRecordSink extends AbstractCharSink {
+public class LogRecordSink extends AbstractCharSink implements Sinkable {
     private final long address;
     private final long lim;
     private long _wptr;
@@ -99,11 +100,9 @@ public class LogRecordSink extends AbstractCharSink {
     }
 
     @Override
-    public String toString() {
-        StringBuilder b = new StringBuilder();
+    public void toSink(CharSink b) {
         for (long p = address, hi = _wptr; p < hi; p++) {
-            b.append((char) Unsafe.getUnsafe().getByte(p));
+            b.put((char) Unsafe.getUnsafe().getByte(p));
         }
-        return b.toString();
     }
 }
