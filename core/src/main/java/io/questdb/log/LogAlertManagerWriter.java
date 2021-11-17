@@ -309,7 +309,7 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
                 }
             } else {
                 location = locationParser.parse(location, clock.getTicks()).toString();
-                try (InputStream is = Files.newInputStream(Path.of(location))) {
+                try (InputStream is = new FileInputStream(location)) {
                     props.load(is);
                 }
             }
