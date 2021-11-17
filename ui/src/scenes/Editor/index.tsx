@@ -26,7 +26,7 @@ import React, { CSSProperties, forwardRef, Ref } from "react"
 
 import { PaneWrapper } from "components"
 
-import Ace from "./Ace"
+import Monaco from "./Monaco"
 import Menu from "./Menu"
 
 type Props = Readonly<{
@@ -39,7 +39,7 @@ const Editor = ({
 }: Props & { innerRef: Ref<HTMLDivElement> }) => (
   <PaneWrapper ref={innerRef} {...rest}>
     <Menu />
-    <Ace />
+    <Monaco />
   </PaneWrapper>
 )
 
