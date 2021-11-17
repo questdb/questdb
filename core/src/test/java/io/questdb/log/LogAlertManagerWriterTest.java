@@ -45,7 +45,7 @@ public class LogAlertManagerWriterTest {
         expected.put("Labels.cluster", "$CLUSTER_NAME");
         expected.put("Labels.instance", "$INSTANCE_NAME");
         expected.put("Labels.orgid", "$ORGID");
-        expected.put("Annotations.description", "ERROR/$ORGID/$NAMESPACE/$CLUSTER_NAME/$INSTANCE_NAME");
+        expected.put("Annotations.description", "ERROR/${ORGID}/${NAMESPACE}/${CLUSTER_NAME}/$INSTANCE_NAME");
         expected.put("Annotations.message", "");
 
         Properties alertProperties = new Properties(expected);
