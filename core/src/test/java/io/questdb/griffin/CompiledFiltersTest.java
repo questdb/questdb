@@ -334,6 +334,31 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNull() throws Exception {
+        final String query = "select * from x where i8 <> null and i16 <> null and i32 <> null and i64 <> null and f32 <> null and f64 <> null";
+        final String expected = "k\ti8\ti16\ti32\ti64\tf32\tf64\n" +
+                "1970-01-05T15:06:40.000000Z\t1\t1\t1\t1\t1.0000\t1.0\n" +
+                "1970-01-05T15:15:00.000000Z\t2\t2\t2\t2\t2.0000\t2.0\n" +
+                "1970-01-05T15:23:20.000000Z\t3\t3\t3\t3\t3.0000\t3.0\n" +
+                "1970-01-05T15:31:40.000000Z\t4\t4\t4\t4\t4.0000\t4.0\n" +
+                "1970-01-05T15:40:00.000000Z\t5\t5\t5\t5\t5.0000\t5.0\n";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " cast(x as byte) i8," +
+                " cast(x as short) i16," +
+                " cast(x as int) i32," +
+                " cast(x as long) i64," +
+                " cast(x as float) f32," +
+                " cast(x as double) f64" +
+                " from long_sequence(5)) timestamp(k)";
+        assertQuery(expected,
+                query,
+                ddl,
+                "k",
+                false);
+    }
+
+    @Test
     public void testSelectAllTypesFromRecord() throws Exception {
         final String query = "select * from x where b = true and kk < 10";
         final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tcc\tl2\thash1b\thash2b\thash3b\thash1c\thash2c\thash4c\thash8c\n" +

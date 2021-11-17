@@ -71,11 +71,12 @@ public class SqlCodeGenerator implements Mutable {
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> minConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> maxConstructors = new IntObjHashMap<>();
-    private static final VectorAggregateFunctionConstructor countConstructor = (keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
+    private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
     private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
+    private final FilterExprIRSerializer irSerializer = new FilterExprIRSerializer();
     private final FunctionParser functionParser;
     private final CairoEngine engine;
     private final BytecodeAssembler asm = new BytecodeAssembler();
@@ -209,7 +210,7 @@ public class SqlCodeGenerator implements Mutable {
         } else if (ast.type == FUNCTION && ast.paramCount == 0 && SqlKeywords.isCountKeyword(ast.token)) {
             // count() is a no-arg function
             tempVecConstructorArgIndexes.add(-1);
-            return countConstructor;
+            return COUNT_CONSTRUCTOR;
         } else if (isSingleColumnFunction(ast, "ksum")) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
@@ -704,12 +705,13 @@ public class SqlCodeGenerator implements Mutable {
                 f.close();
             }
         }
+        // TODO what about FREEBSD_ARM64?
         final boolean arm = Os.type == Os.LINUX_ARM64 || Os.type == Os.OSX_ARM64;
         final boolean optimize = factory.supportPageFrameCursor() && !arm;
-        if(optimize) {
+        if (optimize) {
             MemoryCARWImpl mem = new MemoryCARWImpl(1024, 1, MemoryTag.NATIVE_DEFAULT);
             try {
-                FilterExprIRSerializer.serialize(mem, filter, factory.getMetadata());
+                irSerializer.of(mem, factory.getMetadata()).serialize(filter);
                 f.close();
                 final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
                 final int topDownColumnCount = topDownColumns.size();
@@ -721,6 +723,8 @@ public class SqlCodeGenerator implements Mutable {
                 return new CompiledFilterRecordCursorFactory(factory, columnIndexes, mem);
             } catch (SqlException e) {
                 mem.close();
+            } finally {
+                irSerializer.clear();
             }
         }
         return new FilteredRecordCursorFactory(factory, f);
