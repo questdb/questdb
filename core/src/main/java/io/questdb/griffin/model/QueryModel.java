@@ -116,6 +116,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Que
     private int modelPosition = 0;
     private int orderByAdviceMnemonic;
     private int tableId;
+    private boolean isUpdateModel;
 
     private QueryModel() {
         joinModels.add(this);
@@ -241,6 +242,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Que
         topDownColumns.clear();
         topDownNameSet.clear();
         aliasToColumnMap.clear();
+        isUpdateModel = false;
     }
 
     public void clearColumnMapStructs() {
@@ -311,6 +313,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Que
 
     public ExpressionNode getAlias() {
         return alias;
+    }
+
+    public boolean isUpdate() {
+        return isUpdateModel;
     }
 
     public ExpressionNode getSampleByUnit() {
@@ -403,6 +409,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Que
 
     public ExpressionNode getJoinCriteria() {
         return joinCriteria;
+    }
+
+    public void setIsUpdate(boolean isUpdate) {
+        this.isUpdateModel = isUpdate;
     }
 
     public void setJoinCriteria(ExpressionNode joinCriteria) {

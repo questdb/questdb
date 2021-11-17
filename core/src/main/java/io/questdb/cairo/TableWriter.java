@@ -726,38 +726,91 @@ public class TableWriter implements Closeable {
     // This is very hacky way to update in place for testing only
     // TODO: rewrite to production grade
     public void executeUpdate(UpdateStatement updateStatement, SqlExecutionContext executionContext) throws SqlException {
-        RecordCursorFactory recordFactory = updateStatement.getRecordCursorFactory();
-        RecordMetadata updateMetadata = recordFactory.getMetadata();
+        if (inTransaction()) {
+            commit();
+        }
+
+        RecordMetadata updateMetadata = updateStatement.getValuesMetadata();
         IntList updateToColumnMap = new IntList(updateMetadata.getColumnCount());
-        for(int i = 0, n = updateMetadata.getColumnCount(); i < n; i++) {
+
+        for (int i = 0, n = updateMetadata.getColumnCount(); i < n; i++) {
             CharSequence columnName = updateMetadata.getColumnName(i);
             int tableColumnIndex = metadata.getColumnIndex(columnName);
             assert tableColumnIndex >= 0;
-            if (updateMetadata.getColumnType(i) != metadata.getColumnType(tableColumnIndex)) {
-                throw SqlException.inconvertibleTypes(0, metadata.getColumnType(tableColumnIndex), columnName, updateMetadata.getColumnType(i), columnName);
-            }
             updateToColumnMap.add(tableColumnIndex);
         }
 
-        try(RecordCursor recordCursor = recordFactory.getCursor(executionContext)) {
-            Record record =  recordCursor.getRecord();
+        RecordCursorFactory rowIdFactory = updateStatement.getRowIdFactory();
+        if (!rowIdFactory.supportPageFrameCursor()) {
+            throw SqlException.$(updateStatement.getPosition(), "Only simple UPDATE statements without joins are supported");
+        }
+
+        long rowsUpdated = 0;
+        try (RecordCursor recordCursor = rowIdFactory.getCursor(executionContext)) {
+            Record record = recordCursor.getRecord();
             int columnCount = updateMetadata.getColumnCount();
             long currentPartitionIndex = -1L;
             ObjList<MemoryCMARW> updateMemory = getUpdateColumnsMemory(columnCount);
+            Function filter = updateStatement.getRowIdFilter();
 
             while (recordCursor.hasNext()) {
+                if (filter != null && !filter.getBool(record)) {
+                    continue;
+                }
+
                 long rowId = record.getRowId();
                 int partitionIndex = Rows.toPartitionIndex(rowId);
                 if (partitionIndex != currentPartitionIndex) {
                     openPartitionColumnsForUpdate(updateMemory, partitionIndex, updateToColumnMap);
                     currentPartitionIndex = partitionIndex;
                 }
+                ObjList<Function> resultFunctions = updateStatement.getValuesFunctions();
 
-                for(int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                    int tableColumnIndex = updateToColumnMap.get(columnIndex);
+                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                    int columnType = metadata.getColumnType(updateToColumnMap.get(columnIndex));
+                    MemoryCMARW primaryColMem = updateMemory.get(columnIndex);
+                    Function columnFunction = resultFunctions.get(columnIndex);
 
+                    switch (columnType) {
+                        case ColumnType.INT:
+                            primaryColMem.putInt(rowId << 2, columnFunction.getInt(record));
+                            break;
+                        case ColumnType.FLOAT:
+                            primaryColMem.putFloat(rowId << 2, columnFunction.getFloat(record));
+                            break;
+                        case ColumnType.LONG:
+                            primaryColMem.putLong(rowId << 3, columnFunction.getLong(record));
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            primaryColMem.putLong(rowId << 3, columnFunction.getTimestamp(record));
+                            break;
+                        case ColumnType.DATE:
+                            primaryColMem.putLong(rowId << 3, columnFunction.getDate(record));
+                            break;
+                        case ColumnType.DOUBLE:
+                            primaryColMem.putDouble(rowId << 3, columnFunction.getDouble(record));
+                            break;
+                        case ColumnType.SHORT:
+                            primaryColMem.putShort(rowId << 1, columnFunction.getShort(record));
+                            break;
+                        case ColumnType.CHAR:
+                            primaryColMem.putChar(rowId << 1, columnFunction.getChar(record));
+                            break;
+                        case ColumnType.BYTE:
+                        case ColumnType.BOOLEAN:
+                            primaryColMem.putLong(rowId, columnFunction.getByte(record));
+                            break;
+                        default:
+                            throw SqlException.$(0, "Column type ")
+                                    .put(ColumnType.nameOf(columnType))
+                                    .put(" not supported for updates");
+                    }
                 }
+                rowsUpdated++;
             }
+        }
+        if (rowsUpdated > 0) {
+            commit();
         }
     }
 

@@ -24,20 +24,65 @@
 
 package io.questdb.cairo.sql;
 
-public class UpdateStatement {
-    private final CharSequence tableName;
-    private final RecordCursorFactory records;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
-    public UpdateStatement(CharSequence tableName, RecordCursorFactory records) {
-        this.tableName = tableName;
-        this.records = records;
+import java.io.Closeable;
+
+public class UpdateStatement implements Closeable {
+
+    private final CharSequence updateTableName;
+    private RecordCursorFactory rowIdFactory;
+    private Function rowIdFilter;
+    private final ObjList<Function> valuesFunctions;
+    private final RecordMetadata valuesMetadata;
+    private final int position;
+
+    public UpdateStatement(
+            CharSequence updateTableName,
+            int position,
+            RecordCursorFactory rowIdFactory,
+            Function rowIdFilter,
+            ObjList<Function> valuesFunctions,
+            RecordMetadata valuesMetadata
+    ) {
+        this.updateTableName = updateTableName;
+        this.position = position;
+        this.rowIdFactory = rowIdFactory;
+        this.rowIdFilter = rowIdFilter;
+        this.valuesFunctions = valuesFunctions;
+        this.valuesMetadata = valuesMetadata;
     }
 
-    public RecordCursorFactory getRecordCursorFactory() {
-        return records;
+    @Override
+    public void close() {
+        rowIdFactory = Misc.free(rowIdFactory);
+        rowIdFilter = Misc.free(rowIdFilter);
+        Misc.freeObjList(valuesFunctions);
+        Misc.free(valuesMetadata);
+    }
+
+    public int getPosition() {
+        return position;
     }
 
     public CharSequence getUpdateTableName() {
-        return tableName;
+        return updateTableName;
+    }
+
+    public ObjList<Function> getValuesFunctions() {
+        return valuesFunctions;
+    }
+
+    public RecordMetadata getValuesMetadata() {
+        return valuesMetadata;
+    }
+
+    public RecordCursorFactory getRowIdFactory() {
+        return rowIdFactory;
+    }
+
+    public Function getRowIdFilter() {
+        return rowIdFilter;
     }
 }

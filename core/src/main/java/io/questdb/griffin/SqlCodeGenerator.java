@@ -675,6 +675,16 @@ public class SqlCodeGenerator implements Mutable {
         );
     }
 
+    UpdateStatementBuilder generateUpdate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {
+        // Hint that this is UPDATE query plan
+        queryModel.setIsUpdate(true);
+        queryModel.getNestedModel().setIsUpdate(true);
+
+        // Expect record factory to be UpdateStatementBuilder
+        UpdateStatementBuilder finalRecordSet = (UpdateStatementBuilder) generate(queryModel, executionContext);
+        return finalRecordSet;
+    }
+
     RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         return generateQuery(model, executionContext, true);
     }
@@ -699,6 +709,9 @@ public class SqlCodeGenerator implements Mutable {
             } finally {
                 f.close();
             }
+        }
+        if (model.isUpdate()) {
+            return ((UpdateStatementBuilder) factory).withFilter(f);
         }
         return new FilteredRecordCursorFactory(factory, f);
     }
@@ -1160,7 +1173,11 @@ public class SqlCodeGenerator implements Mutable {
             if (tableName.type == FUNCTION) {
                 return generateFunctionQuery(model);
             } else {
-                return generateTableQuery(model, executionContext);
+                RecordCursorFactory tableRecordCursorFactory = generateTableQuery(model, executionContext);
+                if (!model.isUpdate()) {
+                    return tableRecordCursorFactory;
+                }
+                return new UpdateStatementBuilder(tableRecordCursorFactory);
             }
         }
         return generateSubQuery(model, executionContext);
@@ -2310,6 +2327,9 @@ public class SqlCodeGenerator implements Mutable {
                     }
                 }
             }
+            if (model.isUpdate()) {
+                return ((UpdateStatementBuilder) factory).withSelectVirtual(virtualMetadata, functions);
+            }
             return new VirtualRecordCursorFactory(virtualMetadata, functions, factory);
         } catch (SqlException | CairoException e) {
             factory.close();
@@ -2396,7 +2416,7 @@ public class SqlCodeGenerator implements Mutable {
                 boolean contextTimestampRequired = executionContext.isTimestampRequired();
                 // some "sample by" queries don't select any cols but needs timestamp col selected
                 // for example "select count() from x sample by 1h" implicitly needs timestamp column selected
-                if (topDownColumnCount > 0 || contextTimestampRequired) {
+                if (topDownColumnCount > 0 || contextTimestampRequired || model.isUpdate()) {
                     framingSupported = true;
                     for (int i = 0; i < topDownColumnCount; i++) {
                         int columnIndex = readerMeta.getColumnIndexQuiet(topDownColumns.getQuick(i).getName());
