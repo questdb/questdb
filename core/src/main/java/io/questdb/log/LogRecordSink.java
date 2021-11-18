@@ -45,6 +45,9 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
         _wptr = address + len;
     }
 
+    public void clear() {
+        _wptr = address;
+    }
 
     public long getAddress() {
         return address;

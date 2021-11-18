@@ -223,42 +223,42 @@ class Logger implements LogRecord, Log {
 
     @Override
     public LogRecord debug() {
-        return addTimestamp(xdebug(), " D ");
+        return addTimestamp(xdebug(), LogLevel.DEBUG_HEADER);
     }
 
     @Override
     public LogRecord error() {
-        return addTimestamp(xerror(), " E ");
+        return addTimestamp(xerror(), LogLevel.ERROR_HEADER);
     }
 
     @Override
     public LogRecord info() {
-        return addTimestamp(xinfo(), " I ");
+        return addTimestamp(xinfo(), LogLevel.INFO_HEADER);
     }
 
     @Override
     public LogRecord infoW() {
-        return addTimestamp(xInfoW(), " I ");
+        return addTimestamp(xInfoW(), LogLevel.INFO_HEADER);
     }
 
     @Override
     public LogRecord errorW() {
-        return addTimestamp(xErrorW(), " E ");
+        return addTimestamp(xErrorW(), LogLevel.ERROR_HEADER);
     }
 
     @Override
     public LogRecord debugW() {
-        return addTimestamp(xDebugW(), " D ");
+        return addTimestamp(xDebugW(), LogLevel.DEBUG_HEADER);
     }
 
     @Override
     public LogRecord advisoryW() {
-        return addTimestamp(xAdvisoryW(), " A ");
+        return addTimestamp(xAdvisoryW(), LogLevel.ADVISORY_HEADER);
     }
 
     @Override
     public LogRecord advisory() {
-        return addTimestamp(xadvisory(), " A ");
+        return addTimestamp(xadvisory(), LogLevel.ADVISORY_HEADER);
     }
 
     @Override

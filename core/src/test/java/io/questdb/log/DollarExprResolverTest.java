@@ -32,14 +32,14 @@ import org.junit.Test;
 
 import java.util.Properties;
 
-public class LocationParserTest {
+public class DollarExprResolverTest {
 
-    private LocationParser locationParser;
+    private DollarExprResolver locationParser;
     private StringSink sink;
 
     @Before
     public void setUp() {
-        locationParser = new LocationParser();
+        locationParser = new DollarExprResolver();
         sink = new StringSink();
         System.setProperty("JSON_FILE", "file.json");
         System.setProperty("DATABASE_ROOT", "c:/\\/\\");
@@ -57,6 +57,8 @@ public class LocationParserTest {
         assertParseEquals("a/b/f/$JSON_FILE", "[a/b/f/,file.json]");
         assertParseEquals("a/b/f/${date:y}/$JSON_FILE", "[a/b/f/,1970,/,file.json]");
         assertParseEquals("${DATABASE_ROOT}/a/b/f/${date:y}/$JSON_FILE", "[c:/\\/\\,/a/b/f/,1970,/,file.json]");
+        assertParseEquals("{}", "[{}]");
+        assertParseEquals("{${DATABASE_ROOT}}", "[{,c:/\\/\\,}]");
 
         Properties properties = new Properties();
         properties.put("A", "alpha");
@@ -74,19 +76,19 @@ public class LocationParserTest {
         assertFail("$JSON_FILE$", "Unexpected '$' at position " + position);
         assertFail("$COCO$", "Undefined property: COCO");
         assertFail("$ COCO  $", "Undefined property: COCO");
-        assertFail("{}", "Missing '$' at position 0");
         assertFail("${COCO", "Missing '}' at position 6");
         assertFail("$COCO}", "Unexpected '}' at position 5");
         assertFail("${date:}", "Missing expression at position 7");
+        assertFail("{$DATABASE_ROOT}", "Unexpected '}' at position 15");
         //assertFail("${date: Ketchup}", "Unexpected '}' at position 5"); // TODO: the compiler (TimestampFormatCompiler) should explode, but it does not
     }
 
     @Test
     public void testChangeFileTimestamp() {
         try (Path path = new Path()) {
-            locationParser.parse("${date:y}", 0);
-            locationParser.setFileTimestamp(1637091363010000L); // time always in micros
-            locationParser.buildFilePath(path);
+            locationParser.resolve("${date:y}", 0);
+            locationParser.setDateValue(1637091363010000L); // time always in micros
+            locationParser.toSink(path);
             Assert.assertEquals("2021", path.toString());
         }
     }
@@ -97,8 +99,8 @@ public class LocationParserTest {
 
     private void assertParseEquals(String location, String expected, Properties properties) {
         try (Path path = new Path()) {
-            locationParser.parse(location, 0, properties);
-            locationParser.buildFilePath(path);
+            locationParser.resolve(location, 0, properties);
+            locationParser.toSink(path);
             sink.clear();
             locationParser.getLocationComponents().toSink(sink);
             Assert.assertEquals(expected, sink.toString());
@@ -107,7 +109,7 @@ public class LocationParserTest {
 
     private void assertFail(String location, String expected) {
         try {
-            locationParser.parse(location, 0);
+            locationParser.resolve(location, 0);
             sink.clear();
             locationParser.getLocationComponents().toSink(sink);
             System.out.printf(">>%s%n", sink);

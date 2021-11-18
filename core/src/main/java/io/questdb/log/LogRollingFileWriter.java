@@ -51,7 +51,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private long _wptr;
     private int nBufferSize;
     private long nRollSize;
-    private final LocationParser locationParser = new LocationParser();
+    private final DollarExprResolver locationParser = new DollarExprResolver();
     // can be set via reflection
     private String location;
     private String bufferSize;
@@ -85,7 +85,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     @Override
     public void bindProperties() {
-        locationParser.parse(location, clock.getTicks());
+        locationParser.resolve(location, clock.getTicks());
         if (this.bufferSize != null) {
             try {
                 nBufferSize = Numbers.parseIntSize(this.bufferSize);
@@ -198,11 +198,16 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         this.spinBeforeFlush = spinBeforeFlush;
     }
 
+    private void buildFilePath(Path path) {
+        path.of("");
+        locationParser.toSink(path);
+    }
+
     private void buildUniquePath() {
-        locationParser.buildFilePath(path);
+        buildFilePath(path);
         while (ff.exists(path.$())) {
             pushFileStackUp();
-            locationParser.buildFilePath(path);
+            buildFilePath(path);
         }
     }
 
@@ -225,7 +230,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             ff.close(fd);
             if (ticks > rollDeadline) {
                 rollDeadline = rollDeadlineFunction.getDeadline();
-                locationParser.setFileTimestamp(ticks);
+                locationParser.setDateValue(ticks);
             }
             openFile();
         }
@@ -286,7 +291,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
         int index = 1;
         while (true) {
-            locationParser.buildFilePath(path);
+            buildFilePath(path);
 
             path.put('.').put(index);
             if (ff.exists(path.$())) {
@@ -298,8 +303,8 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
         // rename files
         while (index > 1) {
-            locationParser.buildFilePath(path);
-            locationParser.buildFilePath(renameToPath);
+            buildFilePath(path);
+            buildFilePath(renameToPath);
 
             path.put('.').put(index - 1);
             renameToPath.put('.').put(index);
@@ -310,8 +315,8 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         }
 
         // finally move original file to .1
-        locationParser.buildFilePath(path);
-        locationParser.buildFilePath(renameToPath);
+        buildFilePath(path);
+        buildFilePath(renameToPath);
         renameToPath.put(".1");
         if (!ff.rename(path.$(), renameToPath.$())) {
             throw new LogError("Could not rename " + path + " to " + renameToPath);

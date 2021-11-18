@@ -48,12 +48,16 @@ public class LogFactoryTest {
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
 
-    @Test(expected = LogError.class)
+    @Test
     public void testBadWriter() {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log-bad-writer.conf");
-
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory, null);
+            try {
+                LogFactory.configureFromSystemProperties(factory, null);
+                Assert.fail();
+            } catch (LogError e) {
+                Assert.assertEquals("Class not found com.questdb.log.StdOutWriter2", e.getMessage());
+            }
         }
     }
 
@@ -68,6 +72,7 @@ public class LogFactoryTest {
             assertEnabled(logger.info());
             assertEnabled(logger.error());
             assertEnabled(logger.debug());
+            assertEnabled(logger.advisory());
         }
     }
 
@@ -119,6 +124,7 @@ public class LogFactoryTest {
             assertDisabled(logger.debug());
             assertEnabled(logger.info());
             assertEnabled(logger.error());
+            assertEnabled(logger.advisory());
         }
     }
 
@@ -133,6 +139,7 @@ public class LogFactoryTest {
             assertDisabled(logger.debug());
             assertDisabled(logger.info());
             assertDisabled(logger.error());
+            assertDisabled(logger.advisory());
 
             Log logger1 = factory.create("com.questdb.x.y");
             assertEnabled(logger1.debug());
@@ -236,10 +243,10 @@ public class LogFactoryTest {
             assertEnabled(logger.info());
             assertDisabled(logger.error());
             assertEnabled(logger.debug());
+            assertDisabled(logger.advisory());
         }
     }
 
-    // todo: this test flaps
     @Test
     public void testRollingFileWriterByDay() throws Exception {
         testRollOnDate("mylog-${date:yyyy-MM-dd}.log", 24 * 60000, "day", "mylog-2015-05");
@@ -481,11 +488,13 @@ public class LogFactoryTest {
             assertDisabled(logger.debug());
             assertDisabled(logger.info());
             assertDisabled(logger.error());
+            assertDisabled(logger.advisory());
 
             Log logger1 = factory.create("com.questdb.x.y");
             assertDisabled(logger1.debug());
             assertDisabled(logger1.info());
             assertDisabled(logger1.error());
+            assertDisabled(logger1.advisory());
         }
     }
 

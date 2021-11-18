@@ -24,38 +24,55 @@
 
 package io.questdb.log;
 
-import io.questdb.std.Chars;
-import io.questdb.std.ObjList;
-import io.questdb.std.Sinkable;
+import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
+import java.util.Enumeration;
 import java.util.Properties;
 
-public class LocationParser implements Sinkable {
+public class DollarExprResolver implements Sinkable {
 
     private static final String DATE_FORMAT_KEY = "date:";
     private static final int NIL = -1;
+
+    public static CharSequenceObjHashMap<CharSequence> adaptProperties(Properties props) {
+        CharSequenceObjHashMap<CharSequence> properties = new CharSequenceObjHashMap<>(props.size());
+        for (Enumeration<?> keys = props.propertyNames(); keys.hasMoreElements(); ) {
+            String key = keys.nextElement().toString();
+            properties.put(key, props.getProperty(key));
+        }
+        return properties;
+    }
+
     private final TimestampFormatCompiler dateCompiler = new TimestampFormatCompiler();
     private final ObjList<Sinkable> locationComponents = new ObjList<>();
     private final StringSink resolveSink = new StringSink();
-    private CharSequence location;
-    private long fileTimestamp;
-    private Properties properties;
+    private CharSequenceObjHashMap<CharSequence> properties;
+    private CharSequence originalTxt;
+    private long dateValue;
 
-    public void setFileTimestamp(long fileTimestamp) {
-        this.fileTimestamp = fileTimestamp;
+
+    public void setDateValue(long dateValue) {
+        this.dateValue = dateValue;
     }
 
-    public LocationParser parse(final CharSequence location, final long fileTimestamp) {
-        return parse(location, fileTimestamp, System.getProperties());
+    public DollarExprResolver resolve(final CharSequence location, final long fileTimestamp) {
+        return resolve(location, fileTimestamp, adaptProperties(System.getProperties()));
     }
 
-    public LocationParser parse(final CharSequence location, final long fileTimestamp, final Properties properties) {
+    public DollarExprResolver resolve(CharSequence originalTxt, long dateValue, Properties properties) {
+        return resolve(originalTxt, dateValue, adaptProperties(properties));
+    }
+
+    public DollarExprResolver resolve(
+            CharSequence originalTxt,
+            long dateValue,
+            CharSequenceObjHashMap<CharSequence> properties
+    ) {
 
         // if we find a $ then:
         //
@@ -73,22 +90,18 @@ public class LocationParser implements Sinkable {
         //     with the DateFormatted string equivalent of fileTimestamp
         //     (fileTimestamp can be changed dynamically, which is in fact what
         //     LogRollingFileWriter does).
-        // 2.- it is the start of an expression: $name
-        //     this is only intended to work for standalone such expressions, or
-        //     as the suffix of location:
-        //     - $MY_ENV_VAR
-        //     - /Users/uzulo/$MY_ENV_VAR
+        // 2.- it is the start of an expression: $name, or ${name}
 
-        this.location = location;
-        this.fileTimestamp = fileTimestamp;
+        this.originalTxt = originalTxt;
+        this.dateValue = dateValue;
         this.properties = properties;
         locationComponents.clear();
         int dollarStart = NIL; // points at the $
         int dateStart = NIL; // points at the first char after {
         int lastExprEnd = 0; // points to the char right after the expression
-        final int locationLen = location.length();
+        final int locationLen = this.originalTxt.length();
         for (int i = 0; i < locationLen; i++) {
-            char c = location.charAt(i);
+            char c = this.originalTxt.charAt(i);
             switch (c) {
                 case '$':
                     if (dollarStart != NIL) { // already found a $
@@ -107,13 +120,16 @@ public class LocationParser implements Sinkable {
                     dollarStart = i;
                     break;
                 case '{':
-                    if (dollarStart == NIL || dateStart != NIL) { // missing $
-                        throw new LogError("Missing '$' at position " + (i > 0 ? i - 1 : i));
+                    if (dollarStart == NIL) {
+                        continue;
                     }
                     dateStart = i + 1;
                     break;
                 case '}':
-                    if (dollarStart == NIL || dateStart == NIL) {
+                    if (dollarStart == NIL) {
+                        continue;
+                    }
+                    if (dateStart == NIL) {
                         throw new LogError("Unexpected '}' at position " + i);
                     }
                     int keyLen = DATE_FORMAT_KEY.length();
@@ -122,14 +138,14 @@ public class LocationParser implements Sinkable {
                         throw new LogError("Missing expression at position " + dateStart);
                     }
                     int dateFormatStart = dateStart + keyLen;
-                    if (exprLen >= keyLen && Chars.startsWith(location, dateStart, dateFormatStart, DATE_FORMAT_KEY)) {
+                    if (exprLen >= keyLen && Chars.startsWith(this.originalTxt, dateStart, dateFormatStart, DATE_FORMAT_KEY)) {
                         DateFormat dateFormat;
-                        String dateFormatStr = location.subSequence(dateFormatStart, i).toString().trim();
+                        String dateFormatStr = this.originalTxt.subSequence(dateFormatStart, i).toString().trim();
                         if (dateFormatStr.isEmpty()) {
                             throw new LogError("Missing expression at position " + dateFormatStart);
                         }
                         // TODO: unfortunately compilation will not throw any exception in the presence of a bad format
-                        dateFormat = dateCompiler.compile(location, dateFormatStart, i, false);
+                        dateFormat = dateCompiler.compile(this.originalTxt, dateFormatStart, i, false);
                         locationComponents.add(new DateSinkable(dateFormat));
                     } else {
                         locationComponents.add(new EnvSinkable(resolveSysProp(dollarStart + 1, i)));
@@ -157,11 +173,6 @@ public class LocationParser implements Sinkable {
         return this;
     }
 
-    public void buildFilePath(Path path) {
-        path.of("");
-        toSink(path);
-    }
-
     @Override
     public String toString() {
         resolveSink.clear();
@@ -174,9 +185,9 @@ public class LocationParser implements Sinkable {
         return locationComponents;
     }
 
-    private String resolveSysProp(int start, int end) {
-        String envKey = location.subSequence(start + 1, end).toString().trim();
-        String envValue = properties.getProperty(envKey);
+    private CharSequence resolveSysProp(int start, int end) {
+        String envKey = originalTxt.subSequence(start + 1, end).toString().trim();
+        CharSequence envValue = properties.get(envKey);
         if (envValue == null) {
             throw new LogError("Undefined property: " + envKey);
         }
@@ -201,14 +212,14 @@ public class LocationParser implements Sinkable {
 
         @Override
         public void toSink(CharSink sink) {
-            sink.put(location, start, end);
+            sink.put(originalTxt, start, end);
         }
     }
 
     private class EnvSinkable implements Sinkable {
-        private final String envValue;
+        private final CharSequence envValue;
 
-        public EnvSinkable(String envValue) {
+        public EnvSinkable(CharSequence envValue) {
             this.envValue = envValue;
         }
 
@@ -228,7 +239,7 @@ public class LocationParser implements Sinkable {
         @Override
         public void toSink(CharSink sink) {
             format.format(
-                    fileTimestamp,
+                    dateValue,
                     TimestampFormatUtils.enLocale,
                     null,
                     sink

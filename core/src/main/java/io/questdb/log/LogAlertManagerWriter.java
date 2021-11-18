@@ -37,11 +37,40 @@ import io.questdb.std.str.StringSink;
 import java.io.*;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.*;
+import java.nio.charset.StandardCharsets;
 
 public class LogAlertManagerWriter extends SynchronizedJob implements Closeable, LogWriter {
+
+    private static final String DEFAULT_HOST = "127.0.0.1";
+    private static final int DEFAULT_PORT = 9093;
+    private static final int DEFAULT_SKT_BUFFER_SIZE = 4 * 1024 * 1024;
+    static final String DEFAULT_ALERT_TPT_FILE = "/alert-manager-tpt.json";
+    private static final String HEADER_BODY_SEPARATOR = "\r\n\r\n";
+    private static final String ORG_ID_PROP = "ORGID";
+    private static final String NAMESPACE_PROP = "NAMESPACE";
+    private static final String CLUSTER_PROP = "CLUSTER_NAME";
+    private static final String INSTANCE_PROP = "INSTANCE_NAME";
+    private static final String DEFAULT_PROP_VALUE = "GLOBAL";
+    private static final String MESSAGE_PROP = "ALERT_MESSAGE";
+    private static final int DOLLAR_MESSAGE_LEN = MESSAGE_PROP.length() + 3; // ${ALERT_MESSAGE}
+
+    private final CharSequenceObjHashMap<CharSequence> alertProps = DollarExprResolver.adaptProperties(System.getProperties());
+
+    {
+        if (!alertProps.contains(ORG_ID_PROP)) {
+            alertProps.put(ORG_ID_PROP, DEFAULT_PROP_VALUE);
+        }
+        if (!alertProps.contains(NAMESPACE_PROP)) {
+            alertProps.put(NAMESPACE_PROP, DEFAULT_PROP_VALUE);
+        }
+        if (!alertProps.contains(CLUSTER_PROP)) {
+            alertProps.put(CLUSTER_PROP, DEFAULT_PROP_VALUE);
+        }
+        if (!alertProps.contains(INSTANCE_PROP)) {
+            alertProps.put(INSTANCE_PROP, DEFAULT_PROP_VALUE);
+        }
+        alertProps.put(MESSAGE_PROP, "${" + MESSAGE_PROP + "}");
+    }
 
     private final int level;
     private final MicrosecondClock clock;
@@ -49,12 +78,13 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
     private final SCSequence writeSequence;
     private final RingQueue<LogRecordSink> alertsSource;
     private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
-    private final LocationParser locationParser = new LocationParser();
-    private final StringSink sink = new StringSink();
+    private final DollarExprResolver dollar$ = new DollarExprResolver();
     private final StringSink alertBuilder = new StringSink();
-    private int alertBuilderStart;
-    private int httpBodyMinLen;
-    private int contentMarkerStart;
+    private final StringSink messageSink = new StringSink();
+    private CharSequence alertTemplate;
+    private int alertTemplateLen;
+    private CharSequence httpHeader;
+    private int httpHeaderLen;
     private long sktBufferPtr;
     private int sktBufferSize;
     private long sktBufferLimit; // sktBufferPtr + sktBufferSize
@@ -63,14 +93,8 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
     private String host;
     private int port;
 
-    // config attrs in log-file.conf (set by reflection):
-    //   writers=alert
-    //   w.alert.class=io.questdb.log.LogAlertManagerWriter
-    //   w.alert.level=ERROR we alert on error, could alert on a new LogLevel.ALERT of value 8
-    //   w.alert.location={path to the JSON template file}
-    //   w.alert.bufferSize={defaults to 4Mb}
-    //   w.alert.socketAddress={defaults to "localhost:9093", comma separated list of alertmanager nodes}
-    private String location;
+    // changed by introspection
+    private String location = DEFAULT_ALERT_TPT_FILE;
     private String bufferSize;
     private String socketAddress;
 
@@ -202,46 +226,75 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
         fdSocket = -1;
     }
 
+    private void loadAlertTemplate() {
+        long ticks = clock.getTicks();
+        location = dollar$.resolve(location, ticks).toString();
+        alertBuilder.clear();
+        alertBuilder.put("POST /api/v1/alerts HTTP/1.1\r\n")
+                .put("Host: ").put(socketAddress).put("\r\n")
+                .put("User-Agent: QuestDB/7.71.1\r\n")
+                .put("Accept: */*\r\n")
+                .put("Content-Type: application/json\r\n")
+                .put("Content-Length: ");
+        httpHeader = alertBuilder.toString();
+        httpHeaderLen = alertBuilder.length();
+        alertBuilder.clear();
+        try (InputStream is = new FileInputStream(location)) {
+            alertBuilder.put(new String(is.readAllBytes(), StandardCharsets.UTF_8));
+        } catch (NullPointerException | IOException e) {
+            throw new LogError("Cannot read " + location, e);
+        }
+        alertTemplate = dollar$.resolve(alertBuilder, ticks, alertProps).toString();
+        alertTemplateLen = alertTemplate.length();
+    }
+
     private void onLogRecord(LogRecordSink logRecord) {
-        final int l = logRecord.length();
-        if ((logRecord.getLevel() & level) != 0 && l > 0 && fdSocketAddress > 0) { // advisory is always ignored
-            alertBuilder.clear(alertBuilderStart);
-            sink.clear();
-            logRecord.toSink(sink);
-            int messageLen = sink.length();
-            alertBuilder.put('"');
-            for (int i = 0, limit = sink.length(); i < limit; i++) {
-                char c = sink.charAt(i);
+        final int logRecordLen = logRecord.length();
+        if ((logRecord.getLevel() & level) != 0 && logRecordLen > 0 && fdSocket > 0) {
+            messageSink.clear();
+            final long address = logRecord.getAddress();
+            for (long p = address, limit = address + logRecordLen; p < limit; p++) {
+                char c = (char) Unsafe.getUnsafe().getByte(p);
                 switch (c) {
                     case '\b':
                     case '\f':
                     case '\t':
+                    case '$':
                     case '"':
                     case '\\':
-                        alertBuilder.put('\\');
-                        messageLen++;
+                        messageSink.put('\\');
                         break;
                     case '\r':
                     case '\n':
-                        messageLen--;
                         continue;
                 }
-                alertBuilder.put(c);
+                messageSink.put(c);
             }
-            alertBuilder.put('"');
-            alertBuilder.put(ALERT_FOOTER);
-            alertBuilder.replace(
-                    contentMarkerStart,
-                    contentMarkerStart + CONTENT_LENGTH_MARKER.length(),
-                    String.format(String.format("%%%dd", CONTENT_LENGTH_MARKER.length()), httpBodyMinLen + messageLen)
-            );
-            System.out.printf("ALERT: %s%n", alertBuilder);
-            int len = alertBuilder.length();
+
+            alertBuilder.clear();
+            alertBuilder.put(alertTemplate);
+            alertProps.put(MESSAGE_PROP, messageSink);
+            dollar$.resolve(alertBuilder, 0, alertProps);
+
+            // move alert message to socket buffer
+            long p = sktBufferPtr;
+            Chars.asciiStrCpy(httpHeader, httpHeaderLen, p);
+            p += httpHeaderLen;
+            int contentLen = alertTemplateLen + messageSink.length() - DOLLAR_MESSAGE_LEN;
+            String contentLenStr = String.valueOf(contentLen);
+            int len = contentLenStr.length();
+            Chars.asciiStrCpy(contentLenStr, len, p);
+            p += len;
+            len = HEADER_BODY_SEPARATOR.length();
+            Chars.asciiStrCpy(HEADER_BODY_SEPARATOR, len, p);
+            p += len;
+            String body = dollar$.toString();
+            len = body.length();
+            Chars.asciiStrCpy(body, len, p);
 
             // send
-            Chars.asciiStrCpy(alertBuilder, len, sktBufferPtr);
-            int remaining = len;
-            long p = sktBufferPtr;
+            int remaining = (int) (p + len - sktBufferPtr);
+            p = sktBufferPtr;
             while (remaining > 0) {
                 int n = Net.send(fdSocket, p, remaining);
                 if (n > 0) {
@@ -255,129 +308,7 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
             // read
             p = sktBufferPtr;
             int n = Net.recv(fdSocket, p, (int) sktBufferLimit);
-            System.out.println(n);
             Net.dumpAscii(p, n);
         }
-    }
-
-    private void loadAlertTemplate() {
-        alertBuilder.clear();
-        alertBuilder.put("POST /api/v1/alerts HTTP/1.1\r\n")
-                .put("Host: ").put(socketAddress).put("\r\n")
-                .put("User-Agent: QuestDB/7.71.1\r\n")
-                .put("Accept: */*\r\n")
-                .put("Content-Type: application/json\r\n")
-                .put("Content-Length: ");
-        contentMarkerStart = alertBuilder.length();
-        alertBuilder.put(CONTENT_LENGTH_MARKER)
-                .put("\r\n\r\n")
-                .put("[");
-        int httpHeaderLen = alertBuilder.length() - 1;
-        extendWithTemplate(loadAlertTemplate0());
-        alertBuilder.clear(alertBuilder.length() - 2);
-        alertBuilder.put(',').putQuoted("message").put(':');
-        alertBuilderStart = alertBuilder.length();
-        httpBodyMinLen = alertBuilderStart + ALERT_FOOTER.length() - httpHeaderLen + 2; // quotes around msg
-    }
-
-    private void extendWithTemplate(CharSequenceObjHashMap<Object> template) {
-        alertBuilder.put('{');
-        ObjList<CharSequence> keys = template.keys();
-        for (int k = 0, limit = keys.size(); k < limit; k++) {
-            CharSequence key = keys.getQuick(k);
-            alertBuilder.putQuoted(key).put(':');
-            Object value = template.get(key);
-            if (value instanceof String) {
-                alertBuilder.putQuoted(value.toString());
-            } else {
-                extendWithTemplate((CharSequenceObjHashMap<Object>) value);
-            }
-            if (k < limit - 1) {
-                alertBuilder.put(',');
-            }
-        }
-        alertBuilder.put('}');
-    }
-
-    private CharSequenceObjHashMap<Object> loadAlertTemplate0() {
-        final Properties props = new Properties(DEFAULT_ALERT_PROPS);
-        try {
-            if (location == null || location.isEmpty()) {
-                location = DEFAULT_ALERT_TPT_FILE;
-                try (InputStream is = LogFactory.class.getResourceAsStream(location)) {
-                    props.load(is);
-                }
-            } else {
-                location = locationParser.parse(location, clock.getTicks()).toString();
-                try (InputStream is = new FileInputStream(location)) {
-                    props.load(is);
-                }
-            }
-        } catch (NullPointerException | IOException e) {
-            throw new LogError("Cannot read " + location, e);
-        }
-
-        CharSequenceObjHashMap<Object> template = new CharSequenceObjHashMap<>();
-        for (Enumeration<String> keys = (Enumeration<String>) props.propertyNames(); keys.hasMoreElements(); ) {
-            String key = keys.nextElement();
-            if (key.equals(MESSAGE_KEY)) {
-                continue;
-            }
-            String value = locationParser.parse(
-                    props.getProperty(key),
-                    0,
-                    DEFAULT_SYSTEM_PROPS
-            ).toString();
-            String[] keyParts = key.split("[.]");
-            switch (keyParts.length) {
-                case 1:
-                    template.put(key, value);
-                    break;
-                case 2:
-                    CharSequenceObjHashMap<Object> peers = (CharSequenceObjHashMap<Object>) template.get(keyParts[0]);
-                    if (peers == null) {
-                        template.put(keyParts[0], peers = new CharSequenceObjHashMap<>());
-                    }
-                    peers.put(keyParts[1], value);
-                    break;
-                default:
-                    throw new LogError("Bad key " + key + " only up to two depth levels are supported");
-            }
-        }
-        // leave the map keys sorted in reverse alpha order to have Annotations.message
-        // as last entry in the Annotations object, which
-        template.sortKeys((csa, csb) -> -csa.toString().compareTo(csb.toString()));
-        return template;
-    }
-
-    private static final String CONTENT_LENGTH_MARKER = "###############";
-    private static final String ALERT_FOOTER = "}}]\r\n";
-    private static final String MESSAGE_KEY = "Annotations.message";
-    static final String DEFAULT_ALERT_TPT_FILE = "/alert-manager-tpt.conf";
-    private static final String DEFAULT_HOST = "127.0.0.1";
-    private static final int DEFAULT_PORT = 9093;
-    private static final int DEFAULT_SKT_BUFFER_SIZE = 4 * 1024 * 1024;
-    private static final String DEFAULT_PROP_VALUE = "GLOBAL";
-    private static final Properties DEFAULT_ALERT_PROPS = new Properties();
-    private static final Properties DEFAULT_SYSTEM_PROPS = new Properties(System.getProperties());
-
-    static {
-        // https://prometheus.io/docs/alerting/latest/notifications/#alert
-        DEFAULT_ALERT_PROPS.put("Status", "firing");
-        DEFAULT_ALERT_PROPS.put("Labels.severity", "critical");
-        DEFAULT_ALERT_PROPS.put("Labels.service", "questdb");
-        DEFAULT_ALERT_PROPS.put("Labels.orgid", "GLOBAL");
-        DEFAULT_ALERT_PROPS.put("Labels.namespace", "GLOBAL");
-        DEFAULT_ALERT_PROPS.put("Labels.instance", "GLOBAL");
-        DEFAULT_ALERT_PROPS.put("Labels.cluster", "GLOBAL");
-        DEFAULT_ALERT_PROPS.put("Labels.category", "application-logs");
-        DEFAULT_ALERT_PROPS.put("Labels.alertname", "QuestDbInstanceLogs");
-        DEFAULT_ALERT_PROPS.put("Annotations.description", "ERROR");
-        DEFAULT_ALERT_PROPS.put(MESSAGE_KEY, ""); // it is in fact ignored
-
-        DEFAULT_SYSTEM_PROPS.put("ORGID", DEFAULT_PROP_VALUE);
-        DEFAULT_SYSTEM_PROPS.put("NAMESPACE", DEFAULT_PROP_VALUE);
-        DEFAULT_SYSTEM_PROPS.put("CLUSTER_NAME", DEFAULT_PROP_VALUE);
-        DEFAULT_SYSTEM_PROPS.put("INSTANCE_NAME", DEFAULT_PROP_VALUE);
     }
 }

@@ -35,6 +35,11 @@ public final class LogLevel {
     public static final int MAX = Numbers.msb(LogLevel.ADVISORY) + 1;
     public static final int MASK = ~(-1 << (MAX));
 
+    public static final String DEBUG_HEADER = " D ";
+    public static final String INFO_HEADER = " I ";
+    public static final String ERROR_HEADER = " E ";
+    public static final String ADVISORY_HEADER = " A ";
+
     private LogLevel() {
     }
 }
