@@ -34,42 +34,7 @@ import java.util.TreeSet;
 
 public class LogAlertManagerWriterTest {
     @Test
-    public void testProps() {
-        Properties expected = new Properties();
-        expected.put("Status", "firing");
-        expected.put("Labels.alertname", "QuestDbInstanceLogs");
-        expected.put("Labels.service", "questdb");
-        expected.put("Labels.category", "application-logs");
-        expected.put("Labels.severity", "critical");
-        expected.put("Labels.namespace", "$NAMESPACE");
-        expected.put("Labels.cluster", "$CLUSTER_NAME");
-        expected.put("Labels.instance", "$INSTANCE_NAME");
-        expected.put("Labels.orgid", "$ORGID");
-        expected.put("Annotations.description", "ERROR/${ORGID}/${NAMESPACE}/${CLUSTER_NAME}/$INSTANCE_NAME");
-        expected.put("Annotations.message", "");
-
-        Properties alertProperties = new Properties(expected);
-        alertProperties.put("Status", "UNEXPECTED");
-        alertProperties.put("Labels.alertname", "UNEXPECTED");
-        alertProperties.put("Labels.service", "UNEXPECTED");
-        alertProperties.put("Labels.category", "UNEXPECTED");
-        alertProperties.put("Labels.severity", "UNEXPECTED");
-        alertProperties.put("Labels.namespace", "UNEXPECTED");
-        alertProperties.put("Labels.cluster", "UNEXPECTED");
-        alertProperties.put("Labels.instance", "UNEXPECTED");
-        alertProperties.put("Labels.orgid", "UNEXPECTED");
-        alertProperties.put("Annotations.description", "UNEXPECTED");
-        alertProperties.put("Annotations.message", "UNEXPECTED");
-
-        String location = LogAlertManagerWriter.DEFAULT_ALERT_TPT_FILE;
-        try (InputStream is = LogFactory.class.getResourceAsStream(location)) {
-            if (is == null) {
-                throw new LogError("Cannot read " + location);
-            }
-            alertProperties.load(is);
-        } catch (IOException e) {
-            throw new LogError("Cannot read " + location, e);
-        }
-        Assert.assertEquals(expected, alertProperties);
+    public void testTodo() {
+       // TODO
     }
 }
