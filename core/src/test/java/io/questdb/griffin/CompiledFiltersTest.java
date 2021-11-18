@@ -446,7 +446,13 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
     @Test
     public void testI32NegNulls() throws Exception {
         final String query = "select * from x where -i32a = null or -i32b = null";
-        final String expected = "";
+        final String expected = "k\ti32a\ti32b\n" +
+                "1970-01-05T15:06:40.000000Z\t-1\tNaN\n" +
+                "1970-01-05T15:23:20.000000Z\tNaN\t-3\n" +
+                "1970-01-05T15:40:00.000000Z\tNaN\t2\n" +
+                "1970-01-05T15:48:20.000000Z\tNaN\t-3\n" +
+                "1970-01-05T15:56:40.000000Z\tNaN\tNaN\n" +
+                "1970-01-05T16:05:00.000000Z\t1\tNaN\n";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_int(-10, 10, 1) i32a," +
@@ -461,9 +467,14 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
 
     @Test
     public void testI32AddNulls() throws Exception {
-        final String query = "select * from x where i32a + 1 = null";
-//        final String query = "select * from x where i32a = null";
-        final String expected = "";
+        final String query = "select * from x where i32a + i32b = null";
+        final String expected = "k\ti32a\ti32b\n" +
+                "1970-01-05T15:06:40.000000Z\t-1\tNaN\n" +
+                "1970-01-05T15:23:20.000000Z\tNaN\t-3\n" +
+                "1970-01-05T15:40:00.000000Z\tNaN\t2\n" +
+                "1970-01-05T15:48:20.000000Z\tNaN\t-3\n" +
+                "1970-01-05T15:56:40.000000Z\tNaN\tNaN\n" +
+                "1970-01-05T16:05:00.000000Z\t1\tNaN\n";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_int(-10, 10, 1) i32a," +
@@ -479,7 +490,13 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
     @Test
     public void testI32SubNulls() throws Exception {
         final String query = "select * from x where i32a - i32b = null";
-        final String expected = "";
+        final String expected = "k\ti32a\ti32b\n" +
+                "1970-01-05T15:06:40.000000Z\t-1\tNaN\n" +
+                "1970-01-05T15:23:20.000000Z\tNaN\t-3\n" +
+                "1970-01-05T15:40:00.000000Z\tNaN\t2\n" +
+                "1970-01-05T15:48:20.000000Z\tNaN\t-3\n" +
+                "1970-01-05T15:56:40.000000Z\tNaN\tNaN\n" +
+                "1970-01-05T16:05:00.000000Z\t1\tNaN\n";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_int(-10, 10, 1) i32a," +
@@ -495,7 +512,13 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
     @Test
     public void testI32MulNulls() throws Exception {
         final String query = "select * from x where i32a * i32b = null";
-        final String expected = "";
+        final String expected = "k\ti32a\ti32b\n" +
+                "1970-01-05T15:06:40.000000Z\t-1\tNaN\n" +
+                "1970-01-05T15:23:20.000000Z\tNaN\t-3\n" +
+                "1970-01-05T15:40:00.000000Z\tNaN\t2\n" +
+                "1970-01-05T15:48:20.000000Z\tNaN\t-3\n" +
+                "1970-01-05T15:56:40.000000Z\tNaN\tNaN\n" +
+                "1970-01-05T16:05:00.000000Z\t1\tNaN\n";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_int(-10, 10, 1) i32a," +
@@ -619,7 +642,13 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
     @Test
     public void testI64AddNulls() throws Exception {
         final String query = "select * from x where i64a + i64b = null";
-        final String expected = "";
+        final String expected = "k\ti64a\ti64b\n" +
+                "1970-01-05T15:06:40.000000Z\t2\tNaN\n" +
+                "1970-01-05T15:23:20.000000Z\tNaN\t9\n" +
+                "1970-01-05T15:40:00.000000Z\tNaN\t1\n" +
+                "1970-01-05T15:48:20.000000Z\tNaN\t-5\n" +
+                "1970-01-05T15:56:40.000000Z\tNaN\tNaN\n" +
+                "1970-01-05T16:05:00.000000Z\t-2\tNaN\n";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_long(-10, 10, 1) i64a," +
@@ -635,7 +664,13 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
     @Test
     public void testI64SubNulls() throws Exception {
         final String query = "select * from x where i64a - i64b = null";
-        final String expected = "";
+        final String expected = "k\ti64a\ti64b\n" +
+                "1970-01-05T15:06:40.000000Z\t2\tNaN\n" +
+                "1970-01-05T15:23:20.000000Z\tNaN\t9\n" +
+                "1970-01-05T15:40:00.000000Z\tNaN\t1\n" +
+                "1970-01-05T15:48:20.000000Z\tNaN\t-5\n" +
+                "1970-01-05T15:56:40.000000Z\tNaN\tNaN\n" +
+                "1970-01-05T16:05:00.000000Z\t-2\tNaN\n";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_long(-10, 10, 1) i64a," +
@@ -651,7 +686,13 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
     @Test
     public void testI64MulNulls() throws Exception {
         final String query = "select * from x where i64a * i64b = null";
-        final String expected = "";
+        final String expected = "k\ti64a\ti64b\n" +
+                "1970-01-05T15:06:40.000000Z\t2\tNaN\n" +
+                "1970-01-05T15:23:20.000000Z\tNaN\t9\n" +
+                "1970-01-05T15:40:00.000000Z\tNaN\t1\n" +
+                "1970-01-05T15:48:20.000000Z\tNaN\t-5\n" +
+                "1970-01-05T15:56:40.000000Z\tNaN\tNaN\n" +
+                "1970-01-05T16:05:00.000000Z\t-2\tNaN\n";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_long(-10, 10, 1) i64a," +
