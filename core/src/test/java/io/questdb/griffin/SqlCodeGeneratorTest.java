@@ -4263,19 +4263,45 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestByFilteredBySymbolIn() throws Exception {
+    public void testLatestByFilteredBySymbolInNoIndexes() throws Exception {
+        testLatestByFilteredBySymbolIn("create table x (\n" +
+                "  ts timestamp,\n" +
+                "  node symbol,\n" +
+                "  metric symbol,\n" +
+                "  value long) \n" +
+                "  timestamp(ts) partition by day");
+    }
+
+    @Test
+    public void testLatestByFilteredBySymbolInAllIndexed() throws Exception {
+        testLatestByFilteredBySymbolIn("create table x (\n" +
+                "  ts timestamp,\n" +
+                "  node symbol index,\n" +
+                "  metric symbol index,\n" +
+                "  value long) \n" +
+                "  timestamp(ts) partition by day");
+    }
+
+    @Test
+    public void testLatestByPartiallyIndexedFilteredSymbolIn() throws Exception {
+        testLatestByFilteredBySymbolIn("create table x (\n" +
+                "  ts timestamp,\n" +
+                "  node symbol index,\n" +
+                "  metric symbol,\n" +
+                "  value long) \n" +
+                "  timestamp(ts) partition by day");
+    }
+
+    private void testLatestByFilteredBySymbolIn(String ddl) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table x (\n" +
-                    "  ts timestamp,\n" +
-                    "  node symbol,\n" +
-                    "  metric symbol,\n" +
-                    "  value long) \n" +
-                    "  timestamp(ts) partition by day", sqlExecutionContext);
+            compiler.compile(ddl, sqlExecutionContext);
 
             executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 100)");
             executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'cpu', 75)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'cpu', 25)");
             executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'memory', 2000)");
             executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'memory', 3000)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'memory', 4000)");
 
             TestUtils.assertSql(
                     compiler,
@@ -4290,34 +4316,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestByAllIndexedFilteredBySymbolIn() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table x (\n" +
-                    "  ts timestamp,\n" +
-                    "  node symbol index,\n" +
-                    "  metric symbol index,\n" +
-                    "  value long) \n" +
-                    "  timestamp(ts) partition by day", sqlExecutionContext);
-
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 100)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'cpu', 75)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'memory', 2000)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'memory', 3000)");
-
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "select metric, sum(value) from x latest by node \n" +
-                            "where node in ('node1', 'node2') and metric in ('cpu')",
-                    sink,
-                    "metric\tsum\n" +
-                            "cpu\t75\n"
-            );
-        });
-    }
-
-    @Test
-    public void testLatestByAllFilteredBySymbolIn() throws Exception {
+    public void testLatestBySelectAllFilteredBySymbolIn() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x (\n" +
                     "  ts timestamp,\n" +
