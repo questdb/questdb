@@ -645,9 +645,9 @@ struct JitCompiler {
                 }
                     break;
                 default:
-                    auto rhs = registers.top();
-                    registers.pop();
                     auto lhs = registers.top();
+                    registers.pop();
+                    auto rhs = registers.top();
                     registers.pop();
                     if (rhs.isXmm() && !lhs.isXmm()) {
                         // lhs long to double
@@ -987,8 +987,6 @@ struct JitCompiler {
                     Gp col = c.newGpq();
                     auto column_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
                     c.mov(col, ptr(cols_ptr, 8 * column_index, 8));
-                    //                    uint64_t column_addr = columns[column_index];
-                    //                    c.mov(col, column_addr);
                     Ymm data = c.newYmm();
                     c.vmovdqu(data, ymmword_ptr(col, input_index, 0));
                     registers.push(jit_value_t(data, i8));
@@ -998,9 +996,6 @@ struct JitCompiler {
                     Gp col = c.newGpq();
                     auto column_input_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
                     c.mov(col, ptr(cols_ptr, 8 * column_input_index, 8));
-                    //                    auto column_input_index = read<uint64_t>(filter_expr, filter_size, rpos);
-                    //                    uint64_t column_addr = columns[column_input_index];
-                    //                    c.mov(col, column_addr);
                     Ymm data = c.newYmm();
                     c.vmovdqu(data, ymmword_ptr(col, input_index, 1));
                     registers.push(jit_value_t(data, i16));
@@ -1010,9 +1005,6 @@ struct JitCompiler {
                     Gp col = c.newGpq();
                     auto column_input_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
                     c.mov(col, ptr(cols_ptr, 8 * column_input_index, 8));
-                    //                    auto column_input_index = read<uint64_t>(filter_expr, filter_size, rpos);
-                    //                    uint64_t column_addr = columns[column_input_index];
-                    //                    c.mov(col, column_addr);
                     Ymm data = c.newYmm();
                     c.vmovdqu(data, ymmword_ptr(col, input_index, 2));
                     registers.push(jit_value_t(data, i32));
@@ -1022,9 +1014,6 @@ struct JitCompiler {
                     Gp col = c.newGpq();
                     auto column_input_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
                     c.mov(col, ptr(cols_ptr, 8 * column_input_index, 8));
-                    //                    auto column_input_index = read<uint64_t>(filter_expr, filter_size, rpos);
-                    //                    uint64_t column_addr = columns[column_input_index];
-                    //                    c.mov(col, column_addr);
                     Ymm data = c.newYmm();
                     c.vmovdqu(data, ymmword_ptr(col, input_index, 3));
                     registers.push(jit_value_t(data, i64));
@@ -1034,9 +1023,6 @@ struct JitCompiler {
                     Gp col = c.newGpq();
                     auto column_input_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
                     c.mov(col, ptr(cols_ptr, 8 * column_input_index, 8));
-                    //                    auto column_input_index = read<uint64_t>(filter_expr, filter_size, rpos);
-                    //                    uint64_t column_addr = columns[column_input_index];
-                    //                    c.mov(col, column_addr);
                     Ymm data = c.newYmm();
                     c.vmovups(data, ymmword_ptr(col, input_index, 2));
                     registers.push(jit_value_t(data, f32));
@@ -1046,9 +1032,6 @@ struct JitCompiler {
                     Gp col = c.newGpq();
                     auto column_input_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
                     c.mov(col, ptr(cols_ptr, 8 * column_input_index, 8));
-                    //                    auto column_input_index = read<uint64_t>(filter_expr, filter_size, rpos);
-                    //                    uint64_t column_addr = columns[column_input_index];
-                    //                    c.mov(col, column_addr);
                     Ymm data = c.newYmm();
                     c.vmovupd(data, ymmword_ptr(col, input_index, 3));
                     registers.push(jit_value_t(data, f64));
@@ -1117,9 +1100,9 @@ struct JitCompiler {
                 }
                     break;
                 default:
-                    auto rhs = registers.top();
-                    registers.pop();
                     auto lhs = registers.top();
+                    registers.pop();
+                    auto rhs = registers.top();
                     registers.pop();
                     switch (ic) {
                         case AND:
