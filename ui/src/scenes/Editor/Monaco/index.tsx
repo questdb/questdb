@@ -10,8 +10,14 @@ import {
   getQueryRequestFromLastExecutedQuery,
   Request,
 } from "./utils"
+import { Text } from "components"
 import { useDispatch, useSelector } from "react-redux"
 import { actions, selectors } from "../../../store"
+import { BusEvent } from "consts"
+import { ErrorResult } from "utils/questdb"
+import * as QuestDB from "utils/questdb"
+import { NotificationType } from "types"
+import QueryResult from "../QueryResult"
 
 type IStandaloneCodeEditor = editor.IStandaloneCodeEditor
 
@@ -36,19 +42,91 @@ const MonacoEditor = () => {
   }
 
   useEffect(() => {
-    if (editorRef?.current) {
-      if (running.value) {
-        const request = running.isRefresh
-          ? getQueryRequestFromLastExecutedQuery(lastExecutedQuery)
-          : getQueryRequestFromEditor(editorRef.current)
-        console.log(request)
-      } else if (request) {
-        quest.abort()
-        dispatch(actions.query.stopRunning())
-        setRequest(undefined)
-      }
+    if (!running.value && request) {
+      quest.abort()
+      dispatch(actions.query.stopRunning())
+      setRequest(undefined)
     }
   }, [request, quest, dispatch, running])
+
+  useEffect(() => {
+    if (running.value && editorRef?.current) {
+      const request = running.isRefresh
+        ? getQueryRequestFromLastExecutedQuery(lastExecutedQuery)
+        : getQueryRequestFromEditor(editorRef.current)
+
+      if (request?.query) {
+        void quest
+          .queryRaw(request.query, { limit: "0,1000" })
+          .then((result) => {
+            setRequest(undefined)
+            dispatch(actions.query.stopRunning())
+            dispatch(actions.query.setResult(result))
+
+            if (result.type === QuestDB.Type.DDL) {
+              dispatch(
+                actions.query.addNotification({
+                  content: (
+                    <Text
+                      color="draculaForeground"
+                      ellipsis
+                      title={result.query}
+                    >
+                      {result.query}
+                    </Text>
+                  ),
+                }),
+              )
+              bus.trigger(BusEvent.MSG_QUERY_SCHEMA)
+            }
+
+            if (result.type === QuestDB.Type.DQL) {
+              setLastExecutedQuery(request.query)
+              dispatch(
+                actions.query.addNotification({
+                  content: (
+                    <QueryResult {...result.timings} rowCount={result.count} />
+                  ),
+                  sideContent: (
+                    <Text
+                      color="draculaForeground"
+                      ellipsis
+                      title={result.query}
+                    >
+                      {result.query}
+                    </Text>
+                  ),
+                }),
+              )
+              bus.trigger(BusEvent.MSG_QUERY_DATASET, result)
+            }
+          })
+          .catch((error: ErrorResult) => {
+            setRequest(undefined)
+            dispatch(actions.query.stopRunning())
+            dispatch(
+              actions.query.addNotification({
+                content: <Text color="draculaRed">{error.error}</Text>,
+                sideContent: (
+                  <Text
+                    color="draculaForeground"
+                    ellipsis
+                    title={request.query}
+                  >
+                    {request.query}
+                  </Text>
+                ),
+                type: NotificationType.ERROR,
+              }),
+            )
+          })
+
+        setRequest(request)
+      } else {
+        dispatch(actions.query.stopRunning())
+      }
+    }
+  }, [quest, dispatch, running])
 
   useEffect(() => {
     const editor = editorRef?.current
