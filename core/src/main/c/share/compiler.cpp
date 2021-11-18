@@ -29,6 +29,7 @@
 using namespace asmjit;
 
 struct JitGlobalContext {
+    //todo: is it thread-safe? add mutex
     JitRuntime rt;
 };
 
@@ -499,7 +500,7 @@ struct JitCompiler {
     void compile(const uint8_t *filter_expr, int64_t filter_size, uint32_t options) {
         //todo: process options
         bool null_check = true;
-        if (options != 0) {
+        if (options == 0) {
             scalar_loop(filter_expr, filter_size, null_check);
         } else {
             uint32_t step = 4;
@@ -576,28 +577,28 @@ struct JitCompiler {
                     break;
                 case IMM_I1: {
                     asmjit::x86::Gp val = c.newGpq();
-                    auto value = read<uint64_t>(filter_expr, filter_size, rpos);
+                    auto value = read<int64_t>(filter_expr, filter_size, rpos);
                     c.mov(val, value);
                     registers.push(jit_value_t(val, i8, kConst));
                 }
                     break;
                 case IMM_I2: {
                     asmjit::x86::Gp val = c.newGpq();
-                    auto value = read<uint64_t>(filter_expr, filter_size, rpos);
+                    auto value = read<int64_t>(filter_expr, filter_size, rpos);
                     c.mov(val, value);
                     registers.push(jit_value_t(val, i16, kConst));
                 }
                     break;
                 case IMM_I4: {
                     asmjit::x86::Gp val = c.newGpq();
-                    auto value = read<uint64_t>(filter_expr, filter_size, rpos);
+                    auto value = read<int64_t>(filter_expr, filter_size, rpos);
                     c.mov(val, value);
                     registers.push(jit_value_t(val, i32, kConst));
                 }
                     break;
                 case IMM_I8: {
                     asmjit::x86::Gp val = c.newGpq();
-                    auto value = read<uint64_t>(filter_expr, filter_size, rpos);
+                    auto value = read<int64_t>(filter_expr, filter_size, rpos);
                     c.mov(val, value);
                     registers.push(jit_value_t(val, i64, kConst));
                 }
