@@ -28,9 +28,17 @@
 
 using namespace asmjit;
 
+class JitErrorHandler : public asmjit::ErrorHandler{
+public:
+    void handleError(asmjit::Error /*err*/, const char *msg, asmjit::BaseEmitter * /*origin*/) override {
+        fprintf(stderr, "ERROR: %s\n", msg);
+    }
+};
+
 struct JitGlobalContext {
-    //todo: is it thread-safe? add mutex
+    //rt allocator is thead-safe
     JitRuntime rt;
+    JitErrorHandler errorHandler;
 };
 
 static JitGlobalContext gGlobalContext;
@@ -490,6 +498,7 @@ bool is_float(jit_value_t &v) {
     return v.dtype() == f32 || v.dtype() == f64;
 }
 
+
 using CompiledFn = int64_t (*)(int64_t *cols, int64_t cols_count, int64_t *rows, int64_t rows_count,
                                int64_t rows_start_offset);
 
@@ -628,7 +637,36 @@ struct JitCompiler {
                         c.subpd(r, arg.xmm());
                         arg = r;
                     } else {
-                        c.neg(arg.gp());
+                        if(!null_check) {
+                            c.neg(arg.gp());
+                        } else {
+                            switch (arg.dtype()) {
+                                case i8:
+                                case i16:
+                                    c.neg(arg.gp());
+                                    break;
+                                case i32:
+                                {
+                                    asmjit::x86::Gp t = c.newGpq();
+                                    c.mov(t, arg.gp());
+                                    c.cmp(t, int_null);
+                                    c.cmove(arg.gp(), t);
+                                }
+                                    break;
+                                case i64:
+                                {
+                                    asmjit::x86::Gp t = c.newGpq();
+                                    c.mov(t, arg.gp());
+                                    asmjit::x86::Gp n = c.newGpq();
+                                    c.mov(n, long_null);
+                                    c.cmp(t, n);
+                                    c.cmove(arg.gp(), t);
+                                }
+                                    break;
+                                default:
+                                    break;
+                            }
+                        }
                     }
                     registers.push(arg);
                 }
@@ -837,14 +875,23 @@ struct JitCompiler {
                                     c.add(lhs.gp(), rhs.gp());
                                 } else {
                                     auto nc = (lhs.dtype() == i32 || rhs.dtype() == i32) ? int_null : long_null;
-                                    asmjit::x86::Gp n = c.newGpq();
+                                    asmjit::x86::Gp t = c.newGpq();
+                                    c.mov(t, lhs.gp());
                                     asmjit::x86::Mem m = asmjit::x86::Mem(lhs.gp(), rhs.gp(), 0, 0);
                                     c.lea(lhs.gp(), m);
-                                    c.movabs(n, nc);
-                                    c.cmp(lhs.gp(), n);
-                                    c.cmove(lhs.gp(), lhs.gp());
-                                    c.cmp(rhs.gp(), n);
-                                    c.cmove(lhs.gp(), lhs.gp());
+                                    if(nc == int_null) {
+                                        c.cmp(t, nc);
+                                        c.cmove(lhs.gp(), t);
+                                        c.cmp(rhs.gp(), nc);
+                                        c.cmove(lhs.gp(), rhs.gp());
+                                    } else {
+                                        asmjit::x86::Gp n = c.newGpq();
+                                        c.mov(n, nc);
+                                        c.cmp(t, n);
+                                        c.cmove(lhs.gp(), t);
+                                        c.cmp(rhs.gp(), n);
+                                        c.cmove(lhs.gp(), rhs.gp());
+                                    }
                                 }
                             }
                             registers.push(lhs);
@@ -862,10 +909,10 @@ struct JitCompiler {
                                     c.sub(lhs.gp(), rhs.gp());
                                     asmjit::x86::Gp n = c.newGpq();
                                     c.movabs(n, nc);
-                                    c.cmp(t, lhs.gp());
+                                    c.cmp(t, n);
                                     c.cmove(lhs.gp(), t);
                                     c.cmp(rhs.gp(), n);
-                                    c.cmove(lhs.gp(), lhs.gp());
+                                    c.cmove(lhs.gp(), rhs.gp());
                                 }
                             }
                             registers.push(lhs);
@@ -883,10 +930,10 @@ struct JitCompiler {
                                     c.imul(lhs.gp(), rhs.gp());
                                     asmjit::x86::Gp n = c.newGpq();
                                     c.movabs(n, nc);
-                                    c.cmp(t, lhs.gp());
+                                    c.cmp(t, n);
                                     c.cmove(lhs.gp(), t);
                                     c.cmp(rhs.gp(), n);
-                                    c.cmove(lhs.gp(), lhs.gp());
+                                    c.cmove(lhs.gp(), rhs.gp());
                                 }
                             }
                             registers.push(lhs);
@@ -1291,7 +1338,7 @@ struct JitCompiler {
     x86::Mem int_true_mask = c.newConst(ConstPool::kScopeLocal, &int_true_mask_array, 32);
 };
 
-JNIEXPORT long JNICALL
+JNIEXPORT jlong JNICALL
 Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
                                                     jclass cl,
                                                     jlong filterAddress,
@@ -1301,7 +1348,7 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
     code.init(gGlobalContext.rt.environment());
     FileLogger logger(stdout);
     code.setLogger(&logger);
-
+    code.setErrorHandler(&gGlobalContext.errorHandler);
     x86::Compiler c(&code);
     JitCompiler compiler(c);
 
@@ -1311,15 +1358,14 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
 
     c.finalize();
 
-    std::cerr << "compiled" << std::endl;
     CompiledFn fn;
     Error err = gGlobalContext.rt.add(&fn, &code);
     if (err) {
         //todo: pass error to java side
         std::cerr << "some error happened" << std::endl;
     }
-
-    return reinterpret_cast<long>(fn);
+    auto r = reinterpret_cast<uint64_t>(fn);
+    return r;
 }
 
 JNIEXPORT void JNICALL
@@ -1328,7 +1374,7 @@ Java_io_questdb_jit_FiltersCompiler_freeFunction(JNIEnv *e, jclass cl, jlong fnA
     gGlobalContext.rt.release(fn);
 }
 
-JNIEXPORT long JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv *e,
+JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv *e,
                                                                         jclass cl,
                                                                         jlong fnAddress,
                                                                         jlong colsAddress,
