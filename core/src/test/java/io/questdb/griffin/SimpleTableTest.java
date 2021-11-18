@@ -41,4 +41,22 @@ public class SimpleTableTest extends AbstractGriffinTest {
         assertSql("select ts from tab1 where id > 1", "ts\n" +
                 "2020-01-01T00:00:00.000000Z\n");
     }
+
+    @Test
+    public void testTimeStampWithTimezone() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t (timestamp timestamp) timestamp(timestamp);", sqlExecutionContext);
+            executeInsert("insert into t values (1);");
+
+            String expected1 = "time\n" +
+                                "1970-01-01T00:00:00.000001Z\n";
+
+            assertSql("select timestamp time from t;", expected1);
+            
+            String expected2 = "timestamp\n" +
+                               "1970-01-01T00:00:00.000001Z\n";
+
+            assertSql("select timestamp with time zone from t;", expected2);
+        });
+    }
 }

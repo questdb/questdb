@@ -1011,9 +1011,21 @@ class ExpressionParser {
                         }
                     } else {
                         ExpressionNode last;
-                        if ((last = this.opStack.peek()) != null && SqlKeywords.isTimestampKeyword(last.token) && (SqlKeywords.isWithKeyword(tok) || SqlKeywords.isTimeKeyword(tok) || SqlKeywords.isZoneKeyword(tok))) {
-                            // Skip "with time zone" part of "timestamp with time zone" for Postgres compatibility #740, #980
-                            continue;
+                        if ((last = this.opStack.peek()) != null && SqlKeywords.isTimestampKeyword(last.token) && SqlKeywords.isWithKeyword(tok)) {
+                            CharSequence withTok = GenericLexer.immutableOf(tok);
+                            int withTokPosition = lexer.getPosition();
+
+                            CharSequence timeTok = SqlUtil.fetchNext(lexer);
+                            if (SqlKeywords.isTimeKeyword(timeTok)) {
+                                CharSequence zoneTok = SqlUtil.fetchNext(lexer);
+                                if (SqlKeywords.isZoneKeyword(zoneTok)) {
+                                    // Skip "with time zone" part of "timestamp with time zone" for Postgres compatibility #740, #980
+                                    continue;
+                                }
+                            }
+
+                            lexer.backTo(withTokPosition, withTok);
+                            tok = withTok;
                         }
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input
