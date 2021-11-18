@@ -55,17 +55,16 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private BooleanSupplier next;
     private final BooleanSupplier nextRow = this::nextRow;
     private final BooleanSupplier nextPage = this::nextPage;
-    private final long filterFnAddress;
+    private long filterFnAddress;
+    private final long filterAddress;
+    private final long filterSize;
 
     public CompiledFilterRecordCursor(@NotNull IntList columnIndexes, MemoryAR filter) {
         this.recordA = new PageFrameRecord(columnIndexes);
         //todo: what if filter changed outside?
-        final long filterSize = filter.getAppendOffset();
+        filterSize = filter.getAppendOffset();
         filter.jumpTo(0);
-
-        final long filterAddr = filter.getPageAddress(0);
-        //todo: error reporting
-        this.filterFnAddress = FiltersCompiler.compileFunction(filterAddr, filterSize, 0);
+        filterAddress = filter.getPageAddress(0);
     }
 
     @Override
@@ -116,6 +115,9 @@ class CompiledFilterRecordCursor implements RecordCursor {
         this.pageFrameCursor = factory.getPageFrameCursor(executionContext);
         this.metadata = factory.getMetadata();
         this.next = nextPage;
+        //todo: error reporting
+        //todo: how not to recompile it?
+        this.filterFnAddress = FiltersCompiler.compileFunction(filterAddress, filterSize, 0);
     }
 
     private boolean nextRow() {
