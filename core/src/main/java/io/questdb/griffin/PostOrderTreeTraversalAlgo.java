@@ -56,7 +56,6 @@ final public class PostOrderTreeTraversalAlgo {
     }
 
     public void traverse(ExpressionNode node, Visitor visitor) throws SqlException {
-
         backup();
         try {
             // post-order iterative tree traversal
@@ -69,6 +68,10 @@ final public class PostOrderTreeTraversalAlgo {
 
             while (!stack.isEmpty() || node != null) {
                 if (node != null) {
+                    if (!visitor.descent(node)) {
+                        node = null;
+                        continue;
+                    }
                     stack.push(node);
                     indexStack.push(0);
                     node = node.rhs;
@@ -103,5 +106,22 @@ final public class PostOrderTreeTraversalAlgo {
 
     public interface Visitor {
         void visit(ExpressionNode node) throws SqlException;
+
+        /**
+         * Called on each node in the descent order. When this method returns false,
+         * the algorithm does not visit the current node, nor its children nodes.
+         *
+         * Example. For the tree like
+         *     A
+         *   /  \
+         *  B   C
+         * the visit order will be:
+         * C -> B -> A
+         * while the descent order will be:
+         * A -> B -> C
+         */
+        default boolean descent(ExpressionNode node) throws SqlException {
+            return true;
+        }
     }
 }
