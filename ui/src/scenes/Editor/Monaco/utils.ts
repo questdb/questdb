@@ -36,6 +36,14 @@ export type Request = Readonly<{
   column: number
 }>
 
+export const getSelectedText = (
+  editor: IStandaloneCodeEditor,
+): string | undefined => {
+  const model = editor.getModel()
+  const selection = editor.getSelection()
+  return model && selection ? model.getValueInRange(selection) : undefined
+}
+
 export const getQueryFromCursor = (
   editor: IStandaloneCodeEditor,
 ): Request | undefined => {
@@ -156,19 +164,19 @@ export const getQueryFromSelection = (
   editor: IStandaloneCodeEditor,
 ): Request | undefined => {
   const selection = editor.getSelection()
-  if (selection && selection.toString().length === 0) {
-    const query = selection.toString()
-    let n = query.length
-    let column = query.charAt(n)
+  const selectedText = getSelectedText(editor)
+  if (selection && selectedText) {
+    let n = selectedText.length
+    let column = selectedText.charAt(n)
 
     while (n > 0 && (column === " " || column === "\n" || column === ";")) {
       n--
-      column = query.charAt(n)
+      column = selectedText.charAt(n)
     }
 
     if (n > 0) {
       return {
-        query: query.substr(0, n + 1),
+        query: selectedText.substr(0, n + 1),
         row: selection.startLineNumber,
         column: selection.startColumn,
       }
@@ -179,12 +187,11 @@ export const getQueryFromSelection = (
 export const getQueryRequestFromEditor = (
   editor: IStandaloneCodeEditor,
 ): Request | undefined => {
-  const model = editor.getModel()
-  const selection = editor.getSelection()
-  if (model && selection && model.getValueInRange(selection).length === 0) {
-    return getQueryFromCursor(editor)
+  const selectedText = getSelectedText(editor)
+  if (selectedText) {
+    return getQueryFromSelection(editor)
   }
-  return getQueryFromSelection(editor)
+  return getQueryFromCursor(editor)
 }
 
 export const getQueryRequestFromLastExecutedQuery = (
