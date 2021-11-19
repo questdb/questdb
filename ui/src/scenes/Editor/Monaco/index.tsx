@@ -10,7 +10,7 @@ import {
   getQueryRequestFromLastExecutedQuery,
   Request,
 } from "./utils"
-import { Text } from "components"
+import { PaneContent, Text } from "components"
 import { useDispatch, useSelector } from "react-redux"
 import { actions, selectors } from "../../../store"
 import { BusEvent } from "consts"
@@ -18,11 +18,18 @@ import { ErrorResult } from "utils/questdb"
 import * as QuestDB from "utils/questdb"
 import { NotificationType } from "types"
 import QueryResult from "../QueryResult"
+import Loader from "../Loader"
+import styled from "styled-components"
 
 type IStandaloneCodeEditor = editor.IStandaloneCodeEditor
 
+const Content = styled(PaneContent)`
+  position: relative;
+  overflow: hidden;
+`
+
 const MonacoEditor = () => {
-  const { editorRef } = useEditor()
+  const { editorRef, insertTextAtCursor } = useEditor()
   const { loadPreferences, savePreferences } = usePreferences()
   const { quest } = useContext(QuestContext)
   const [request, setRequest] = useState<Request | undefined>()
@@ -36,9 +43,16 @@ const MonacoEditor = () => {
   ) => {
     if (editorRef) {
       editorRef.current = editor
+
+      // Support legacy bus events for non-react codebase
+      window.bus.on(BusEvent.MSG_EDITOR_INSERT_COLUMN, (_event, column) => {
+        insertTextAtCursor(column)
+      })
     }
     monaco.editor.defineTheme("dracula", dracula)
     monaco.editor.setTheme("dracula")
+
+    loadPreferences(editor)
   }
 
   useEffect(() => {
@@ -137,15 +151,18 @@ const MonacoEditor = () => {
   }, [running, savePreferences])
 
   return (
-    <Editor
-      defaultLanguage="sql"
-      onMount={handleEditorDidMount}
-      options={{
-        fontSize: 14,
-        fontFamily: theme.fontMonospace,
-        renderLineHighlight: "none",
-      }}
-    />
+    <Content>
+      <Editor
+        defaultLanguage="sql"
+        onMount={handleEditorDidMount}
+        options={{
+          fontSize: 14,
+          fontFamily: theme.fontMonospace,
+          renderLineHighlight: "none",
+        }}
+      />
+      <Loader show={!!request} />
+    </Content>
   )
 }
 

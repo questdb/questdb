@@ -17,6 +17,22 @@ const Dracula: editor.IStandaloneThemeData = {
       token: "string",
     },
     {
+      foreground: "f1fa8c",
+      token: "string.sql",
+    },
+    {
+      foreground: "ff79c6",
+      token: "operator.sql",
+    },
+    {
+      foreground: "8be9fd",
+      token: "predefined.sql",
+    },
+    {
+      foreground: "8be9fd",
+      token: "function",
+    },
+    {
       foreground: "bd93f9",
       token: "constant.numeric",
     },

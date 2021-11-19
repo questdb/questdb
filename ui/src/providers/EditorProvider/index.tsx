@@ -3,11 +3,9 @@ import React, {
   MutableRefObject,
   PropsWithChildren,
   useContext,
-  useEffect,
   useRef,
 } from "react"
 import { editor } from "monaco-editor"
-import { BusEvent } from "../../consts"
 
 type IStandaloneCodeEditor = editor.IStandaloneCodeEditor
 
@@ -39,13 +37,6 @@ export const EditorProvider = ({ children }: PropsWithChildren<{}>) => {
   const insertTextAtCursor = (text: string) => {
     editorRef?.current?.trigger("keyboard", "type", { text })
   }
-
-  // Support legacy bus events for non-react codebase
-  useEffect(() => {
-    window.bus.on(BusEvent.MSG_EDITOR_INSERT_COLUMN, (_event, column) => {
-      insertTextAtCursor(column)
-    })
-  }, [])
 
   return (
     <EditorContext.Provider value={{ editorRef, getValue, insertTextAtCursor }}>
