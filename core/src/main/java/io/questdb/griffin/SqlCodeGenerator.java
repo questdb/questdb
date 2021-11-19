@@ -1246,7 +1246,7 @@ public class SqlCodeGenerator implements Mutable {
                 if (!model.isUpdate()) {
                     return tableRecordCursorFactory;
                 }
-                return new UpdateStatementBuilder(tableRecordCursorFactory);
+                return new UpdateStatementBuilder(model.getModelPosition(), tableRecordCursorFactory);
             }
         }
         return generateSubQuery(model, executionContext);
@@ -1995,7 +1995,10 @@ public class SqlCodeGenerator implements Mutable {
             columnCrossIndex.add(timestampIndex);
         }
 
-        return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
+        if (!model.isUpdate()) {
+            return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
+        }
+        return ((UpdateStatementBuilder)factory).withSelectChoose(selectMetadata, columnCrossIndex);
     }
 
     private RecordCursorFactory generateSelectCursor(QueryModel model, SqlExecutionContext executionContext) throws SqlException {

@@ -760,7 +760,6 @@ public class TableWriter implements Closeable {
             updateMemory = getUpdateColumnsMemory(columnCount);
             Function filter = updateStatement.getRowIdFilter();
             Function postJoinFilter = updateStatement.getPostJoinFilter();
-            ObjList<Function> resultFunctions = updateStatement.getValuesFunctions();
 
             while (recordCursor.hasNext()) {
                 if (filter != null && !filter.getBool(masterRecord)) {
@@ -786,11 +785,7 @@ public class TableWriter implements Closeable {
                     currentPartitionIndex = partitionIndex;
                 }
 
-                if (resultFunctions != null) {
-                    updateColumnValuesUsingFunctions(updateToColumnMap, columnCount, updateMemory, resultFunctions, rowId, record);
-                } else {
-                    updateColumnValues(updateToColumnMap, columnCount, updateMemory, rowId, record);
-                }
+                updateColumnValues(updateToColumnMap, columnCount, updateMemory, rowId, updateStatement.getColumnMapper(), record);
                 rowsUpdated++;
             }
         } finally {
@@ -813,6 +808,7 @@ public class TableWriter implements Closeable {
             int columnCount,
             ObjList<MemoryCMARW> updateMemory,
             long rowId,
+            RecordColumnMapper columnMapper,
             Record record
     ) throws SqlException {
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -821,82 +817,32 @@ public class TableWriter implements Closeable {
 
             switch (columnType) {
                 case ColumnType.INT:
-                    primaryColMem.putInt(rowId << 2, record.getInt(columnIndex));
+                    primaryColMem.putInt(rowId << 2, columnMapper.getInt(record, columnIndex));
                     break;
                 case ColumnType.FLOAT:
-                    primaryColMem.putFloat(rowId << 2, record.getFloat(columnIndex));
+                    primaryColMem.putFloat(rowId << 2, columnMapper.getFloat(record, columnIndex));
                     break;
                 case ColumnType.LONG:
-                    primaryColMem.putLong(rowId << 3, record.getLong(columnIndex));
+                    primaryColMem.putLong(rowId << 3, columnMapper.getLong(record, columnIndex));
                     break;
                 case ColumnType.TIMESTAMP:
-                    primaryColMem.putLong(rowId << 3, record.getTimestamp(columnIndex));
+                    primaryColMem.putLong(rowId << 3, columnMapper.getTimestamp(record, columnIndex));
                     break;
                 case ColumnType.DATE:
-                    primaryColMem.putLong(rowId << 3, record.getDate(columnIndex));
+                    primaryColMem.putLong(rowId << 3, columnMapper.getDate(record, columnIndex));
                     break;
                 case ColumnType.DOUBLE:
-                    primaryColMem.putDouble(rowId << 3, record.getDouble(columnIndex));
+                    primaryColMem.putDouble(rowId << 3, columnMapper.getDouble(record, columnIndex));
                     break;
                 case ColumnType.SHORT:
-                    primaryColMem.putShort(rowId << 1, record.getShort(columnIndex));
+                    primaryColMem.putShort(rowId << 1, columnMapper.getShort(record,columnIndex));
                     break;
                 case ColumnType.CHAR:
-                    primaryColMem.putChar(rowId << 1, record.getChar(columnIndex));
+                    primaryColMem.putChar(rowId << 1, columnMapper.getChar(record, columnIndex));
                     break;
                 case ColumnType.BYTE:
                 case ColumnType.BOOLEAN:
-                    primaryColMem.putLong(rowId, record.getByte(columnIndex));
-                    break;
-                default:
-                    throw SqlException.$(0, "Column type ")
-                            .put(ColumnType.nameOf(columnType))
-                            .put(" not supported for updates");
-            }
-        }
-    }
-
-    private void updateColumnValuesUsingFunctions(
-            IntList updateToColumnMap,
-            int columnCount,
-            ObjList<MemoryCMARW> updateMemory,
-            ObjList<Function> resultFunctions,
-            long rowId,
-            Record record
-    ) throws SqlException {
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            int columnType = metadata.getColumnType(updateToColumnMap.get(columnIndex));
-            MemoryCMARW primaryColMem = updateMemory.get(columnIndex);
-            Function columnFunction = resultFunctions.get(columnIndex);
-
-            switch (columnType) {
-                case ColumnType.INT:
-                    primaryColMem.putInt(rowId << 2, columnFunction.getInt(record));
-                    break;
-                case ColumnType.FLOAT:
-                    primaryColMem.putFloat(rowId << 2, columnFunction.getFloat(record));
-                    break;
-                case ColumnType.LONG:
-                    primaryColMem.putLong(rowId << 3, columnFunction.getLong(record));
-                    break;
-                case ColumnType.TIMESTAMP:
-                    primaryColMem.putLong(rowId << 3, columnFunction.getTimestamp(record));
-                    break;
-                case ColumnType.DATE:
-                    primaryColMem.putLong(rowId << 3, columnFunction.getDate(record));
-                    break;
-                case ColumnType.DOUBLE:
-                    primaryColMem.putDouble(rowId << 3, columnFunction.getDouble(record));
-                    break;
-                case ColumnType.SHORT:
-                    primaryColMem.putShort(rowId << 1, columnFunction.getShort(record));
-                    break;
-                case ColumnType.CHAR:
-                    primaryColMem.putChar(rowId << 1, columnFunction.getChar(record));
-                    break;
-                case ColumnType.BYTE:
-                case ColumnType.BOOLEAN:
-                    primaryColMem.putLong(rowId, columnFunction.getByte(record));
+                    primaryColMem.putLong(rowId, columnMapper.getByte(record, columnIndex));
                     break;
                 default:
                     throw SqlException.$(0, "Column type ")

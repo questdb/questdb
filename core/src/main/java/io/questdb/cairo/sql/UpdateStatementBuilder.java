@@ -25,17 +25,23 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.UpdateModel;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 import java.io.Closeable;
+import java.io.IOException;
 
 public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
+
+    private final static RecordColumnMapper IDENTICAL_COLUMN_MAPPER = new IdenticalMapper();
+    private final int position;
     private RecordMetadata setValuesMetadata;
     private ObjList<Function> setValuesFunctions;
     private Function masterFilter;
@@ -43,8 +49,10 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
     private RecordCursorFactory rowIdFactory;
     private RecordMetadata joinMetadata;
     private UpdateStatementMasterCursorFactory joinRecordCursorFactory;
+    private IntList selectChooseColumnMaps;
 
-    public UpdateStatementBuilder(RecordCursorFactory noSelectFactory) {
+    public UpdateStatementBuilder(int position, RecordCursorFactory noSelectFactory) {
+        this.position = position;
         this.rowIdFactory = noSelectFactory;
     }
 
@@ -53,7 +61,7 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
             TableReaderMetadata updateTableMetadata,
             BindVariableService bindVariableService
     ) throws SqlException {
-        if (joinRecordCursorFactory == null && setValuesFunctions == null) {
+        if (joinRecordCursorFactory == null && setValuesFunctions == null && selectChooseColumnMaps == null) {
             // This is update of column to the same values, e.g. changing nothing
             return UpdateStatement.EMPTY;
         }
@@ -77,15 +85,24 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
             }
         }
 
+        RecordColumnMapper columnMapper;
+        if (setValuesFunctions != null) {
+            columnMapper = new FunctionsColumnMapper().of(setValuesFunctions);
+        } else if (selectChooseColumnMaps != null) {
+            columnMapper = new IndexColumnMapper().of(selectChooseColumnMaps);
+        } else {
+            columnMapper = IDENTICAL_COLUMN_MAPPER;
+        }
+
         UpdateStatement updateStatement = new UpdateStatement(
                 updateModel.getUpdateTableName(),
                 updateModel.getPosition(),
                 rowIdFactory,
                 masterFilter,
                 postJoinFilter,
-                setValuesFunctions,
                 valuesResultMetadata,
-                joinRecordCursorFactory
+                joinRecordCursorFactory,
+                columnMapper
         );
 
         // Closing responsibility is within resulting updateStatement
@@ -116,7 +133,7 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
 
     @Override
     public RecordMetadata getMetadata() {
-        return  setValuesMetadata != null ? setValuesMetadata : (joinMetadata != null ? joinMetadata : rowIdFactory.getMetadata());
+        return setValuesMetadata != null ? setValuesMetadata : (joinMetadata != null ? joinMetadata : rowIdFactory.getMetadata());
     }
 
     @Override
@@ -139,7 +156,16 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
         return this;
     }
 
-    public UpdateStatementBuilder withSelectVirtual(RecordMetadata virtualMetadata, ObjList<Function> virtualFunctions) {
+    public UpdateStatementBuilder withSelectChoose(GenericRecordMetadata selectChooseMetadata, IntList selectChooseColumnMaps) {
+        this.setValuesMetadata = selectChooseMetadata;
+        this.selectChooseColumnMaps = selectChooseColumnMaps;
+        return this;
+    }
+
+    public UpdateStatementBuilder withSelectVirtual(RecordMetadata virtualMetadata, ObjList<Function> virtualFunctions) throws SqlException {
+        if (setValuesMetadata != null) {
+            throw SqlException.$(position, "UPDATE of this shape not supported. Cannot compose select-virtual and select-choose");
+        }
         this.setValuesMetadata = virtualMetadata;
         this.setValuesFunctions = virtualFunctions;
         return this;
@@ -169,5 +195,60 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
                 return toColumnType == ColumnType.DOUBLE;
         }
         return false;
+    }
+
+    static class IdenticalMapper implements RecordColumnMapper {
+        @Override
+        public void close() throws IOException {
+        }
+
+        @Override
+        public long getByte(Record record, int columnIndex) {
+            return record.getByte(columnIndex);
+        }
+
+        @Override
+        public char getChar(Record record, int columnIndex) {
+            return record.getChar(columnIndex);
+        }
+
+        @Override
+        public long getDate(Record record, int columnIndex) {
+            return record.getDate(columnIndex);
+        }
+
+        @Override
+        public double getDouble(Record record, int columnIndex) {
+            return record.getDouble(columnIndex);
+        }
+
+        @Override
+        public float getFloat(Record record, int columnIndex) {
+            return record.getFloat(columnIndex);
+        }
+
+        @Override
+        public int getInt(Record record, int columnIndex) {
+            return record.getInt(columnIndex);
+        }
+
+        @Override
+        public long getLong(Record record, int columnIndex) {
+            return record.getLong(columnIndex);
+        }
+
+        @Override
+        public short getShort(Record record, int columnIndex) {
+            return record.getShort(columnIndex);
+        }
+
+        @Override
+        public long getTimestamp(Record record, int columnIndex) {
+            return record.getTimestamp(columnIndex);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        }
     }
 }

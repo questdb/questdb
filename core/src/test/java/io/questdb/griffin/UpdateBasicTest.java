@@ -140,6 +140,34 @@ public class UpdateBasicTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testUpdateWithJoinNoVirtual() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            compiler.compile("create table down as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " x * 100 as y" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET x = y" +
+                    " FROM down " +
+                    " WHERE up.ts = down.ts and x < 4");
+
+            assertSql("up", "ts\tx\n" +
+                    "1970-01-01T00:00:00.000000Z\t100\n" +
+                    "1970-01-01T00:00:01.000000Z\t200\n" +
+                    "1970-01-01T00:00:02.000000Z\t300\n" +
+                    "1970-01-01T00:00:03.000000Z\t4\n" +
+                    "1970-01-01T00:00:04.000000Z\t5\n");
+        });
+    }
+
     private void applyUpdate(UpdateStatement updateStatement) throws SqlException {
         if (updateStatement != UpdateStatement.EMPTY) {
             try (TableWriter tableWriter = engine.getWriter(
