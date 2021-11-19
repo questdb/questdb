@@ -99,18 +99,27 @@ inline static void avx2_cmp_neq(asmjit::x86::Compiler &c, jit_value_t &dst, jit_
 }
 
 inline static void avx2_not_null(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &rhs) {
-    int64_t lnulls_a[4] = {long_null, long_null, long_null, long_null};
-    int64_t lneg_a[4] = {-1ll, -1ll, -1ll, -1ll};
-    int32_t inulls_a[8] = {int_null, int_null, int_null, int_null, int_null, int_null, int_null, int_null};
-    asmjit::x86::Mem lnulls = c.newConst(asmjit::ConstPool::kScopeLocal, &lnulls_a, 32);
-    asmjit::x86::Mem inulls = c.newConst(asmjit::ConstPool::kScopeLocal, &inulls_a, 32);
-    asmjit::x86::Mem lneg = c.newConst(asmjit::ConstPool::kScopeLocal, &lneg_a, 32);
     asmjit::x86::Ymm lmask = c.newYmm();
     asmjit::x86::Ymm rmask = c.newYmm();
-    c.vpcmpeqq(lmask, lhs.ymm(), lnulls);
-    c.vpcmpeqq(rmask, rhs.ymm(), lnulls);
-    c.vpor(dst.ymm(), lmask, rmask);
-    c.vpxor(dst.ymm(), dst.ymm(), lneg);
+    if(dst.dtype() == i32 || rhs.dtype() == i32) {
+        int32_t inulls_a[8] = {int_null, int_null, int_null, int_null, int_null, int_null, int_null, int_null};
+        int32_t ineg_a[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
+        asmjit::x86::Mem inulls = c.newConst(asmjit::ConstPool::kScopeLocal, &inulls_a, 32);
+        asmjit::x86::Mem ineg = c.newConst(asmjit::ConstPool::kScopeLocal, &ineg_a, 32);
+        c.vpcmpeqd(lmask, lhs.ymm(), inulls);
+        c.vpcmpeqd(rmask, rhs.ymm(), inulls);
+        c.vpor(dst.ymm(), lmask, rmask);
+        c.vpxor(dst.ymm(), dst.ymm(), ineg);
+    } else {
+        int64_t lnulls_a[4] = {long_null, long_null, long_null, long_null};
+        int64_t lneg_a[4] = {-1ll, -1ll, -1ll, -1ll};
+        asmjit::x86::Mem lneg = c.newConst(asmjit::ConstPool::kScopeLocal, &lneg_a, 32);
+        asmjit::x86::Mem lnulls = c.newConst(asmjit::ConstPool::kScopeLocal, &lnulls_a, 32);
+        c.vpcmpeqq(lmask, lhs.ymm(), lnulls);
+        c.vpcmpeqq(rmask, rhs.ymm(), lnulls);
+        c.vpor(dst.ymm(), lmask, rmask);
+        c.vpxor(dst.ymm(), dst.ymm(), lneg);
+    }
 }
 
 inline static void avx2_ignore_null(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &rhs) {
@@ -121,9 +130,15 @@ inline static void avx2_ignore_null(asmjit::x86::Compiler &c, jit_value_t &dst, 
 }
 
 inline static void avx2_select_byte(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &mask) {
-    int64_t lnulls_a[4] = {long_null, long_null, long_null, long_null};
-    asmjit::x86::Mem lnulls = c.newConst(asmjit::ConstPool::kScopeLocal, &lnulls_a, 32);
-    c.vpblendvb(dst.ymm(), lhs.ymm(), lnulls, mask.ymm());
+    if(lhs.dtype() == i32) {
+        int32_t inulls_a[8] = {int_null, int_null, int_null, int_null, int_null, int_null, int_null, int_null};
+        asmjit::x86::Mem inulls = c.newConst(asmjit::ConstPool::kScopeLocal, &inulls_a, 32);
+        c.vpblendvb(dst.ymm(), lhs.ymm(), inulls, mask.ymm());
+    } else {
+        int64_t lnulls_a[4] = {long_null, long_null, long_null, long_null};
+        asmjit::x86::Mem lnulls = c.newConst(asmjit::ConstPool::kScopeLocal, &lnulls_a, 32);
+        c.vpblendvb(dst.ymm(), lhs.ymm(), lnulls, mask.ymm());
+    }
 }
 
 inline static void avx2_cmp_gt(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &rhs) {
@@ -369,7 +384,8 @@ inline static void avx2_div(asmjit::x86::Compiler &c, jit_value_t &dst, jit_valu
 
             c.je(l_zero);
             c.mov(a, lhs_c);
-            c.xor_(r, r);
+
+            c.cqo(r, a);
             c.idiv(r, a, b);
 
             c.bind(l_zero);
@@ -424,7 +440,7 @@ inline static void to_bits16(asmjit::x86::Compiler &c, asmjit::x86::Gp &dst, con
     c.pmovmskb(dst, l);
     c.and_(dst, 0xffff);
 }
-
+#define OP(type, name, op, nc) type type##_##name(type a, type b) { return (a == nc || b == nc)? nc : a op b; }
 inline static void to_bits8(asmjit::x86::Compiler &c, asmjit::x86::Gp &dst, const asmjit::x86::Ymm &x) {
     //    __m128i a = _mm_packs_epi32(x.get_low(), x.get_high());  // 32-bit dwords to 16-bit words
     //    __m128i b = _mm_packs_epi16(a, a);  // 16-bit words to bytes
@@ -512,7 +528,7 @@ struct JitCompiler {
         if (options == 0) {
             scalar_loop(filter_expr, filter_size, null_check);
         } else {
-            uint32_t step = 4;
+            uint32_t step = options;
             avx2_loop(filter_expr, filter_size, step, null_check);
         }
     };
@@ -534,8 +550,8 @@ struct JitCompiler {
                 case RET:
                     break;
                 case MEM_I1: {
-                    asmjit::x86::Gp col = c.newGpq();
                     auto column_input_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
+                    asmjit::x86::Gp col = c.newInt64("byte column[%d]", column_input_index);
                     c.mov(col, ptr(cols_ptr, 8 * column_input_index, 8));
                     c.movsx(col, x86::Mem(col, input_index, 0, 0, 1));
                     registers.push(jit_value_t(col, i8, kMemory));
@@ -948,8 +964,7 @@ struct JitCompiler {
                                     c.mov(r, rhs.gp());
                                     c.test(r, r);
                                     c.je(l_zero);
-
-                                    c.xor_(r, r);
+                                    c.cqo(r, lhs.gp());
                                     c.idiv(r, lhs.gp(), rhs.gp());
                                     c.mov(r, lhs.gp());
                                     c.bind(l_zero);
@@ -1136,7 +1151,16 @@ struct JitCompiler {
                 case NEG: {
                     auto arg = registers.top();
                     registers.pop();
-                    avx2_neg(c, arg, arg);
+                    if(!null_check) {
+                        avx2_neg(c, arg, arg);
+                    } else {
+                        Ymm r = c.newYmm();
+                        jit_value_t v(r, arg.dtype(), arg.dkind());
+                        avx2_not_null(c, v, arg, arg);
+                        avx2_neg(c, arg, arg);
+                        avx2_not(c, v, v);
+                        avx2_select_byte(c, arg, arg, v);
+                    }
                     registers.push(arg);
                 }
                     break;
@@ -1258,7 +1282,7 @@ struct JitCompiler {
                             break;
                         case DIV:
                             if (!null_check || is_float(lhs) || is_float(rhs)) {
-                                avx2_mul(c, lhs, lhs, rhs);
+                                avx2_div(c, lhs, lhs, rhs);
                             } else {
                                 Ymm r = c.newYmm();
                                 jit_value_t v(r, lhs.dtype(), lhs.dkind());
@@ -1332,10 +1356,10 @@ struct JitCompiler {
     int32_t int_nulls_array[8] = {int_null, int_null, int_null, int_null, int_null, int_null, int_null, int_null};
     int32_t int_true_mask_array[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
 
-    x86::Mem long_nulls = c.newConst(ConstPool::kScopeLocal, &long_nulls_array, 32);
-    x86::Mem long_true_mask = c.newConst(ConstPool::kScopeLocal, &long_true_mask_array, 32);
-    x86::Mem int_nulls = c.newConst(ConstPool::kScopeLocal, &int_nulls_array, 32);
-    x86::Mem int_true_mask = c.newConst(ConstPool::kScopeLocal, &int_true_mask_array, 32);
+//    x86::Mem long_nulls = c.newConst(ConstPool::kScopeLocal, &long_nulls_array, 32);
+//    x86::Mem long_true_mask = c.newConst(ConstPool::kScopeLocal, &long_true_mask_array, 32);
+//    x86::Mem int_nulls = c.newConst(ConstPool::kScopeLocal, &int_nulls_array, 32);
+//    x86::Mem int_true_mask = c.newConst(ConstPool::kScopeLocal, &int_true_mask_array, 32);
 };
 
 JNIEXPORT jlong JNICALL
@@ -1347,13 +1371,17 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
     CodeHolder code;
     code.init(gGlobalContext.rt.environment());
     FileLogger logger(stdout);
+    logger.addFlags(FormatOptions::kFlagRegCasts |
+                    FormatOptions::kFlagExplainImms |
+                    FormatOptions::kFlagAnnotations);
+
     code.setLogger(&logger);
     code.setErrorHandler(&gGlobalContext.errorHandler);
     x86::Compiler c(&code);
     JitCompiler compiler(c);
 
     compiler.begin_fn();
-    compiler.compile(reinterpret_cast<uint8_t *>(filterAddress), filterSize, 0);
+    compiler.compile(reinterpret_cast<uint8_t *>(filterAddress), filterSize, options);
     compiler.end_fn();
 
     c.finalize();
