@@ -4263,6 +4263,157 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByFilteredBySymbolInNoIndexes() throws Exception {
+        testLatestByFilteredBySymbolIn("create table x (\n" +
+                "  ts timestamp,\n" +
+                "  node symbol,\n" +
+                "  metric symbol,\n" +
+                "  value long) \n" +
+                "  timestamp(ts) partition by day");
+    }
+
+    @Test
+    public void testLatestByFilteredSymbolInPartiallyIndexed1() throws Exception {
+        testLatestByFilteredBySymbolIn("create table x (\n" +
+                "  ts timestamp,\n" +
+                "  node symbol index,\n" +
+                "  metric symbol,\n" +
+                "  value long) \n" +
+                "  timestamp(ts) partition by day");
+    }
+
+    @Test
+    public void testLatestByFilteredSymbolInPartiallyIndexed2() throws Exception {
+        testLatestByFilteredBySymbolIn("create table x (\n" +
+                "  ts timestamp,\n" +
+                "  node symbol,\n" +
+                "  metric symbol index,\n" +
+                "  value long) \n" +
+                "  timestamp(ts) partition by day");
+    }
+
+    @Test
+    public void testLatestByFilteredBySymbolInAllIndexed() throws Exception {
+        testLatestByFilteredBySymbolIn("create table x (\n" +
+                "  ts timestamp,\n" +
+                "  node symbol index,\n" +
+                "  metric symbol index,\n" +
+                "  value long) \n" +
+                "  timestamp(ts) partition by day");
+    }
+
+    private void testLatestByFilteredBySymbolIn(String ddl) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(ddl, sqlExecutionContext);
+
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 1)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'cpu', 10)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'cpu', 100)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'cpu', 7)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'cpu', 15)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'cpu', 75)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'cpu', 5)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'cpu', 20)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'cpu', 25)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'memory', 20)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'memory', 200)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'memory', 2000)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'memory', 30)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'memory', 300)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'memory', 3000)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'memory', 40)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'memory', 400)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
+
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "select metric, sum(value) from x latest by node \n" +
+                            "where node in ('node1', 'node2') and metric in ('cpu')",
+                    sink,
+                    "metric\tsum\n" +
+                            "cpu\t175\n"
+            );
+        });
+    }
+
+    @Test
+    public void testLatestBySelectAllFilteredBySymbolInNoIndexes() throws Exception {
+        testLatestBySelectAllFilteredBySymbolIn("create table x (\n" +
+                "  ts timestamp,\n" +
+                "  node symbol,\n" +
+                "  metric symbol,\n" +
+                "  value long) \n" +
+                "  timestamp(ts) partition by day");
+    }
+
+    @Test
+    public void testLatestBySelectAllFilteredBySymbolInPartiallyIndexed1() throws Exception {
+        testLatestBySelectAllFilteredBySymbolIn("create table x (\n" +
+                "  ts timestamp,\n" +
+                "  node symbol index,\n" +
+                "  metric symbol,\n" +
+                "  value long) \n" +
+                "  timestamp(ts) partition by day");
+    }
+
+    @Test
+    public void testLatestBySelectAllFilteredBySymbolInPartiallyIndexed2() throws Exception {
+        testLatestBySelectAllFilteredBySymbolIn("create table x (\n" +
+                "  ts timestamp,\n" +
+                "  node symbol,\n" +
+                "  metric symbol index,\n" +
+                "  value long) \n" +
+                "  timestamp(ts) partition by day");
+    }
+
+    @Test
+    public void testLatestBySelectAllFilteredBySymbolInAllIndexed() throws Exception {
+        testLatestBySelectAllFilteredBySymbolIn("create table x (\n" +
+                "  ts timestamp,\n" +
+                "  node symbol index,\n" +
+                "  metric symbol index,\n" +
+                "  value long) \n" +
+                "  timestamp(ts) partition by day");
+    }
+
+    private void testLatestBySelectAllFilteredBySymbolIn(String ddl) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(ddl, sqlExecutionContext);
+
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 1)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'cpu', 10)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'cpu', 100)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'cpu', 7)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'cpu', 15)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'cpu', 75)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'cpu', 5)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'cpu', 20)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'cpu', 25)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'memory', 20)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'memory', 200)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'memory', 2000)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'memory', 30)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'memory', 300)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'memory', 3000)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'memory', 40)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'memory', 400)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
+
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "select * from x latest by node, metric \n" +
+                            "where node in ('node2') and metric in ('cpu', 'memory')",
+                    sink,
+                    "ts\tnode\tmetric\tvalue\n" +
+                            "2021-11-17T17:35:03.000000Z\tnode2\tcpu\t75\n" +
+                            "2021-11-17T17:35:03.000000Z\tnode2\tmemory\t3000\n"
+            );
+        });
+    }
+
+    @Test
     public void testLeftJoinDoesNotRequireTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("CREATE TABLE sensors (ID LONG, make STRING, city STRING);", sqlExecutionContext);
