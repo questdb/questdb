@@ -38,8 +38,11 @@ import java.io.Closeable;
 public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
     private RecordMetadata setValuesMetadata;
     private ObjList<Function> setValuesFunctions;
-    private Function filter;
+    private Function masterFilter;
+    private Function postJoinFilter;
     private RecordCursorFactory rowIdFactory;
+    private RecordMetadata joinMetadata;
+    private UpdateStatementMasterCursorFactory joinRecordCursorFactory;
 
     public UpdateStatementBuilder(RecordCursorFactory noSelectFactory) {
         this.rowIdFactory = noSelectFactory;
@@ -50,18 +53,27 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
             TableReaderMetadata updateTableMetadata,
             BindVariableService bindVariableService
     ) throws SqlException {
+        if (joinRecordCursorFactory == null && setValuesFunctions == null) {
+            // This is update of column to the same values, e.g. changing nothing
+            return UpdateStatement.EMPTY;
+        }
+
         // Check that virtualColumnFunctions match types of updateTableMetadata
-        for (int i = 0, n = setValuesMetadata.getColumnCount(); i < n; i++) {
-            Function virtualColumn = setValuesFunctions.get(i);
-            int virtualColumnType = virtualColumn.getType();
-            CharSequence updateColumnName = setValuesMetadata.getColumnName(i);
+        RecordMetadata valuesResultMetadata = getMetadata();
+
+        for (int i = 0, n = valuesResultMetadata.getColumnCount(); i < n; i++) {
+            int virtualColumnType = valuesResultMetadata.getColumnType(i);
+            CharSequence updateColumnName = valuesResultMetadata.getColumnName(i);
             int columnType = updateTableMetadata.getColumnType(updateColumnName);
 
-            if (virtualColumnType != columnType && !implicitCastAllowed(virtualColumnType, columnType, virtualColumn, bindVariableService)) {
-                // get column position
-                ExpressionNode setRhs = updateModel.getUpdateColumnExpressions().get(i);
-                int position = setRhs.position;
-                throw SqlException.inconvertibleTypes(position, virtualColumnType, "", columnType, updateColumnName);
+            if (virtualColumnType != columnType) {
+                Function virtualColumn = setValuesFunctions != null ? setValuesFunctions.get(i) : null;
+                if (!implicitCastAllowed(virtualColumnType, columnType, virtualColumn, bindVariableService)) {
+                    // get column position
+                    ExpressionNode setRhs = updateModel.getUpdateColumnExpressions().get(i);
+                    int position = setRhs.position;
+                    throw SqlException.inconvertibleTypes(position, virtualColumnType, "", columnType, updateColumnName);
+                }
             }
         }
 
@@ -69,18 +81,68 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
                 updateModel.getUpdateTableName(),
                 updateModel.getPosition(),
                 rowIdFactory,
-                filter,
+                masterFilter,
+                postJoinFilter,
                 setValuesFunctions,
-                setValuesMetadata
+                valuesResultMetadata,
+                joinRecordCursorFactory
         );
 
         // Closing responsibility is within resulting updateStatement
         rowIdFactory = null;
-        filter = null;
+        masterFilter = null;
+        postJoinFilter = null;
         setValuesFunctions = null;
         setValuesMetadata = null;
+        joinRecordCursorFactory = null;
 
         return updateStatement;
+    }
+
+    @Override
+    public void close() {
+        Misc.freeObjList(setValuesFunctions);
+        masterFilter = Misc.free(masterFilter);
+        postJoinFilter = Misc.free(postJoinFilter);
+        rowIdFactory = Misc.free(rowIdFactory);
+        setValuesMetadata = Misc.free(setValuesMetadata);
+        joinRecordCursorFactory = Misc.free(joinRecordCursorFactory);
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return  setValuesMetadata != null ? setValuesMetadata : (joinMetadata != null ? joinMetadata : rowIdFactory.getMetadata());
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return rowIdFactory.recordCursorSupportsRandomAccess();
+    }
+
+    public UpdateStatementBuilder withFilter(Function filter) {
+        if (joinRecordCursorFactory == null) {
+            masterFilter = filter;
+        } else {
+            postJoinFilter = filter;
+        }
+        return this;
+    }
+
+    public UpdateStatementBuilder withJoin(UpdateStatementMasterCursorFactory updateRecordFactory) {
+        this.joinRecordCursorFactory = updateRecordFactory;
+        this.joinMetadata = updateRecordFactory.getMetadata();
+        return this;
+    }
+
+    public UpdateStatementBuilder withSelectVirtual(RecordMetadata virtualMetadata, ObjList<Function> virtualFunctions) {
+        this.setValuesMetadata = virtualMetadata;
+        this.setValuesFunctions = virtualFunctions;
+        return this;
     }
 
     private boolean implicitCastAllowed(int fromColumnType, int toColumnType, Function fromFunction, BindVariableService bindVariableService) throws SqlException {
@@ -107,39 +169,5 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
                 return toColumnType == ColumnType.DOUBLE;
         }
         return false;
-    }
-
-    @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return setValuesMetadata != null ? setValuesMetadata : rowIdFactory.getMetadata();
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return rowIdFactory.recordCursorSupportsRandomAccess();
-    }
-
-    @Override
-    public void close() {
-        Misc.freeObjList(setValuesFunctions);
-        Misc.free(filter);
-        Misc.free(rowIdFactory);
-        Misc.free(setValuesMetadata);
-    }
-
-    public UpdateStatementBuilder withFilter(Function filter) {
-        this.filter = filter;
-        return this;
-    }
-
-    public UpdateStatementBuilder withSelectVirtual(RecordMetadata virtualMetadata, ObjList<Function> virtualFunctions) {
-        this.setValuesMetadata = virtualMetadata;
-        this.setValuesFunctions = virtualFunctions;
-        return this;
     }
 }

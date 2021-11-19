@@ -487,6 +487,72 @@ public class SqlCodeGenerator implements Mutable {
             RecordCursorFactory master,
             RecordCursorFactory slave,
             int joinType
+    ) throws SqlException {
+        if (!(master instanceof UpdateStatementBuilder)) {
+            return createHashJoin0(
+                    metadata,
+                    master,
+                    slave,
+                    joinType
+            );
+        }
+        return createUpdateStatementJoin(metadata, master, slave, joinType);
+    }
+
+    @NotNull
+    private UpdateStatementBuilder createUpdateStatementJoin(
+            RecordMetadata metadata,
+            RecordCursorFactory master,
+            RecordCursorFactory slave,
+            int joinType
+    ) throws SqlException {
+        UpdateStatementBuilder updateBuilder = (UpdateStatementBuilder) master;
+        if (joinType != JOIN_INNER) {
+            throw SqlException.$(0, "Only INNER joins are supported with UPDATE statements. Please specify join condition in WHERE clause.");
+        }
+        final RecordSink masterKeySink = RecordSinkFactory.getInstance(
+                asm,
+                master.getMetadata(),
+                listColumnFilterB,
+                true
+        );
+        final RecordSink slaveKeySink = RecordSinkFactory.getInstance(
+                asm,
+                slave.getMetadata(),
+                listColumnFilterA,
+                true
+        );
+        valueTypes.clear();
+        valueTypes.add(ColumnType.LONG);
+        valueTypes.add(ColumnType.LONG);
+        entityColumnFilter.of(slave.getMetadata().getColumnCount());
+        RecordSink slaveSink = RecordSinkFactory.getInstance(
+                asm,
+                slave.getMetadata(),
+                entityColumnFilter,
+                false
+        );
+        return updateBuilder.withJoin(
+                new UpdateHashJoinRecordCursorFactory(
+                        configuration,
+                        metadata,
+                        master,
+                        slave,
+                        keyTypes,
+                        valueTypes,
+                        masterKeySink,
+                        slaveKeySink,
+                        slaveSink,
+                        master.getMetadata().getColumnCount()
+                )
+        );
+    }
+
+    private RecordCursorFactory createHashJoin0(
+            RecordMetadata metadata,
+            RecordCursorFactory master,
+            RecordCursorFactory slave,
+            int joinType
     ) {
         /*
          * JoinContext provides the following information:
@@ -682,6 +748,9 @@ public class SqlCodeGenerator implements Mutable {
 
         // Expect record factory to be UpdateStatementBuilder
         RecordCursorFactory finalRecordSet = generate(queryModel, executionContext);
+        if (!(finalRecordSet instanceof UpdateStatementBuilder)) {
+            throw SqlException.$(queryModel.getModelPosition(), "This shape of UPDATE statement is not supported");
+        }
         return (UpdateStatementBuilder) finalRecordSet;
     }
 

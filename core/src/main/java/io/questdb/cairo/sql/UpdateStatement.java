@@ -31,11 +31,14 @@ import java.io.Closeable;
 
 public class UpdateStatement implements Closeable {
 
+    public final static UpdateStatement EMPTY = new UpdateStatement();
     private final CharSequence updateTableName;
     private RecordCursorFactory rowIdFactory;
     private Function rowIdFilter;
+    private Function postJoinFilter;
     private final ObjList<Function> valuesFunctions;
-    private final RecordMetadata valuesMetadata;
+    private RecordMetadata valuesMetadata;
+    private UpdateStatementMasterCursorFactory joinRecordCursorFactory;
     private final int position;
 
     public UpdateStatement(
@@ -43,23 +46,37 @@ public class UpdateStatement implements Closeable {
             int position,
             RecordCursorFactory rowIdFactory,
             Function rowIdFilter,
+            Function joinFilter,
             ObjList<Function> valuesFunctions,
-            RecordMetadata valuesMetadata
+            RecordMetadata valuesMetadata,
+            UpdateStatementMasterCursorFactory joinRecordCursorFactory
     ) {
         this.updateTableName = updateTableName;
         this.position = position;
         this.rowIdFactory = rowIdFactory;
         this.rowIdFilter = rowIdFilter;
+        this.postJoinFilter = joinFilter;
         this.valuesFunctions = valuesFunctions;
         this.valuesMetadata = valuesMetadata;
+        this.joinRecordCursorFactory = joinRecordCursorFactory;
+    }
+
+    private UpdateStatement() {
+        this.updateTableName = null;
+        valuesFunctions = null;
+        valuesMetadata = null;
+        this.position = 0;
+        joinRecordCursorFactory = null;
     }
 
     @Override
     public void close() {
+        Misc.freeObjList(valuesFunctions);
         rowIdFactory = Misc.free(rowIdFactory);
         rowIdFilter = Misc.free(rowIdFilter);
-        Misc.freeObjList(valuesFunctions);
-        Misc.free(valuesMetadata);
+        valuesMetadata = Misc.free(valuesMetadata);
+        postJoinFilter = Misc.free(postJoinFilter);
+        joinRecordCursorFactory = Misc.free(joinRecordCursorFactory);
     }
 
     public int getPosition() {
@@ -84,5 +101,13 @@ public class UpdateStatement implements Closeable {
 
     public Function getRowIdFilter() {
         return rowIdFilter;
+    }
+
+    public Function getPostJoinFilter() {
+        return postJoinFilter;
+    }
+
+    public UpdateStatementMasterCursorFactory getJoinRecordCursorFactory() {
+        return joinRecordCursorFactory;
     }
 }
