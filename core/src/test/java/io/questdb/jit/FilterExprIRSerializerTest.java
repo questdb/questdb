@@ -156,21 +156,27 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testNullConstMixedFloatValues() throws Exception {
+    public void testNullConstMixedFloatColumns() throws Exception {
         serialize("afloat + adouble <> null");
         assertIR("(f64 NaND)(f64 adouble)(f32 afloat)(+)(<>)(ret)");
     }
 
     @Test
-    public void testNullConstMixedLongValues() throws Exception {
+    public void testNullConstMixedLongColumns() throws Exception {
         serialize("anint + along <> null");
         assertIR("(i64 " + Numbers.LONG_NaN + "L)(i64 along)(i32 anint)(+)(<>)(ret)");
     }
 
     @Test
-    public void testNullConstMixedFloatLongValues() throws Exception {
+    public void testNullConstMixedFloatLongColumns() throws Exception {
         serialize("afloat + along <> null");
         assertIR("(f64 NaND)(i64 along)(f32 afloat)(+)(<>)(ret)");
+    }
+
+    @Test
+    public void testNullConstMixedLongFloatColumns() throws Exception {
+        serialize("along + afloat <> null");
+        assertIR("(f64 NaND)(f32 afloat)(i64 along)(+)(<>)(ret)");
     }
 
     @Test
@@ -222,6 +228,18 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testBooleanConst() throws Exception {
+        serialize("aboolean = true or aboolean = false");
+        assertIR("(i8 0L)(i8 aboolean)(=)(i8 1L)(i8 aboolean)(=)(||)(ret)");
+    }
+
+    @Test
+    public void testCharConst() throws Exception {
+        serialize("achar = 'a'");
+        assertIR("(i16 97L)(i16 achar)(=)(ret)");
+    }
+
+    @Test
     public void testNegatedColumn() throws Exception {
         serialize("-ashort > 0");
         assertIR("(i16 0L)(i16 ashort)(neg)(>)(ret)");
@@ -239,7 +257,7 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test(expected = SqlException.class)
     public void testUnsupportedColumnType() throws Exception {
-        serialize("astring <> null");
+        serialize("astring = 'a'");
     }
 
     @Test(expected = SqlException.class)
@@ -249,7 +267,7 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test(expected = SqlException.class)
     public void testUnsupportedFunctionToken() throws Exception {
-        serialize("now() > 0");
+        serialize("atimestamp + now() > 0");
     }
 
     @Test(expected = SqlException.class)
@@ -258,7 +276,27 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedNonNumericNullType() throws Exception {
+    public void testUnsupportedMixedBooleanAndNumericColumns() throws Exception {
+        serialize("aboolean = abyte");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedMixedNumericAndBooleanColumns() throws Exception {
+        serialize("abyte = aboolean");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedMixedCharAndNumericColumns() throws Exception {
+        serialize("achar = anint");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedMixedGeoHashAndNumericColumns() throws Exception {
+        serialize("ageoint = along");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedNullType() throws Exception {
         serialize("astring <> null");
     }
 
@@ -268,8 +306,13 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedBooleanConstInNumericContext() throws Exception {
+    public void testUnsupportedTrueConstInNumericContext() throws Exception {
         serialize("along = true");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedFalseConstInNumericContext() throws Exception {
+        serialize("along = false");
     }
 
     @Test(expected = SqlException.class)

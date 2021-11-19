@@ -175,7 +175,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         }
 
         if (SqlKeywords.isNullKeyword(token)) {
-            boolean geohashExpression = ExpressionType.GEOHASH == exprContext.expressionType;
+            boolean geohashExpression = ExpressionType.GEO_HASH == exprContext.expressionType;
             serializeNull(position, typeCode, geohashExpression);
             return;
         }
@@ -384,6 +384,8 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         @Override
         public void clear() {
             rootNode = null;
+            typeCode = UNDEFINED_CODE;
+            expressionType = null;
         }
 
         public void onNodeEntered(ExpressionNode node) throws SqlException {
@@ -455,12 +457,12 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                 case ColumnType.GEOSHORT:
                 case ColumnType.GEOINT:
                 case ColumnType.GEOLONG:
-                    if (expressionType != null && expressionType != ExpressionType.GEOHASH) {
+                    if (expressionType != null && expressionType != ExpressionType.GEO_HASH) {
                         throw SqlException.position(position)
                                 .put("non-geohash column in geohash expression: ")
                                 .put(ColumnType.nameOf(columnType));
                     }
-                    expressionType = ExpressionType.GEOHASH;
+                    expressionType = ExpressionType.GEO_HASH;
                     break;
                 case ColumnType.CHAR:
                     if (expressionType != null && expressionType != ExpressionType.CHAR) {
@@ -533,6 +535,6 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
     }
 
     private enum ExpressionType {
-        NUMERIC, CHAR, BOOLEAN, GEOHASH
+        NUMERIC, CHAR, BOOLEAN, GEO_HASH
     }
 }
