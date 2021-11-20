@@ -32,44 +32,42 @@ import io.questdb.network.Net;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.Path;
 
 import java.io.*;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.nio.charset.StandardCharsets;
 
 public class LogAlertManagerWriter extends SynchronizedJob implements Closeable, LogWriter {
 
+    static final String DEFAULT_ALERT_TPT_FILE = "/alert-manager-tpt.json";
     private static final String DEFAULT_HOST = "127.0.0.1";
     private static final int DEFAULT_PORT = 9093;
-    private static final int DEFAULT_SKT_BUFFER_SIZE = 4 * 1024 * 1024;
-    static final String DEFAULT_ALERT_TPT_FILE = "/alert-manager-tpt.json";
-    private static final String HEADER_BODY_SEPARATOR = "\r\n\r\n";
-    private static final String ORG_ID_PROP = "ORGID";
-    private static final String NAMESPACE_PROP = "NAMESPACE";
-    private static final String CLUSTER_PROP = "CLUSTER_NAME";
-    private static final String INSTANCE_PROP = "INSTANCE_NAME";
-    private static final String DEFAULT_PROP_VALUE = "GLOBAL";
-    private static final String MESSAGE_PROP = "ALERT_MESSAGE";
-    private static final int DOLLAR_MESSAGE_LEN = MESSAGE_PROP.length() + 3; // ${ALERT_MESSAGE}
-
-    private final CharSequenceObjHashMap<CharSequence> alertProps = DollarExprResolver.adaptProperties(System.getProperties());
+    private static final int DEFAULT_SKT_OUT_BUFFER_SIZE = 4 * 1024 * 1024;
+    private static final int SKT_IN_BUFFER_SIZE = 2 * 1024 * 1024;
+    private final CharSequenceObjHashMap<CharSequence> alertProps = DollarExpr.adaptMap(System.getenv());
+    private static final String DEFAULT_ENV_VALUE = "GLOBAL";
+    private static final String ORG_ID_ENV = "ORGID";
+    private static final String NAMESPACE_ENV = "NAMESPACE";
+    private static final String CLUSTER_ENV = "CLUSTER_NAME";
+    private static final String INSTANCE_ENV = "INSTANCE_NAME";
+    private static final String MESSAGE_ENV = "ALERT_MESSAGE";
 
     {
-        if (!alertProps.contains(ORG_ID_PROP)) {
-            alertProps.put(ORG_ID_PROP, DEFAULT_PROP_VALUE);
+        if (!alertProps.contains(ORG_ID_ENV)) {
+            alertProps.put(ORG_ID_ENV, DEFAULT_ENV_VALUE);
         }
-        if (!alertProps.contains(NAMESPACE_PROP)) {
-            alertProps.put(NAMESPACE_PROP, DEFAULT_PROP_VALUE);
+        if (!alertProps.contains(NAMESPACE_ENV)) {
+            alertProps.put(NAMESPACE_ENV, DEFAULT_ENV_VALUE);
         }
-        if (!alertProps.contains(CLUSTER_PROP)) {
-            alertProps.put(CLUSTER_PROP, DEFAULT_PROP_VALUE);
+        if (!alertProps.contains(CLUSTER_ENV)) {
+            alertProps.put(CLUSTER_ENV, DEFAULT_ENV_VALUE);
         }
-        if (!alertProps.contains(INSTANCE_PROP)) {
-            alertProps.put(INSTANCE_PROP, DEFAULT_PROP_VALUE);
+        if (!alertProps.contains(INSTANCE_ENV)) {
+            alertProps.put(INSTANCE_ENV, DEFAULT_ENV_VALUE);
         }
-        alertProps.put(MESSAGE_PROP, "${" + MESSAGE_PROP + "}");
+        alertProps.put(MESSAGE_ENV, "${" + MESSAGE_ENV + "}");
     }
 
     private final int level;
@@ -78,21 +76,19 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
     private final SCSequence writeSequence;
     private final RingQueue<LogRecordSink> alertsSource;
     private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
-    private final DollarExprResolver dollar$ = new DollarExprResolver();
-    private final StringSink alertBuilder = new StringSink();
-    private final StringSink messageSink = new StringSink();
-    private CharSequence alertTemplate;
-    private int alertTemplateLen;
-    private CharSequence httpHeader;
-    private int httpHeaderLen;
-    private long sktBufferPtr;
-    private int sktBufferSize;
-    private long sktBufferLimit; // sktBufferPtr + sktBufferSize
-    private long fdSocketAddress = -1; // tcp/ip host:port address
-    private long fdSocket = -1;
+    private final HttpAlertBuilder httpAlertBuilder = new HttpAlertBuilder();
+    private final DollarExpr dollar$ = new DollarExpr();
+    private String alertFooter;
+    // socket
+    private String localHostIp;
     private String host;
     private int port;
-
+    private int sktOutBufferSize;
+    private long sktOutBufferPtr;
+    private long sktOutBufferLimit; // sktOutBufferPtr + sktBufferSize
+    private long sktInBufferPtr;
+    private long fdSocketAddress = -1; // tcp/ip host:port address
+    private long fdSocket = -1;
     // changed by introspection
     private String location = DEFAULT_ALERT_TPT_FILE;
     private String bufferSize;
@@ -130,26 +126,32 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
     @Override
     public void bindProperties() {
         parseSocketAddress();
-        loadAlertTemplate();
         if (bufferSize != null) {
             try {
-                sktBufferSize = Numbers.parseIntSize(bufferSize);
+                sktOutBufferSize = Numbers.parseIntSize(bufferSize);
             } catch (NumericException e) {
                 throw new LogError("Invalid value for bufferSize");
             }
         } else {
-            sktBufferSize = DEFAULT_SKT_BUFFER_SIZE;
+            sktOutBufferSize = DEFAULT_SKT_OUT_BUFFER_SIZE;
         }
-        sktBufferPtr = Unsafe.malloc(sktBufferSize, MemoryTag.NATIVE_DEFAULT);
-        sktBufferLimit = sktBufferPtr + sktBufferSize;
+        sktInBufferPtr = Unsafe.malloc(SKT_IN_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        sktOutBufferLimit = sktOutBufferPtr + SKT_IN_BUFFER_SIZE;
+        sktOutBufferPtr = Unsafe.malloc(sktOutBufferSize, MemoryTag.NATIVE_DEFAULT);
+        sktOutBufferLimit = sktOutBufferPtr + sktOutBufferSize;
+        loadAlertTemplate();
         connectSocket();
     }
 
     @Override
     public void close() {
-        if (sktBufferPtr != 0) {
-            Unsafe.free(sktBufferPtr, sktBufferSize, MemoryTag.NATIVE_DEFAULT);
-            sktBufferPtr = 0;
+        if (sktOutBufferPtr != 0) {
+            Unsafe.free(sktOutBufferPtr, sktOutBufferSize, MemoryTag.NATIVE_DEFAULT);
+            sktOutBufferPtr = 0;
+        }
+        if (sktInBufferPtr != 0) {
+            Unsafe.free(sktInBufferPtr, SKT_IN_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            sktInBufferPtr = 0;
         }
         if (fdSocket != -1) {
             freeSocket();
@@ -170,6 +172,11 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
     }
 
     private void parseSocketAddress() {
+        try {
+            localHostIp = InetAddress.getLocalHost().getHostAddress();
+        } catch (UnknownHostException e) {
+            throw new LogError("Cannot access our ip address info");
+        }
         if (socketAddress != null) {
             // expected format: host[:port]
             if (Chars.isQuoted(socketAddress)) {
@@ -177,7 +184,7 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
             }
             final int len = socketAddress.length();
             int portIdx = -1;
-            for (int i = 0, limit = len; i < limit; ++i) {
+            for (int i = 0; i < len; ++i) {
                 if (socketAddress.charAt(i) == ':') {
                     host = socketAddress.substring(0, i);
                     portIdx = i + 1;
@@ -228,73 +235,51 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
 
     private void loadAlertTemplate() {
         long ticks = clock.getTicks();
-        location = dollar$.resolve(location, ticks).toString();
-        alertBuilder.clear();
-        alertBuilder.put("POST /api/v1/alerts HTTP/1.1\r\n")
-                .put("Host: ").put(socketAddress).put("\r\n")
-                .put("User-Agent: QuestDB/7.71.1\r\n")
-                .put("Accept: */*\r\n")
-                .put("Content-Type: application/json\r\n")
-                .put("Content-Length: ");
-        httpHeader = alertBuilder.toString();
-        httpHeaderLen = alertBuilder.length();
-        alertBuilder.clear();
-        try (InputStream is = new FileInputStream(location)) {
-            alertBuilder.put(new String(is.readAllBytes(), StandardCharsets.UTF_8));
-        } catch (NullPointerException | IOException e) {
-            throw new LogError("Cannot read " + location, e);
+        location = dollar$.resolveEnv(location, ticks).toString();
+        httpAlertBuilder.of(sktOutBufferPtr, sktOutBufferLimit, localHostIp);
+
+        // load template file content.
+        long size;
+        try (Path path = new Path()) {
+            path.of(location);
+            long fdTemplate = ff.openRO(path.$());
+            if (fdTemplate == -1) {
+                throw new LogError(String.format(
+                        "Cannot read %s [errno=%d]", location, ff.errno()));
+            }
+            size = ff.length(fdTemplate);
+            // use the inbound socket buffer temporarily as the socket is not open yet
+            if (size < 0 || size != ff.read(fdTemplate, sktInBufferPtr, size, 0)) {
+                throw new LogError(String.format(
+                        "Cannot read %s [size=%d, errno=%d]", location, size, ff.errno()));
+            }
         }
-        alertTemplate = dollar$.resolve(alertBuilder, ticks, alertProps).toString();
-        alertTemplateLen = alertTemplate.length();
+
+        // resolve env vars within template.
+        DirectByteCharSequence templateBytes = new DirectByteCharSequence();
+        templateBytes.of(sktInBufferPtr, sktInBufferPtr + size);
+        dollar$.resolve(templateBytes, ticks, alertProps);
+        dollar$.resolve(dollar$.toString(), ticks, alertProps);
+        ObjList<Sinkable> components = dollar$.getLocationComponents();
+        if (dollar$.getKeyOffset(MESSAGE_ENV) < 0 || components.size() < 3) {
+            throw new LogError(String.format("Bad template %s", location));
+        }
+        httpAlertBuilder.put(components.getQuick(0));
+        httpAlertBuilder.setMark(); // mark the end of the first static block in buffer
+        alertFooter = components.getQuick(2).toString();
     }
 
     private void onLogRecord(LogRecordSink logRecord) {
         final int logRecordLen = logRecord.length();
         if ((logRecord.getLevel() & level) != 0 && logRecordLen > 0 && fdSocket > 0) {
-            messageSink.clear();
-            final long address = logRecord.getAddress();
-            for (long p = address, limit = address + logRecordLen; p < limit; p++) {
-                char c = (char) Unsafe.getUnsafe().getByte(p);
-                switch (c) {
-                    case '\b':
-                    case '\f':
-                    case '\t':
-                    case '$':
-                    case '"':
-                    case '\\':
-                        messageSink.put('\\');
-                        break;
-                    case '\r':
-                    case '\n':
-                        continue;
-                }
-                messageSink.put(c);
-            }
-
-            alertBuilder.clear();
-            alertBuilder.put(alertTemplate);
-            alertProps.put(MESSAGE_PROP, messageSink);
-            dollar$.resolve(alertBuilder, 0, alertProps);
-
-            // move alert message to socket buffer
-            long p = sktBufferPtr;
-            Chars.asciiStrCpy(httpHeader, httpHeaderLen, p);
-            p += httpHeaderLen;
-            int contentLen = alertTemplateLen + messageSink.length() - DOLLAR_MESSAGE_LEN;
-            String contentLenStr = String.valueOf(contentLen);
-            int len = contentLenStr.length();
-            Chars.asciiStrCpy(contentLenStr, len, p);
-            p += len;
-            len = HEADER_BODY_SEPARATOR.length();
-            Chars.asciiStrCpy(HEADER_BODY_SEPARATOR, len, p);
-            p += len;
-            String body = dollar$.toString();
-            len = body.length();
-            Chars.asciiStrCpy(body, len, p);
+            httpAlertBuilder.rewindToMark();
+            httpAlertBuilder.put(logRecord);
+            httpAlertBuilder.put(alertFooter);
+            httpAlertBuilder.$();
 
             // send
-            int remaining = (int) (p + len - sktBufferPtr);
-            p = sktBufferPtr;
+            int remaining = httpAlertBuilder.length();
+            long p = sktOutBufferPtr;
             while (remaining > 0) {
                 int n = Net.send(fdSocket, p, remaining);
                 if (n > 0) {
@@ -305,9 +290,9 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
                 }
             }
 
-            // read
-            p = sktBufferPtr;
-            int n = Net.recv(fdSocket, p, (int) sktBufferLimit);
+            // receive ack
+            p = sktInBufferPtr;
+            int n = Net.recv(fdSocket, p, SKT_IN_BUFFER_SIZE);
             Net.dumpAscii(p, n);
         }
     }

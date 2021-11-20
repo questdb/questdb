@@ -24,6 +24,7 @@
 
 package io.questdb.log;
 
+import io.questdb.VisibleForTesting;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -253,12 +254,13 @@ public class LogFactory implements Closeable {
         );
     }
 
-    public ObjHashSet<LogWriter> getJobs() {
-        return jobs;
-    }
-
     public int getQueueDepth() {
         return queueDepth;
+    }
+
+    @VisibleForTesting
+    ObjHashSet<LogWriter> getJobs() {
+        return jobs;
     }
 
     private void setQueueDepth(int queueDepth) {

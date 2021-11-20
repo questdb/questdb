@@ -24,25 +24,30 @@
 
 package io.questdb.log;
 
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 
-public class DollarExprResolverTest {
+public class DollarExprTest {
+    private static final Map<String, String> ENV = new HashMap<>();
 
-    private DollarExprResolver locationParser;
+    static {
+        ENV.put("JSON_FILE", "file.json");
+        ENV.put("DATABASE_ROOT", "c:/\\/\\");
+    }
+
+    private DollarExpr locationParser;
     private StringSink sink;
 
     @Before
     public void setUp() {
-        locationParser = new DollarExprResolver();
+        locationParser = new DollarExpr();
         sink = new StringSink();
-        System.setProperty("JSON_FILE", "file.json");
-        System.setProperty("DATABASE_ROOT", "c:/\\/\\");
     }
 
     @Test
@@ -54,65 +59,72 @@ public class DollarExprResolverTest {
         assertParseEquals("${date:yyyy-MM-dd HH:mm:ss}", "[1970-01-01 00:00:00]");
         assertParseEquals("${date:yyyy-MM-ddTHH:mm:ss}", "[1970-01-01T00:00:00]");
         assertParseEquals("$JSON_FILE", "[file.json]");
+        assertParseEquals("${JSON_FILE}", "[file.json]");
         assertParseEquals("a/b/f/$JSON_FILE", "[a/b/f/,file.json]");
+        assertParseEquals("a/b/f/${JSON_FILE}", "[a/b/f/,file.json]");
         assertParseEquals("a/b/f/${date:y}/$JSON_FILE", "[a/b/f/,1970,/,file.json]");
         assertParseEquals("${DATABASE_ROOT}/a/b/f/${date:y}/$JSON_FILE", "[c:/\\/\\,/a/b/f/,1970,/,file.json]");
         assertParseEquals("{}", "[{}]");
+        assertParseEquals("{$JSON_FILE}", "[{,file.json,}]");
         assertParseEquals("{${DATABASE_ROOT}}", "[{,c:/\\/\\,}]");
+        assertParseEquals("{$DATABASE_ROOT}", "[{,c:/\\/\\,}]");
 
-        Properties properties = new Properties();
-        properties.put("A", "alpha");
-        properties.put("B", "betha");
-        properties.put("C", "cetha");
-        properties.put("Z", "zetha");
-        assertParseEquals("${A}/${B}/${C}/${date:y}/$Z", "[alpha,/,betha,/,cetha,/,1970,/,zetha]", properties);
+        Map<String, String> props = new HashMap<>();
+        props.put("A", "alpha");
+        props.put("B", "betha");
+        props.put("C", "cetha");
+        props.put("Z", "zetha");
+        assertParseEquals("${A}/${B}/${C}/${date:y}/$Z", "[alpha,/,betha,/,cetha,/,1970,/,zetha]", props);
     }
 
     @Test
     public void testFailedParse() {
         assertFail("$", "Unexpected '$' at position 0");
         assertFail("$$", "Unexpected '$' at position 1");
-        int position = System.getProperty("JSON_FILE").length() + 1;
+        assertFail("${}", "Missing expression at position 2");
+        int position = ENV.get("JSON_FILE").length() + 1;
         assertFail("$JSON_FILE$", "Unexpected '$' at position " + position);
         assertFail("$COCO$", "Undefined property: COCO");
         assertFail("$ COCO  $", "Undefined property: COCO");
         assertFail("${COCO", "Missing '}' at position 6");
-        assertFail("$COCO}", "Unexpected '}' at position 5");
+        assertFail("$JSON_FILE}", "Mismatched '{}' at position 10");
         assertFail("${date:}", "Missing expression at position 7");
-        assertFail("{$DATABASE_ROOT}", "Unexpected '}' at position 15");
-        //assertFail("${date: Ketchup}", "Unexpected '}' at position 5"); // TODO: the compiler (TimestampFormatCompiler) should explode, but it does not
+        assertFail("/a/b/$DATABASE_ROOT/c", "Undefined property: DATABASE_ROOT/c");
     }
 
     @Test
     public void testChangeFileTimestamp() {
-        try (Path path = new Path()) {
-            locationParser.resolve("${date:y}", 0);
-            locationParser.setDateValue(1637091363010000L); // time always in micros
-            locationParser.toSink(path);
-            Assert.assertEquals("2021", path.toString());
-        }
+        locationParser.resolveEnv("${date:y}", 0);
+        locationParser.setDateValue(1637091363010000L); // time always in micros
+        Assert.assertEquals("2021", locationParser.toString());
+    }
+
+    @Test
+    public void testKeyOffsets() {
+        Map<String, String> props = new HashMap<>();
+        props.put("tarzan", "T");
+        props.put("jane", "J");
+        locationParser.resolve("${date:yyyy}{${tarzan}^$jane}", 0, props);
+        Assert.assertEquals("1970{T^J}", locationParser.toString());
+        Assert.assertTrue(locationParser.getKeyOffset("date:") < 0);
+        Assert.assertEquals(locationParser.getKeyOffset("tarzan"), 13);
+        Assert.assertEquals(locationParser.getKeyOffset("jane"), 23);
     }
 
     private void assertParseEquals(String location, String expected) {
-        assertParseEquals(location, expected, System.getProperties());
+        assertParseEquals(location, expected, ENV);
     }
 
-    private void assertParseEquals(String location, String expected, Properties properties) {
-        try (Path path = new Path()) {
-            locationParser.resolve(location, 0, properties);
-            locationParser.toSink(path);
-            sink.clear();
-            locationParser.getLocationComponents().toSink(sink);
-            Assert.assertEquals(expected, sink.toString());
-        }
+    private void assertParseEquals(String location, String expected, Map<String, String> props) {
+        locationParser.resolve(location, 0, props);
+        sink.clear();
+        sink.put(locationParser.getLocationComponents());
+        Assert.assertEquals(expected, sink.toString());
     }
 
     private void assertFail(String location, String expected) {
         try {
-            locationParser.resolve(location, 0);
-            sink.clear();
-            locationParser.getLocationComponents().toSink(sink);
-            System.out.printf(">>%s%n", sink);
+            locationParser.resolve(location, 0, ENV);
             Assert.fail();
         } catch (LogError t) {
             Assert.assertEquals(expected, t.getMessage());

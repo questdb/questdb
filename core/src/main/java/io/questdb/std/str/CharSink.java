@@ -30,7 +30,9 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 
 public interface CharSink {
 
-    int encodeSurrogate(char c, CharSequence in, int pos, int hi);
+    default int encodeSurrogate(char c, CharSequence in, int pos, int hi) {
+        throw new UnsupportedOperationException();
+    }
 
     default CharSink encodeUtf8(CharSequence cs) {
         return encodeUtf8(cs, 0, cs.length());
@@ -64,7 +66,9 @@ public interface CharSink {
     default void flush() {
     }
 
-    char[] getDoubleDigitsBuffer();
+    default char[] getDoubleDigitsBuffer() {
+        throw new UnsupportedOperationException();
+    }
 
     default CharSink put(CharSequence cs) {
         throw new UnsupportedOperationException();

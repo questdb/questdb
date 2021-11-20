@@ -88,6 +88,10 @@ public final class Chars {
         }
     }
 
+    public static void asciiPut(final char value, final long address) {
+        Unsafe.getUnsafe().putByte(address, (byte) value);
+    }
+
     public static int compare(CharSequence l, CharSequence r) {
         if (l == r) {
             return 0;
