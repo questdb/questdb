@@ -30,7 +30,7 @@ import io.questdb.std.str.CharSink;
 public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     public static final ObjectFactory<InsertModel> FACTORY = InsertModel::new;
     private final CharSequenceHashSet columnSet = new CharSequenceHashSet();
-    private final ObjList<ExpressionNode> columnValues = new ObjList<>();
+    private final ObjList<ObjList<ExpressionNode>> rowValuesTuples = new ObjList<>();
     private final IntList columnPositions = new IntList();
     private ExpressionNode tableName;
     private QueryModel queryModel;
@@ -50,8 +50,8 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return false;
     }
 
-    public void addColumnValue(ExpressionNode value) {
-        columnValues.add(value);
+    public void addRow(ObjList<ExpressionNode> row) {
+        rowValuesTuples.add(row);
     }
 
     @Override
@@ -60,7 +60,10 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.queryModel = null;
         this.columnSet.clear();
         this.columnPositions.clear();
-        this.columnValues.clear();
+        for (int i = 0; i < this.rowValuesTuples.size(); i++) {
+            this.rowValuesTuples.get(i).clear();
+        }
+        this.rowValuesTuples.clear();
         this.selectKeywordPosition = 0;
         this.endOfValuesPosition = 0;
         this.batchSize = -1;
@@ -75,8 +78,8 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return columnSet;
     }
 
-    public ObjList<ExpressionNode> getColumnValues() {
-        return columnValues;
+    public ObjList<ExpressionNode> getRowValues(int index) {
+        return rowValuesTuples.get(index);
     }
 
     public int getSelectKeywordPosition() {
@@ -115,6 +118,8 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     public void setCommitLag(long lag) {
         this.commitLag = lag;
     }
+
+    public int getRowTupleCount() { return rowValuesTuples.size(); }
 
     public ExpressionNode getTableName() {
         return tableName;
@@ -158,16 +163,18 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         if (queryModel != null) {
             queryModel.toSink(sink);
         } else {
-            sink.put("values (");
-
-            for (int i = 0, m = columnValues.size(); i < m; i++) {
-                if (i > 0) {
-                    sink.put(", ");
+            sink.put("values ");
+            for (int t = 0; t < rowValuesTuples.size(); t++) {
+                ObjList<ExpressionNode> columnValues = rowValuesTuples.get(t);
+                sink.put('(');
+                for (int i = 0, m = columnValues.size(); i < m; i++) {
+                    if (i > 0) {
+                        sink.put(", ");
+                    }
+                    sink.put(columnValues.getQuick(i));
                 }
-                sink.put(columnValues.getQuick(i));
+                sink.put(')');
             }
-
-            sink.put(')');
         }
     }
 }
