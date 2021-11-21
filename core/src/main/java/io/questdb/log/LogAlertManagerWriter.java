@@ -83,9 +83,9 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
     private String localHostIp;
     private String host;
     private int port;
-    private int sktOutBufferSize;
     private long sktOutBufferPtr;
     private long sktOutBufferLimit; // sktOutBufferPtr + sktBufferSize
+    private int sktOutBufferSize;
     private long sktInBufferPtr;
     private long fdSocketAddress = -1; // tcp/ip host:port address
     private long fdSocket = -1;
@@ -248,6 +248,9 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
                         "Cannot read %s [errno=%d]", location, ff.errno()));
             }
             size = ff.length(fdTemplate);
+            if (size > SKT_IN_BUFFER_SIZE) {
+                throw new LogError("template file is too big");
+            }
             // use the inbound socket buffer temporarily as the socket is not open yet
             if (size < 0 || size != ff.read(fdTemplate, sktInBufferPtr, size, 0)) {
                 throw new LogError(String.format(
@@ -256,9 +259,9 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
         }
 
         // resolve env vars within template.
-        DirectByteCharSequence templateBytes = new DirectByteCharSequence();
-        templateBytes.of(sktInBufferPtr, sktInBufferPtr + size);
-        dollar$.resolve(templateBytes, ticks, alertProps);
+        DirectByteCharSequence template = new DirectByteCharSequence();
+        template.of(sktInBufferPtr, sktInBufferPtr + size);
+        dollar$.resolve(template, ticks, alertProps);
         dollar$.resolve(dollar$.toString(), ticks, alertProps);
         ObjList<Sinkable> components = dollar$.getLocationComponents();
         if (dollar$.getKeyOffset(MESSAGE_ENV) < 0 || components.size() < 3) {
@@ -272,10 +275,11 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
     private void onLogRecord(LogRecordSink logRecord) {
         final int logRecordLen = logRecord.length();
         if ((logRecord.getLevel() & level) != 0 && logRecordLen > 0 && fdSocket > 0) {
-            httpAlertBuilder.rewindToMark();
-            httpAlertBuilder.put(logRecord);
-            httpAlertBuilder.put(alertFooter);
-            httpAlertBuilder.$();
+            httpAlertBuilder
+                    .rewindToMark()
+                    .put(logRecord)
+                    .put(alertFooter)
+                    .$();
 
             // send
             int remaining = httpAlertBuilder.length();

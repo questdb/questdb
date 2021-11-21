@@ -35,6 +35,7 @@ public class HttpAlertBuilder implements CharSink {
     private static final int NO_MARK = -1;
 
     private long lo;
+    private long hi;
     private long p;
     private long mark = NO_MARK;
     private long contentLenStart;
@@ -42,6 +43,7 @@ public class HttpAlertBuilder implements CharSink {
 
     public HttpAlertBuilder of(long address, long addressLimit, CharSequence localHostIp) {
         this.lo = address;
+        this.hi = addressLimit;
         this.p = address;
         this.mark = NO_MARK;
         put("POST /api/v1/alerts HTTP/1.1\r\n")
@@ -57,14 +59,13 @@ public class HttpAlertBuilder implements CharSink {
         return this;
     }
 
-    public HttpAlertBuilder $() {
-        char [] len = Long.toString(p - bodyStart).toCharArray();
+    public void $() {
+        char[] len = Long.toString(p - bodyStart).toCharArray();
         long q = contentLenStart;
         for (int i = 0, limit = CL_MARKER_LEN - len.length; i < limit; i++) {
             Chars.asciiPut(' ', q++);
         }
         Chars.asciiCopyTo(len, 0, len.length, q);
-        return this;
     }
 
     public int length() {
@@ -84,9 +85,10 @@ public class HttpAlertBuilder implements CharSink {
         return this;
     }
 
-    public CharSink put(LogRecordSink logRecord) {
+    public HttpAlertBuilder put(LogRecordSink logRecord) {
         final long address = logRecord.getAddress();
         final int logRecordLen = logRecord.length();
+        checkFits(logRecordLen);
         for (long p = address, limit = address + logRecordLen; p < limit; p++) {
             char c = (char) Unsafe.getUnsafe().getByte(p);
             switch (c) {
@@ -108,22 +110,25 @@ public class HttpAlertBuilder implements CharSink {
     }
 
     @Override
-    public CharSink put(char c) {
+    public HttpAlertBuilder put(char c) {
+        checkFits(1);
         Chars.asciiPut(c, p++);
         return this;
     }
 
     @Override
-    public CharSink put(CharSequence cs) {
+    public HttpAlertBuilder put(CharSequence cs) {
         int len = cs.length();
+        checkFits(len);
         Chars.asciiStrCpy(cs, len, p);
         p += len;
         return this;
     }
 
     @Override
-    public CharSink put(CharSequence cs, int lo, int hi) {
+    public HttpAlertBuilder put(CharSequence cs, int lo, int hi) {
         int len = hi - lo;
+        checkFits(len);
         Chars.asciiStrCpy(cs, len, p);
         p += len;
         return this;
@@ -132,5 +137,11 @@ public class HttpAlertBuilder implements CharSink {
     @Override
     public String toString() {
         return Chars.stringFromUtf8Bytes(lo, p);
+    }
+
+    private void checkFits(int len) {
+        if (p + len >= hi) {
+            throw new LogError("not enough out buffer size");
+        }
     }
 }
