@@ -101,11 +101,6 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             }
         }
 
-        if (filter != null) {
-            AbstractDataFrameRecordCursor cursor = super.getCursorInstance(dataFrameCursor, executionContext);
-            filter.init(cursor, executionContext);
-            return cursor;
-        }
         return super.getCursorInstance(dataFrameCursor, executionContext);
     }
 

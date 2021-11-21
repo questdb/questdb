@@ -1398,7 +1398,12 @@ public class SqlCompiler implements Closeable {
             final CharSequence unquoted = GenericLexer.unquote(tok);
 
             final long timestamp;
-            timestamp = parsePartitionNameToTimestamp(unquoted, reader.getPartitionedBy());
+            try {
+                timestamp = PartitionBy.parsePartitionDirName(unquoted, reader.getPartitionedBy());
+            } catch (CairoException e) {
+                throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage())
+                        .put("[errno=").put(e.getErrno()).put(']');
+            }
 
             partitions.ofPartition(timestamp);
             tok = SqlUtil.fetchNext(lexer);
@@ -1414,34 +1419,6 @@ public class SqlCompiler implements Closeable {
         } while (true);
 
         return compiledQuery.ofAlter(alterQueryBuilder.build());
-    }
-
-    private long parsePartitionNameToTimestamp(CharSequence text, int partitionBy) {
-        try {
-            if (partitionBy == PartitionBy.YEAR && text.length() == 4
-                    || partitionBy == PartitionBy.MONTH && text.length() == 7
-                    || partitionBy == PartitionBy.DAY && text.length() == 10) {
-                return IntervalUtils.parseFloorPartialDate(text);
-            }
-        } catch (NumericException e) {
-            // fall through to generate exception message
-        }
-        // Invalid value
-        final CairoException ee = CairoException.instance(0);
-        ee.put("partition date in ");
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                ee.put("'YYYY-MM-DD'");
-                break;
-            case PartitionBy.MONTH:
-                ee.put("'YYYY-MM'");
-                break;
-            default:
-                ee.put("'YYYY'");
-                break;
-        }
-        ee.put(" format expected");
-        throw ee;
     }
 
     private CompiledQuery alterTableRenameColumn(int tableNamePosition, String tableName, TableReaderMetadata metadata) throws SqlException {
@@ -1751,14 +1728,21 @@ public class SqlCompiler implements Closeable {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final ExpressionNode name = createTableModel.getName();
 
+        // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
+        if (createTableModel.isIgnoreIfExists()
+                &&
+                engine.getStatus(executionContext.getCairoSecurityContext(), path,
+                        name.token, 0, name.token.length()) != TableUtils.TABLE_DOES_NOT_EXIST) {
+            return compiledQuery.ofCreateTable();
+        }
+
+        // Slow path with lock attempt
         CharSequence lockedReason = engine.lock(executionContext.getCairoSecurityContext(), name.token, "createTable");
         if (null == lockedReason) {
             TableWriter writer = null;
             boolean newTable = false;
             try {
-                if (engine.getStatus(
-                        executionContext.getCairoSecurityContext(),
-                        path,
+                if (engine.getStatus(executionContext.getCairoSecurityContext(), path,
                         name.token, 0, name.token.length()) != TableUtils.TABLE_DOES_NOT_EXIST) {
                     if (createTableModel.isIgnoreIfExists()) {
                         return compiledQuery.ofCreateTable();
@@ -2449,7 +2433,7 @@ public class SqlCompiler implements Closeable {
             throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(metadata.getColumnType(timestamp.token))).put(']');
         }
 
-        if (model.getPartitionBy() != PartitionBy.NONE && model.getTimestampIndex() == -1 && metadata.getTimestampIndex() == -1) {
+        if (PartitionBy.isPartitioned(model.getPartitionBy()) && model.getTimestampIndex() == -1 && metadata.getTimestampIndex() == -1) {
             throw SqlException.position(0).put("timestamp is not defined");
         }
     }

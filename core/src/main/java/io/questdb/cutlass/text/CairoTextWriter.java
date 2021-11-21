@@ -272,7 +272,7 @@ public class CairoTextWriter implements Closeable, Mutable {
             final int detectedType = detectedAdapter.getType();
             if (detectedType != columnType) {
                 // when DATE type is mis-detected as STRING we
-                // wouldn't have neither date format nor locale to
+                // would not have either date format nor locale to
                 // use when populating this field
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.DATE:
@@ -333,7 +333,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                             !Chars.equalsNc(importedTimestampColumnName, designatedTimestampColumnName)) {
                         warnings |= TextLoadWarning.TIMESTAMP_MISMATCH;
                     }
-                    if (partitionBy != PartitionBy.NONE && partitionBy != writer.getPartitionBy()) {
+                    if (PartitionBy.isPartitioned(partitionBy) && partitionBy != writer.getPartitionBy()) {
                         warnings |= TextLoadWarning.PARTITION_TYPE_MISMATCH;
                     }
                     partitionBy = writer.getPartitionBy();
@@ -344,14 +344,12 @@ public class CairoTextWriter implements Closeable, Mutable {
                 throw CairoException.instance(0).put("name is reserved [table=").put(tableName).put(']');
         }
         if (canUpdateMetadata) {
-            if (partitionBy == PartitionBy.NONE && (commitLag >= 0 || maxUncommittedRows >= 0)) {
-                LOG.info().$("parameters commitLag and maxUncommittedRows have no effect when partitionBy is NONE").$();
-            } else {
-                if (commitLag >= 0) {
+            if (PartitionBy.isPartitioned(partitionBy)) {
+                if (commitLag > -1) {
                     writer.setMetaCommitLag(commitLag);
                     LOG.info().$("updating metadata attribute commitLag to ").$(commitLag).$(", table=").utf8(tableName).$();
                 }
-                if (maxUncommittedRows >= 0) {
+                if (maxUncommittedRows > -1) {
                     writer.setMetaMaxUncommittedRows(maxUncommittedRows);
                     LOG.info().$("updating metadata attribute maxUncommittedRows to ").$(maxUncommittedRows).$(", table=").utf8(tableName).$();
                 }

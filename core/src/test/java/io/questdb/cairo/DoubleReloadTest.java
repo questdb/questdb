@@ -27,7 +27,7 @@ package io.questdb.cairo;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class TestDoubleReload extends AbstractCairoTest {
+public class DoubleReloadTest extends AbstractCairoTest {
     @Test
     public void testSingleColumn() {
         try (TableModel model = new TableModel(

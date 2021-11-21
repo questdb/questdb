@@ -56,7 +56,7 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
         symbolKeys.clear();
 
         final StaticSymbolTable staticSymbolTable = tableReader.getSymbolMapReader(columnIndex);
-        int count = staticSymbolTable.size();
+        int count = staticSymbolTable.getSymbolCount();
 
         final SortHelper sortHelper = TL_SORT_HELPER.get();
         final ObjList<SymbolTableEntry> entries = sortHelper.getEntries();

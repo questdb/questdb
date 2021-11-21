@@ -78,7 +78,7 @@ class SymbolCache implements Closeable {
         final long ticks;
 
         if (
-                symbolValueCount > symbolMapReader.size()
+                symbolValueCount > symbolMapReader.getSymbolCount()
                         && (ticks = clock.getTicks()) - lastSymbolReaderReloadTimestamp > waitUsBeforeReload
         ) {
             symbolMapReader.updateSymbolCount(symbolValueCount);

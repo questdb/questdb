@@ -84,7 +84,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
         Path path = Path.getThreadLocal(root);
         path.concat(tableName).slash$();
         sink.clear();
-        TableUtils.setSinkForPartition(sink, partitionBy, partitionTimestamp, false);
+        PartitionBy.setSinkForPartition(sink, partitionBy, partitionTimestamp, false);
         path.slash$();
 
         txnList.clear();

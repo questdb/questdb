@@ -112,9 +112,8 @@ public class TableWriter implements Closeable {
     private final MessageBus messageBus;
     private final MessageBus ownMessageBus;
     private final boolean parallelIndexerEnabled;
-    private final Timestamps.TimestampFloorMethod timestampFloorMethod;
-    private final Timestamps.TimestampCeilMethod timestampCeilMethod;
-    private final Timestamps.TimestampAddMethod timestampAddMethod;
+    private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
+    private final PartitionBy.PartitionCeilMethod partitionCeilMethod;
     private final int defaultCommitMode;
     private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
     private final int o3ColumnMemorySize;
@@ -302,15 +301,11 @@ public class TableWriter implements Closeable {
             this.o3NullSetters = new ObjList<>(columnCount);
             this.activeNullSetters = nullSetters;
             this.columnTops = new LongList(columnCount);
-            if (partitionBy != PartitionBy.NONE) {
-                timestampFloorMethod = getPartitionFloor(partitionBy);
-                timestampCeilMethod = getPartitionCeil(partitionBy);
-                timestampAddMethod = getPartitionAdd(partitionBy);
-                partitionDirFmt = getPartitionDateFmt(partitionBy);
+            this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
+            this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
+            if (PartitionBy.isPartitioned(partitionBy)) {
+                partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
             } else {
-                timestampFloorMethod = null;
-                timestampCeilMethod = null;
-                timestampAddMethod = null;
                 partitionDirFmt = null;
             }
 
@@ -336,19 +331,6 @@ public class TableWriter implements Closeable {
 
     public static long getTimestampIndexValue(long timestampIndex, long indexRow) {
         return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16);
-    }
-
-    public static DateFormat selectPartitionDirFmt(int partitionBy) {
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                return fmtDay;
-            case PartitionBy.MONTH:
-                return fmtMonth;
-            case PartitionBy.YEAR:
-                return fmtYear;
-            default:
-                return null;
-        }
     }
 
     public void addColumn(CharSequence name, int type) {
@@ -455,7 +437,7 @@ public class TableWriter implements Closeable {
         columnTops.extendAndSet(columnCount - 1, txWriter.getTransientRowCount());
 
         // create column files
-        if (txWriter.getTransientRowCount() > 0 || partitionBy == PartitionBy.NONE) {
+        if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
             try {
                 openNewColumnFiles(name, isIndexed, indexValueBlockCapacity);
             } catch (CairoException e) {
@@ -517,21 +499,20 @@ public class TableWriter implements Closeable {
                 // column has top value, e.g. does not span entire partition
                 // to this end, we have a super-edge case:
                 //
-                if (partitionBy != PartitionBy.NONE) {
+                if (PartitionBy.isPartitioned(partitionBy)) {
                     // run indexer for the whole table
                     final long timestamp = indexHistoricPartitions(indexer, columnName, indexValueBlockSize);
-                    if (timestamp == Numbers.LONG_NaN) {
-                        return;
+                    if (timestamp != Numbers.LONG_NaN) {
+                        path.trimTo(rootLen);
+                        setStateForTimestamp(path, timestamp, true);
+                        // create index in last partition
+                        indexLastPartition(indexer, columnName, columnIndex, indexValueBlockSize);
                     }
-                    path.trimTo(rootLen);
-                    setStateForTimestamp(path, timestamp, true);
                 } else {
                     setStateForTimestamp(path, 0, false);
+                    // create index in last partition
+                    indexLastPartition(indexer, columnName, columnIndex, indexValueBlockSize);
                 }
-
-                // create index in last partition
-                indexLastPartition(indexer, columnName, columnIndex, indexValueBlockSize);
-
             } finally {
                 path.trimTo(rootLen);
             }
@@ -574,8 +555,7 @@ public class TableWriter implements Closeable {
         }
 
         txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
-
-        indexers.extendAndSet((columnIndex) / 2, indexer);
+        indexers.extendAndSet(columnIndex, indexer);
         populateDenseIndexerList();
 
         TableColumnMetadata columnMetadata = metadata.getColumnQuick(columnIndex);
@@ -825,7 +805,7 @@ public class TableWriter implements Closeable {
                         return newRowO3(timestamp);
                     }
 
-                    if (timestamp > partitionTimestampHi && partitionBy != PartitionBy.NONE) {
+                    if (timestamp > partitionTimestampHi && PartitionBy.isPartitioned(partitionBy)) {
                         switchPartition(timestamp);
                     }
                 }
@@ -864,30 +844,6 @@ public class TableWriter implements Closeable {
         o3ErrorCount.incrementAndGet();
     }
 
-    public long partitionNameToTimestamp(CharSequence partitionName) {
-        if (partitionDirFmt == null) {
-            throw CairoException.instance(0).put("table is not partitioned");
-        }
-        try {
-            return partitionDirFmt.parse(partitionName, null);
-        } catch (NumericException e) {
-            final CairoException ee = CairoException.instance(0);
-            switch (partitionBy) {
-                case PartitionBy.DAY:
-                    ee.put("'YYYY-MM-DD'");
-                    break;
-                case PartitionBy.MONTH:
-                    ee.put("'YYYY-MM'");
-                    break;
-                default:
-                    ee.put("'YYYY'");
-                    break;
-            }
-            ee.put(" expected");
-            throw ee;
-        }
-    }
-
     public void removeColumn(CharSequence name) {
 
         checkDistressed();
@@ -901,7 +857,7 @@ public class TableWriter implements Closeable {
         final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
         boolean timestamp = index == timestampIndex;
 
-        if (timestamp && partitionBy != PartitionBy.NONE) {
+        if (timestamp && PartitionBy.isPartitioned(partitionBy)) {
             throw CairoException.instance(0).put("Cannot remove timestamp from partitioned table");
         }
 
@@ -971,7 +927,7 @@ public class TableWriter implements Closeable {
         long minTimestamp = txWriter.getMinTimestamp();
         long maxTimestamp = txWriter.getMaxTimestamp();
 
-        if (partitionBy == PartitionBy.NONE) {
+        if (!PartitionBy.isPartitioned(partitionBy)) {
             return false;
         }
         timestamp = getPartitionLo(timestamp);
@@ -1371,6 +1327,8 @@ public class TableWriter implements Closeable {
                 purgeUnusedPartitions();
                 configureAppendPosition();
                 o3InError = false;
+                // when we rolled transaction back, hasO3() has to be false
+                o3MasterRef = -1;
                 LOG.info().$("tx rollback complete [name=").$(tableName).$(']').$();
                 processCommandQueue(false);
             } catch (Throwable e) {
@@ -1470,6 +1428,7 @@ public class TableWriter implements Closeable {
      * and likely to cause segmentation fault. When table re-opens any partial truncate will be retried.
      */
     public final void truncate() {
+        rollback();
 
         // we do this before size check so that "old" corrupt symbol tables are brought back in line
         for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
@@ -1492,15 +1451,6 @@ public class TableWriter implements Closeable {
         // ensure file is closed with correct length
         todoMem.jumpTo(48);
 
-        for (int i = 0; i < columnCount; i++) {
-            getPrimaryColumn(i).truncate();
-            MemoryMA mem = getSecondaryColumn(i);
-            if (mem != null && mem.isOpen()) {
-                mem.truncate();
-                mem.putLong(0);
-            }
-        }
-
         if (partitionBy != PartitionBy.NONE) {
             freeColumns(false);
             if (indexers != null) {
@@ -1510,15 +1460,21 @@ public class TableWriter implements Closeable {
             }
             removePartitionDirectories();
             rowActon = ROW_ACTION_OPEN_PARTITION;
+        } else {
+            // truncate columns, we cannot remove them
+            for (int i = 0; i < columnCount; i++) {
+                getPrimaryColumn(i).truncate();
+                MemoryMA mem = getSecondaryColumn(i);
+                if (mem != null && mem.isOpen()) {
+                    mem.truncate();
+                    mem.putLong(0);
+                }
+            }
         }
 
         txWriter.resetTimestamp();
         txWriter.truncate();
-
-        // todo: check and clear O3 memory
         row = regularRow;
-
-        // todo: implement switching off the transaction log
         try {
             clearTodoLog();
         } catch (CairoException err) {
@@ -1917,18 +1873,19 @@ public class TableWriter implements Closeable {
     }
 
     private void configureAppendPosition() {
-        if (this.txWriter.getMaxTimestamp() > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
+        final boolean partitioned = PartitionBy.isPartitioned(partitionBy);
+        if (this.txWriter.getMaxTimestamp() > Long.MIN_VALUE || !partitioned) {
             openFirstPartition(this.txWriter.getMaxTimestamp());
-            if (partitionBy == PartitionBy.NONE) {
+            if (partitioned) {
+                rowActon = ROW_ACTION_OPEN_PARTITION;
+                timestampSetter = appendTimestampSetter;
+            } else {
                 if (metadata.getTimestampIndex() < 0) {
                     rowActon = ROW_ACTION_NO_TIMESTAMP;
                 } else {
                     rowActon = ROW_ACTION_NO_PARTITION;
                     timestampSetter = appendTimestampSetter;
                 }
-            } else {
-                rowActon = ROW_ACTION_OPEN_PARTITION;
-                timestampSetter = appendTimestampSetter;
             }
         } else {
             rowActon = ROW_ACTION_OPEN_PARTITION;
@@ -2356,7 +2313,7 @@ public class TableWriter implements Closeable {
     }
 
     private long getPartitionLo(long timestamp) {
-        return timestampFloorMethod.floor(timestamp);
+        return partitionFloorMethod.floor(timestamp);
     }
 
     long getPartitionNameTxnByIndex(int index) {
@@ -2388,7 +2345,7 @@ public class TableWriter implements Closeable {
     private long indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize) {
         final long ts = this.txWriter.getMaxTimestamp();
         if (ts > Numbers.LONG_NaN) {
-            final long maxTimestamp = timestampFloorMethod.floor(ts);
+            final long maxTimestamp = partitionFloorMethod.floor(ts);
             long timestamp = txWriter.getMinTimestamp();
             try (final MemoryMR roMem = indexMem) {
 
@@ -2424,7 +2381,7 @@ public class TableWriter implements Closeable {
                             }
                         }
                     }
-                    timestamp = timestampAddMethod.calculate(timestamp, 1);
+                    timestamp = partitionCeilMethod.ceil(timestamp);
                 }
             } finally {
                 indexer.close();
@@ -2498,8 +2455,10 @@ public class TableWriter implements Closeable {
         long o3LagRowCount = 0;
         long maxUncommittedRows = metadata.getMaxUncommittedRows();
         final int timestampIndex = metadata.getTimestampIndex();
-        this.lastPartitionTimestamp = timestampFloorMethod.floor(partitionTimestampHi);
-        long activePartitionTimestampCeil = timestampCeilMethod.ceil(partitionTimestampHi);
+        this.lastPartitionTimestamp = partitionFloorMethod.floor(partitionTimestampHi);
+        // we will check new partitionTimestampHi value against the limit to see if the writer
+        // will have to switch partition internally
+        long partitionTimestampHiLimit = partitionCeilMethod.ceil(partitionTimestampHi) - 1;
         try {
             o3RowCount += o3MoveUncommitted(timestampIndex);
             final long transientRowCount = txWriter.transientRowCount;
@@ -2626,7 +2585,7 @@ public class TableWriter implements Closeable {
                         final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
                         final long srcOooHi;
                         // keep ceil inclusive in the interval
-                        final long srcOooTimestampCeil = timestampCeilMethod.ceil(o3Timestamp) - 1;
+                        final long srcOooTimestampCeil = partitionCeilMethod.ceil(o3Timestamp) - 1;
                         if (srcOooTimestampCeil < o3TimestampMax) {
                             srcOooHi = Vect.boundedBinarySearchIndexT(
                                     sortedTimestampsAddr,
@@ -2639,7 +2598,7 @@ public class TableWriter implements Closeable {
                             srcOooHi = srcOooMax - 1;
                         }
 
-                        final long partitionTimestamp = timestampFloorMethod.floor(o3Timestamp);
+                        final long partitionTimestamp = partitionFloorMethod.floor(o3Timestamp);
                         final boolean last = partitionTimestamp == lastPartitionTimestamp;
                         srcOoo = srcOooHi + 1;
 
@@ -2860,7 +2819,7 @@ public class TableWriter implements Closeable {
             }
         }
 
-        if (!columns.getQuick(0).isOpen() || partitionTimestampHi > activePartitionTimestampCeil) {
+        if (!columns.getQuick(0).isOpen() || partitionTimestampHi > partitionTimestampHiLimit) {
             openPartition(txWriter.getMaxTimestamp());
         }
 
@@ -3924,7 +3883,7 @@ public class TableWriter implements Closeable {
     }
 
     void purgeUnusedPartitions() {
-        if (partitionBy != PartitionBy.NONE) {
+        if (PartitionBy.isPartitioned(partitionBy)) {
             removeNonAttachedPartitions();
         }
     }
@@ -4319,14 +4278,14 @@ public class TableWriter implements Closeable {
     }
 
     private long repairDataGaps(final long timestamp) {
-        if (txWriter.getMaxTimestamp() != Numbers.LONG_NaN && partitionBy != PartitionBy.NONE) {
+        if (txWriter.getMaxTimestamp() != Numbers.LONG_NaN && PartitionBy.isPartitioned(partitionBy)) {
             long fixedRowCount = 0;
             long lastTimestamp = -1;
             long transientRowCount = this.txWriter.getTransientRowCount();
             long maxTimestamp = this.txWriter.getMaxTimestamp();
             try {
-                final long tsLimit = timestampFloorMethod.floor(this.txWriter.getMaxTimestamp());
-                for (long ts = getPartitionLo(txWriter.getMinTimestamp()); ts < tsLimit; ts = timestampAddMethod.calculate(ts, 1)) {
+                final long tsLimit = partitionFloorMethod.floor(this.txWriter.getMaxTimestamp());
+                for (long ts = getPartitionLo(txWriter.getMinTimestamp()); ts < tsLimit; ts = partitionCeilMethod.ceil(ts)) {
                     path.trimTo(rootLen);
                     setStateForTimestamp(path, ts, false);
                     int p = path.length();
@@ -4436,7 +4395,7 @@ public class TableWriter implements Closeable {
 
     private void repairTruncate() {
         LOG.info().$("repairing abnormally terminated truncate on ").$(path).$();
-        if (partitionBy != PartitionBy.NONE) {
+        if (PartitionBy.isPartitioned(partitionBy)) {
             removePartitionDirectories();
         }
         txWriter.truncate();
@@ -4556,7 +4515,7 @@ public class TableWriter implements Closeable {
 
         // dirty timestamp should be 1 because newRow() increments it
         if (dirtyTransientRowCount == 1) {
-            if (partitionBy != PartitionBy.NONE) {
+            if (PartitionBy.isPartitioned(partitionBy)) {
                 // we have to undo creation of partition
                 closeActivePartition(false);
                 if (removeDirOnCancelRow) {

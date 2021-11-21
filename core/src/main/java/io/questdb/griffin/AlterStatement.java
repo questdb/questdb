@@ -364,7 +364,7 @@ public class AlterStatement implements Mutable {
     }
 
     private SqlException putPartitionName(SqlException ex, int partitionBy, long timestamp) {
-        TableUtils.setSinkForPartition(exceptionSinkAdapter.of(ex), partitionBy, timestamp, false);
+        PartitionBy.setSinkForPartition(exceptionSinkAdapter.of(ex), partitionBy, timestamp, false);
         return ex;
     }
 
