@@ -34,6 +34,8 @@ import java.io.Closeable;
 public class TableWriterTask implements Closeable {
     public static final int TSK_SLAVE_SYNC = 1;
     public static final int TSK_ALTER_TABLE = 2;
+    public static final int TSK_ALTER_TABLE_BEGIN = 3;
+    public static final int TSK_ALTER_TABLE_COMPLETE = 4;
     private int type;
     private long tableId;
     private String tableName;

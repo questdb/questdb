@@ -46,6 +46,10 @@ public interface CompiledQuery {
     short LOCK = 14;
     short UNLOCK = 14;
 
+    int QUERY_NO_RESPONSE = 0;
+    int QUERY_STARTED = 1;
+    int QUERY_COMPLETE = 2;
+
     RecordCursorFactory getRecordCursorFactory();
 
     InsertStatement getInsertStatement();

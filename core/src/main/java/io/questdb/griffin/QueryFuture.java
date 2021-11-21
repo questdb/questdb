@@ -26,6 +26,8 @@ package io.questdb.griffin;
 
 import java.io.Closeable;
 
+import static io.questdb.griffin.CompiledQuery.QUERY_COMPLETE;
+
 public interface QueryFuture extends Closeable {
     /***
      * Blocking wait for query completion. Returns immediately if query has executed synchronously
@@ -40,13 +42,13 @@ public interface QueryFuture extends Closeable {
      * @return true if complete, false otherwise
      * @throws SqlException when query execution fails
      */
-    boolean await(long timeout) throws SqlException;
+    int await(long timeout) throws SqlException;
 
     /***
      * True if operation completed, false otherwise
      * @return true when done, false if needs awaiting
      */
-    boolean isDone();
+    int getStatus();
 
     /***
      * In case of async execution close must be called to remove sequence
@@ -60,13 +62,13 @@ public interface QueryFuture extends Closeable {
         }
 
         @Override
-        public boolean await(long timeout) {
-            return true;
+        public int await(long timeout) {
+            return QUERY_COMPLETE;
         }
 
         @Override
-        public boolean isDone() {
-            return true;
+        public int getStatus() {
+            return QUERY_COMPLETE;
         }
 
         @Override

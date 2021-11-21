@@ -1252,6 +1252,7 @@ public class TableWriter implements Closeable {
 
         CharSequence error = null;
         try {
+            replAlterTableEvent0(tableId, instance, error, TableWriterTask.TSK_ALTER_TABLE_BEGIN);
             LOG.info()
                     .$("received ASYNC ALTER TABLE cmd [tableName=").$(tableName)
                     .$(", tableId=").$(tableId)
@@ -1274,15 +1275,15 @@ public class TableWriter implements Closeable {
         } finally {
             sequence.done(cursor);
         }
-        replAlterTableEvent0(tableId, instance, error);
+        replAlterTableEvent0(tableId, instance, error, TableWriterTask.TSK_ALTER_TABLE_COMPLETE);
     }
 
-    private void replAlterTableEvent0(long tableId, long instance, CharSequence error) {
+    private void replAlterTableEvent0(long tableId, long instance, CharSequence error, int eventType) {
         final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
         if (pubCursor > -1) {
             try {
                 final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
-                event.of(TableWriterTask.TSK_ALTER_TABLE, tableId, tableName);
+                event.of(eventType, tableId, tableName);
                 if (error != null) {
                     event.putStr(error);
                 } else {
@@ -1294,14 +1295,16 @@ public class TableWriter implements Closeable {
             }
 
             // Log result
-            LogRecord lg = LOG.info()
-                    .$("published alter table complete event [table=").$(tableName)
-                    .$(",tableId=").$(tableId)
-                    .$(",instance=").$(instance);
-            if (error != null) {
-                lg.$(",error=").$(error);
+            if (eventType == TableWriterTask.TSK_ALTER_TABLE_COMPLETE) {
+                LogRecord lg = LOG.info()
+                        .$("published alter table complete event [table=").$(tableName)
+                        .$(",tableId=").$(tableId)
+                        .$(",instance=").$(instance);
+                if (error != null) {
+                    lg.$(",error=").$(error);
+                }
+                lg.I$();
             }
-            lg.I$();
         } else if (pubCursor == -1) {
             // Queue is full
             LOG.error()
@@ -3872,7 +3875,7 @@ public class TableWriter implements Closeable {
                     processAlterTableEvent(cmd, cursor, commandSubSeq, acceptStructureChange);
                     break;
                 default:
-                    LOG.error().$("unknown TableWriterTask type, ignored: ").$(cmd).$();
+                    LOG.error().$("unknown TableWriterTask type, ignored: ").$(cmd.getType()).$();
                     // Don't block the queue even if command is unknown
                     commandSubSeq.done(cursor);
                     break;

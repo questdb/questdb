@@ -205,28 +205,28 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     private class AlterTableQueryFuture implements QueryFuture {
         private SCSequence eventSubSeq;
-        private boolean done;
+        private int status;
         private long commandId;
 
         @Override
         public void await() throws SqlException {
-            if (!await(engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout())) {
+            status = await(engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout());
+            if (status != QUERY_COMPLETE) {
                 throw SqlException.$(alterStatement.getTableNamePosition(), "Timeout expired on waiting for the ALTER TABLE execution result");
             }
-            done = true;
         }
 
         @Override
-        public boolean await(long timeout) throws SqlException {
-            if (done) {
-                return true;
+        public int await(long timeout) throws SqlException {
+            if (status == QUERY_COMPLETE) {
+                return status;
             }
-            return done = awaitWriterEvent(timeout, alterStatement.getTableNamePosition());
+            return status = Math.max(status, awaitWriterEvent(timeout, alterStatement.getTableNamePosition()));
         }
 
         @Override
-        public boolean isDone() {
-            return false;
+        public int getStatus() {
+            return status;
         }
 
         @Override
@@ -254,19 +254,19 @@ public class CompiledQueryImpl implements CompiledQuery {
             try {
                 // Publish new command and get published Command Id
                 commandId = engine.publishTableWriterCommand(alterStatement);
-                done = false;
+                status = QUERY_NO_RESPONSE;
             } catch (Throwable ex) {
                 close();
                 throw ex;
             }
         }
 
-        private boolean awaitWriterEvent(
+        private int awaitWriterEvent(
                 long writerAsyncCommandBusyWaitTimeout,
                 int queryTableNamePosition
         ) throws SqlException {
-            if (writerAsyncCommandBusyWaitTimeout < 1) {
-                return false;
+            if (writerAsyncCommandBusyWaitTimeout < 2) {
+                return QUERY_NO_RESPONSE;
             }
             assert eventSubSeq != null : "No sequence to wait on";
             assert commandId > -1 : "No command id to wait for";
@@ -275,22 +275,24 @@ public class CompiledQueryImpl implements CompiledQuery {
             final long start = clock.getTicks();
             final RingQueue<TableWriterTask> tableWriterEventQueue = engine.getMessageBus().getTableWriterEventQueue();
 
+            int status = QUERY_NO_RESPONSE;
             while (true) {
                 long seq = eventSubSeq.next();
                 if (seq < 0) {
                     // Queue is empty, check if the execution blocked for too long
                     if (clock.getTicks() - start > writerAsyncCommandBusyWaitTimeout) {
-                        return false;
+                        return status;
                     }
                     LockSupport.parkNanos(1);
                     continue;
                 }
 
                 TableWriterTask event = tableWriterEventQueue.get(seq);
-                if (event.getInstance() != commandId || event.getType() != TableWriterTask.TSK_ALTER_TABLE) {
+                int type = event.getType();
+                if (event.getInstance() != commandId || (type != TableWriterTask.TSK_ALTER_TABLE_BEGIN && type != TableWriterTask.TSK_ALTER_TABLE_COMPLETE)) {
                     LOG.debug()
                             .$("writer command response received and ignored [instance=").$(event.getInstance())
-                            .$(", type=").$(event.getType())
+                            .$(", type=").$(type)
                             .$(", expectedInstance=").$(commandId)
                             .I$();
                     eventSubSeq.done(seq);
@@ -298,19 +300,25 @@ public class CompiledQueryImpl implements CompiledQuery {
                     continue;
                 }
 
-                // If writer failed to execute the ALTER command it will send back string error
-                // in the event data
-                SqlException result = null;
-                int strLen = Unsafe.getUnsafe().getInt(event.getData());
-                if (strLen != 0) {
-                    result = SqlException.$(queryTableNamePosition, event.getData() + 4L, event.getData() + 4L + 2L * strLen);
+                if (type == TableWriterTask.TSK_ALTER_TABLE_COMPLETE) {
+                    // If writer failed to execute the ALTER command it will send back string error
+                    // in the event data
+                    SqlException result = null;
+                    int strLen = Unsafe.getUnsafe().getInt(event.getData());
+                    if (strLen != 0) {
+                        result = SqlException.$(queryTableNamePosition, event.getData() + 4L, event.getData() + 4L + 2L * strLen);
+                    }
+                    eventSubSeq.done(seq);
+                    LOG.info().$("writer command response received [instance=").$(commandId).I$();
+                    if (result != null) {
+                        throw result;
+                    }
+                    return QUERY_COMPLETE;
+                } else {
+                    status = QUERY_STARTED;
+                    eventSubSeq.done(seq);
+                    LOG.info().$("writer command QUERY_STARTED response received [instance=").$(commandId).I$();
                 }
-                eventSubSeq.done(seq);
-                LOG.info().$("writer command response received [instance=").$(commandId).I$();
-                if (result != null) {
-                    throw result;
-                }
-                return true;
             }
         }
     }

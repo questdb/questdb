@@ -38,6 +38,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.griffin.CompiledQuery.QUERY_COMPLETE;
+import static io.questdb.griffin.CompiledQuery.QUERY_NO_RESPONSE;
+
 public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
 
     private final SCSequence commandReplySequence = new SCSequence();
@@ -68,7 +71,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     qf.await(0);
                     engine.tick();
                     writer.tick();
-                    Assert.assertFalse(qf.await(500_000));
+                    Assert.assertEquals(QUERY_NO_RESPONSE, qf.await(500_000));
                 }
 
                 // Remove sequence
@@ -119,7 +122,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             CompiledQuery cc = compiler.compile("ALTER TABLE product add column column5 int", sqlExecutionContext);
             try (QueryFuture cq = cc.execute(tempSequence)) {
                 // Should execute in sync since writer is unlocked
-                Assert.assertTrue(cq.isDone());
+                Assert.assertEquals(QUERY_COMPLETE, cq.getStatus());
             }
         });
     }
@@ -192,7 +195,8 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 }
 
             } // Unblock table
-            Assert.assertTrue(compiler.compile("ALTER TABLE product drop column to_remove", sqlExecutionContext).execute(null).isDone());
+            int status = compiler.compile("ALTER TABLE product drop column to_remove", sqlExecutionContext).execute(null).getStatus();
+            Assert.assertEquals(QUERY_COMPLETE, status);
         });
     }
 
@@ -291,11 +295,11 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
 
                 try (TableWriter ignored = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
                     // Add invalid command to engine queue
-                    MPSequence commandPugSeq = messageBus.getTableWriterCommandPubSeq();
-                    long pubCursor = commandPugSeq.next();
+                    MPSequence commandPubSeq = messageBus.getTableWriterCommandPubSeq();
+                    long pubCursor = commandPubSeq.next();
                     Assert.assertTrue(pubCursor > -1);
                     messageBus.getTableWriterCommandQueue().get(pubCursor).setTableId(ignored.getMetadata().getId());
-                    commandPugSeq.done(pubCursor);
+                    commandPubSeq.done(pubCursor);
 
                     CompiledQuery cc = compiler.compile("alter table product rename column name to name1, timestamp to timestamp1", sqlExecutionContext);
                     commandFuture = cc.execute(commandReplySequence);
