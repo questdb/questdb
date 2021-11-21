@@ -44,15 +44,26 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
     static final String DEFAULT_ALERT_TPT_FILE = "/alert-manager-tpt.json";
     private static final String DEFAULT_HOST = "127.0.0.1";
     private static final int DEFAULT_PORT = 9093;
-    private static final int DEFAULT_SKT_OUT_BUFFER_SIZE = 4 * 1024 * 1024;
-    private static final int SKT_IN_BUFFER_SIZE = 2 * 1024 * 1024;
-    private final CharSequenceObjHashMap<CharSequence> alertProps = DollarExpr.adaptMap(System.getenv());
+    private static final int IN_BUFFER_SIZE = 2 * 1024 * 1024;
+    private static final int OUT_BUFFER_SIZE = 4 * 1024 * 1024;
     private static final String DEFAULT_ENV_VALUE = "GLOBAL";
     private static final String ORG_ID_ENV = "ORGID";
     private static final String NAMESPACE_ENV = "NAMESPACE";
     private static final String CLUSTER_ENV = "CLUSTER_NAME";
     private static final String INSTANCE_ENV = "INSTANCE_NAME";
     private static final String MESSAGE_ENV = "ALERT_MESSAGE";
+
+
+    private final int level;
+    private final MicrosecondClock clock;
+    private final FilesFacade ff;
+    private final SCSequence writeSequence;
+    private final RingQueue<LogRecordSink> alertsSource;
+    private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
+    private final DollarExpr dollar$ = new DollarExpr();
+    private final HttpAlertBuilder alertBuilder = new HttpAlertBuilder();
+    private final CharSequenceObjHashMap<CharSequence> alertProps = DollarExpr.adaptMap(System.getenv());
+    private String alertFooter;
 
     {
         if (!alertProps.contains(ORG_ID_ENV)) {
@@ -70,40 +81,30 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
         alertProps.put(MESSAGE_ENV, "${" + MESSAGE_ENV + "}");
     }
 
-    private final int level;
-    private final MicrosecondClock clock;
-    private final FilesFacade ff;
-    private final SCSequence writeSequence;
-    private final RingQueue<LogRecordSink> alertsSource;
-    private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
-    private final HttpAlertBuilder httpAlertBuilder = new HttpAlertBuilder();
-    private final DollarExpr dollar$ = new DollarExpr();
-    private String alertFooter;
     // socket
     private String localHostIp;
     private String host;
     private int port;
-    private long sktOutBufferPtr;
-    private long sktOutBufferLimit; // sktOutBufferPtr + sktBufferSize
-    private int sktOutBufferSize;
-    private long sktInBufferPtr;
+    private long outBufferPtr;
+    private long outBufferLimit;
+    private int outBufferSize;
+    private long inBufferPtr;
+    private long inBufferLimit;
+    private final int inBufferSize = IN_BUFFER_SIZE;
     private long fdSocketAddress = -1; // tcp/ip host:port address
     private long fdSocket = -1;
+
     // changed by introspection
     private String location = DEFAULT_ALERT_TPT_FILE;
     private String bufferSize;
     private String socketAddress;
 
 
-    public LogAlertManagerWriter(
-            RingQueue<LogRecordSink> alertsSource,
-            SCSequence writeSequence,
-            int level
-    ) {
+    public LogAlertManagerWriter(RingQueue<LogRecordSink> alertsSrc, SCSequence writeSequence, int level) {
         this(
                 FilesFacadeImpl.INSTANCE,
                 MicrosecondClockImpl.INSTANCE,
-                alertsSource,
+                alertsSrc,
                 writeSequence,
                 level
         );
@@ -112,46 +113,49 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
     public LogAlertManagerWriter(
             FilesFacade ff,
             MicrosecondClock clock,
-            RingQueue<LogRecordSink> alertsSource,
+            RingQueue<LogRecordSink> alertsSrc,
             SCSequence writeSequence,
             int level
     ) {
         this.ff = ff;
         this.clock = clock;
-        this.alertsSource = alertsSource;
+        this.alertsSource = alertsSrc;
         this.writeSequence = writeSequence;
         this.level = level & ~(1 << Numbers.msb(LogLevel.ADVISORY)); // switch off ADVISORY
     }
 
     @Override
     public void bindProperties() {
-        parseSocketAddress();
         if (bufferSize != null) {
             try {
-                sktOutBufferSize = Numbers.parseIntSize(bufferSize);
+                outBufferSize = Numbers.parseIntSize(bufferSize);
             } catch (NumericException e) {
                 throw new LogError("Invalid value for bufferSize");
             }
         } else {
-            sktOutBufferSize = DEFAULT_SKT_OUT_BUFFER_SIZE;
+            outBufferSize = OUT_BUFFER_SIZE;
         }
-        sktInBufferPtr = Unsafe.malloc(SKT_IN_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-        sktOutBufferLimit = sktOutBufferPtr + SKT_IN_BUFFER_SIZE;
-        sktOutBufferPtr = Unsafe.malloc(sktOutBufferSize, MemoryTag.NATIVE_DEFAULT);
-        sktOutBufferLimit = sktOutBufferPtr + sktOutBufferSize;
+        inBufferPtr = Unsafe.malloc(inBufferSize, MemoryTag.NATIVE_DEFAULT);
+        inBufferLimit = inBufferPtr + inBufferSize;
+        outBufferPtr = Unsafe.malloc(outBufferSize, MemoryTag.NATIVE_DEFAULT);
+        outBufferLimit = outBufferPtr + outBufferSize;
+
+        parseSocketAddress();
         loadAlertTemplate();
         connectSocket();
     }
 
     @Override
     public void close() {
-        if (sktOutBufferPtr != 0) {
-            Unsafe.free(sktOutBufferPtr, sktOutBufferSize, MemoryTag.NATIVE_DEFAULT);
-            sktOutBufferPtr = 0;
+        if (outBufferPtr != 0) {
+            Unsafe.free(outBufferPtr, outBufferSize, MemoryTag.NATIVE_DEFAULT);
+            outBufferPtr = 0;
+            outBufferLimit = 0;
         }
-        if (sktInBufferPtr != 0) {
-            Unsafe.free(sktInBufferPtr, SKT_IN_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-            sktInBufferPtr = 0;
+        if (inBufferPtr != 0) {
+            Unsafe.free(inBufferPtr, IN_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            inBufferPtr = 0;
+            inBufferLimit = 0;
         }
         if (fdSocket != -1) {
             freeSocket();
@@ -234,56 +238,51 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
     }
 
     private void loadAlertTemplate() {
-        long ticks = clock.getTicks();
-        location = dollar$.resolveEnv(location, ticks).toString();
-        httpAlertBuilder.of(sktOutBufferPtr, sktOutBufferLimit, localHostIp);
+        final long now = clock.getTicks();
+        location = dollar$.resolveEnv(location, now).toString();
 
-        // load template file content.
-        long size;
-        try (Path path = new Path()) {
-            path.of(location);
-            long fdTemplate = ff.openRO(path.$());
-            if (fdTemplate == -1) {
-                throw new LogError(String.format(
-                        "Cannot read %s [errno=%d]", location, ff.errno()));
+        // resolve env vars within template, except ALERT_MESSAGE
+        long size = -1;
+        try (InputStream is = LogAlertManagerWriter.class.getResourceAsStream(location)) {
+            if (is != null) {
+                dollar$.resolve(new String(is.readAllBytes(), Files.UTF_8), now, alertProps);
+            } else {
+                size = readTemplateFile(location, inBufferPtr, inBufferLimit, ff);
             }
-            size = ff.length(fdTemplate);
-            if (size > SKT_IN_BUFFER_SIZE) {
-                throw new LogError("template file is too big");
-            }
-            // use the inbound socket buffer temporarily as the socket is not open yet
-            if (size < 0 || size != ff.read(fdTemplate, sktInBufferPtr, size, 0)) {
-                throw new LogError(String.format(
-                        "Cannot read %s [size=%d, errno=%d]", location, size, ff.errno()));
-            }
+        } catch (IOException e) {
+            size = readTemplateFile(location, inBufferPtr, inBufferLimit, ff);
+        }
+        if (size != -1) {
+            DirectByteCharSequence template = new DirectByteCharSequence();
+            template.of(inBufferPtr, inBufferPtr + size);
+            dollar$.resolve(template, now, alertProps);
         }
 
-        // resolve env vars within template.
-        DirectByteCharSequence template = new DirectByteCharSequence();
-        template.of(sktInBufferPtr, sktInBufferPtr + size);
-        dollar$.resolve(template, ticks, alertProps);
-        dollar$.resolve(dollar$.toString(), ticks, alertProps);
+        // consolidate/check/load template onto the outbound socket buffer
+        dollar$.resolve(dollar$.toString(), now, alertProps);
         ObjList<Sinkable> components = dollar$.getLocationComponents();
         if (dollar$.getKeyOffset(MESSAGE_ENV) < 0 || components.size() < 3) {
             throw new LogError(String.format("Bad template %s", location));
         }
-        httpAlertBuilder.put(components.getQuick(0));
-        httpAlertBuilder.setMark(); // mark the end of the first static block in buffer
+        alertBuilder
+                .using(outBufferPtr, outBufferLimit, localHostIp)
+                .put(components.getQuick(0))
+                .setMark(); // mark the end of the first static block in buffer
         alertFooter = components.getQuick(2).toString();
     }
 
     private void onLogRecord(LogRecordSink logRecord) {
         final int logRecordLen = logRecord.length();
         if ((logRecord.getLevel() & level) != 0 && logRecordLen > 0 && fdSocket > 0) {
-            httpAlertBuilder
+            alertBuilder
                     .rewindToMark()
                     .put(logRecord)
                     .put(alertFooter)
                     .$();
 
             // send
-            int remaining = httpAlertBuilder.length();
-            long p = sktOutBufferPtr;
+            int remaining = alertBuilder.length();
+            long p = outBufferPtr;
             while (remaining > 0) {
                 int n = Net.send(fdSocket, p, remaining);
                 if (n > 0) {
@@ -295,9 +294,30 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
             }
 
             // receive ack
-            p = sktInBufferPtr;
-            int n = Net.recv(fdSocket, p, SKT_IN_BUFFER_SIZE);
+            p = inBufferPtr;
+            int n = Net.recv(fdSocket, p, inBufferSize);
             Net.dumpAscii(p, n);
+        }
+    }
+
+    private static long readTemplateFile(String location, long address, long limit, FilesFacade ff) {
+        try (Path path = new Path()) {
+            path.of(location);
+            long fdTemplate = ff.openRO(path.$());
+            if (fdTemplate == -1) {
+                throw new LogError(String.format(
+                        "Cannot read %s [errno=%d]", location, ff.errno()));
+            }
+            long size = ff.length(fdTemplate);
+            if (size > limit - address) {
+                throw new LogError("Template file is too big");
+            }
+            // use the inbound socket buffer temporarily as the socket is not open yet
+            if (size < 0 || size != ff.read(fdTemplate, address, size, 0)) {
+                throw new LogError(String.format(
+                        "Cannot read %s [size=%d, errno=%d]", location, size, ff.errno()));
+            }
+            return size;
         }
     }
 }

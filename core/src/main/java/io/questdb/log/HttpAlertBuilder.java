@@ -25,8 +25,10 @@
 package io.questdb.log;
 
 import io.questdb.std.Chars;
+import io.questdb.std.Sinkable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
+
 
 public class HttpAlertBuilder implements CharSink {
     private static final String HEADER_BODY_SEPARATOR = "\r\n\r\n";
@@ -41,7 +43,10 @@ public class HttpAlertBuilder implements CharSink {
     private long contentLenStart;
     private long bodyStart;
 
-    public HttpAlertBuilder of(long address, long addressLimit, CharSequence localHostIp) {
+    public HttpAlertBuilder using(long address, long addressLimit, CharSequence localHostIp) {
+        assert address < addressLimit;
+        assert localHostIp != null;
+
         this.lo = address;
         this.hi = addressLimit;
         this.p = address;
@@ -131,6 +136,12 @@ public class HttpAlertBuilder implements CharSink {
         checkFits(len);
         Chars.asciiStrCpy(cs, len, p);
         p += len;
+        return this;
+    }
+
+    @Override
+    public HttpAlertBuilder put(Sinkable sinkable) {
+        sinkable.toSink(this);
         return this;
     }
 

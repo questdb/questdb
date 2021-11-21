@@ -42,7 +42,7 @@ public class HttpAlertBuilderTest {
         final long bufferLimit = bufferPtr + bufferSize;
         try {
             HttpAlertBuilder builder = new HttpAlertBuilder();
-            builder.of(bufferPtr, bufferLimit, "localhost");
+            builder.using(bufferPtr, bufferLimit, "localhost");
             builder.setMark();
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
@@ -87,7 +87,7 @@ public class HttpAlertBuilderTest {
             logRecord.put(msg);
 
             HttpAlertBuilder builder = new HttpAlertBuilder();
-            builder.of(bufferPtr, bufferLimit, "localhost");
+            builder.using(bufferPtr, bufferLimit, "localhost");
             builder.setMark();
             builder.put(logRecord);
             builder.$();
