@@ -250,6 +250,14 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     }
 
     @Test
+    public void testMangledMeasurementNameFromBothEnds() {
+        assertThat(
+                "--ERROR=INVALID_MEASUREMENT_NAME--",
+                "\0\0\0,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
     public void testWithQuotedStringsWithSpaces() {
         assertThat(
                 "measurement,tag=value,tag2=value field=10000i,field2=\"longstring\",fld3=\"short string\" 100000\n",
@@ -281,7 +289,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     }
 
     @Test
-    public void testSpaceInMesurmentName() {
+    public void testSpaceInMeasurementName() {
         assertThat(
                 "tab ble,tag= 1 field=2 123\n",
                 "tab\\ ble,tag=\\ 1 field=2 123\n"

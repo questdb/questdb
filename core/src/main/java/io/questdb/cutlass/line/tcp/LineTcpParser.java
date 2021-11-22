@@ -64,15 +64,51 @@ public class LineTcpParser implements Closeable {
     private ProtoEntity currentEntity;
     private ErrorCode errorCode;
     private EntityHandler entityHandler;
-    private final EntityHandler entityTableHandler = this::expectTableName;
     private long timestamp;
-    private final EntityHandler entityTimestampHandler = this::expectTimestamp;
-    private final EntityHandler entityValueHandler = this::expectEntityValue;
-    private final EntityHandler entityNameHandler = this::expectEntityName;
+    private final EntityHandler entityTimestampHandler = this::expectTimestamp;    private final EntityHandler entityTableHandler = this::expectTableName;
     private int nQuoteCharacters;
     private boolean scape;
     private boolean nextValueCanBeOpenQuote;
-    private boolean hasNonAscii;
+    private boolean hasNonAscii;    private final EntityHandler entityValueHandler = this::expectEntityValue;
+
+    public static long sanitizeEnd(long lo, long hi) {
+        long p = hi - 1;
+        OUT:
+        while (p >= lo) {
+            switch (Unsafe.getUnsafe().getByte(p)) {
+                case ' ':
+                case '\0':
+                case '\t':
+                case '\\':
+                case '/':
+                    p--;
+                    break;
+                default:
+                    break OUT;
+            }
+        }
+        return p + 1;
+    }
+
+    public static long sanitizeStart(long lo, long hi) {
+        long p = lo;
+        OUT:
+        while (p < hi) {
+            switch (Unsafe.getUnsafe().getByte(p)) {
+                case ' ':
+                case '\0':
+                case '\t':
+                case '\\':
+                case '.':
+                case '/':
+                    p++;
+                    break;
+                default:
+                    break OUT;
+            }
+        }
+        return p;
+    }    private final EntityHandler entityNameHandler = this::expectEntityName;
 
     @Override
     public void close() {
@@ -122,7 +158,7 @@ public class LineTcpParser implements Closeable {
         // We can resume from random place of the line message
         // the class member variables should resume byte by byte parsing from the last place
         // processing stopped.
-        if (nQuoteCharacters == 1 && tagsComplete && entityHandler == entityValueHandler)  {
+        if (nQuoteCharacters == 1 && tagsComplete && entityHandler == entityValueHandler) {
             // when nQuoteCharacters it means that parsing of quoted value has started.
             // continue parsing quoted value
             if (!prepareQuotedEntity(entityLo, bufHi)) {
@@ -199,7 +235,7 @@ public class LineTcpParser implements Closeable {
                     appendByte = true;
                     break;
 
-                case (byte)'"':
+                case (byte) '"':
                     if (nextValueCanBeOpenQuote && ++nQuoteCharacters == 1) {
                         // This means that the processing resumed from "
                         // and it's allowed to start quoted value at this point
@@ -288,7 +324,7 @@ public class LineTcpParser implements Closeable {
     private boolean expectEntityName(byte endOfEntityByte, long bufHi) {
         if (endOfEntityByte == (byte) '=') {
             if (bufAt - entityLo - nEscapedChars == 0) { // no tag/field name
-                errorCode = tagsComplete ? ErrorCode.INCOMPLETE_FIELD: ErrorCode.INCOMPLETE_TAG;
+                errorCode = tagsComplete ? ErrorCode.INCOMPLETE_FIELD : ErrorCode.INCOMPLETE_TAG;
                 return false;
             }
 
@@ -339,7 +375,7 @@ public class LineTcpParser implements Closeable {
         } else if (tagsComplete && (endOfEntityByte == '\n' || endOfEntityByte == '\r')) {
             if (currentEntity != null && currentEntity.getType() == ENTITY_TYPE_TAG) {
                 // One token after last tag, and no fields
-                // This must be timestamp
+                // This must be the timestamp
                 return expectTimestamp(endOfEntityByte, bufHi);
             }
         }
@@ -350,6 +386,68 @@ public class LineTcpParser implements Closeable {
             errorCode = ErrorCode.INCOMPLETE_TAG;
         }
         return false;
+    }
+
+    private boolean expectEntityValue(byte endOfEntityByte, long bufHi) {
+        boolean endOfSet = endOfEntityByte == (byte) ' ';
+        if (endOfSet || endOfEntityByte == (byte) ',' || endOfEntityByte == (byte) '\n') {
+            if (currentEntity.setValue()) {
+                if (endOfSet) {
+                    if (tagsComplete) {
+                        entityHandler = entityTimestampHandler;
+                    } else {
+                        entityHandler = entityNameHandler;
+                        tagsComplete = true;
+                    }
+                } else {
+                    entityHandler = entityNameHandler;
+                }
+                return true;
+            }
+
+            errorCode = ErrorCode.INVALID_FIELD_VALUE;
+            return false;
+        }
+
+        errorCode = ErrorCode.INVALID_FIELD_SEPARATOR;
+        return false;
+    }
+
+    private boolean expectTableName(byte endOfEntityByte, long bufHi) {
+        tagsComplete = endOfEntityByte == (byte) ' ';
+        if (endOfEntityByte == (byte) ',' || tagsComplete) {
+            long hi = sanitizeEnd(entityLo, bufAt - nEscapedChars);
+            long lo = sanitizeStart(entityLo, hi);
+            if (lo < hi) {
+                measurementName.of(lo, hi);
+                entityHandler = entityNameHandler;
+                return true;
+            }
+            errorCode = ErrorCode.INVALID_MEASUREMENT_NAME;
+            return false;
+        }
+
+        if (entityLo == bufAt) {
+            errorCode = ErrorCode.EMPTY_LINE;
+        } else {
+            errorCode = ErrorCode.NO_FIELDS;
+        }
+        return false;
+    }
+
+    private boolean expectTimestamp(byte endOfEntityByte, long bufHi) {
+        try {
+            if (endOfEntityByte == (byte) '\n') {
+                timestamp = Numbers.parseLong(charSeq.of(entityLo, bufAt - nEscapedChars));
+                entityHandler = null;
+                return true;
+            }
+            errorCode = ErrorCode.INVALID_FIELD_SEPARATOR;
+            return false;
+        } catch (NumericException ex) {
+            errorCode = ErrorCode.INVALID_TIMESTAMP;
+            return false;
+        }
     }
 
     private boolean prepareQuotedEntity(long openQuoteIdx, long bufHi) {
@@ -402,62 +500,6 @@ public class LineTcpParser implements Closeable {
         return false; // missing tail quote as the string extends past the max allowed size
     }
 
-    private boolean expectEntityValue(byte endOfEntityByte, long bufHi) {
-        boolean endOfSet = endOfEntityByte == (byte) ' ';
-        if (endOfSet || endOfEntityByte == (byte) ',' || endOfEntityByte == (byte) '\n') {
-            if (currentEntity.setValue()) {
-                if (endOfSet) {
-                    if (tagsComplete) {
-                        entityHandler = entityTimestampHandler;
-                    } else {
-                        entityHandler = entityNameHandler;
-                        tagsComplete = true;
-                    }
-                } else {
-                    entityHandler = entityNameHandler;
-                }
-                return true;
-            }
-
-            errorCode = ErrorCode.INVALID_FIELD_VALUE;
-            return false;
-        }
-
-        errorCode = ErrorCode.INVALID_FIELD_SEPARATOR;
-        return false;
-    }
-
-    private boolean expectTableName(byte endOfEntityByte, long bufHi) {
-        tagsComplete = endOfEntityByte == (byte) ' ';
-        if (endOfEntityByte == (byte) ',' || tagsComplete) {
-            measurementName.of(entityLo, bufAt - nEscapedChars);
-            entityHandler = entityNameHandler;
-            return true;
-        }
-
-        if (entityLo == bufAt) {
-            errorCode = ErrorCode.EMPTY_LINE;
-        } else {
-            errorCode = ErrorCode.NO_FIELDS;
-        }
-        return false;
-    }
-
-    private boolean expectTimestamp(byte endOfEntityByte, long bufHi) {
-        try {
-            if (endOfEntityByte == (byte) '\n') {
-                timestamp = Numbers.parseLong(charSeq.of(entityLo, bufAt - nEscapedChars));
-                entityHandler = null;
-                return true;
-            }
-            errorCode = ErrorCode.INVALID_FIELD_SEPARATOR;
-            return false;
-        } catch (NumericException ex) {
-            errorCode = ErrorCode.INVALID_TIMESTAMP;
-            return false;
-        }
-    }
-
     public enum ParseResult {
         MEASUREMENT_COMPLETE, BUFFER_UNDERFLOW, ERROR
     }
@@ -471,6 +513,7 @@ public class LineTcpParser implements Closeable {
         INVALID_TIMESTAMP,
         INVALID_FIELD_VALUE,
         INVALID_FIELD_VALUE_STR_UNDERFLOW,
+        INVALID_MEASUREMENT_NAME,
         NONE
     }
 
@@ -499,12 +542,12 @@ public class LineTcpParser implements Closeable {
             return integerValue;
         }
 
-        public long getTimestampValue() {
-            return timestampValue;
-        }
-
         public DirectByteCharSequence getName() {
             return name;
+        }
+
+        public long getTimestampValue() {
+            return timestampValue;
         }
 
         public byte getType() {
@@ -632,4 +675,10 @@ public class LineTcpParser implements Closeable {
             return true;
         }
     }
+
+
+
+
+
+
 }
