@@ -131,7 +131,7 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testNullConstValues() throws Exception {
+    public void testNullConstantValues() throws Exception {
         String[][] columns = new String[][]{
                 {"abyte", "i8", "0L"},
                 {"ashort", "i16", "0L"},
@@ -156,37 +156,35 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testNullConstMixedFloatColumns() throws Exception {
+    public void testNullConstantMixedFloatColumns() throws Exception {
         serialize("afloat + adouble <> null");
         assertIR("(f64 NaND)(f64 adouble)(f32 afloat)(+)(<>)(ret)");
     }
 
     @Test
-    public void testNullConstMixedLongColumns() throws Exception {
-        serialize("anint + along <> null");
-        assertIR("(i64 " + Numbers.LONG_NaN + "L)(i64 along)(i32 anint)(+)(<>)(ret)");
+    public void testNullConstantMixedIntegerColumns() throws Exception {
+        serialize("anint + along <> null or null <> along + anint");
+        assertIR("(i32 anint)(i64 along)(+)(i64 " + Numbers.LONG_NaN + "L)(<>)" +
+                "(i64 " + Numbers.LONG_NaN + "L)(i64 along)(i32 anint)(+)(<>)" +
+                "(||)(ret)");
     }
 
     @Test
-    public void testNullConstMixedFloatLongColumns() throws Exception {
-        serialize("afloat + along <> null");
-        assertIR("(f64 NaND)(i64 along)(f32 afloat)(+)(<>)(ret)");
+    public void testNullConstantMixedFloatIntegerColumns() throws Exception {
+        serialize("afloat + along <> null and null <> along + afloat");
+        assertIR("(f32 afloat)(i64 along)(+)(f64 NaND)(<>)" +
+                "(f64 NaND)(i64 along)(f32 afloat)(+)(<>)" +
+                "(&&)(ret)");
     }
 
     @Test
-    public void testNullConstMixedLongFloatColumns() throws Exception {
-        serialize("along + afloat <> null");
-        assertIR("(f64 NaND)(f32 afloat)(i64 along)(+)(<>)(ret)");
-    }
-
-    @Test
-    public void testNullConstMultipleExpressions() throws Exception {
+    public void testNullConstantMultipleExpressions() throws Exception {
         serialize("ageoint <> null and abyte <> null");
         assertIR("(i8 0L)(i8 abyte)(<>)(i32 -1L)(i32 ageoint)(<>)(&&)(ret)");
     }
 
     @Test
-    public void testPositiveConstTypes() throws Exception {
+    public void testPositiveConstantTypes() throws Exception {
         String[][] columns = new String[][]{
                 {"abyte", "i8", "1L"},
                 {"ashort", "i16", "1L"},
@@ -207,7 +205,7 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testNegativeConstTypes() throws Exception {
+    public void testNegativeConstantTypes() throws Exception {
         String[][] columns = new String[][]{
                 {"abyte", "i8", "-1L"},
                 {"ashort", "i16", "-1L"},
@@ -228,13 +226,13 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testBooleanConst() throws Exception {
+    public void testBooleanConstant() throws Exception {
         serialize("aboolean = true or aboolean = false");
         assertIR("(i8 0L)(i8 aboolean)(=)(i8 1L)(i8 aboolean)(=)(||)(ret)");
     }
 
     @Test
-    public void testCharConst() throws Exception {
+    public void testCharConstant() throws Exception {
         serialize("achar = 'a'");
         assertIR("(i16 97L)(i16 achar)(=)(ret)");
     }
@@ -246,12 +244,12 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedSingleConst() throws Exception {
+    public void testUnsupportedSingleConstantExpression() throws Exception {
         serialize("true");
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedConstExpression() throws Exception {
+    public void testUnsupportedAllConstantsExpression() throws Exception {
         serialize("2 > 1");
     }
 
@@ -271,8 +269,13 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedStrConst() throws Exception {
+    public void testUnsupportedStringConstant() throws Exception {
         serialize("achar = 'abc'");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedLong256Constant() throws Exception {
+        serialize("along = 0x123");
     }
 
     @Test(expected = SqlException.class)
@@ -301,22 +304,22 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedFloatConstInIntContext() throws Exception {
+    public void testUnsupportedFloatConstantInIntegerContext() throws Exception {
         serialize("anint > 1.5");
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedTrueConstInNumericContext() throws Exception {
+    public void testUnsupportedTrueConstantInNumericContext() throws Exception {
         serialize("along = true");
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedFalseConstInNumericContext() throws Exception {
+    public void testUnsupportedFalseConstantInNumericContext() throws Exception {
         serialize("along = false");
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedCharConstInNumericContext() throws Exception {
+    public void testUnsupportedCharConstantInNumericContext() throws Exception {
         serialize("along = 'x'");
     }
 

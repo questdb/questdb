@@ -24,21 +24,24 @@
 
 package io.questdb.std;
 
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class IntObjHashMapTest {
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+
+public class LongObjHashMapTest {
+
     @Test
     public void testAll() {
-
         Rnd rnd = new Rnd();
         // populate map
-        IntObjHashMap<CharSequence> map = new IntObjHashMap<>();
+        LongObjHashMap<String> map = new LongObjHashMap<>();
         final int N = 1000;
         for (int i = 0; i < N; i++) {
-            CharSequence cs = rnd.nextChars(15);
-            map.put(rnd.nextInt(), cs.toString());
+            long value = i + 1;
+            map.put(i, String.valueOf(value));
         }
         Assert.assertEquals(N, map.size());
 
@@ -46,10 +49,8 @@ public class IntObjHashMapTest {
 
         // assert that map contains the values we just added
         for (int i = 0; i < N; i++) {
-            CharSequence cs = rnd.nextChars(15);
-            int value = rnd.nextInt();
-            Assert.assertFalse(map.excludes(value));
-            Assert.assertEquals(cs, map.get(value));
+            Assert.assertFalse(map.excludes(i));
+            Assert.assertEquals(String.valueOf(i + 1), map.get(i));
         }
 
         Rnd rnd2 = new Rnd();
@@ -59,10 +60,8 @@ public class IntObjHashMapTest {
         // remove some keys and assert that the size() complies
         int removed = 0;
         for (int i = 0; i < N; i++) {
-            rnd.nextChars(15);
-            int value = rnd.nextInt();
             if (rnd2.nextPositiveInt() % 16 == 0) {
-                Assert.assertTrue(map.remove(value) > -1);
+                Assert.assertTrue(map.remove(i) > -1);
                 removed++;
                 Assert.assertEquals(N - removed, map.size());
             }
@@ -79,23 +78,21 @@ public class IntObjHashMapTest {
         // assert that keys we didn't remove are still there and
         // keys we removed are not
         for (int i = 0; i < N; i++) {
-            CharSequence cs = rnd.nextChars(15);
             int value = rnd.nextInt();
             if (rnd2.nextPositiveInt() % 16 == 0) {
-                Assert.assertTrue(map.excludes(value));
+                Assert.assertTrue(map.excludes(i));
             } else {
-                Assert.assertFalse(map.excludes(value));
+                Assert.assertFalse(map.excludes(i));
 
-                int index = map.keyIndex(value);
-                TestUtils.assertEquals(cs, map.valueAt(index));
+                int index = map.keyIndex(i);
+                Assert.assertEquals(String.valueOf(i + 1), map.valueAt(index));
 
                 // update value
-                map.putAt(index, value, rnd3.nextChars(5));
+                map.putAt(index, value, String.valueOf(rnd3.nextLong()));
             }
         }
 
         // assert that update is visible correctly
-
         rnd3.reset();
         rnd2.reset();
         rnd.reset();
@@ -103,14 +100,37 @@ public class IntObjHashMapTest {
         // assert that keys we didn't remove are still there and
         // keys we removed are not
         for (int i = 0; i < N; i++) {
-            rnd.nextChars(15);
-            int value = rnd.nextInt();
             if (rnd2.nextPositiveInt() % 16 == 0) {
-                Assert.assertTrue(map.excludes(value));
+                Assert.assertTrue(map.excludes(i));
             } else {
-                Assert.assertFalse(map.excludes(value));
-                TestUtils.assertEquals(rnd3.nextChars(3), map.get(value));
+                Assert.assertFalse(map.excludes(i));
+                Assert.assertEquals(String.valueOf(rnd3.nextLong()), map.get(i));
             }
         }
+    }
+
+    @Test
+    public void testAddAndIterate() {
+        Rnd rnd = new Rnd();
+
+        LongObjHashMap<String> map = new LongObjHashMap<>();
+        Map<Long, String> master = new HashMap<>();
+
+        final int n = 1000;
+        for (int i = 0; i < n; i++) {
+            long k = rnd.nextLong();
+            String v = rnd.nextString(rnd.nextPositiveInt() % 20);
+            map.put(k, v);
+            master.put(k, v);
+        }
+
+        AtomicInteger count = new AtomicInteger();
+        map.forEach((key, value) -> {
+            String v = master.get(key);
+            Assert.assertNotNull(v);
+            Assert.assertEquals(value, v);
+            count.incrementAndGet();
+        });
+        Assert.assertEquals(n, count.get());
     }
 }

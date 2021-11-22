@@ -32,28 +32,25 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.std.Chars;
-import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
+import io.questdb.std.*;
 
 public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
 
-    // Column types
+    // Column type codes
     static final byte MEM_I1 = 0;
     static final byte MEM_I2 = 1;
     static final byte MEM_I4 = 2;
     static final byte MEM_I8 = 3;
     static final byte MEM_F4 = 4;
     static final byte MEM_F8 = 5;
-    // Constant types
+    // Constant type codes
     static final byte IMM_I1 = 6;
     static final byte IMM_I2 = 7;
     static final byte IMM_I4 = 8;
     static final byte IMM_I8 = 9;
     static final byte IMM_F4 = 10;
     static final byte IMM_F8 = 11;
-    // Operators
+    // Operator codes
     static final byte NEG = 12;               // -a
     static final byte NOT = 13;               // !a
     static final byte AND = 14;               // a && b
@@ -77,23 +74,12 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
     private static final byte UNDEFINED_CODE = -1;
 
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
-    private final ArithmeticExpressionContext exprContext = new ArithmeticExpressionContext();
+    private final ArithmeticExpressionContext arithmeticContext = new ArithmeticExpressionContext();
+    // contains <memory_offset, constant_node> pairs for backfilling purposes
+    private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
+
     private MemoryA memory;
     private RecordMetadata metadata;
-
-    // TODO:
-    // +* constant type tagging:
-    // afloat + along = 42 => double
-    // along / along = 42 => long
-    // edge cases:
-    // along > 1.5 => we could truncate 1.5 to 1, but for now we're not going to support such filters in JIT
-    // afloat > 1 <- this one is fine
-    //
-    // +* negate constant => negative constant
-    // * constant folding??? - nice to have
-    // * restricted cast support: CAST(along TO DOUBLE) - nice to have
-    // * geohashes have special null values e.g. GeoHashes.BYTE_NULL
-    // * EXPLAIN PLAN or at least JIT compilation phase
 
     public FilterExprIRSerializer of(MemoryA memory, RecordMetadata metadata) {
         this.memory = memory;
@@ -110,21 +96,32 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
     public void clear() {
         memory = null;
         metadata = null;
-        exprContext.clear();
+        arithmeticContext.clear();
+        backfillNodes.clear();
     }
 
     @Override
-    public boolean descent(ExpressionNode node) throws SqlException {
+    public boolean descend(ExpressionNode node) throws SqlException {
+        // Check if we're at the start of an arithmetic expression
+        arithmeticContext.onNodeDescended(node);
+
+        // Check for root expression level constant
+        if (arithmeticContext.rootNode == null && node.type == ExpressionNode.CONSTANT) {
+            throw SqlException.position(node.position)
+                    .put("constant outside of arithmetic expression: ")
+                    .put(node.token);
+        }
+
         // Look ahead for negative const
         if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, "-")) {
             ExpressionNode nextNode = node.lhs != null ? node.lhs : node.rhs;
             if (nextNode != null && nextNode.paramCount == 0 && nextNode.type == ExpressionNode.CONSTANT) {
-                serializeConstant(nextNode.position, nextNode.token, true);
+                // Store negation node for later backfilling
+                serializeConstantStub(node);
                 return false;
             }
         }
 
-        exprContext.onNodeEntered(node);
         return true;
     }
 
@@ -137,7 +134,8 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                     serializeColumn(node.position, node.token);
                     break;
                 case ExpressionNode.CONSTANT:
-                    serializeConstant(node.position, node.token, false);
+                    // Write stub values to be backfilled later
+                    serializeConstantStub(node);
                     break;
                 default:
                     throw SqlException.position(node.position)
@@ -148,7 +146,25 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
             serializeOperator(node.position, node.token, argCount);
         }
 
-        exprContext.onNodeLeft(node);
+        arithmeticContext.onNodeVisited(node);
+
+        // We're out of arithmetic expression: backfill constants and clean up
+        if (node == arithmeticContext.rootNode) {
+            try {
+                backfillNodes.forEach((key, value) -> {
+                    try {
+                        backfillConstant(key, value);
+                    } catch (SqlException e) {
+                        throw new SqlWrapperException(e);
+                    }
+                });
+                backfillNodes.clear();
+            } catch (SqlWrapperException e) {
+                throw e.wrappedException;
+            }
+
+            arithmeticContext.clear();
+        }
     }
 
     private void serializeColumn(int position, final CharSequence token) throws SqlException {
@@ -168,20 +184,50 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         memory.putLong(index);
     }
 
+    private void serializeConstantStub(final ExpressionNode node) {
+        long offset = memory.getAppendOffset();
+        backfillNodes.put(offset, node);
+        memory.putByte(UNDEFINED_CODE);
+        memory.putLong(0);
+    }
+
+    private void backfillConstant(long offset, final ExpressionNode node) throws SqlException {
+        int position = node.position;
+        CharSequence token = node.token;
+        boolean negate = false;
+        // Check for negation case
+        if (node.type == ExpressionNode.OPERATION) {
+            ExpressionNode nextNode = node.lhs != null ? node.lhs : node.rhs;
+            if (nextNode != null) {
+                position = nextNode.position;
+                token = nextNode.token;
+                negate = true;
+            }
+        }
+
+        long originalOffset = memory.getAppendOffset();
+        try {
+            memory.jumpTo(offset);
+            serializeConstant(position, token, negate);
+        } finally {
+            memory.jumpTo(originalOffset);
+        }
+    }
+
     private void serializeConstant(int position, final CharSequence token, boolean negate) throws SqlException {
-        final byte typeCode = exprContext.typeCode;
+        final byte typeCode = arithmeticContext.constantTypeCode;
         if (typeCode == UNDEFINED_CODE) {
             throw SqlException.position(position).put("all constants expression: ").put(token);
         }
 
         if (SqlKeywords.isNullKeyword(token)) {
-            boolean geohashExpression = ExpressionType.GEO_HASH == exprContext.expressionType;
-            serializeNull(position, typeCode, geohashExpression);
+            boolean geoHashExpression = ExpressionType.GEO_HASH == arithmeticContext.type;
+            serializeNull(position, typeCode, geoHashExpression);
             return;
         }
 
         if (Chars.isQuoted(token)) {
-            if (ExpressionType.CHAR != exprContext.expressionType) {
+            if (ExpressionType.CHAR != arithmeticContext.type) {
                 throw SqlException.position(position).put("char constant in non-char expression: ").put(token);
             }
             final int len = token.length();
@@ -191,11 +237,11 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                 memory.putLong(token.charAt(1));
                 return;
             }
-            throw SqlException.position(position).put("invalid constant: ").put(token);
+            throw SqlException.position(position).put("unsupported char constant: ").put(token);
         }
 
         if (SqlKeywords.isTrueKeyword(token)) {
-            if (ExpressionType.BOOLEAN != exprContext.expressionType) {
+            if (ExpressionType.BOOLEAN != arithmeticContext.type) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
             memory.putByte(IMM_I1);
@@ -204,7 +250,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         }
 
         if (SqlKeywords.isFalseKeyword(token)) {
-            if (ExpressionType.BOOLEAN != exprContext.expressionType) {
+            if (ExpressionType.BOOLEAN != arithmeticContext.type) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
             memory.putByte(IMM_I1);
@@ -212,66 +258,26 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
             return;
         }
 
-        if (ExpressionType.NUMERIC != exprContext.expressionType) {
+        if (ExpressionType.NUMERIC != arithmeticContext.type) {
             throw SqlException.position(position).put("numeric constant in non-numeric expression: ").put(token);
         }
-        try {
-            long sign = negate ? -1 : 1;
-            switch (typeCode) {
-                case IMM_I1:
-                    final byte b = (byte) Numbers.parseInt(token);
-                    memory.putByte(IMM_I1);
-                    memory.putLong(sign * b);
-                    return;
-                case IMM_I2:
-                    final short s = (short) Numbers.parseInt(token);
-                    memory.putByte(IMM_I2);
-                    memory.putLong(sign * s);
-                    return;
-                case IMM_I4:
-                    final int i = Numbers.parseInt(token);
-                    memory.putByte(IMM_I4);
-                    memory.putLong(sign * i);
-                    return;
-                case IMM_I8:
-                    final long l = Numbers.parseLong(token);
-                    memory.putByte(IMM_I8);
-                    memory.putLong(sign * l);
-                    return;
-                case IMM_F4:
-                    final float f = Numbers.parseFloat(token);
-                    memory.putByte(IMM_F4);
-                    memory.putDouble(sign * f);
-                    return;
-                case IMM_F8:
-                    final double d = Numbers.parseDouble(token);
-                    memory.putByte(IMM_F8);
-                    memory.putDouble(sign * d);
-                    return;
-            }
-        } catch (NumericException e) {
-            throw SqlException.position(position)
-                    .put("could not parse constant: ").put(token)
-                    .put(", expected type: ").put(typeCode);
-        }
-
-        throw SqlException.position(position).put("invalid constant: ").put(token);
+        serializeNumber(position, token, typeCode, negate);
     }
 
-    private void serializeNull(int position, byte typeCode, boolean geohashExpression) throws SqlException {
+    private void serializeNull(int position, byte typeCode, boolean geoHashExpression) throws SqlException {
         memory.putByte(typeCode);
         switch (typeCode) {
             case IMM_I1:
-                memory.putLong(geohashExpression ? GeoHashes.BYTE_NULL : NullConstant.NULL.getByte(null));
+                memory.putLong(geoHashExpression ? GeoHashes.BYTE_NULL : NullConstant.NULL.getByte(null));
                 break;
             case IMM_I2:
-                memory.putLong(geohashExpression ? GeoHashes.SHORT_NULL : NullConstant.NULL.getShort(null));
+                memory.putLong(geoHashExpression ? GeoHashes.SHORT_NULL : NullConstant.NULL.getShort(null));
                 break;
             case IMM_I4:
-                memory.putLong(geohashExpression ? GeoHashes.INT_NULL : NullConstant.NULL.getInt(null));
+                memory.putLong(geoHashExpression ? GeoHashes.INT_NULL : NullConstant.NULL.getInt(null));
                 break;
             case IMM_I8:
-                memory.putLong(geohashExpression ? GeoHashes.NULL : NullConstant.NULL.getLong(null));
+                memory.putLong(geoHashExpression ? GeoHashes.NULL : NullConstant.NULL.getLong(null));
                 break;
             case IMM_F4:
                 memory.putDouble(NullConstant.NULL.getFloat(null));
@@ -281,6 +287,47 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                 break;
             default:
                 throw SqlException.position(position).put("unexpected null type: ").put(typeCode);
+        }
+    }
+
+    private void serializeNumber(int position, final CharSequence token, byte typeCode, boolean negate) throws SqlException {
+        memory.putByte(typeCode);
+        long sign = negate ? -1 : 1;
+        try {
+            switch (typeCode) {
+                case IMM_I1:
+                    final byte b = (byte) Numbers.parseInt(token);
+                    memory.putLong(sign * b);
+                    break;
+                case IMM_I2:
+                    final short s = (short) Numbers.parseInt(token);
+                    memory.putLong(sign * s);
+                    break;
+                case IMM_I4:
+                    final int i = Numbers.parseInt(token);
+                    memory.putLong(sign * i);
+                    break;
+                case IMM_I8:
+                    final long l = Numbers.parseLong(token);
+                    memory.putLong(sign * l);
+                    break;
+                case IMM_F4:
+                    final float f = Numbers.parseFloat(token);
+                    memory.putDouble(sign * f);
+                    break;
+                case IMM_F8:
+                    final double d = Numbers.parseDouble(token);
+                    memory.putDouble(sign * d);
+                    break;
+                default:
+                    throw SqlException.position(position)
+                            .put("unexpected non-numeric constant: ").put(token)
+                            .put(", expected type: ").put(typeCode);
+            }
+        } catch (NumericException e) {
+            throw SqlException.position(position)
+                    .put("could not parse constant: ").put(token)
+                    .put(", expected type: ").put(typeCode);
         }
     }
 
@@ -374,37 +421,53 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         }
     }
 
-    private class ArithmeticExpressionContext implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
+    private static boolean isTopLevelArithmeticOperation(ExpressionNode node) {
+        if (node.paramCount < 2) {
+            return false;
+        }
+        final CharSequence token = node.token;
+        if (Chars.equals(token, "=")) {
+            return true;
+        }
+        if (Chars.equals(token, "<>") || Chars.equals(token, "!=")) {
+            return true;
+        }
+        if (Chars.equals(token, "<")) {
+            return true;
+        }
+        if (Chars.equals(token, "<=")) {
+            return true;
+        }
+        if (Chars.equals(token, ">")) {
+            return true;
+        }
+        return Chars.equals(token, ">=");
+    }
 
-        private ExpressionNode rootNode;
-        // based on the widest column type in expression (contains IMM_* or UNDEFINED_CODE value)
-        byte typeCode;
-        ExpressionType expressionType;
+    private class ArithmeticExpressionContext implements Mutable {
+
+        ExpressionNode rootNode;
+        // expected constant type; calculated based on the "widest" column type
+        // in the expression (contains IMM_* or UNDEFINED_CODE value)
+        byte constantTypeCode;
+        ExpressionType type;
 
         @Override
         public void clear() {
             rootNode = null;
-            typeCode = UNDEFINED_CODE;
-            expressionType = null;
+            constantTypeCode = UNDEFINED_CODE;
+            type = null;
         }
 
-        public void onNodeEntered(ExpressionNode node) throws SqlException {
+        public void onNodeDescended(final ExpressionNode node) {
             if (rootNode == null && isTopLevelArithmeticOperation(node)) {
                 rootNode = node;
-                typeCode = UNDEFINED_CODE;
-                expressionType = null;
-                traverseAlgo.traverse(node, this);
+                constantTypeCode = UNDEFINED_CODE;
+                type = null;
             }
         }
 
-        public void onNodeLeft(ExpressionNode node) {
-            if (rootNode != null && rootNode == node) {
-                rootNode = null;
-            }
-        }
-
-        @Override
-        public void visit(ExpressionNode node) throws SqlException {
+        public void onNodeVisited(final ExpressionNode node) throws SqlException {
             if (node.type != ExpressionNode.LITERAL) {
                 return;
             }
@@ -416,121 +479,101 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
 
             int columnType = metadata.getColumnType(index);
 
-            updateExpressionType(node.position, columnType);
-            updateTypeCode(node.position, columnType);
+            updateType(node.position, columnType);
+            updateConstantTypeCode(node.position, columnType);
         }
 
-        private boolean isTopLevelArithmeticOperation(ExpressionNode node) {
-            if (node.paramCount < 2) {
-                return false;
-            }
-            final CharSequence token = node.token;
-            if (Chars.equals(token, "=")) {
-                return true;
-            }
-            if (Chars.equals(token, "<>") || Chars.equals(token, "!=")) {
-                return true;
-            }
-            if (Chars.equals(token, "<")) {
-                return true;
-            }
-            if (Chars.equals(token, "<=")) {
-                return true;
-            }
-            if (Chars.equals(token, ">")) {
-                return true;
-            }
-            return Chars.equals(token, ">=");
-        }
-
-        private void updateExpressionType(int position, int columnType) throws SqlException {
+        private void updateType(int position, int columnType) throws SqlException {
             switch (columnType) {
                 case ColumnType.BOOLEAN:
-                    if (expressionType != null && expressionType != ExpressionType.BOOLEAN) {
+                    if (type != null && type != ExpressionType.BOOLEAN) {
                         throw SqlException.position(position)
                                 .put("non-boolean column in boolean expression: ")
                                 .put(ColumnType.nameOf(columnType));
                     }
-                    expressionType = ExpressionType.BOOLEAN;
+                    type = ExpressionType.BOOLEAN;
                     break;
                 case ColumnType.GEOBYTE:
                 case ColumnType.GEOSHORT:
                 case ColumnType.GEOINT:
                 case ColumnType.GEOLONG:
-                    if (expressionType != null && expressionType != ExpressionType.GEO_HASH) {
+                    if (type != null && type != ExpressionType.GEO_HASH) {
                         throw SqlException.position(position)
                                 .put("non-geohash column in geohash expression: ")
                                 .put(ColumnType.nameOf(columnType));
                     }
-                    expressionType = ExpressionType.GEO_HASH;
+                    type = ExpressionType.GEO_HASH;
                     break;
                 case ColumnType.CHAR:
-                    if (expressionType != null && expressionType != ExpressionType.CHAR) {
+                    if (type != null && type != ExpressionType.CHAR) {
                         throw SqlException.position(position)
                                 .put("non-char column in char expression: ")
                                 .put(ColumnType.nameOf(columnType));
                     }
-                    expressionType = ExpressionType.CHAR;
+                    type = ExpressionType.CHAR;
                     break;
                 default:
-                    if (expressionType != null && expressionType != ExpressionType.NUMERIC) {
+                    if (type != null && type != ExpressionType.NUMERIC) {
                         throw SqlException.position(position)
                                 .put("non-numeric column in numeric expression: ")
                                 .put(ColumnType.nameOf(columnType));
                     }
-                    expressionType = ExpressionType.NUMERIC;
+                    type = ExpressionType.NUMERIC;
                     break;
             }
         }
 
-        private void updateTypeCode(int position, int columnType) throws SqlException {
+        private void updateConstantTypeCode(int position, int columnType) throws SqlException {
             byte code = columnTypeCode(columnType);
-            if (code == UNDEFINED_CODE) {
-                throw SqlException.position(position)
-                        .put("unsupported column type: ")
-                        .put(ColumnType.nameOf(columnType));
-            }
-
             switch (code) {
                 case MEM_I1:
-                    if (typeCode == UNDEFINED_CODE) {
-                        typeCode = IMM_I1;
+                    if (constantTypeCode == UNDEFINED_CODE) {
+                        constantTypeCode = IMM_I1;
                     }
                     break;
                 case MEM_I2:
-                    if (typeCode < IMM_I2) {
-                        typeCode = IMM_I2;
+                    if (constantTypeCode < IMM_I2) {
+                        constantTypeCode = IMM_I2;
                     }
                     break;
                 case MEM_I4:
-                    if (typeCode < IMM_I4) {
-                        typeCode = IMM_I4;
+                    if (constantTypeCode < IMM_I4) {
+                        constantTypeCode = IMM_I4;
                     }
                     break;
                 case MEM_I8:
-                    if (typeCode < IMM_I8) {
-                        typeCode = IMM_I8;
+                    if (constantTypeCode < IMM_I8) {
+                        constantTypeCode = IMM_I8;
                     }
-                    if (typeCode == IMM_F4) {
-                        typeCode = IMM_F8;
+                    if (constantTypeCode == IMM_F4) {
+                        constantTypeCode = IMM_F8;
                     }
                     break;
                 case MEM_F4:
-                    if (typeCode <= IMM_I4) {
-                        typeCode = IMM_F4;
+                    if (constantTypeCode <= IMM_I4) {
+                        constantTypeCode = IMM_F4;
                     }
-                    if (typeCode == IMM_I8) {
-                        typeCode = IMM_F8;
+                    if (constantTypeCode == IMM_I8) {
+                        constantTypeCode = IMM_F8;
                     }
                     break;
                 case MEM_F8:
-                    typeCode = IMM_F8;
+                    constantTypeCode = IMM_F8;
                     break;
                 default:
                     throw SqlException.position(position)
-                            .put("unexpected numeric type for column: ")
+                            .put("expected numeric column type: ")
                             .put(ColumnType.nameOf(columnType));
             }
+        }
+    }
+
+    private static class SqlWrapperException extends RuntimeException {
+
+        final SqlException wrappedException;
+
+        SqlWrapperException(SqlException wrappedException) {
+            this.wrappedException = wrappedException;
         }
     }
 

@@ -68,7 +68,7 @@ final public class PostOrderTreeTraversalAlgo {
 
             while (!stack.isEmpty() || node != null) {
                 if (node != null) {
-                    if (!visitor.descent(node)) {
+                    if (!visitor.descend(node)) {
                         node = null;
                         continue;
                     }
@@ -108,8 +108,9 @@ final public class PostOrderTreeTraversalAlgo {
         void visit(ExpressionNode node) throws SqlException;
 
         /**
-         * Called on each node in the descent order. When this method returns false,
-         * the algorithm does not visit the current node, nor its children nodes.
+         * Called on each node in the top-down, left-right descent order. When
+         * this method returns false, the algorithm does not visit the current
+         * node, nor its children nodes.
          *
          * Example. For the tree like
          *     A
@@ -120,7 +121,7 @@ final public class PostOrderTreeTraversalAlgo {
          * while the descent order will be:
          * A -> B -> C
          */
-        default boolean descent(ExpressionNode node) throws SqlException {
+        default boolean descend(ExpressionNode node) throws SqlException {
             return true;
         }
     }
