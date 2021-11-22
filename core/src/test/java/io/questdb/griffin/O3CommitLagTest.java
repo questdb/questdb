@@ -367,7 +367,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         );
 
         int longColIndex = -1;
-        int flotColIndex = -1;
+        int floatColIndex = -1;
         int strColIndex = -1;
         for (int i = 0; i < tableModel.getColumnCount(); i++) {
             switch (ColumnType.tagOf(tableModel.getColumnType(i))) {
@@ -375,7 +375,7 @@ public class O3CommitLagTest extends AbstractO3Test {
                     longColIndex = i;
                     break;
                 case ColumnType.FLOAT:
-                    flotColIndex = i;
+                    floatColIndex = i;
                     break;
                 case ColumnType.STRING:
                     strColIndex = i;
@@ -388,8 +388,8 @@ public class O3CommitLagTest extends AbstractO3Test {
         for (int c = 0; c < testCounts.length; c++) {
             long idCount = testCounts[c];
 
-            // Create big commit with has big part before OOO starts
-            // which exceed default MAMemoryImpl size in one or all columns
+            // Create big commit with a big part before OOO starts
+            // which exceeds default MAMemoryImpl size in one or all columns
             int iterations = 2;
             String[] varCol = new String[]{"abc", "aldfjkasdlfkj", "as", "2021-04-27T12:00:00", "12345678901234578"};
 
@@ -405,8 +405,8 @@ public class O3CommitLagTest extends AbstractO3Test {
                         if (longColIndex > -1) {
                             row.putLong(longColIndex, timestamp);
                         }
-                        if (flotColIndex > -1) {
-                            row.putFloat(flotColIndex, rnd.nextFloat());
+                        if (floatColIndex > -1) {
+                            row.putFloat(floatColIndex, rnd.nextFloat());
                         }
                         if (strColIndex > -1) {
                             row.putStr(strColIndex, varCol[id % varCol.length]);
@@ -418,8 +418,8 @@ public class O3CommitLagTest extends AbstractO3Test {
                         if (longColIndex > -1) {
                             row.putLong(longColIndex, timestamp);
                         }
-                        if (flotColIndex > -1) {
-                            row.putFloat(flotColIndex, rnd.nextFloat());
+                        if (floatColIndex > -1) {
+                            row.putFloat(floatColIndex, rnd.nextFloat());
                         }
                         if (strColIndex > -1) {
                             row.putStr(strColIndex, varCol[id % varCol.length]);
@@ -557,7 +557,11 @@ public class O3CommitLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testCommitLagEndingAtPartitionBoundaryPlus1WithRollback0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
+    private void testCommitLagEndingAtPartitionBoundaryPlus1WithRollback0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException, NumericException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -600,6 +604,7 @@ public class O3CommitLagTest extends AbstractO3Test {
             TestUtils.assertEquals(sink, sink2);
 
             writer.rollback();
+            Assert.assertFalse(writer.inTransaction());
             TestUtils.printSql(compiler, sqlExecutionContext, "select count(*) from y", sink);
             TestUtils.assertEquals("count\n185\n", sink);
 
@@ -624,7 +629,11 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testCommitLagEndingAtPartitionBoundaryWithRollback0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
+    private void testCommitLagEndingAtPartitionBoundaryWithRollback0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException, NumericException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +

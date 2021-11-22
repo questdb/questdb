@@ -34,7 +34,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
@@ -54,10 +53,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final Path path;
     private final int rootLen;
     private final TableReaderMetadata metadata;
-    private final DateFormat partitionFormat;
+    private final DateFormat partitionDirFormatMethod;
     private final LongList openPartitionInfo;
     private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
-    private final Timestamps.TimestampFloorMethod timestampFloorMethod;
+    private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
     private final String tableName;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
@@ -99,8 +98,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             readTxnSlow();
             openSymbolMaps();
             partitionCount = txFile.getPartitionCount();
-            partitionFormat = TableUtils.getPartitionDateFmt(partitionBy);
-            timestampFloorMethod = partitionBy == PartitionBy.NONE ? null : TableUtils.getPartitionFloor(partitionBy);
+            partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+            partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
 
             int capacity = getColumnBase(partitionCount);
             this.columns = new ObjList<>(capacity);
@@ -206,7 +205,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public long floorToPartitionTimestamp(long timestamp) {
-        return timestampFloorMethod.floor(timestamp);
+        return partitionFloorMethod.floor(timestamp);
     }
 
     public BitmapIndexReader getBitmapIndexReader(int partitionIndex, int columnIndex, int direction) {
@@ -713,7 +712,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void formatPartitionDirName(int partitionIndex, CharSink sink) {
-        partitionFormat.format(
+        partitionDirFormatMethod.format(
                 openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE),
                 null, // this format does not need locale access
                 null,
@@ -853,7 +852,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
             LOG.error().$("open partition failed, partition does not exist on the disk. [path=").utf8(path.$()).I$();
 
-            if (getPartitionedBy() != PartitionBy.NONE) {
+            if (PartitionBy.isPartitioned(getPartitionedBy())) {
                 CairoException exception = CairoException.instance(0).put("Partition '");
                 formatPartitionDirName(partitionIndex, exception.message);
                 TableUtils.txnPartitionConditionally(exception.message, partitionNameTxn);
@@ -933,7 +932,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                 Unsafe.getUnsafe().loadFence();
                 // ok, we have snapshot, check if our snapshot is stable
-                if (txn == txFile.getTxn()) {
+                if (txn == txFile.unsafeReadTxn()) {
                     // good, very stable, congrats
                     if (active) {
                         txnScoreboard.releaseTxn(this.txn);

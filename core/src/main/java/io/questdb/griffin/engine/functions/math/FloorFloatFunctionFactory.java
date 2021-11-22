@@ -22,55 +22,45 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.eq;
+package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.CharFunction;
+import io.questdb.griffin.engine.functions.FloatFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class NullIfCharCharFunctionFactory implements FunctionFactory {
+public class FloorFloatFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "nullif(AA)";
+        return "floor(F)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-
-        Function chrFunc1 = args.getQuick(0);
-        Function chrFunc2 = args.getQuick(1);
-
-        return new Func(chrFunc1, chrFunc2);
+        return new FloorFunction(args.getQuick(0));
     }
 
-    private static class Func extends CharFunction implements BinaryFunction {
-        private final Function chrFunc1;
-        private final Function chrFunc2;
+    private static class FloorFunction extends FloatFunction implements UnaryFunction {
+        private final Function function;
 
-        public Func(Function chrFunc1, Function chrFunc2) {
-            this.chrFunc1 = chrFunc1;
-            this.chrFunc2 = chrFunc2;
+        public FloorFunction(Function function) {
+            this.function = function;
         }
 
         @Override
-        public Function getLeft() {
-            return chrFunc1;
+        public Function getArg() {
+            return function;
         }
 
         @Override
-        public Function getRight() {
-            return chrFunc2;
-        }
-
-        @Override
-        public char getChar(Record rec) {
-            return chrFunc1.getChar(rec) == chrFunc2.getChar(rec) ? Character.MIN_VALUE : chrFunc1.getChar(rec);
+        public float getFloat(Record rec) {
+            float value = function.getFloat(rec);
+            return (float) Math.floor(value);
         }
     }
 }

@@ -174,12 +174,12 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                 // we need to update the table to reflect that
                 if (enabled != _enabled || !configuration.getBuildInformation().getQuestDbVersion().equals(lastVersion)) {
                     appendConfigRow(compiler, configWriter, l256, enabled);
-                    LOG.info()
+                    LOG.advisory()
                             .$("instance config changes [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
                             .$(", enabled=").$(enabled)
                             .$(']').$();
                 } else {
-                    LOG.error()
+                    LOG.advisory()
                             .$("instance [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
                             .$(", enabled=").$(enabled)
                             .$(']').$();

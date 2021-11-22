@@ -325,7 +325,11 @@ public class RecordComparatorCompiler {
             fieldRecordAccessorIndicesB.add(methodIndex);
             comparatorAccessorIndices.add(
                     asm.poolMethod(asm.poolClass(comparatorClass),
-                            asm.poolNameAndType(compareMethodIndex, comparatorDesc == null ? asm.poolUtf8().put('(').put(fieldType).put(fieldType).put(")I").$() : asm.poolUtf8(comparatorDesc))
+                            asm.poolNameAndType(
+                                    compareMethodIndex, comparatorDesc == null ?
+                                            asm.poolUtf8().put('(').put(fieldType).put(fieldType).put(")I").$()
+                                            :
+                                            asm.poolUtf8(comparatorDesc))
                     ));
         }
     }

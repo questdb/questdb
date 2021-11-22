@@ -32,6 +32,7 @@ import { color } from "utils"
 
 const CloseOutlineIcon = styled(CloseOutline)`
   color: ${color("draculaRed")};
+  flex-shrink: 0;
 `
 
 export const ErrorNotification = (props: NotificationShape) => {

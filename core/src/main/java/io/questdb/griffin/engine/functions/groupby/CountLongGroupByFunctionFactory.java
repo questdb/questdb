@@ -22,23 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class NullIfIFunctionFactory implements FunctionFactory {
+public class CountLongGroupByFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "nullif(Ii)";
+        return "count(l)";
+    }
+
+    @Override
+    public boolean isGroupBy() {
+        return true;
     }
 
     @Override
@@ -48,29 +52,16 @@ public class NullIfIFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
-        return new NullIfIFunction(args.getQuick(0), args.getQuick(1).getInt(null));
-    }
-
-    private static class NullIfIFunction extends IntFunction implements UnaryFunction {
-        private final Function value;
-        private final int replacement;
-
-        public NullIfIFunction(Function value, int replacement) {
-            super();
-            this.value = value;
-            this.replacement = replacement;
+    ) throws SqlException {
+        final Function arg = args.getQuick(0);
+        if (arg.isConstant()) {
+            int val = arg.getInt(null);
+            // NULL expression would lead to zero matched rows, so it makes
+            // no sense to support it until we support count(expression).
+            if (val == Numbers.INT_NaN) {
+                throw SqlException.$(argPositions.getQuick(0), "NULL is not allowed");
+            }
         }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            final int val = value.getInt(rec);
-            return val != Numbers.INT_NaN ? val : replacement;
-        }
+        return new CountGroupByFunction();
     }
 }

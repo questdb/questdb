@@ -1386,31 +1386,6 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCharToStrConstZero() throws Exception {
-        assertQuery(
-                "a\n",
-                "select a from tab",
-                "create table tab (a string)",
-                null,
-                "insert into tab select cast('' as string) from long_sequence(10)",
-                "a\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n",
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testCharToStrSort() throws Exception {
         assertQuery(
                 "x\n" +
@@ -4575,6 +4550,31 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testStrConstZeroToChar() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a char)",
+                null,
+                "insert into tab select cast('' as char) from long_sequence(10)",
+                "a\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testStrToDate() throws Exception {
         assertQuery(
                 "a\n",
@@ -4727,12 +4727,12 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "\n" +
                         "\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
                         "0x123455\n" +
                         "0x123455\n" +
                         "0x123455\n" +
                         "0x123455\n" +
-                        "0x8802ff90\n" +
-                        "0x172a489c48c2692600000000529d71ab695f8ae33a2cc2aa99193c2e0a9e76da\n",
+                        "0x8802ff90\n",
                 "select cast(a as long256) x from tt order by x",
                 "create table tt as (select rnd_str('0x00123455', '0x8802ff90', 'z', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926', '0x880z', '0xhello') a from long_sequence(20))",
                 null,
@@ -5061,12 +5061,12 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "\n" +
                         "\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
                         "0x123455\n" +
                         "0x123455\n" +
                         "0x123455\n" +
                         "0x123455\n" +
-                        "0x8802ff90\n" +
-                        "0x172a489c48c2692600000000529d71ab695f8ae33a2cc2aa99193c2e0a9e76da\n",
+                        "0x8802ff90\n",
                 "select cast(a as long256) x from tt order by x",
                 "create table tt as (select rnd_symbol('0x00123455', '0x8802ff90', 'z', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926', '0x880z', '0xhello') a from long_sequence(20))",
                 null,
@@ -5099,12 +5099,12 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "\n" +
                         "\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
                         "0x123455\n" +
                         "0x123455\n" +
                         "0x123455\n" +
                         "0x123455\n" +
-                        "0x8802ff90\n" +
-                        "0x172a489c48c2692600000000529d71ab695f8ae33a2cc2aa99193c2e0a9e76da\n",
+                        "0x8802ff90\n",
                 true,
                 true,
                 true

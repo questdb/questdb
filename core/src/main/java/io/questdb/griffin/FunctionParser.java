@@ -66,6 +66,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
     private final FunctionFactoryCache functionFactoryCache;
     private final IntList undefinedVariables = new IntList();
+    private final Long256Impl long256Sink = new Long256Impl();
     private RecordMetadata metadata;
     private SqlCodeGenerator sqlCodeGenerator;
     private SqlExecutionContext sqlExecutionContext;
@@ -419,7 +420,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
             if (len == 2) {
                 // empty
-                return CharConstant.ZERO;
+                return StrConstant.EMPTY;
             }
             return new StrConstant(tok);
         }
@@ -498,6 +499,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 }
             } catch (NumericException ignored) {
             }
+        }
+
+        // long256
+        if (Numbers.extractLong256(tok, len, long256Sink)) {
+            return new Long256Constant(long256Sink); // values are copied from this sink
         }
 
         throw SqlException.position(position).put("invalid constant: ").put(tok);

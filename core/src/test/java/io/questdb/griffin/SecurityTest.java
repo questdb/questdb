@@ -491,7 +491,7 @@ public class SecurityTest extends AbstractGriffinTest {
             compiler.compile("create table tb1 as (select" +
                     " rnd_symbol(4,4,4,20000) sym1," +
                     " rnd_symbol(4,4,4,20000) sym2," +
-                    " rnd_double(2) d," +
+                    " rnd_long() d," +
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(100)) timestamp(ts)", sqlExecutionContext);
             try {
