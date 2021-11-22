@@ -48,27 +48,13 @@ public class ColumnVersionReader implements Closeable {
         mem.close();
     }
 
-    public long getOffsetA() {
-        return mem.getLong(ColumnVersionWriter.OFFSET_OFFSET_A);
-    }
-
-    public long getOffsetB() {
-        return mem.getLong(ColumnVersionWriter.OFFSET_OFFSET_B);
-    }
-
-    public long getSizeA() {
-        return mem.getLong(ColumnVersionWriter.OFFSET_SIZE_A);
-    }
-
-    public long getSizeB() {
-        return mem.getLong(ColumnVersionWriter.OFFSET_SIZE_B);
-    }
-
     public boolean isB() {
         return (char) mem.getLong(ColumnVersionWriter.OFFSET_AREA) == 'B';
     }
 
     public void load(LongList columnVersions, long offset, long areaSize) {
+        resize(offset + areaSize);
+
         long p = offset;
         int i = 0;
         long lim = offset + areaSize;

@@ -41,6 +41,8 @@ public class ColumnVersionWriter implements Closeable {
     public static final int OFFSET_SIZE_B = 32;
     private final MemoryMARW mem;
     private long size;
+    private long transientOffset;
+    private long transientSize;
 
     // size should be read from the transaction file
     // it can be zero when there are no columns deviating from the main
@@ -73,8 +75,12 @@ public class ColumnVersionWriter implements Closeable {
             bumpFileSize(headerSize + areaSize);
             // writing A group
             store(columnVersions, entryCount, headerSize);
-            updateA(headerSize, areaSize);
+            // We update transient offset and size here
+            // the important values are for area 'A'.
+            // This is the reason 'B' is updated first so that
+            // 'A' overwrites transient values
             updateB(headerSize + areaSize, 0);
+            updateA(headerSize, areaSize);
             switchToA();
             this.size = areaSize + headerSize;
         } else {
@@ -126,12 +132,20 @@ public class ColumnVersionWriter implements Closeable {
         }
     }
 
+    public long getOffset() {
+        return transientOffset;
+    }
+
     public long getOffsetA() {
         return mem.getLong(OFFSET_OFFSET_A);
     }
 
     public long getOffsetB() {
         return mem.getLong(OFFSET_OFFSET_B);
+    }
+
+    public long getSize() {
+        return transientSize;
     }
 
     public long getSizeA() {
@@ -172,10 +186,14 @@ public class ColumnVersionWriter implements Closeable {
     private void updateA(long aOffset, long aSize) {
         mem.putLong(OFFSET_OFFSET_A, aOffset);
         mem.putLong(OFFSET_SIZE_A, aSize);
+        this.transientOffset = aOffset;
+        this.transientSize = aSize;
     }
 
     private void updateB(long bOffset, long bSize) {
         mem.putLong(OFFSET_OFFSET_B, bOffset);
         mem.putLong(OFFSET_SIZE_B, bSize);
+        this.transientOffset = bOffset;
+        this.transientSize = bSize;
     }
 }

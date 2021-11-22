@@ -26,13 +26,23 @@ package io.questdb.cairo;
 
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.LongList;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class ColumnVersionWriterTest extends AbstractCairoTest {
+    public static void assertEqual(LongList expected, LongList actual) {
+        Assert.assertEquals(expected.size(), actual.size());
+        for (int i = 0, n = expected.size(); i < n; i++) {
+            Assert.assertEquals(expected.getQuick(i), actual.getQuick(i));
+        }
+    }
+
     @Test
-    public void testSimple() {
+    public void testFuzz() {
+        final Rnd rnd = new Rnd();
+        final int N = 10_000;
         try (
                 Path path = new Path();
                 ColumnVersionWriter w = new ColumnVersionWriter(FilesFacadeImpl.INSTANCE, path.of(root).concat("_cv").$(), 0);
@@ -45,81 +55,27 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
             writtenColumns.extendAndSet(1, 2); // column index
             writtenColumns.extendAndSet(2, 3); // version
             writtenColumns.extendAndSet(3, 0); // reserved
-            w.commit(writtenColumns);
 
-            Assert.assertFalse(w.isB());
+            int lastSize = 4; // number of items in last batch; 4 items per column entry
 
-            long offset;
-            long size;
+            for (int i = 0; i < N; i++) {
+                // increment from 0 to 4 columns
+                int increment = rnd.nextInt(4);
 
-            offset = w.getOffsetA();
-            size = w.getSizeA();
+                writtenColumns.setPos(lastSize + increment * 4);
+                for (int j = 0; j < increment; j++) {
+                    writtenColumns.setQuick(lastSize++, rnd.nextLong()); // timestamp
+                    writtenColumns.setQuick(lastSize++, rnd.nextLong()); // column index
+                    writtenColumns.setQuick(lastSize++, rnd.nextLong()); // version
+                    writtenColumns.setQuick(lastSize++, 0); // reserved
+                }
 
-            // this is the reading pattern
-            // first size up the reader
-            r.resize(offset + size);
-
-            // make sure reader sees the same things as writer
-            Assert.assertFalse(r.isB());
-            Assert.assertEquals(offset, r.getOffsetA());
-            Assert.assertEquals(size, r.getSizeA());
-            r.load(readColumns, offset, size);
-            assertEqual(writtenColumns, readColumns);
-
-            // another transaction
-            // change version and update again
-            // this should be regular append of 'B' area
-            writtenColumns.extendAndSet(2, 4); // version
-            w.commit(writtenColumns);
-            Assert.assertTrue(w.isB());
-
-            offset = w.getOffsetB();
-            size = w.getSizeB();
-
-            r.resize(offset + size);
-            Assert.assertTrue(r.isB());
-            Assert.assertEquals(offset, r.getOffsetB());
-            Assert.assertEquals(size, r.getSizeB());
-            r.load(readColumns, offset, size);
-            assertEqual(writtenColumns, readColumns);
-
-            // change 'A' area such it still fits at top of the file
-            writtenColumns.extendAndSet(2, 5); // version
-            w.commit(writtenColumns);
-            Assert.assertFalse(w.isB());
-            offset = w.getOffsetA();
-            size = w.getSizeA();
-
-            r.resize(offset + size);
-            Assert.assertFalse(r.isB());
-            Assert.assertEquals(offset, r.getOffsetA());
-            Assert.assertEquals(size, r.getSizeA());
-            r.load(readColumns, offset, size);
-            assertEqual(writtenColumns, readColumns);
-
-            // change 'B' area such it still fits at top of the file
-            // nothing to dramatic, we need to reach 'A' when 'A' does not fit
-            writtenColumns.extendAndSet(2, 6); // version
-            w.commit(writtenColumns);
-            Assert.assertTrue(w.isB());
-            offset = w.getOffsetB();
-            size = w.getSizeB();
-
-            // verify
-            r.resize(offset + size);
-            Assert.assertTrue(r.isB());
-            Assert.assertEquals(offset, r.getOffsetB());
-            Assert.assertEquals(size, r.getSizeB());
-            r.load(readColumns, offset, size);
-            assertEqual(writtenColumns, readColumns);
-
-        }
-    }
-
-    public static void assertEqual(LongList expected, LongList actual) {
-        Assert.assertEquals(expected.size(), actual.size());
-        for (int i = 0, n = expected.size(); i < n; i++) {
-            Assert.assertEquals(expected.getQuick(i), actual.getQuick(i));
+                w.commit(writtenColumns);
+                final long offset = w.getOffset();
+                final long size = w.getSize();
+                r.load(readColumns, offset, size);
+                assertEqual(writtenColumns, readColumns);
+            }
         }
     }
 }
