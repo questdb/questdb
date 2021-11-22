@@ -337,7 +337,7 @@ class Logger implements LogRecord, Log {
         h.ring = ring;
         LogRecordSink r = ring.get(cursor);
         r.setLevel(level);
-        r.clear(0);
+        r.clear();
         return this;
     }
 

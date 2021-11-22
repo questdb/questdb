@@ -27,45 +27,44 @@ package io.questdb.log;
 import io.questdb.std.Chars;
 import io.questdb.std.Sinkable;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.CharSink;
 
 
-public class HttpAlertBuilder implements CharSink {
+public class HttpAlertBuilder extends LogRecordSink {
+
+    private static final String QDB_VERSION = "7.71.1";
     private static final String HEADER_BODY_SEPARATOR = "\r\n\r\n";
     private static final String CL_MARKER = "######"; // 999999 / (1024*2) == 488 half a Gb payload max
     private static final int CL_MARKER_LEN = 6;
-    private static final int NO_MARK = -1;
+    private static final int NOT_SET = -1;
 
-    private long lo;
-    private long hi;
-    private long p;
-    private long mark = NO_MARK;
+
+    private long mark = NOT_SET;
     private long contentLenStart;
     private long bodyStart;
 
-    public HttpAlertBuilder using(long address, long addressLimit, CharSequence localHostIp) {
-        assert address < addressLimit;
-        assert localHostIp != null;
+    public HttpAlertBuilder(long address, long addressSize) {
+        super(address, addressSize);
+        contentLenStart = _wptr;
+        bodyStart = _wptr;
+    }
 
-        this.lo = address;
-        this.hi = addressLimit;
-        this.p = address;
-        this.mark = NO_MARK;
+    public HttpAlertBuilder putHeader(CharSequence localHostIp) {
+        clear();
         put("POST /api/v1/alerts HTTP/1.1\r\n")
                 .put("Host: ").put(localHostIp).put("\r\n")
-                .put("User-Agent: QuestDB/7.71.1\r\n")
+                .put("User-Agent: QuestDB/").put(QDB_VERSION).put("\r\n")
                 .put("Accept: */*\r\n")
                 .put("Content-Type: application/json\r\n")
                 .put("Content-Length: ");
-        contentLenStart = p;
+        contentLenStart = _wptr;
         put(CL_MARKER);
         put(HEADER_BODY_SEPARATOR);
-        bodyStart = p;
+        bodyStart = _wptr;
         return this;
     }
 
     public void $() {
-        char[] len = Long.toString(p - bodyStart).toCharArray();
+        char[] len = Long.toString(_wptr - bodyStart).toCharArray();
         long q = contentLenStart;
         for (int i = 0, limit = CL_MARKER_LEN - len.length; i < limit; i++) {
             Chars.asciiPut(' ', q++);
@@ -73,12 +72,9 @@ public class HttpAlertBuilder implements CharSink {
         Chars.asciiCopyTo(len, 0, len.length, q);
     }
 
-    public int length() {
-        return (int) (p - lo);
-    }
-
-    public void setMark() {
-        mark = p;
+    public HttpAlertBuilder setMark() {
+        mark = _wptr;
+        return this;
     }
 
     public long getMark() {
@@ -86,26 +82,35 @@ public class HttpAlertBuilder implements CharSink {
     }
 
     public HttpAlertBuilder rewindToMark() {
-        this.p = mark == NO_MARK ? lo : mark;
+        this._wptr = mark == NOT_SET ? address : mark;
         return this;
     }
 
+    @Override
+    public void clear() {
+        super.clear();
+        mark = NOT_SET;
+        contentLenStart = _wptr;
+        bodyStart = _wptr;
+    }
+
     public HttpAlertBuilder put(LogRecordSink logRecord) {
+        final int len = logRecord.length();
         final long address = logRecord.getAddress();
-        final int logRecordLen = logRecord.length();
-        checkFits(logRecordLen);
-        for (long p = address, limit = address + logRecordLen; p < limit; p++) {
+        for (long p = address, limit = address + len; p < limit; p++) {
             char c = (char) Unsafe.getUnsafe().getByte(p);
             switch (c) {
-                case '\b': // scape chars
-                case '\f':
                 case '\t':
+                    put(' ');
+                    continue;
                 case '$':
                 case '"':
                 case '\\':
                     put('\\');
                     break;
-                case '\r': // ignore chars
+                case '\b': // ignore chars
+                case '\f':
+                case '\r':
                 case '\n':
                     continue;
             }
@@ -115,27 +120,14 @@ public class HttpAlertBuilder implements CharSink {
     }
 
     @Override
-    public HttpAlertBuilder put(char c) {
-        checkFits(1);
-        Chars.asciiPut(c, p++);
-        return this;
-    }
-
-    @Override
     public HttpAlertBuilder put(CharSequence cs) {
-        int len = cs.length();
-        checkFits(len);
-        Chars.asciiStrCpy(cs, len, p);
-        p += len;
+        super.put(cs);
         return this;
     }
 
     @Override
     public HttpAlertBuilder put(CharSequence cs, int lo, int hi) {
-        int len = hi - lo;
-        checkFits(len);
-        Chars.asciiStrCpy(cs, len, p);
-        p += len;
+        super.put(cs, lo, hi);
         return this;
     }
 
@@ -146,13 +138,13 @@ public class HttpAlertBuilder implements CharSink {
     }
 
     @Override
-    public String toString() {
-        return Chars.stringFromUtf8Bytes(lo, p);
+    public HttpAlertBuilder put(char c) {
+        super.put(c);
+        return this;
     }
 
-    private void checkFits(int len) {
-        if (p + len >= hi) {
-            throw new LogError("not enough out buffer size");
-        }
+    @Override
+    public String toString() {
+        return Chars.stringFromUtf8Bytes(address, _wptr);
     }
 }

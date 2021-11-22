@@ -61,7 +61,7 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
     private final RingQueue<LogRecordSink> alertsSource;
     private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
     private final DollarExpr dollar$ = new DollarExpr();
-    private final HttpAlertBuilder alertBuilder = new HttpAlertBuilder();
+    private HttpAlertBuilder alertBuilder;
     private final CharSequenceObjHashMap<CharSequence> alertProps = DollarExpr.adaptMap(System.getenv());
     private String alertFooter;
 
@@ -139,9 +139,11 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
         inBufferLimit = inBufferPtr + inBufferSize;
         outBufferPtr = Unsafe.malloc(outBufferSize, MemoryTag.NATIVE_DEFAULT);
         outBufferLimit = outBufferPtr + outBufferSize;
-
         parseSocketAddress();
+
+        alertBuilder = new HttpAlertBuilder(outBufferPtr, outBufferLimit);
         loadAlertTemplate();
+
         connectSocket();
     }
 
@@ -265,8 +267,8 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
         if (dollar$.getKeyOffset(MESSAGE_ENV) < 0 || components.size() < 3) {
             throw new LogError(String.format("Bad template %s", location));
         }
-        alertBuilder
-                .using(outBufferPtr, outBufferLimit, localHostIp)
+        alertBuilder = new HttpAlertBuilder(outBufferPtr, outBufferLimit)
+                .putHeader(localHostIp)
                 .put(components.getQuick(0))
                 .setMark(); // mark the end of the first static block in buffer
         alertFooter = components.getQuick(2).toString();

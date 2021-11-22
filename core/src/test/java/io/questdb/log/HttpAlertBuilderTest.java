@@ -24,91 +24,169 @@
 
 package io.questdb.log;
 
-import io.questdb.std.Chars;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
-import org.junit.Assert;
-import org.junit.Test;
+import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
+import org.junit.*;
 
 import java.io.UnsupportedEncodingException;
-import java.nio.charset.StandardCharsets;
 
 public class HttpAlertBuilderTest {
 
+    private static final long bufferSize = 1024;
+    private static long bufferPtr;
+    private static long bufferLimit;
+    private HttpAlertBuilder alertBuilder;
+
+    @BeforeClass
+    public static void classSetup() {
+        bufferPtr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        bufferLimit = bufferPtr + bufferSize;
+    }
+
+    @AfterClass
+    public static void classTeardown() {
+        Unsafe.free(bufferPtr, bufferSize, MemoryTag.NATIVE_DEFAULT);
+    }
+
+    @Before
+    public void setUp() {
+        alertBuilder = new HttpAlertBuilder(bufferPtr, bufferLimit);
+        alertBuilder.putHeader("localhost");
+        alertBuilder.setMark();
+        Assert.assertEquals(
+                "POST /api/v1/alerts HTTP/1.1\r\n" +
+                        "Host: localhost\r\n" +
+                        "User-Agent: QuestDB/7.71.1\r\n" +
+                        "Accept: */*\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Content-Length: ######\r\n" +
+                        "\r\n",
+                Chars.stringFromUtf8Bytes(bufferPtr, alertBuilder.getMark())
+        );
+        Assert.assertEquals(146, alertBuilder.length());
+    }
+
     @Test
     public void testEmptyMessage() {
-        final long bufferSize = 1024;
-        final long bufferPtr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        final long bufferLimit = bufferPtr + bufferSize;
+        alertBuilder.$(); // we are adding nothing, just finish the build
+        Assert.assertEquals(
+                "POST /api/v1/alerts HTTP/1.1\r\n" +
+                        "Host: localhost\r\n" +
+                        "User-Agent: QuestDB/7.71.1\r\n" +
+                        "Accept: */*\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Content-Length:      0\r\n" +
+                        "\r\n",
+                Chars.stringFromUtf8Bytes(bufferPtr, alertBuilder.getMark())
+        );
+        Assert.assertEquals(146, alertBuilder.length());
+        Assert.assertEquals("POST /api/v1/alerts HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "User-Agent: QuestDB/7.71.1\r\n" +
+                "Accept: */*\r\n" +
+                "Content-Type: application/json\r\n" +
+                "Content-Length:      0\r\n" +
+                "\r\n", alertBuilder.toString());
+    }
+
+    @Test
+    public void testSimpleMessage() throws UnsupportedEncodingException {
+        final String msg = "Hello, my name is Íñigo Montoya, you killed my father, prepare to ∑π¬µ∫√ç©!!";
+        final byte[] msgBytes = msg.getBytes(Files.UTF_8);
+        final int len = msgBytes.length;
+        final long msgPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         try {
-            HttpAlertBuilder builder = new HttpAlertBuilder();
-            builder.using(bufferPtr, bufferLimit, "localhost");
-            builder.setMark();
+            LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
+            logRecord.put(msg);
+            alertBuilder.put(logRecord).$();
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
                             "Host: localhost\r\n" +
                             "User-Agent: QuestDB/7.71.1\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length: ######\r\n" +
-                            "\r\n",
-                    Chars.stringFromUtf8Bytes(bufferPtr, builder.getMark())
+                            "Content-Length:     89\r\n" +
+                            "\r\n" +
+                            "Hello, my name is Íñigo Montoya, you killed my father, prepare to ∑π¬µ∫√ç©!!",
+                    alertBuilder.toString()
             );
-            Assert.assertEquals(146, builder.length());
-            builder.$();
-            Assert.assertEquals(
-                    "POST /api/v1/alerts HTTP/1.1\r\n" +
-                            "Host: localhost\r\n" +
-                            "User-Agent: QuestDB/7.71.1\r\n" +
-                            "Accept: */*\r\n" +
-                            "Content-Type: application/json\r\n" +
-                            "Content-Length:      0\r\n" +
-                            "\r\n",
-                    Chars.stringFromUtf8Bytes(bufferPtr, builder.getMark())
-            );
-            Assert.assertEquals(146, builder.length());
+            Assert.assertEquals(235, alertBuilder.length());
+
+            String randomMsg = "Yup, this is a random message.";
+            alertBuilder.rewindToMark().put(randomMsg, 5, randomMsg.length()).$();
+            Assert.assertEquals(171, alertBuilder.length());
+            Assert.assertEquals("POST /api/v1/alerts HTTP/1.1\r\n" +
+                    "Host: localhost\r\n" +
+                    "User-Agent: QuestDB/7.71.1\r\n" +
+                    "Accept: */*\r\n" +
+                    "Content-Type: application/json\r\n" +
+                    "Content-Length:     25\r\n" +
+                    "\r\n" +
+                    "this is a random message.", alertBuilder.toString());
         } finally {
-            if (bufferPtr != 0) {
-                Unsafe.free(bufferPtr, bufferSize, MemoryTag.NATIVE_DEFAULT);
+            if (msgPtr != 0) {
+                Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
             }
         }
     }
 
     @Test
-    public void testSimpleMessage() throws UnsupportedEncodingException {
-        final long bufferSize = 1024;
-        final long bufferPtr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        final long bufferLimit = bufferPtr + bufferSize;
-        final String msg = "My name is Inigo Montoya";
-        final int len = msg.getBytes(StandardCharsets.UTF_8).length;
+    public void testFilteringSimpleMessage() throws UnsupportedEncodingException {
+        final String msg = "\b\f\t$\"\\\r\n";
+        final byte[] msgBytes = msg.getBytes(Files.UTF_8);
+        final int len = msgBytes.length;
         final long msgPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         try {
             LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
             logRecord.put(msg);
-
-            HttpAlertBuilder builder = new HttpAlertBuilder();
-            builder.using(bufferPtr, bufferLimit, "localhost");
-            builder.setMark();
-            builder.put(logRecord);
-            builder.$();
+            alertBuilder.put(logRecord).$();
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
                             "Host: localhost\r\n" +
                             "User-Agent: QuestDB/7.71.1\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:     24\r\n" +
+                            "Content-Length:      7\r\n" +
                             "\r\n" +
-                            "My name is Inigo Montoya",
-                    builder.toString()
+                            " \\$\\\"\\\\",
+                    alertBuilder.toString()
             );
-            Assert.assertEquals(170, builder.length());
+            Assert.assertEquals(153, alertBuilder.length());
         } finally {
             if (msgPtr != 0) {
                 Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
             }
-            if (bufferPtr != 0) {
-                Unsafe.free(bufferPtr, bufferSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testSinkable() throws UnsupportedEncodingException {
+        final String msg = "test: ";
+        final byte[] msgBytes = msg.getBytes(Files.UTF_8);
+        final int len = msgBytes.length;
+        final long msgPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        try {
+            LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
+            logRecord.put(msg);
+
+            Sinkable sinkable = sink1 -> sink1.put("Tres, Dos, Uno, Zero!!");
+            alertBuilder.put(logRecord).put(sinkable).$();
+            Assert.assertEquals(
+                    "POST /api/v1/alerts HTTP/1.1\r\n" +
+                            "Host: localhost\r\n" +
+                            "User-Agent: QuestDB/7.71.1\r\n" +
+                            "Accept: */*\r\n" +
+                            "Content-Type: application/json\r\n" +
+                            "Content-Length:     28\r\n" +
+                            "\r\n" +
+                            "test: Tres, Dos, Uno, Zero!!",
+                    alertBuilder.toString()
+            );
+            Assert.assertEquals(174, alertBuilder.length());
+        } finally {
+            if (msgPtr != 0) {
+                Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
             }
         }
     }

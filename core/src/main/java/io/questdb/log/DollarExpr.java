@@ -46,6 +46,7 @@ public class DollarExpr implements Sinkable {
         return properties;
     }
 
+
     private final TimestampFormatCompiler dateCompiler = new TimestampFormatCompiler();
     private final StringSink resolveSink = new StringSink();
     private final ObjList<Sinkable> txtComponents = new ObjList<>();

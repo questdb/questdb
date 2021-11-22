@@ -39,53 +39,112 @@ public class LogRecordSinkTest {
         sink = new StringSink();
     }
 
+
     @Test
-    public void testEndToEnd() {
-        String expected = "ﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺﾺ";
-        int memorySize = Numbers.ceilPow2(20);
-        long memoryPtr = Unsafe.malloc(memorySize, MemoryTag.NATIVE_DEFAULT);
+    public void testCharSequenceOf() {
+        char[] iCanEatGlass = "ᛖᚴ ᚷᛖᛏ ᛖᛏᛁ ᚧ ᚷᛚᛖᚱ ᛘᚾ ᚦᛖᛋᛋ ᚨᚧ ᚡᛖ ᚱᚧᚨ ᛋᚨᚱ".toCharArray();
+        LogRecordSink.CharSequenceOf charSeq = new LogRecordSink.CharSequenceOf();
+        charSeq.of(iCanEatGlass, 0, iCanEatGlass.length);
+        Assert.assertEquals(iCanEatGlass.length, charSeq.length());
+        for (int i = 0; i < iCanEatGlass.length; i++) {
+            Assert.assertEquals(iCanEatGlass[i], charSeq.charAt(i));
+        }
+    }
+
+    @Test
+    public void testOffsetCharSequenceOf() {
+        CharSequence sample = "Aš galiu valgyti stiklą ir jis manęs nežeidžia".subSequence(9, 18);
+        char[] iCanEatGlass = "Aš galiu valgyti stiklą ir jis manęs nežeidžia".toCharArray();
+        LogRecordSink.CharSequenceOf charSeq = new LogRecordSink.CharSequenceOf();
+        charSeq.of(iCanEatGlass, 9, 18);
+        Assert.assertEquals(sample.length(), charSeq.length());
+        for (int i = 0; i < sample.length(); i++) {
+            Assert.assertEquals(sample.charAt(i), charSeq.charAt(i));
+            Assert.assertEquals(iCanEatGlass[9 + i], charSeq.charAt(i));
+        }
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testCharSequenceOfSubsequenceNotSupported() {
+        new LogRecordSink.CharSequenceOf().subSequence(0, 0);
+    }
+
+    @Test(expected = IndexOutOfBoundsException.class)
+    public void testCharSequenceOfOutOfBounds() {
+        new LogRecordSink.CharSequenceOf().charAt(1);
+    }
+
+    @Test
+    public void testConvoluted() {
+        final String expected = "ππππππππππππππππππππ"; // len == 20
+        final int len = expected.length();
+        final int buffSize = len * 3;
+        final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            LogRecordSink recordSink = new LogRecordSink(memoryPtr, memorySize);
+            LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
             recordSink.setLevel(LogLevel.ERROR);
             Assert.assertEquals(LogLevel.ERROR, recordSink.getLevel());
-            Assert.assertEquals(memoryPtr, recordSink.getAddress());
-
-            // fill it in with rubbish
-            for (int i = 0; i < memorySize; i++) {
-                recordSink.put('º'); // non ascii
-            }
+            Assert.assertEquals(buffPtr, recordSink.getAddress());
+            recordSink.put(expected);
             recordSink.toSink(sink);
-            Assert.assertEquals(memorySize, recordSink.length());
-            Assert.assertEquals(memorySize, sink.length());
             Assert.assertEquals(expected, sink.toString());
-
-            recordSink.clear(16);
-            sink.clear();
-            recordSink.put(expected, 16, 32);
-            recordSink.toSink(sink);
-            Assert.assertEquals(memorySize, recordSink.length());
-            Assert.assertEquals(memorySize, sink.length());
-            Assert.assertEquals(expected, sink.toString());
-
-            recordSink.clear(0);
-            sink.clear();
-            recordSink.put(expected, 16, 32);
-            recordSink.toSink(sink);
-            Assert.assertEquals(16, recordSink.length());
-            Assert.assertEquals(16, sink.length());
-            Assert.assertEquals(expected.substring(16, 32), sink.toString());
-
+            Assert.assertEquals(recordSink.length(), sink.length() * 2);
             recordSink.clear();
+            Assert.assertEquals(0, recordSink.length());
             sink.clear();
-            recordSink.put(expected.toCharArray(), 16, 16);
             recordSink.toSink(sink);
-            Assert.assertEquals(16, recordSink.length());
-            Assert.assertEquals(16, sink.length());
-            Assert.assertEquals(expected.substring(16, 32), sink.toString());
-
+            Assert.assertEquals(0, recordSink.length());
+            Assert.assertEquals("", sink.toString());
         } finally {
-            Unsafe.free(memoryPtr, memorySize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
         }
+    }
 
+    @Test
+    public void testSimpleMessage1() {
+        final String expected = "我能吞下玻璃而不傷身體";
+        final int len = expected.length();
+        final int buffSize = len * 3;
+        final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
+            recordSink.put(expected.toCharArray(), 1, len - 1);
+            recordSink.toSink(sink);
+            Assert.assertEquals(expected.substring(1, len - 1), sink.toString());
+        } finally {
+            Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testSimpleMessage2() {
+        final String expected = "Я можу їсти скло, і воно мені не зашкодить.";
+        final int len = expected.length();
+        final int buffSize = len * 3;
+        final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
+            recordSink.put(expected, 2, len - 1);
+            recordSink.toSink(sink);
+            Assert.assertEquals(expected.substring(2, len - 1), sink.toString());
+        } finally {
+            Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testSimpleMessage3() {
+        final String expected = "This is a simple message";
+        final int len = expected.length();
+        final int buffSize = len * 3;
+        final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
+            recordSink.put(expected, 2, len - 1);
+            recordSink.toSink(sink);
+            Assert.assertEquals(expected.substring(2, len - 1), sink.toString());
+        } finally {
+            Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 }
