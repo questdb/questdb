@@ -241,24 +241,25 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
         final long now = clock.getTicks();
         location = dollar$.resolveEnv(location, now).toString();
 
-        // resolve env vars within template, except ALERT_MESSAGE
-        long size = -1;
-        try (InputStream is = LogAlertManagerWriter.class.getResourceAsStream(location)) {
+        // read template, resolve env vars within (except $ALERT_MESSAGE)
+        boolean wasRead = false;
+        try {
+            InputStream is = LogAlertManagerWriter.class.getResourceAsStream(location);
             if (is != null) {
                 dollar$.resolve(new String(is.readAllBytes(), Files.UTF_8), now, alertProps);
-            } else {
-                size = readTemplateFile(location, inBufferPtr, inBufferLimit, ff);
+                wasRead = true;
             }
         } catch (IOException e) {
-            size = readTemplateFile(location, inBufferPtr, inBufferLimit, ff);
+            // it was not a resource ("/resource_name")
         }
-        if (size != -1) {
+        if (!wasRead) {
+            long size = readTemplateFile(location, inBufferPtr, inBufferLimit, ff);
             DirectByteCharSequence template = new DirectByteCharSequence();
             template.of(inBufferPtr, inBufferPtr + size);
             dollar$.resolve(template, now, alertProps);
         }
 
-        // consolidate/check/load template onto the outbound socket buffer
+        // consolidate/check/load template to the outbound socket buffer
         dollar$.resolve(dollar$.toString(), now, alertProps);
         ObjList<Sinkable> components = dollar$.getLocationComponents();
         if (dollar$.getKeyOffset(MESSAGE_ENV) < 0 || components.size() < 3) {
