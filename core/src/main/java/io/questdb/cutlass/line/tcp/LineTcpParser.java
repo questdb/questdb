@@ -675,10 +675,4 @@ public class LineTcpParser implements Closeable {
             return true;
         }
     }
-
-
-
-
-
-
 }
