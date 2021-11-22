@@ -142,10 +142,7 @@ FetchContent_Declare(
         asmjit
         GIT_REPOSITORY https://github.com/questdb/asmjit.git
 )
-FetchContent_GetProperties(asmjit)
-if(NOT asmjit_POPULATED)
-    FetchContent_Populate(asmjit)
-endif()
+FetchContent_MakeAvailable(asmjit)
 include("${ASMJIT_DIR}/CMakeLists.txt")
 include_directories(${ASMJIT_INCLUDE_DIRS} SYSTEM)
 

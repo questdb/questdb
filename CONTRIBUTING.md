@@ -82,11 +82,11 @@ C-libraries will have to be compiled for each platform separately. Cmake will al
 commands will compile on Linux/OSX.
 
 ```text
-cmake
+cmake .
 make
 ```
 
-For C development we use Intellij CLion. This IDEA "understands" cmake files and will make compilation easier.
+For C/C++ development we use CLion. This IDE "understands" cmake files and will make compilation easier.
 
 The build will copy artifacts as follows:
 
