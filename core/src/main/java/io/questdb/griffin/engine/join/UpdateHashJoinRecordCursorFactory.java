@@ -121,10 +121,6 @@ public class UpdateHashJoinRecordCursorFactory implements UpdateStatementMasterC
 
         @Override
         public Record next(Record master) {
-            if (useSlaveCursor && slaveChain.hasNext()) {
-                return recordA;
-            }
-
             MapKey key = joinKeyMap.withKey();
             key.put(master, masterSink);
             MapValue value = key.findValue();

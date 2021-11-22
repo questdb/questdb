@@ -25,11 +25,29 @@
 package io.questdb.griffin.model;
 
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Mutable;
 
-public interface QueryWithClauseModel {
-    void addWithClause(CharSequence token, WithClauseModel wcm);
+public class QueryWithClauseModel implements Mutable {
+    private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses = new LowerCaseCharSequenceObjHashMap<>();
 
-    WithClauseModel getWithClause(CharSequence token);
+    public void addWithClause(CharSequence name, WithClauseModel model) {
+        withClauses.put(name, model);
+    }
 
-    LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses();
+    public void addWithClauses(QueryWithClauseModel parentWithClauses) {
+        withClauses.putAll(parentWithClauses.withClauses);
+    }
+
+    @Override
+    public void clear() {
+        withClauses.clear();
+    }
+
+    public WithClauseModel getWithClause(CharSequence name) {
+        return withClauses.get(name);
+    }
+
+    public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
+        return withClauses;
+    }
 }

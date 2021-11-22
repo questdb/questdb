@@ -24,27 +24,19 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.pool.ResourcePool;
-import io.questdb.cairo.sql.Record;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
-import java.io.Closeable;
-
 import static io.questdb.griffin.model.QueryModel.*;
 
-public class UpdateModel implements Mutable, ExecutionModel, QueryWithClauseModel, Sinkable {
+public class UpdateModel implements Mutable, ExecutionModel, Sinkable {
     private ExpressionNode updateTableAlias;
     private final ObjList<ExpressionNode> updatedColumns = new ObjList<>();
     private final ObjList<ExpressionNode> updateColumnExpressions = new ObjList<>();
     private QueryModel fromModel;
     private int position;
     private CharSequence updateTableName;
-
-    @Override
-    public void addWithClause(CharSequence token, WithClauseModel wcm) {
-    }
+    private final QueryWithClauseModel withModel = new QueryWithClauseModel();
 
     public int getPosition() {
         return position;
@@ -63,23 +55,10 @@ public class UpdateModel implements Mutable, ExecutionModel, QueryWithClauseMode
     }
 
     @Override
-    public WithClauseModel getWithClause(CharSequence token) {
-        return null;
-    }
-
-    @Override
-    public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
-        return null;
-    }
-
-    public void addWithClauses(LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses) {
-
-    }
-
-    @Override
     public void clear() {
         updatedColumns.clear();
         updateColumnExpressions.clear();
+        withModel.clear();
         updateTableName = null;
         updateTableAlias = null;
     }
@@ -87,6 +66,10 @@ public class UpdateModel implements Mutable, ExecutionModel, QueryWithClauseMode
     @Override
     public int getModelType() {
         return UPDATE;
+    }
+
+    public QueryWithClauseModel getWithModel() {
+        return withModel;
     }
 
     public void setUpdateTableAlias(ExpressionNode updateTableAlias) {
@@ -125,7 +108,7 @@ public class UpdateModel implements Mutable, ExecutionModel, QueryWithClauseMode
             sink.put(")");
         }
 
-        if (fromModel.getWhereClause() != null) {
+        if (fromModel != null && fromModel.getWhereClause() != null) {
             sink.put(" where ");
             sink.put(fromModel.getWhereClause());
         }

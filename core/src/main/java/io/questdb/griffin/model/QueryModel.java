@@ -32,7 +32,7 @@ import java.util.ArrayDeque;
 
 import static io.questdb.griffin.SqlKeywords.isAndKeyword;
 
-public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, QueryWithClauseModel, Sinkable {
+public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sinkable {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
     public static final int ORDER_DIRECTION_ASCENDING = 0;
     public static final int ORDER_DIRECTION_DESCENDING = 1;
@@ -83,7 +83,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Que
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final LowerCaseCharSequenceIntHashMap orderHash = new LowerCaseCharSequenceIntHashMap(4, 0.5, -1);
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
-    private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
     private ExpressionNode sampleByTimezoneName = null;
     private ExpressionNode sampleByOffset = null;
@@ -117,6 +116,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Que
     private int orderByAdviceMnemonic;
     private int tableId;
     private boolean isUpdateModel;
+    private final QueryWithClauseModel withClauseModel = new QueryWithClauseModel();
 
     private QueryModel() {
         joinModels.add(this);
@@ -186,14 +186,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Que
         }
     }
 
-    public void addWithClause(CharSequence name, WithClauseModel model) {
-        withClauses.put(name, model);
-    }
-
-    public void addWithClauses(LowerCaseCharSequenceObjHashMap<WithClauseModel> parentWithClauses) {
-        withClauses.putAll(parentWithClauses);
-    }
-
     public void clear() {
         bottomUpColumns.clear();
         aliasToColumnNameMap.clear();
@@ -226,7 +218,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Que
         timestamp = null;
         sqlNodeStack.clear();
         joinColumns.clear();
-        withClauses.clear();
+        withClauseModel.clear();
         selectModelType = SELECT_MODEL_NONE;
         columnNameToAliasMap.clear();
         tableNameFunction = null;
@@ -313,6 +305,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Que
 
     public ExpressionNode getAlias() {
         return alias;
+    }
+
+    public QueryWithClauseModel getWithClauses() {
+        return withClauseModel;
     }
 
     public boolean isUpdate() {
@@ -636,14 +632,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Que
 
     public void setWhereClause(ExpressionNode whereClause) {
         this.whereClause = whereClause;
-    }
-
-    public WithClauseModel getWithClause(CharSequence name) {
-        return withClauses.get(name);
-    }
-
-    public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
-        return withClauses;
     }
 
     public boolean isDistinct() {
