@@ -184,7 +184,7 @@ const Menu = () => {
         </PopperHover>
       )}
 
-      {running && (
+      {running.value && (
         <ErrorButton onClick={handleClick}>
           <Stop size="18px" />
           <span>Cancel</span>
