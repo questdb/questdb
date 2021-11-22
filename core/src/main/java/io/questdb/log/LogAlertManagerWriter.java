@@ -24,6 +24,7 @@
 
 package io.questdb.log;
 
+import io.questdb.VisibleForTesting;
 import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -140,10 +141,8 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
         outBufferPtr = Unsafe.malloc(outBufferSize, MemoryTag.NATIVE_DEFAULT);
         outBufferLimit = outBufferPtr + outBufferSize;
         parseSocketAddress();
-
         alertBuilder = new HttpAlertBuilder(outBufferPtr, outBufferLimit);
         loadAlertTemplate();
-
         connectSocket();
     }
 
@@ -241,21 +240,27 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
 
     private void loadAlertTemplate() {
         final long now = clock.getTicks();
+        if (location.isEmpty()) {
+            location = DEFAULT_ALERT_TPT_FILE;
+        }
         location = dollar$.resolveEnv(location, now).toString();
 
         // read template, resolve env vars within (except $ALERT_MESSAGE)
         boolean wasRead = false;
-        try {
-            InputStream is = LogAlertManagerWriter.class.getResourceAsStream(location);
+        try (InputStream is = LogAlertManagerWriter.class.getResourceAsStream(location)){
             if (is != null) {
-                dollar$.resolve(new String(is.readAllBytes(), Files.UTF_8), now, alertProps);
-                wasRead = true;
+                byte [] buff = new byte[IN_BUFFER_SIZE];
+                int n = is.read(buff, 0, buff.length);
+                if (n > 0) {
+                    dollar$.resolve(new String(buff, 0, n, Files.UTF_8), now, alertProps);
+                    wasRead = true;
+                }
             }
         } catch (IOException e) {
             // it was not a resource ("/resource_name")
         }
         if (!wasRead) {
-            long size = readTemplateFile(location, inBufferPtr, inBufferLimit, ff);
+            long size = readFile(location, inBufferPtr, inBufferLimit, ff);
             DirectByteCharSequence template = new DirectByteCharSequence();
             template.of(inBufferPtr, inBufferPtr + size);
             dollar$.resolve(template, now, alertProps);
@@ -274,7 +279,8 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
         alertFooter = components.getQuick(2).toString();
     }
 
-    private void onLogRecord(LogRecordSink logRecord) {
+    @VisibleForTesting
+    void onLogRecord(LogRecordSink logRecord) {
         final int logRecordLen = logRecord.length();
         if ((logRecord.getLevel() & level) != 0 && logRecordLen > 0 && fdSocket > 0) {
             alertBuilder
@@ -303,7 +309,13 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
         }
     }
 
-    private static long readTemplateFile(String location, long address, long limit, FilesFacade ff) {
+    @VisibleForTesting
+    HttpAlertBuilder getAlertBuilder() {
+        return alertBuilder;
+    }
+
+    @VisibleForTesting
+    static long readFile(String location, long address, long limit, FilesFacade ff) {
         try (Path path = new Path()) {
             path.of(location);
             long fdTemplate = ff.openRO(path.$());

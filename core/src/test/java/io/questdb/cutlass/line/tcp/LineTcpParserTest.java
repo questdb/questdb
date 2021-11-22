@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
@@ -116,7 +117,7 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         TestUtils.assertMemoryLeak(() -> {
             sink.clear();
             sink.put(type == LineTcpParser.ENTITY_TYPE_TAG ? "t,v=" : "t v=").put(value).put('\n'); // SYMBOLS are in tag set, not field set
-            byte[] bytes = sink.toString().getBytes(StandardCharsets.UTF_8);
+            byte[] bytes = sink.toString().getBytes(Files.UTF_8);
             final int len = bytes.length;
             long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
             try {

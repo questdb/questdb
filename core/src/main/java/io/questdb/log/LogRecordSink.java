@@ -118,7 +118,7 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
             if (index > -1 && index < len) {
                 return chars[lo + index];
             }
-            throw new IndexOutOfBoundsException(index);
+            throw new IndexOutOfBoundsException("Index out of range: " + index);
         }
 
         @NotNull

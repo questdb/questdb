@@ -135,9 +135,9 @@ public class JsonLexerTest {
 
     @Test
     public void testInvalidUtf8Value() {
-        byte[] bytesA = "{\"x\":\"违法违,控网站漏洞风\", \"y\":\"站漏洞风".getBytes(StandardCharsets.UTF_8);
+        byte[] bytesA = "{\"x\":\"违法违,控网站漏洞风\", \"y\":\"站漏洞风".getBytes(Files.UTF_8);
         byte[] bytesB = {-116, -76, -55, 55, -34, 0, -11, 15, 13};
-        byte[] bytesC = "\"}".getBytes(StandardCharsets.UTF_8);
+        byte[] bytesC = "\"}".getBytes(Files.UTF_8);
 
         byte[] bytes = new byte[bytesA.length + bytesB.length + bytesC.length];
         System.arraycopy(bytesA, 0, bytes, 0, bytesA.length);
@@ -689,7 +689,7 @@ public class JsonLexerTest {
     }
 
     private void assertThat(String expected, String input, boolean recordPositions) throws Exception {
-        byte[] bytes = input.getBytes(StandardCharsets.UTF_8);
+        byte[] bytes = input.getBytes(Files.UTF_8);
         int len = bytes.length;
         long address = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < len; i++) {

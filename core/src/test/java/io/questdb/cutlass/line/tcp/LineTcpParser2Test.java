@@ -335,7 +335,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     }
 
     protected void assertThat(CharSequence expected, String lineStr, int start) throws LineProtoException {
-        byte[] line = lineStr.getBytes(StandardCharsets.UTF_8);
+        byte[] line = lineStr.getBytes(Files.UTF_8);
         final int len = line.length;
         final boolean endWithEOL = line[len - 1] == '\n' || line[len - 1] == '\r';
         int fullLen = endWithEOL ? line.length : line.length + 1;

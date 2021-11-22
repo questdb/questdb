@@ -100,21 +100,27 @@ public class HttpAlertBuilder extends LogRecordSink {
         for (long p = address, limit = address + len; p < limit; p++) {
             char c = (char) Unsafe.getUnsafe().getByte(p);
             switch (c) {
-                case '\t':
-                    put(' ');
-                    continue;
-                case '$':
-                case '"':
-                case '\\':
-                    put('\\');
-                    break;
                 case '\b': // ignore chars
                 case '\f':
                 case '\r':
                 case '\n':
-                    continue;
+                    break;
+
+                case '\t':
+                    put(' ');
+                    break;
+
+                case '$':
+                    put("\\\\$");
+                    break;
+
+                case '"':
+                    put("\\\"");
+                    break;
+
+                default:
+                    put(c);
             }
-            put(c);
         }
         return this;
     }
