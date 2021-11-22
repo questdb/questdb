@@ -142,9 +142,13 @@ FetchContent_Declare(
         asmjit
         GIT_REPOSITORY https://github.com/questdb/asmjit.git
 )
-FetchContent_MakeAvailable(asmjit)
-include("${ASMJIT_DIR}/CMakeLists.txt")
-include_directories(${ASMJIT_INCLUDE_DIRS} SYSTEM)
+
+FetchContent_GetProperties(asmjit)
+if(NOT asmjit_POPULATED)
+    FetchContent_Populate(asmjit)
+endif()
+include("${asmjit_SOURCE_DIR}/CMakeLists.txt")
+include_directories(${asmjit_SOURCE_DIR}/src SYSTEM)
 
 #zlib
 set(ZLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/zlib-1.2.8)
