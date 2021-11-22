@@ -149,7 +149,7 @@ public class HttpAlertBuilderTest {
                             "Content-Type: application/json\r\n" +
                             "Content-Length:      7\r\n" +
                             "\r\n" +
-                            " \\$\\\"\\\\",
+                            " \\\\$\\\"\\",
                     alertBuilder.toString()
             );
             Assert.assertEquals(153, alertBuilder.length());
