@@ -6,6 +6,10 @@ import React, {
   useRef,
 } from "react"
 import { editor } from "monaco-editor"
+import {
+  insertTextAtCursor,
+  appendQuery,
+} from "../../scenes/Editor/Monaco/utils"
 
 type IStandaloneCodeEditor = editor.IStandaloneCodeEditor
 
@@ -13,12 +17,14 @@ type ContextProps = {
   editorRef: MutableRefObject<IStandaloneCodeEditor | null> | null
   insertTextAtCursor: (text: string) => void
   getValue: () => void
+  appendQuery: (query: string) => void
 }
 
 const defaultValues = {
   editorRef: null,
   insertTextAtCursor: (text: string) => undefined,
   getValue: () => undefined,
+  appendQuery: (query: string) => undefined,
 }
 
 const EditorContext = createContext<ContextProps>(defaultValues)
@@ -34,12 +40,23 @@ export const EditorProvider = ({ children }: PropsWithChildren<{}>) => {
     return editorRef.current?.getValue()
   }
 
-  const insertTextAtCursor = (text: string) => {
-    editorRef?.current?.trigger("keyboard", "type", { text })
-  }
-
   return (
-    <EditorContext.Provider value={{ editorRef, getValue, insertTextAtCursor }}>
+    <EditorContext.Provider
+      value={{
+        editorRef,
+        getValue,
+        insertTextAtCursor: (text) => {
+          if (editorRef?.current) {
+            insertTextAtCursor(editorRef.current, text)
+          }
+        },
+        appendQuery: (text) => {
+          if (editorRef?.current) {
+            appendQuery(editorRef.current, text)
+          }
+        },
+      }}
+    >
       {children}
     </EditorContext.Provider>
   )

@@ -127,7 +127,7 @@ $.fn.grid = function (msgBus) {
         }
         rowContainer.questIndex = -1
       }
-      rowContainer.style.top = n * rh - o + "px"
+      rowContainer.style.top = n * rh + "px"
       if (rowContainer === activeRowContainer) {
         if (n === activeRow) {
           rowContainer.className = "qg-r qg-r-active"

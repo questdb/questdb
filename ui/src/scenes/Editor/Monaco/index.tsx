@@ -6,6 +6,7 @@ import { theme } from "../../../theme"
 import { QuestContext, useEditor } from "../../../providers"
 import { usePreferences } from "./usePreferences"
 import {
+  appendQuery,
   getQueryRequestFromEditor,
   getQueryRequestFromLastExecutedQuery,
   Request,
@@ -28,6 +29,12 @@ const Content = styled(PaneContent)`
   overflow: hidden;
 `
 
+enum Command {
+  EXECUTE = "execute",
+  FOCUS_GRID = "focus_grid",
+  CLEANUP_NOTIFICATIONS = "clean_notifications",
+}
+
 const MonacoEditor = () => {
   const { editorRef, insertTextAtCursor } = useEditor()
   const { loadPreferences, savePreferences } = usePreferences()
@@ -36,6 +43,10 @@ const MonacoEditor = () => {
   const [lastExecutedQuery, setLastExecutedQuery] = useState("")
   const dispatch = useDispatch()
   const running = useSelector(selectors.query.getRunning)
+
+  const toggleRunning = (isRefresh: boolean = false) => {
+    dispatch(actions.query.toggleRunning(isRefresh))
+  }
 
   const handleEditorDidMount = (
     editor: IStandaloneCodeEditor,
@@ -47,6 +58,72 @@ const MonacoEditor = () => {
       // Support legacy bus events for non-react codebase
       window.bus.on(BusEvent.MSG_EDITOR_INSERT_COLUMN, (_event, column) => {
         insertTextAtCursor(column)
+      })
+
+      window.bus.on(BusEvent.MSG_QUERY_FIND_N_EXEC, (_event, query: string) => {
+        const text = `${query};`
+        appendQuery(editor, text)
+        toggleRunning()
+      })
+
+      window.bus.on(BusEvent.MSG_QUERY_EXEC, (_event, query: { q: string }) => {
+        const matches = editor
+          .getModel()
+          ?.findMatches(query.q, true, false, true, null, true)
+        if (matches) {
+          // TODO: Display a query marker on correct line
+        }
+        toggleRunning(true)
+      })
+
+      window.bus.on(
+        BusEvent.MSG_QUERY_EXPORT,
+        (_event, request?: { q: string }) => {
+          if (request) {
+            window.location.href = `/exp?query=${encodeURIComponent(request.q)}`
+          }
+        },
+      )
+
+      window.bus.on(BusEvent.MSG_EDITOR_FOCUS, () => {
+        const position = editor.getPosition()
+        if (position) {
+          editor.setPosition({
+            lineNumber: position.lineNumber + 1,
+            column: position?.column,
+          })
+        }
+        editor.focus()
+      })
+
+      editor.addAction({
+        id: Command.FOCUS_GRID,
+        label: "Focus Grid",
+        keybindings: [monaco.KeyCode.F2],
+        run: () => {
+          window.bus.trigger(BusEvent.GRID_FOCUS)
+        },
+      })
+
+      editor.addAction({
+        id: Command.EXECUTE,
+        label: "Execute command",
+        keybindings: [
+          monaco.KeyCode.F9,
+          monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
+        ],
+        run: () => {
+          toggleRunning()
+        },
+      })
+
+      editor.addAction({
+        id: Command.CLEANUP_NOTIFICATIONS,
+        label: "Clear all notifications",
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK],
+        run: () => {
+          dispatch(actions.query.cleanupNotifications())
+        },
       })
     }
     monaco.editor.defineTheme("dracula", dracula)
@@ -159,6 +236,9 @@ const MonacoEditor = () => {
           fontSize: 14,
           fontFamily: theme.fontMonospace,
           renderLineHighlight: "none",
+          minimap: {
+            enabled: false,
+          },
         }}
       />
       <Loader show={!!request} />

@@ -25,11 +25,6 @@ import { editor } from "monaco-editor"
 
 type IStandaloneCodeEditor = editor.IStandaloneCodeEditor
 
-type Position = Readonly<{
-  column: number
-  row: number
-}>
-
 export type Request = Readonly<{
   query: string
   row: number
@@ -204,25 +199,53 @@ export const getQueryRequestFromLastExecutedQuery = (
   }
 }
 
-export const toTextPosition = (
-  request: Request,
-  position: number,
-): Position => {
-  const end = Math.min(position, request.query.length)
-  let row = 0
-  let column = 0
+export const insertTextAtCursor = (
+  editor: IStandaloneCodeEditor,
+  text: string,
+) => {
+  editor.trigger("keyboard", "type", { text })
+  editor.focus()
+}
 
-  for (let i = 0; i < end; i++) {
-    if (request.query.charAt(i) === "\n") {
-      row++
-      column = 0
-    } else {
-      column++
+export const insertTextAtPosition = (
+  editor: IStandaloneCodeEditor,
+  lineNumber: number,
+  column: number,
+  text: string,
+) => {
+  editor.executeEdits("", [
+    {
+      range: {
+        startLineNumber: lineNumber,
+        startColumn: column,
+        endLineNumber: lineNumber,
+        endColumn: column,
+      },
+      text,
+    },
+  ])
+}
+
+export const appendQuery = (editor: IStandaloneCodeEditor, query: string) => {
+  const model = editor.getModel()
+  if (model) {
+    const firstLine = model.getLineContent(1)
+    const position = editor.getPosition()
+    if (position) {
+      insertTextAtPosition(
+        editor,
+        position.lineNumber + 1,
+        0,
+        firstLine === "" ? query : `\n\n${query}`,
+      )
+
+      editor.setSelection({
+        startColumn: 0,
+        endColumn: model.getLineContent(position.lineNumber + 2).length + 1,
+        startLineNumber: position.lineNumber + 2,
+        endLineNumber: position.lineNumber + 2,
+      })
     }
-  }
-
-  return {
-    row: row + 1 + request.row,
-    column: (row === 0 ? column + request.column : column) + 1,
+    editor.focus()
   }
 }
