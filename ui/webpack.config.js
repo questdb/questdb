@@ -118,7 +118,7 @@ module.exports = {
   module: {
     rules: [
       {
-        test: /\.(png|jpg|woff)$/,
+        test: /\.(png|jpg|ttf|woff)$/,
         use: ["file-loader"],
       },
       {

@@ -6,6 +6,7 @@ import React, {
   useRef,
 } from "react"
 import { editor } from "monaco-editor"
+import { Monaco } from "@monaco-editor/react"
 import {
   insertTextAtCursor,
   appendQuery,
@@ -15,6 +16,7 @@ type IStandaloneCodeEditor = editor.IStandaloneCodeEditor
 
 type ContextProps = {
   editorRef: MutableRefObject<IStandaloneCodeEditor | null> | null
+  monacoRef: MutableRefObject<Monaco | null> | null
   insertTextAtCursor: (text: string) => void
   getValue: () => void
   appendQuery: (query: string) => void
@@ -22,6 +24,7 @@ type ContextProps = {
 
 const defaultValues = {
   editorRef: null,
+  monacoRef: null,
   insertTextAtCursor: (text: string) => undefined,
   getValue: () => undefined,
   appendQuery: (query: string) => undefined,
@@ -31,6 +34,7 @@ const EditorContext = createContext<ContextProps>(defaultValues)
 
 export const EditorProvider = ({ children }: PropsWithChildren<{}>) => {
   const editorRef = useRef<IStandaloneCodeEditor | null>(null)
+  const monacoRef = useRef<Monaco | null>(null)
 
   /*
     To avoid re-rendering components that subscribe to this context
@@ -44,6 +48,7 @@ export const EditorProvider = ({ children }: PropsWithChildren<{}>) => {
     <EditorContext.Provider
       value={{
         editorRef,
+        monacoRef,
         getValue,
         insertTextAtCursor: (text) => {
           if (editorRef?.current) {

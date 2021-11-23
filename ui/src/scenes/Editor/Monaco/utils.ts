@@ -21,9 +21,12 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-import { editor } from "monaco-editor"
+import { editor, IPosition, IRange } from "monaco-editor"
+import { Monaco } from "@monaco-editor/react"
 
 type IStandaloneCodeEditor = editor.IStandaloneCodeEditor
+
+export const QuestDBLanguage: string = "questdb-sql"
 
 export type Request = Readonly<{
   query: string
@@ -69,8 +72,8 @@ export const getQueryFromCursor = (
         }
 
         if (
-          row < position.lineNumber ||
-          (row === position.lineNumber && column < position.column)
+          row < position.lineNumber - 1 ||
+          (row === position.lineNumber - 1 && column < position.column)
         ) {
           sqlTextStack.push({
             row: startRow,
@@ -199,6 +202,37 @@ export const getQueryRequestFromLastExecutedQuery = (
   }
 }
 
+export const getErrorRange = (
+  editor: IStandaloneCodeEditor,
+  request: Request,
+  errorPosition: number,
+): IRange | null => {
+  const position = toTextPosition(request, errorPosition)
+  const model = editor.getModel()
+  if (model) {
+    const selection = editor.getSelection()
+    const selectedText = getSelectedText(editor)
+    let wordAtPosition
+    if (selection && selectedText) {
+      wordAtPosition = model.getWordAtPosition({
+        column: selection.startColumn,
+        lineNumber: selection.startLineNumber,
+      })
+    } else {
+      wordAtPosition = model.getWordAtPosition(position)
+    }
+    if (wordAtPosition) {
+      return {
+        startColumn: wordAtPosition.startColumn,
+        endColumn: wordAtPosition.endColumn,
+        startLineNumber: position.lineNumber,
+        endLineNumber: position.lineNumber,
+      }
+    }
+  }
+  return null
+}
+
 export const insertTextAtCursor = (
   editor: IStandaloneCodeEditor,
   text: string,
@@ -247,5 +281,61 @@ export const appendQuery = (editor: IStandaloneCodeEditor, query: string) => {
       })
     }
     editor.focus()
+  }
+}
+
+export const clearModelMarkers = (
+  monaco: Monaco,
+  editor: IStandaloneCodeEditor,
+) => {
+  const model = editor.getModel()
+
+  if (model) {
+    monaco.editor.setModelMarkers(model, QuestDBLanguage, [])
+  }
+}
+
+export const setErrorMarker = (
+  monaco: Monaco,
+  editor: IStandaloneCodeEditor,
+  errorRange: IRange,
+  message: string,
+) => {
+  const model = editor.getModel()
+
+  if (model) {
+    monaco.editor.setModelMarkers(model, QuestDBLanguage, [
+      {
+        message,
+        severity: monaco.MarkerSeverity.Error,
+        startLineNumber: errorRange.startLineNumber,
+        endLineNumber: errorRange.endLineNumber,
+        startColumn: errorRange.startColumn,
+        endColumn: errorRange.endColumn,
+      },
+    ])
+  }
+}
+
+export const toTextPosition = (
+  request: Request,
+  position: number,
+): IPosition => {
+  const end = Math.min(position, request.query.length)
+  let row = 0
+  let column = 0
+
+  for (let i = 0; i < end; i++) {
+    if (request.query.charAt(i) === "\n") {
+      row++
+      column = 0
+    } else {
+      column++
+    }
+  }
+
+  return {
+    lineNumber: row + 1 + request.row,
+    column: (row === 0 ? column + request.column : column) + 1,
   }
 }

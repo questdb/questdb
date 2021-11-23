@@ -7,9 +7,13 @@ import { QuestContext, useEditor } from "../../../providers"
 import { usePreferences } from "./usePreferences"
 import {
   appendQuery,
+  getErrorRange,
   getQueryRequestFromEditor,
   getQueryRequestFromLastExecutedQuery,
+  QuestDBLanguage,
   Request,
+  setErrorMarker,
+  clearModelMarkers,
 } from "./utils"
 import { PaneContent, Text } from "components"
 import { useDispatch, useSelector } from "react-redux"
@@ -21,8 +25,7 @@ import { NotificationType } from "types"
 import QueryResult from "../QueryResult"
 import Loader from "../Loader"
 import styled from "styled-components"
-
-import { language as questdbSql } from "./questdb-sql"
+import { language as QuestDBLanguageConfig } from "./questdb-sql"
 import { color } from "../../../utils"
 
 type IStandaloneCodeEditor = editor.IStandaloneCodeEditor
@@ -43,7 +46,7 @@ enum Command {
 }
 
 const MonacoEditor = () => {
-  const { editorRef, insertTextAtCursor } = useEditor()
+  const { editorRef, monacoRef, insertTextAtCursor } = useEditor()
   const { loadPreferences, savePreferences } = usePreferences()
   const { quest } = useContext(QuestContext)
   const [request, setRequest] = useState<Request | undefined>()
@@ -59,8 +62,16 @@ const MonacoEditor = () => {
     editor: IStandaloneCodeEditor,
     monaco: Monaco,
   ) => {
-    monaco.languages.register({ id: "questdb-sql" })
-    monaco.languages.setMonarchTokensProvider("questdb-sql", questdbSql)
+    monaco.languages.register({ id: QuestDBLanguage })
+    monaco.languages.setMonarchTokensProvider(
+      QuestDBLanguage,
+      QuestDBLanguageConfig,
+    )
+
+    if (monacoRef) {
+      monacoRef.current = monaco
+    }
+
     if (editorRef) {
       editorRef.current = editor
 
@@ -151,6 +162,10 @@ const MonacoEditor = () => {
 
   useEffect(() => {
     if (running.value && editorRef?.current) {
+      if (monacoRef?.current) {
+        clearModelMarkers(monacoRef.current, editorRef.current)
+      }
+
       const request = running.isRefresh
         ? getQueryRequestFromLastExecutedQuery(lastExecutedQuery)
         : getQueryRequestFromEditor(editorRef.current)
@@ -219,8 +234,23 @@ const MonacoEditor = () => {
                 type: NotificationType.ERROR,
               }),
             )
-          })
 
+            if (editorRef?.current && monacoRef?.current) {
+              const errorRange = getErrorRange(
+                editorRef.current,
+                request,
+                error.position,
+              )
+              if (errorRange) {
+                setErrorMarker(
+                  monacoRef?.current,
+                  editorRef.current,
+                  errorRange,
+                  error.error,
+                )
+              }
+            }
+          })
         setRequest(request)
       } else {
         dispatch(actions.query.stopRunning())
@@ -239,7 +269,7 @@ const MonacoEditor = () => {
   return (
     <Content>
       <Editor
-        defaultLanguage="questdb-sql"
+        defaultLanguage={QuestDBLanguage}
         onMount={handleEditorDidMount}
         options={{
           fontSize: 14,
