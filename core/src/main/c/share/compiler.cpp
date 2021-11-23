@@ -530,11 +530,13 @@ struct JitCompiler {
             mixed_size = 3,
         };
 
-        uint32_t type_size = options & 3 ; // 1-2 LSB. 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B
-        uint32_t exec_hint = (options >> 3) & 3 ; // 3-4 LSB.  0 - scalar, 1 - single size type, 2 - mixed size types, ...
+        uint32_t type_size = (options >> 1) & 3 ; // 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B
+        uint32_t exec_hint = (options >> 3) & 3 ; // 0 - scalar, 1 - single size type, 2 - mixed size types, ...
+
         bool null_check = true;
         if(exec_hint == single_size && features.hasAVX2()) {
-            avx2_loop(filter_expr, filter_size, 1 << type_size, null_check);
+            auto step = 256 / ((1 << type_size) * 8);
+            avx2_loop(filter_expr, filter_size, step, null_check);
         } else {
             scalar_loop(filter_expr, filter_size, null_check);
         }
