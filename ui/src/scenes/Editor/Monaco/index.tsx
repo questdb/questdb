@@ -22,6 +22,8 @@ import QueryResult from "../QueryResult"
 import Loader from "../Loader"
 import styled from "styled-components"
 
+import { language as questdbSql } from "./questdb-sql"
+
 type IStandaloneCodeEditor = editor.IStandaloneCodeEditor
 
 const Content = styled(PaneContent)`
@@ -52,6 +54,8 @@ const MonacoEditor = () => {
     editor: IStandaloneCodeEditor,
     monaco: Monaco,
   ) => {
+    monaco.languages.register({ id: "questdb-sql" })
+    monaco.languages.setMonarchTokensProvider("questdb-sql", questdbSql)
     if (editorRef) {
       editorRef.current = editor
 
@@ -230,7 +234,7 @@ const MonacoEditor = () => {
   return (
     <Content>
       <Editor
-        defaultLanguage="sql"
+        defaultLanguage="questdb-sql"
         onMount={handleEditorDidMount}
         options={{
           fontSize: 14,
