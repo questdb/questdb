@@ -65,18 +65,20 @@ public class LineTcpParser implements Closeable {
     private ErrorCode errorCode;
     private EntityHandler entityHandler;
     private long timestamp;
-    private final EntityHandler entityTimestampHandler = this::expectTimestamp;    private final EntityHandler entityTableHandler = this::expectTableName;
+    private final EntityHandler entityTimestampHandler = this::expectTimestamp;
+    private final EntityHandler entityTableHandler = this::expectTableName;
+    private final EntityHandler entityValueHandler = this::expectEntityValue;
+    private final EntityHandler entityNameHandler = this::expectEntityName;
     private int nQuoteCharacters;
     private boolean scape;
     private boolean nextValueCanBeOpenQuote;
-    private boolean hasNonAscii;    private final EntityHandler entityValueHandler = this::expectEntityValue;
+    private boolean hasNonAscii;
 
     public static long sanitizeEnd(long lo, long hi) {
         long p = hi - 1;
         OUT:
         while (p >= lo) {
             switch (Unsafe.getUnsafe().getByte(p)) {
-                case ' ':
                 case '\0':
                 case '\t':
                 case '\\':
@@ -95,7 +97,6 @@ public class LineTcpParser implements Closeable {
         OUT:
         while (p < hi) {
             switch (Unsafe.getUnsafe().getByte(p)) {
-                case ' ':
                 case '\0':
                 case '\t':
                 case '\\':
@@ -108,7 +109,7 @@ public class LineTcpParser implements Closeable {
             }
         }
         return p;
-    }    private final EntityHandler entityNameHandler = this::expectEntityName;
+    }
 
     @Override
     public void close() {
