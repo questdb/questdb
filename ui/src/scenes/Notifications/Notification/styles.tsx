@@ -46,6 +46,7 @@ export const Content = styled.div`
 
 export const SideContent = styled.div`
   margin-left: auto;
+  padding-left: 1rem;
   overflow: hidden;
   text-overflow: ellipsis;
 `

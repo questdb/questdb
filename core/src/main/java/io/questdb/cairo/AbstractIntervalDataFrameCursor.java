@@ -132,16 +132,16 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     private void calculateRanges(LongList intervals) {
         size = -1;
         if (intervals.size() > 0) {
-            if (reader.getPartitionedBy() == PartitionBy.NONE) {
-                initialIntervalsLo = 0;
-                initialIntervalsHi = intervals.size() / 2;
-                initialPartitionLo = 0;
-                initialPartitionHi = reader.getPartitionCount();
-            } else {
+            if (PartitionBy.isPartitioned(reader.getPartitionedBy())) {
                 cullIntervals(intervals);
                 if (initialIntervalsLo < initialIntervalsHi) {
                     cullPartitions(intervals);
                 }
+            } else {
+                initialIntervalsLo = 0;
+                initialIntervalsHi = intervals.size() / 2;
+                initialPartitionLo = 0;
+                initialPartitionHi = reader.getPartitionCount();
             }
             toTop();
         }

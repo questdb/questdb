@@ -129,7 +129,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             }
 
             CharSequence timestampIndexCol = rh.getUrlParam("timestamp");
-            if (partitionBy != PartitionBy.NONE && timestampIndexCol == null) {
+            if (PartitionBy.isPartitioned(partitionBy) && timestampIndexCol == null) {
                 sendErrorAndThrowDisconnect("when specifying partitionBy you must also specify timestamp");
             }
 

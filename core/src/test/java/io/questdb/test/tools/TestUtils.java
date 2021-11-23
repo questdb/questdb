@@ -523,13 +523,15 @@ public final class TestUtils {
             TableModel tableModel,
             int totalRows,
             String startDate,
-            int partitionCount) throws NumericException, SqlException {
+            int partitionCount
+    ) throws NumericException, SqlException {
         long fromTimestamp = IntervalUtils.parseFloorPartialDate(startDate);
 
         long increment = 0;
-        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
-            Timestamps.TimestampAddMethod partitionAdd = TableUtils.getPartitionAdd(tableModel.getPartitionBy());
-            long toTs = partitionAdd.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
+        if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
+            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
+            assert partitionAddMethod != null;
+            long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
             increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
         }
 
@@ -592,7 +594,7 @@ public final class TestUtils {
             CharSequence timestampCol = tableModel.getColumnName(tableModel.getTimestampIndex());
             sql.append(" timestamp(").append(timestampCol).append(")");
         }
-        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
+        if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
             sql.append(" Partition By ").append(PartitionBy.toString(tableModel.getPartitionBy()));
         }
         compiler.compile(sql.toString(), sqlExecutionContext);

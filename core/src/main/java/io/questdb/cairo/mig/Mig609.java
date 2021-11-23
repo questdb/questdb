@@ -68,7 +68,7 @@ final class Mig609 {
                 final int partitionCount = txMem.getInt(partitionCountOffset) / Long.BYTES / LONGS_PER_TX_ATTACHED_PARTITION - 1;
 
 
-                if (partitionBy != PartitionBy.NONE) {
+                if (PartitionBy.isPartitioned(partitionBy)) {
                     long calculatedFixedRowCount = 0;
                     for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
                         final long partitionDataOffset = partitionCountOffset + Integer.BYTES + partitionIndex * 8L * LONGS_PER_TX_ATTACHED_PARTITION;

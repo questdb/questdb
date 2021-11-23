@@ -70,12 +70,14 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
     }
 
     private void findRecord() {
-
         DataFrame frame;
+        // frame metadata is based on TableReader, which is "full" metadata
+        // this cursor works with subset of columns, which warrants column index remap
+        int frameColumnIndex = columnIndexes.getQuick(columnIndex);
         found = false;
         while ((frame = this.dataFrameCursor.next()) != null) {
             final int partitionIndex = frame.getPartitionIndex();
-            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
             this.recordA.jumpTo(partitionIndex, 0);

@@ -549,7 +549,7 @@ public final class IntervalUtils {
                     addHiLoInterval(millis, millis, operation, out);
                     break;
                 } catch (NumericException e) {
-                    throw SqlException.$(position, "Not a date");
+                    throw SqlException.$(position, "Invalid date");
                 }
             case 0:
                 // single semicolon, expect period format after date
@@ -604,7 +604,7 @@ public final class IntervalUtils {
                     throw SqlException.$(position, "Not a date, use IN keyword with intervals");
                 }
             }
-            throw SqlException.$(position, "Not a date");
+            throw SqlException.$(position, "Invalid date");
         }
     }
 

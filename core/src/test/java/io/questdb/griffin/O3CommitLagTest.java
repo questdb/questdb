@@ -557,7 +557,11 @@ public class O3CommitLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testCommitLagEndingAtPartitionBoundaryPlus1WithRollback0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
+    private void testCommitLagEndingAtPartitionBoundaryPlus1WithRollback0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException, NumericException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -600,6 +604,7 @@ public class O3CommitLagTest extends AbstractO3Test {
             TestUtils.assertEquals(sink, sink2);
 
             writer.rollback();
+            Assert.assertFalse(writer.inTransaction());
             TestUtils.printSql(compiler, sqlExecutionContext, "select count(*) from y", sink);
             TestUtils.assertEquals("count\n185\n", sink);
 
@@ -624,7 +629,11 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testCommitLagEndingAtPartitionBoundaryWithRollback0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
+    private void testCommitLagEndingAtPartitionBoundaryWithRollback0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException, NumericException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +

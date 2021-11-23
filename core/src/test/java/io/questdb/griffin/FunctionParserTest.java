@@ -47,10 +47,7 @@ import io.questdb.griffin.engine.functions.math.*;
 import io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory;
 import io.questdb.griffin.engine.functions.str.LengthSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.IntList;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
@@ -398,6 +395,12 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void testExplicitConstantLong() throws SqlException {
         testConstantPassThru(new LongConstant(200));
+    }
+
+    @Test
+    public void testExplicitConstantLong256() throws SqlException {
+        CharSequence tok = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
+        testConstantPassThru(new Long256Constant(Numbers.parseLong256(tok, tok.length(), new Long256Impl())));
     }
 
     @Test

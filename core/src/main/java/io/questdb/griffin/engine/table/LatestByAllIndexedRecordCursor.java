@@ -90,7 +90,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         final Sequence pubSeq = bus.getLatestByPubSeq();
         final Sequence subSeq = bus.getLatestBySubSeq();
 
-        int keyCount = getSymbolTable(columnIndex).size() + 1;
+        int keyCount = getSymbolTable(columnIndex).getSymbolCount() + 1;
         rows.extend(keyCount);
         GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
 

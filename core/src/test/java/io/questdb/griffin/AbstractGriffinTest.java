@@ -35,6 +35,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.BeforeClass;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
@@ -44,6 +45,34 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected static SqlExecutionContext sqlExecutionContext;
     protected static SqlCompiler compiler;
     protected static Metrics metrics = Metrics.enabled();
+
+    @BeforeClass
+    public static void setUpStatic() {
+        AbstractCairoTest.setUpStatic();
+        compiler = new SqlCompiler(engine);
+        bindVariableService = new BindVariableServiceImpl(configuration);
+        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                .with(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService,
+                        null,
+                        -1,
+                        null);
+        bindVariableService.clear();
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        AbstractCairoTest.tearDownStatic();
+        compiler.close();
+    }
+
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        bindVariableService.clear();
+    }
 
     public static void assertReader(String expected, CharSequence tableName) {
         try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
@@ -101,27 +130,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
     public static void executeInsert(String insertSql) throws SqlException {
         TestUtils.insert(compiler, sqlExecutionContext, insertSql);
-    }
-
-    @BeforeClass
-    public static void setUpStatic() {
-        AbstractCairoTest.setUpStatic();
-        compiler = new SqlCompiler(engine);
-        bindVariableService = new BindVariableServiceImpl(configuration);
-        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService,
-                        null,
-                        -1,
-                        null);
-        bindVariableService.clear();
-    }
-
-    @AfterClass
-    public static void tearDownStatic() {
-        AbstractCairoTest.tearDownStatic();
-        compiler.close();
     }
 
     protected static void assertQuery(
@@ -505,7 +513,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     if (symbolTable instanceof StaticSymbolTable) {
                         CharSequence sym = Chars.toString(record.getSym(column));
                         int value = record.getInt(column);
-                        if (((StaticSymbolTable) symbolTable).containsNullValue() && value == ((StaticSymbolTable) symbolTable).size()) {
+                        if (((StaticSymbolTable) symbolTable).containsNullValue() && value == ((StaticSymbolTable) symbolTable).getSymbolCount()) {
                             Assert.assertEquals(Integer.MIN_VALUE, ((StaticSymbolTable) symbolTable).keyOf(sym));
                         } else {
                             Assert.assertEquals(value, ((StaticSymbolTable) symbolTable).keyOf(sym));

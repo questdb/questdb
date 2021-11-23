@@ -52,8 +52,6 @@ final public class Timestamps {
     public static final int STATE_END = 6;
     public static final int STATE_SIGN = 7;
     public static final long O3_MIN_TS = 0L;
-    public static final TimestampFloorMethod FLOOR_DD = Timestamps::floorDD;
-    public static final TimestampAddMethod ADD_DD = Timestamps::addDays;
     private static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
     private static final long HALF_YEAR_MICROS = AVG_YEAR_MICROS / 2;
     private static final long EPOCH_MICROS = 1970L * AVG_YEAR_MICROS;
@@ -64,18 +62,11 @@ final public class Timestamps {
     private static final int HOUR_MINUTES = 60;
     private static final int MINUTE_SECONDS = 60;
     private static final int DAYS_0000_TO_1970 = 719527;
-    public static final TimestampFloorMethod FLOOR_YYYY = Timestamps::floorYYYY;
     private static final int[] DAYS_PER_MONTH = {
             31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
     };
     private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long[] MAX_MONTH_OF_YEAR_MICROS = new long[12];
-    public static final TimestampCeilMethod CEIL_DD = Timestamps::ceilDD;
-    public static final TimestampCeilMethod CEIL_YYYY = Timestamps::ceilYYYY;
-    public static final TimestampFloorMethod FLOOR_MM = Timestamps::floorMM;
-    public static final TimestampCeilMethod CEIL_MM = Timestamps::ceilMM;
-    public static final TimestampAddMethod ADD_MM = Timestamps::addMonths;
-    public static final TimestampAddMethod ADD_YYYY = Timestamps::addYear;
     private static final char BEFORE_ZERO = '0' - 1;
     private static final char AFTER_NINE = '9' + 1;
 
@@ -748,21 +739,6 @@ final public class Timestamps {
 
     private static long getTimeMicros(long micros) {
         return micros < 0 ? DAY_MICROS - 1 + (micros % DAY_MICROS) : micros % DAY_MICROS;
-    }
-
-    @FunctionalInterface
-    public interface TimestampFloorMethod {
-        long floor(long timestamp);
-    }
-
-    @FunctionalInterface
-    public interface TimestampCeilMethod {
-        long ceil(long timestamp);
-    }
-
-    @FunctionalInterface
-    public interface TimestampAddMethod {
-        long calculate(long minTimestamp, int partitionIndex);
     }
 
     static {
