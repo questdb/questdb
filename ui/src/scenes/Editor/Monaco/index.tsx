@@ -23,12 +23,17 @@ import Loader from "../Loader"
 import styled from "styled-components"
 
 import { language as questdbSql } from "./questdb-sql"
+import { color } from "../../../utils"
 
 type IStandaloneCodeEditor = editor.IStandaloneCodeEditor
 
 const Content = styled(PaneContent)`
   position: relative;
   overflow: hidden;
+
+  .monaco-scrollable-element > .scrollbar > .slider {
+    background: ${color("draculaSelection")};
+  }
 `
 
 enum Command {
