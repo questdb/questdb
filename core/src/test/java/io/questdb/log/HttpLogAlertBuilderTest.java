@@ -25,18 +25,16 @@
 package io.questdb.log;
 
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.StringSink;
 import org.junit.*;
 
 import java.io.UnsupportedEncodingException;
 
-public class HttpAlertBuilderTest {
+public class HttpLogAlertBuilderTest {
 
     private static final long bufferSize = 1024;
     private static long bufferPtr;
     private static long bufferLimit;
-    private HttpAlertBuilder alertBuilder;
+    private HttpLogAlertBuilder alertBuilder;
 
     @BeforeClass
     public static void classSetup() {
@@ -51,7 +49,7 @@ public class HttpAlertBuilderTest {
 
     @Before
     public void setUp() {
-        alertBuilder = new HttpAlertBuilder(bufferPtr, bufferLimit);
+        alertBuilder = new HttpLogAlertBuilder(bufferPtr, bufferLimit);
         alertBuilder.putHeader("localhost");
         alertBuilder.setMark();
         Assert.assertEquals(

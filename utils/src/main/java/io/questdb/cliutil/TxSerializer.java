@@ -187,7 +187,7 @@ public class TxSerializer
 
     @SuppressWarnings("ReadWriteStringCanBeUsed")
     private void serializeFile(String jsonFile, String target) throws IOException {
-        String json = new String(Files.readAllBytes(Paths.get(jsonFile)), Files.UTF_8);
+        String json = new String(Files.readAllBytes(Paths.get(jsonFile)), StandardCharsets.UTF_8);
         serializeJson(json, target);
     }
 

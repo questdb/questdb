@@ -24,12 +24,10 @@
 
 package io.questdb.log;
 
-import io.questdb.std.Chars;
-import io.questdb.std.Sinkable;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 
 
-public class HttpAlertBuilder extends LogRecordSink {
+public class HttpLogAlertBuilder extends LogRecordSink {
 
     private static final String QDB_VERSION = "7.71.1";
     private static final String HEADER_BODY_SEPARATOR = "\r\n\r\n";
@@ -37,18 +35,17 @@ public class HttpAlertBuilder extends LogRecordSink {
     private static final int CL_MARKER_LEN = 6;
     private static final int NOT_SET = -1;
 
-
     private long mark = NOT_SET;
     private long contentLenStart;
     private long bodyStart;
 
-    public HttpAlertBuilder(long address, long addressSize) {
+    public HttpLogAlertBuilder(long address, long addressSize) {
         super(address, addressSize);
         contentLenStart = _wptr;
         bodyStart = _wptr;
     }
 
-    public HttpAlertBuilder putHeader(CharSequence localHostIp) {
+    public HttpLogAlertBuilder putHeader(CharSequence localHostIp) {
         clear();
         put("POST /api/v1/alerts HTTP/1.1\r\n")
                 .put("Host: ").put(localHostIp).put("\r\n")
@@ -72,7 +69,7 @@ public class HttpAlertBuilder extends LogRecordSink {
         Chars.asciiCopyTo(len, 0, len.length, q);
     }
 
-    public HttpAlertBuilder setMark() {
+    public HttpLogAlertBuilder setMark() {
         mark = _wptr;
         return this;
     }
@@ -81,7 +78,7 @@ public class HttpAlertBuilder extends LogRecordSink {
         return mark;
     }
 
-    public HttpAlertBuilder rewindToMark() {
+    public HttpLogAlertBuilder rewindToMark() {
         this._wptr = mark == NOT_SET ? address : mark;
         return this;
     }
@@ -94,7 +91,7 @@ public class HttpAlertBuilder extends LogRecordSink {
         bodyStart = _wptr;
     }
 
-    public HttpAlertBuilder put(LogRecordSink logRecord) {
+    public HttpLogAlertBuilder put(LogRecordSink logRecord) {
         final int len = logRecord.length();
         final long address = logRecord.getAddress();
         for (long p = address, limit = address + len; p < limit; p++) {
@@ -126,25 +123,25 @@ public class HttpAlertBuilder extends LogRecordSink {
     }
 
     @Override
-    public HttpAlertBuilder put(CharSequence cs) {
+    public HttpLogAlertBuilder put(CharSequence cs) {
         super.put(cs);
         return this;
     }
 
     @Override
-    public HttpAlertBuilder put(CharSequence cs, int lo, int hi) {
+    public HttpLogAlertBuilder put(CharSequence cs, int lo, int hi) {
         super.put(cs, lo, hi);
         return this;
     }
 
     @Override
-    public HttpAlertBuilder put(Sinkable sinkable) {
+    public HttpLogAlertBuilder put(Sinkable sinkable) {
         sinkable.toSink(this);
         return this;
     }
 
     @Override
-    public HttpAlertBuilder put(char c) {
+    public HttpLogAlertBuilder put(char c) {
         super.put(c);
         return this;
     }

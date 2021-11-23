@@ -29,7 +29,6 @@ import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SynchronizedJob;
-import io.questdb.network.Net;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -37,16 +36,11 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 
 import java.io.*;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
 
-public class LogAlertManagerWriter extends SynchronizedJob implements Closeable, LogWriter {
+public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, LogWriter {
 
     static final String DEFAULT_ALERT_TPT_FILE = "/alert-manager-tpt.json";
-    private static final String DEFAULT_HOST = "127.0.0.1";
-    private static final int DEFAULT_PORT = 9093;
-    private static final int IN_BUFFER_SIZE = 2 * 1024 * 1024;
-    private static final int OUT_BUFFER_SIZE = 4 * 1024 * 1024;
+
     private static final String DEFAULT_ENV_VALUE = "GLOBAL";
     private static final String ORG_ID_ENV = "ORGID";
     private static final String NAMESPACE_ENV = "NAMESPACE";
@@ -62,8 +56,9 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
     private final RingQueue<LogRecordSink> alertsSource;
     private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
     private final DollarExpr dollar$ = new DollarExpr();
-    private HttpAlertBuilder alertBuilder;
     private final CharSequenceObjHashMap<CharSequence> alertProps = DollarExpr.adaptMap(System.getenv());
+    private HttpLogAlertBuilder alertBuilder;
+    private LogAlertSocket socket;
     private String alertFooter;
 
     {
@@ -82,26 +77,13 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
         alertProps.put(MESSAGE_ENV, "${" + MESSAGE_ENV + "}");
     }
 
-    // socket
-    private String localHostIp;
-    private String host;
-    private int port;
-    private long outBufferPtr;
-    private long outBufferLimit;
-    private int outBufferSize;
-    private long inBufferPtr;
-    private long inBufferLimit;
-    private final int inBufferSize = IN_BUFFER_SIZE;
-    private long fdSocketAddress = -1; // tcp/ip host:port address
-    private long fdSocket = -1;
-
     // changed by introspection
     private String location = DEFAULT_ALERT_TPT_FILE;
     private String bufferSize;
     private String socketAddress;
 
 
-    public LogAlertManagerWriter(RingQueue<LogRecordSink> alertsSrc, SCSequence writeSequence, int level) {
+    public LogAlertSocketWriter(RingQueue<LogRecordSink> alertsSrc, SCSequence writeSequence, int level) {
         this(
                 FilesFacadeImpl.INSTANCE,
                 MicrosecondClockImpl.INSTANCE,
@@ -111,7 +93,7 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
         );
     }
 
-    public LogAlertManagerWriter(
+    public LogAlertSocketWriter(
             FilesFacade ff,
             MicrosecondClock clock,
             RingQueue<LogRecordSink> alertsSrc,
@@ -127,39 +109,23 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
 
     @Override
     public void bindProperties() {
+        int nBufferSize = LogAlertSocket.OUT_BUFFER_SIZE;
         if (bufferSize != null) {
             try {
-                outBufferSize = Numbers.parseIntSize(bufferSize);
+                nBufferSize = Numbers.parseIntSize(bufferSize);
             } catch (NumericException e) {
                 throw new LogError("Invalid value for bufferSize");
             }
-        } else {
-            outBufferSize = OUT_BUFFER_SIZE;
         }
-        inBufferPtr = Unsafe.malloc(inBufferSize, MemoryTag.NATIVE_DEFAULT);
-        inBufferLimit = inBufferPtr + inBufferSize;
-        outBufferPtr = Unsafe.malloc(outBufferSize, MemoryTag.NATIVE_DEFAULT);
-        outBufferLimit = outBufferPtr + outBufferSize;
-        parseSocketAddress();
-        alertBuilder = new HttpAlertBuilder(outBufferPtr, outBufferLimit);
+        socket = new LogAlertSocket(ff, socketAddress, nBufferSize);
         loadAlertTemplate();
-        connectSocket();
+        socket.connectSocket();
     }
 
     @Override
     public void close() {
-        if (outBufferPtr != 0) {
-            Unsafe.free(outBufferPtr, outBufferSize, MemoryTag.NATIVE_DEFAULT);
-            outBufferPtr = 0;
-            outBufferLimit = 0;
-        }
-        if (inBufferPtr != 0) {
-            Unsafe.free(inBufferPtr, IN_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-            inBufferPtr = 0;
-            inBufferLimit = 0;
-        }
-        if (fdSocket != -1) {
-            freeSocket();
+        if (socket != null) {
+            socket.close();
         }
     }
 
@@ -172,71 +138,32 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
         this.bufferSize = bufferSize;
     }
 
+    public int getBufferSize() {
+        return socket.getOutBufferSize();
+    }
+
     public void setLocation(String location) {
         this.location = location;
     }
 
-    private void parseSocketAddress() {
-        try {
-            localHostIp = InetAddress.getLocalHost().getHostAddress();
-        } catch (UnknownHostException e) {
-            throw new LogError("Cannot access our ip address info");
-        }
-        if (socketAddress != null) {
-            // expected format: host[:port]
-            if (Chars.isQuoted(socketAddress)) {
-                socketAddress = socketAddress.subSequence(1, socketAddress.length() - 1).toString();
-            }
-            final int len = socketAddress.length();
-            int portIdx = -1;
-            for (int i = 0; i < len; ++i) {
-                if (socketAddress.charAt(i) == ':') {
-                    host = socketAddress.substring(0, i);
-                    portIdx = i + 1;
-                }
-            }
-            if (portIdx != -1) {
-                try {
-                    port = Numbers.parseInt(socketAddress, portIdx, len);
-                } catch (NumericException e) {
-                    throw new LogError("Invalid value for socketAddress, should be: host[:port]");
-                }
-            } else {
-                host = socketAddress;
-                port = DEFAULT_PORT;
-            }
-            try {
-                host = InetAddress.getByName(host).getHostAddress();
-            } catch (UnknownHostException e) {
-                throw new LogError("Invalid host value for socketAddress: " + host);
-            }
-        } else {
-            host = DEFAULT_HOST;
-            port = DEFAULT_PORT;
-            socketAddress = host + ":" + port;
-        }
+    public String getLocation() {
+        return location;
     }
 
-    private void connectSocket() {
-        fdSocketAddress = Net.sockaddr(host, port);
-        fdSocket = Net.socketTcp(true);
-        if (fdSocket > -1) {
-            if (Net.connect(fdSocket, fdSocketAddress) != 0) {
-                System.out.println(" E could not connect to");
-                freeSocket();
-            }
-        } else {
-            System.out.println(" E could not create TCP socket [errno=" + ff.errno() + "]");
-            freeSocket();
-        }
+    public void setSocketAddress(String socketAddress) {
+        this.socketAddress = socketAddress;
     }
 
-    private void freeSocket() {
-        Net.freeSockAddr(fdSocketAddress);
-        fdSocketAddress = -1;
-        Net.close(fdSocket);
-        fdSocket = -1;
+    @VisibleForTesting
+    String getSocketAddress() {
+        return socket.getSocketAddress();
     }
+
+    @VisibleForTesting
+    HttpLogAlertBuilder getAlertBuilder() {
+        return alertBuilder;
+    }
+
 
     private void loadAlertTemplate() {
         final long now = clock.getTicks();
@@ -247,9 +174,9 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
 
         // read template, resolve env vars within (except $ALERT_MESSAGE)
         boolean wasRead = false;
-        try (InputStream is = LogAlertManagerWriter.class.getResourceAsStream(location)){
+        try (InputStream is = LogAlertSocketWriter.class.getResourceAsStream(location)) {
             if (is != null) {
-                byte [] buff = new byte[IN_BUFFER_SIZE];
+                byte[] buff = new byte[LogAlertSocket.IN_BUFFER_SIZE];
                 int n = is.read(buff, 0, buff.length);
                 if (n > 0) {
                     dollar$.resolve(new String(buff, 0, n, Files.UTF_8), now, alertProps);
@@ -260,20 +187,29 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
             // it was not a resource ("/resource_name")
         }
         if (!wasRead) {
-            long size = readFile(location, inBufferPtr, inBufferLimit, ff);
-            DirectByteCharSequence template = new DirectByteCharSequence();
-            template.of(inBufferPtr, inBufferPtr + size);
-            dollar$.resolve(template, now, alertProps);
+            dollar$.resolve(
+                    readFile(
+                            location,
+                            socket.getInBufferPtr(),
+                            socket.getInBufferLimit(),
+                            ff
+                    ),
+                    now,
+                    alertProps
+            );
         }
 
         // consolidate/check/load template to the outbound socket buffer
         dollar$.resolve(dollar$.toString(), now, alertProps);
         ObjList<Sinkable> components = dollar$.getLocationComponents();
         if (dollar$.getKeyOffset(MESSAGE_ENV) < 0 || components.size() < 3) {
-            throw new LogError(String.format("Bad template %s", location));
+            throw new LogError(String.format(
+                    "Bad template, no ${%s} declaration found %s",
+                    MESSAGE_ENV,
+                    location));
         }
-        alertBuilder = new HttpAlertBuilder(outBufferPtr, outBufferLimit)
-                .putHeader(localHostIp)
+        alertBuilder = new HttpLogAlertBuilder(socket.getOutBufferPtr(), socket.getOutBufferSize())
+                .putHeader(LogAlertSocket.localHostIp)
                 .put(components.getQuick(0))
                 .setMark(); // mark the end of the first static block in buffer
         alertFooter = components.getQuick(2).toString();
@@ -282,40 +218,18 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
     @VisibleForTesting
     void onLogRecord(LogRecordSink logRecord) {
         final int logRecordLen = logRecord.length();
-        if ((logRecord.getLevel() & level) != 0 && logRecordLen > 0 && fdSocket > 0) {
+        if ((logRecord.getLevel() & level) != 0 && logRecordLen > 0) {
             alertBuilder
                     .rewindToMark()
                     .put(logRecord)
                     .put(alertFooter)
                     .$();
-
-            // send
-            int remaining = alertBuilder.length();
-            long p = outBufferPtr;
-            while (remaining > 0) {
-                int n = Net.send(fdSocket, p, remaining);
-                if (n > 0) {
-                    remaining -= n;
-                    p += n;
-                } else {
-                    System.out.println("could not send [n=" + n + " [errno=" + ff.errno() + "]");
-                }
-            }
-
-            // receive ack
-            p = inBufferPtr;
-            int n = Net.recv(fdSocket, p, inBufferSize);
-            Net.dumpAscii(p, n);
+            socket.send(alertBuilder.length());
         }
     }
 
     @VisibleForTesting
-    HttpAlertBuilder getAlertBuilder() {
-        return alertBuilder;
-    }
-
-    @VisibleForTesting
-    static long readFile(String location, long address, long limit, FilesFacade ff) {
+    static DirectByteCharSequence readFile(String location, long address, long limit, FilesFacade ff) {
         try (Path path = new Path()) {
             path.of(location);
             long fdTemplate = ff.openRO(path.$());
@@ -327,12 +241,13 @@ public class LogAlertManagerWriter extends SynchronizedJob implements Closeable,
             if (size > limit - address) {
                 throw new LogError("Template file is too big");
             }
-            // use the inbound socket buffer temporarily as the socket is not open yet
             if (size < 0 || size != ff.read(fdTemplate, address, size, 0)) {
                 throw new LogError(String.format(
                         "Cannot read %s [size=%d, errno=%d]", location, size, ff.errno()));
             }
-            return size;
+            DirectByteCharSequence template = new DirectByteCharSequence();
+            template.of(address, address + size);
+            return template;
         }
     }
 }
