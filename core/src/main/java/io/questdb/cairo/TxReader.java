@@ -167,17 +167,7 @@ public class TxReader implements Closeable {
 
     int findAttachedPartitionIndexByLoTimestamp(long ts) {
         // Start from the end, usually it will be last partition searched / appended
-        int hi = attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION;
-        if (hi > -1) {
-            long last = attachedPartitions.getQuick(hi);
-            if (last < ts) {
-                return -(hi + LONGS_PER_TX_ATTACHED_PARTITION + 1);
-            }
-            if (last == ts) {
-                return hi;
-            }
-        }
-        return attachedPartitions.binarySearchBlock(0, attachedPartitions.size(), LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts);
+        return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts);
     }
 
     protected long getPartitionTimestampLo(long timestamp) {

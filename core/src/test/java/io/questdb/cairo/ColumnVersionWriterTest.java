@@ -49,7 +49,6 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 ColumnVersionReader r = new ColumnVersionReader(FilesFacadeImpl.INSTANCE, path, 0)
         ) {
             final LongList writtenColumns = new LongList();
-            final LongList readColumns = new LongList();
 
             writtenColumns.extendAndSet(0, 1); // timestamp
             writtenColumns.extendAndSet(1, 2); // column index
@@ -73,8 +72,8 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 w.commit(writtenColumns);
                 final long offset = w.getOffset();
                 final long size = w.getSize();
-                r.load(readColumns, offset, size);
-                assertEqual(writtenColumns, readColumns);
+                r.load(offset, size);
+                assertEqual(writtenColumns, r.getColumnVersions());
             }
         }
     }

@@ -133,9 +133,9 @@ public class CollectionsTest {
             }
 
             // Assert.assertEquals("Block hint " + blockSizeHint, 18 << blockSizeHint, list.binarySearchBlock(0, list.size(), blockSizeHint, 188));
-            Assert.assertEquals("Block hint " + blockSizeHint,-1, list.binarySearchBlock(0, list.size(), blockSizeHint,6));
-            Assert.assertEquals("Block hint " + blockSizeHint, -((24 << blockSizeHint) + 1), list.binarySearchBlock(0, list.size(), blockSizeHint,240));
-            Assert.assertEquals("Block hint " + blockSizeHint,-((200 << blockSizeHint) + 1), list.binarySearchBlock(0, list.size(), blockSizeHint,2010));
+            Assert.assertEquals("Block hint " + blockSizeHint,-1, list.binarySearchBlock(0, list.size(), blockSizeHint, 6));
+            Assert.assertEquals("Block hint " + blockSizeHint, -((24 << blockSizeHint) + 1), list.binarySearchBlock(0, list.size(), blockSizeHint, 240));
+            Assert.assertEquals("Block hint " + blockSizeHint,-((200 << blockSizeHint) + 1), list.binarySearchBlock(0, list.size(), blockSizeHint, 2010));
         }
     }
 

@@ -137,7 +137,24 @@ public class LongList implements Mutable, LongVec {
         return -(low + 1);
     }
 
+    public int binarySearchBlock(int shift, long v) {
+        return binarySearchBlock(0, size(), shift, v);
+    }
+
     public int binarySearchBlock(int low, int high, int shift, long v) {
+        final int blockSize = 1 << shift;
+
+        int hi = high - blockSize;
+        if (hi > -1) {
+            long last = getQuick(hi);
+            if (last < v) {
+                return -(hi + blockSize + 1);
+            }
+            if (last == v) {
+                return hi;
+            }
+        }
+
         // Binary searches using 2^shift blocks
         // e.g. when shift == 2
         // this method treats 4 longs as 1 entry

@@ -265,7 +265,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public int getPartitionIndexByTimestamp(long timestamp) {
-        int end = openPartitionInfo.binarySearchBlock(0, openPartitionInfo.size(), PARTITIONS_SLOT_SIZE_MSB, timestamp);
+        int end = openPartitionInfo.binarySearchBlock(PARTITIONS_SLOT_SIZE_MSB, timestamp);
         if (end < 0) {
             // This will return -1 if searched timestamp is before the first partition
             // The caller should handle negative return values
@@ -1037,7 +1037,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // When column is added mid-table existence the .top file is only
             // created in the current partition. Older partitions would simply have no
             // column file. This makes it necessary to check for .d file existence
-            if (partitionRowCount > 0 &&  ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
+            if (partitionRowCount > 0 && ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
                 final int columnType = metadata.getColumnType(columnIndex);
 
                 if (ColumnType.isVariableLength(columnType)) {

@@ -35,6 +35,7 @@ import java.io.Closeable;
 
 public class ColumnVersionReader implements Closeable {
     private final MemoryCMR mem;
+    private final LongList cachedList = new LongList();
 
     // size should be read from the transaction file
     // it can be zero when there are no columns deviating from the main
@@ -48,23 +49,23 @@ public class ColumnVersionReader implements Closeable {
         mem.close();
     }
 
-    public boolean isB() {
-        return (char) mem.getLong(ColumnVersionWriter.OFFSET_AREA) == 'B';
+    public LongList getColumnVersions() {
+        return cachedList;
     }
 
-    public void load(LongList columnVersions, long offset, long areaSize) {
+    public void load(long offset, long areaSize) {
         resize(offset + areaSize);
 
         long p = offset;
         int i = 0;
         long lim = offset + areaSize;
-        columnVersions.setPos((int) ((areaSize / (3 * 8)) * 4));
+        cachedList.setPos((int) ((areaSize / (3 * 8)) * 4));
 
         while (p < lim) {
-            columnVersions.setQuick(i, mem.getLong(p));
-            columnVersions.setQuick(i + 1, mem.getLong(p + 8));
-            columnVersions.setQuick(i + 2, mem.getLong(p + 16));
-            columnVersions.setQuick(i + 3, 0);
+            cachedList.setQuick(i, mem.getLong(p));
+            cachedList.setQuick(i + 1, mem.getLong(p + 8));
+            cachedList.setQuick(i + 2, mem.getLong(p + 16));
+            cachedList.setQuick(i + 3, 0);
             i += 4;
             p += 24;
         }

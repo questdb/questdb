@@ -29,6 +29,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
@@ -39,7 +40,10 @@ public class ColumnVersionWriter implements Closeable {
     public static final int OFFSET_SIZE_A = 16;
     public static final int OFFSET_OFFSET_B = 24;
     public static final int OFFSET_SIZE_B = 32;
+    public static final int BLOCK_SIZE = 4;
+    public static final int BLOCK_SIZE_MSB = Numbers.msb(BLOCK_SIZE);
     private final MemoryMARW mem;
+    private final LongList cachedList = new LongList();
     private long size;
     private long transientOffset;
     private long transientSize;
@@ -50,6 +54,18 @@ public class ColumnVersionWriter implements Closeable {
     public ColumnVersionWriter(FilesFacade ff, LPSZ fileName, long size) {
         this.mem = new MemoryCMARWImpl(ff, fileName, ff.getPageSize(), size, MemoryTag.MMAP_TABLE_READER);
         this.size = size;
+    }
+
+    public void add(long timestamp, int column, long columnVersion) {
+        int index = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, timestamp);
+        if (index < 0) {
+            int p = -index - 1;
+            // brute force columns for this timestamp
+            do {
+
+            } while (cachedList.getQuick(p) == timestamp);
+        }
+
     }
 
     @Override
@@ -167,7 +183,7 @@ public class ColumnVersionWriter implements Closeable {
 
     private void store(LongList columnVersions, int entryCount, long offset) {
         for (int i = 0; i < entryCount; i++) {
-            int x = i * 4;
+            int x = i * BLOCK_SIZE;
             mem.putLong(offset, columnVersions.getQuick(x));
             mem.putLong(offset + 8, columnVersions.getQuick(x + 1));
             mem.putLong(offset + 16, columnVersions.getQuick(x + 2));
