@@ -1111,7 +1111,7 @@ struct JitCompiler {
                 }
                     break;
                 case IMM_I1: {
-                    auto value = read<int64_t>(filter_expr, filter_size, rpos);
+                    auto value = (int8_t)read<int64_t>(filter_expr, filter_size, rpos);
                     Mem c0 = c.newConst(ConstPool::kScopeLocal, &value, 1);
                     Ymm val = c.newYmm();
                     c.vpbroadcastb(val, c0);
