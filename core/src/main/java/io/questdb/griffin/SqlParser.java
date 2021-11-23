@@ -952,33 +952,36 @@ public final class SqlParser {
         updateModel.setUpdateTableName(tableName);
         nestedModel.setTableName(ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableName, 0, 0));
 
+        tok = tok(lexer, "AS, SET or table alias expected");
+        if (isAsKeyword(tok)) {
+            tok = tok(lexer, "table alias expected");
+            if (isSetKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "table alias expected");
+            }
+        }
+
+        if (!isAsKeyword(tok) && !isSetKeyword(tok)) {
+            // This is table alias
+            CharSequence tableAlias = GenericLexer.immutableOf(tok);
+            ExpressionNode tableAliasExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableAlias, 0, 0);
+            updateModel.setUpdateTableAlias(tableAliasExpr);
+            tok = tok(lexer, "SET expected");
+        }
+
+        if (!isSetKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "SET expected");
+        }
+
         while (true) {
-            tok = tok(lexer, "AS, SET or table alias expected");
-            if (isAsKeyword(tok)) {
-                tok = tok(lexer, "table alias expected");
-                if (isSetKeyword(tok)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "table alias expected");
-                }
-            }
-
-            if (!isAsKeyword(tok) && !isSetKeyword(tok)) {
-                // This is table alias
-                CharSequence tableAlias = GenericLexer.immutableOf(tok);
-                ExpressionNode tableAliasExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableAlias, 0, 0);
-                updateModel.setUpdateTableAlias(tableAliasExpr);
-                tok = tok(lexer, "SET expected");
-            }
-
-            if (!isSetKeyword(tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "SET expected");
-            }
-
-            // Add next column
-            CharSequence col = GenericLexer.immutableOf(GenericLexer.unquote(tok(lexer, "column name")));
+            // Column
+            tok = tok(lexer, "column name");
+            CharSequence col = GenericLexer.immutableOf(GenericLexer.unquote(tok));
             int colPosition = lexer.lastTokenPosition();
-            expectTok(lexer, "=");
-            ExpressionNode expr = expr(lexer, (QueryModel) null);
 
+            expectTok(lexer, "=");
+
+            // Value expression
+            ExpressionNode expr = expr(lexer, (QueryModel) null);
             QueryColumn valueColumn = queryColumnPool.next().of(col, expr);
             updateModel.withSet(expressionNodePool.next().of(ExpressionNode.LITERAL, col, 0, colPosition), expr);
             nestedModel.addBottomUpColumn(valueColumn);
@@ -988,7 +991,7 @@ public final class SqlParser {
                 break;
             }
 
-            if (tok.length() != 1 || tok.charAt(1) != ',') {
+            if (tok.length() != 1 || tok.charAt(0) != ',') {
                 lexer.unparse();
                 break;
             }

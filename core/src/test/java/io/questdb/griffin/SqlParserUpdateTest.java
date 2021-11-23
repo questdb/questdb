@@ -39,6 +39,31 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testUpdateAmbiguousColumnFails() throws Exception {
+        assertSyntaxError(
+                "update tblx set y = y from tbly y where tblx.x = tbly.y and tblx.x > 10",
+                "update tblx set y = ".length(),
+                "Ambiguous column name",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp(),
+                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testUpdateDesignatedTimestampFails() throws Exception {
+        assertSyntaxError("update x set tt = 1",
+                13,
+                "Designated timestamp column cannot be updated",
+                partitionedModelOf("x")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .timestamp("tt"));
+    }
+
+    @Test
     public void testUpdateNonPartitionedTableFails() throws Exception {
         assertSyntaxError(
                 "update tblx set x = 1",
@@ -48,6 +73,20 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
                         .col("s", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
+    public void testUpdateSameColumnTwiceFails() throws Exception {
+        assertSyntaxError(
+                "update tblx set x = 1, s = 'abc', x = 2",
+                "update tblx set x = 1, s = 'abc', ".length(),
+                "Duplicate column x in SET clause",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL)
+                        .timestamp()
         );
     }
 
@@ -95,13 +134,14 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testUpdateDesignatedTimestampFails() throws Exception {
-        assertSyntaxError("update x set tt = 1",
-                13,
-                "Designated timestamp column cannot be updated",
+    public void testUpdateTwoColumnsToConst() throws Exception {
+        assertUpdate("update x set tt = 1,x = 2 from (x timestamp (timestamp))",
+                "update x set tt = 1, x = 2",
                 partitionedModelOf("x")
                         .col("t", ColumnType.TIMESTAMP)
-                        .timestamp("tt"));
+                        .col("tt", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .timestamp());
     }
 
     @Test

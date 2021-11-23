@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.UpdateStatement;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -171,35 +172,13 @@ public class UpdateBasicTest extends AbstractGriffinTest {
     @Test
     public void testUpdateWith2TableJoinInWithClause() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table up as" +
+
+            createTablesToJoin("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " rnd_symbol('a', 'b', null) s," +
                     " x" +
                     " from long_sequence(5))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
-
-            compiler.compile("create table down1 (s symbol index, y int)", sqlExecutionContext);
-            executeInsert("insert into down1 values ('a', 1)");
-            executeInsert("insert into down1 values ('a', 2)");
-            executeInsert("insert into down1 values ('b', 3)");
-            executeInsert("insert into down1 values ('b', 4)");
-            executeInsert("insert into down1 values (null, 5)");
-            executeInsert("insert into down1 values (null, 6)");
-
-            compiler.compile("create table  down2 (s symbol index, y long)", sqlExecutionContext);
-            executeInsert("insert into down2 values ('a', 100)");
-            executeInsert("insert into down2 values ('b', 300)");
-            executeInsert("insert into down2 values (null, 500)");
-
-            // Check what will be in WITH before JOIN in UPDATE
-            assertSql("select down1.y + down2.y AS sm, down1.s FROM down1 JOIN down2 ON down1.s = down2.s",
-                    "sm\ts\n" +
-                            "101\ta\n" +
-                            "102\ta\n" +
-                            "303\tb\n" +
-                            "304\tb\n" +
-                            "505\t\n" +
-                            "506\t\n");
+                    " timestamp(ts) partition by DAY");
 
             executeUpdate("WITH jn AS (select down1.y + down2.y AS sm, down1.s FROM down1 JOIN down2 ON down1.s = down2.s)" +
                     "UPDATE up SET x = sm" +
@@ -214,6 +193,82 @@ public class UpdateBasicTest extends AbstractGriffinTest {
                             "1970-01-01T00:00:03.000000Z\t\t505\n" +
                             "1970-01-01T00:00:04.000000Z\t\t505\n");
         });
+    }
+
+    @Test
+    public void testUpdate2ColumnsWith2TableJoinInWithClause() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesToJoin("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " rnd_symbol('a', 'b', null) s," +
+                    " x," +
+                    " x + 1 as y" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY");
+
+            executeUpdate("WITH jn AS (select down1.y + down2.y AS sm, down1.s, down2.y FROM down1 JOIN down2 ON down1.s = down2.s)" +
+                    "UPDATE up SET x = sm, y = jn.y" +
+                    " FROM jn " +
+                    " WHERE up.s = jn.s");
+
+            assertSql("up",
+                    "ts\ts\tx\ty\n" +
+                            "1970-01-01T00:00:00.000000Z\ta\t101\t100\n" +
+                            "1970-01-01T00:00:01.000000Z\ta\t101\t100\n" +
+                            "1970-01-01T00:00:02.000000Z\tb\t303\t300\n" +
+                            "1970-01-01T00:00:03.000000Z\t\t505\t500\n" +
+                            "1970-01-01T00:00:04.000000Z\t\t505\t500\n");
+        });
+    }
+
+    private void createTablesToJoin(String createTableSql) throws SqlException {
+        compiler.compile(createTableSql, sqlExecutionContext);
+
+        compiler.compile("create table down1 (s symbol index, y int)", sqlExecutionContext);
+        executeInsert("insert into down1 values ('a', 1)");
+        executeInsert("insert into down1 values ('a', 2)");
+        executeInsert("insert into down1 values ('b', 3)");
+        executeInsert("insert into down1 values ('b', 4)");
+        executeInsert("insert into down1 values (null, 5)");
+        executeInsert("insert into down1 values (null, 6)");
+
+        compiler.compile("create table  down2 (s symbol index, y long)", sqlExecutionContext);
+        executeInsert("insert into down2 values ('a', 100)");
+        executeInsert("insert into down2 values ('b', 300)");
+        executeInsert("insert into down2 values (null, 500)");
+
+        // Check what will be in JOIN between down1 and down2
+        assertSql("select down1.y + down2.y AS sm, down1.s FROM down1 JOIN down2 ON down1.s = down2.s",
+                "sm\ts\n" +
+                        "101\ta\n" +
+                        "102\ta\n" +
+                        "303\tb\n" +
+                        "304\tb\n" +
+                        "505\t\n" +
+                        "506\t\n");
+    }
+
+    @Test
+    public void testUpdateTimestampFails() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x as int) x" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            executeUpdateFails("UPDATE up SET ts = 1", 14, "Designated timestamp column cannot be updated");
+        });
+    }
+
+    private void executeUpdateFails(String sql, int position, String reason) {
+        try {
+            executeUpdate(sql);
+            Assert.fail();
+        } catch (SqlException exception) {
+            TestUtils.assertContains(exception.getFlyweightMessage(), reason);
+            Assert.assertEquals(position, exception.getPosition());
+        }
     }
 
     private void applyUpdate(UpdateStatement updateStatement) throws SqlException {

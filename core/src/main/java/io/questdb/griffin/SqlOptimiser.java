@@ -1896,7 +1896,10 @@ class SqlOptimiser {
                 throw SqlException.$(updateModel.getPosition(), "UPDATE query can only be executed on partitioned tables");
             }
 
-            for(int i = 0, n = updateModel.getUpdateColumns().size(); i < n; i++) {
+            tempList.clear(metadata.getColumnCount());
+            tempList.setPos(metadata.getColumnCount());
+            int updateSetColumnCount = updateModel.getUpdateColumns().size();
+            for(int i = 0; i < updateSetColumnCount; i++) {
 
                 ExpressionNode lhs = updateModel.getUpdateColumns().get(i);
                 int columnIndex = metadata.getColumnIndexQuiet(lhs.token);
@@ -1906,6 +1909,10 @@ class SqlOptimiser {
                 if (columnIndex == timestampIndex) {
                     throw SqlException.$(lhs.position, "Designated timestamp column cannot be updated");
                 }
+                if (tempList.getQuick(columnIndex) == 1) {
+                    throw SqlException.$(lhs.position, "Duplicate column ").put(lhs.token).put(" in SET clause");
+                }
+                tempList.set(columnIndex, 1);
 
                 ExpressionNode rhs = updateModel.getUpdateColumnExpressions().get(i);
                 if (rhs.type == FUNCTION) {
