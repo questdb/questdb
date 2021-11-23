@@ -71,21 +71,13 @@ public class LogAlertSocket implements Closeable {
     public LogAlertSocket(FilesFacade ff, String socketAddress, int outBufferSize) {
         this.ff = ff;
         this.rand = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
+        this.socketAddress = socketAddress;
+        parseSocketAddress();
         this.outBufferSize = outBufferSize;
         this.outBufferPtr = Unsafe.malloc(outBufferSize, MemoryTag.NATIVE_DEFAULT);
         this.outBufferLimit = outBufferPtr + outBufferSize;
         this.inBufferPtr = Unsafe.malloc(inBufferSize, MemoryTag.NATIVE_DEFAULT);
         this.inBufferLimit = inBufferPtr + inBufferSize;
-        this.socketAddress = socketAddress;
-        parseSocketAddress();
-    }
-
-    public String getCurrentHost() {
-        return hosts[currentHostPortIdx];
-    }
-
-    public int getCurrentPort() {
-        return ports[currentHostPortIdx];
     }
 
     public long getOutBufferPtr() {
@@ -100,15 +92,11 @@ public class LogAlertSocket implements Closeable {
         return inBufferPtr;
     }
 
-    public int getInBufferSize() {
-        return inBufferSize;
-    }
-
     public long getInBufferLimit() {
         return inBufferLimit;
     }
 
-    public void connectSocket() {
+    public void connect() {
         fdSocketAddress = Net.sockaddr(hosts[currentHostPortIdx], ports[currentHostPortIdx]);
         fdSocket = Net.socketTcp(true);
         if (fdSocket > -1) {
@@ -194,26 +182,20 @@ public class LogAlertSocket implements Closeable {
 
     private void parseSocketAddress() {
         if (socketAddress == null) {
-            hosts[currentHostPortIdx] = DEFAULT_HOST;
-            ports[currentHostPortIdx] = DEFAULT_PORT;
-            socketAddress = DEFAULT_HOST + ":" + DEFAULT_PORT;
-            currentHostPortIdx = 0;
-            hostPortLimit = 1;
+            setDefaultHostPort();
             return;
         }
+
         if (Chars.isQuoted(socketAddress)) {
             socketAddress = socketAddress.subSequence(1, socketAddress.length() - 1).toString();
         }
         socketAddress = socketAddress.trim();
         final int len = socketAddress.length();
         if (len == 0) {
-            hosts[currentHostPortIdx] = DEFAULT_HOST;
-            ports[currentHostPortIdx] = DEFAULT_PORT;
-            socketAddress = DEFAULT_HOST + ":" + DEFAULT_PORT;
-            currentHostPortIdx = 0;
-            hostPortLimit = 1;
+            setDefaultHostPort();
             return;
         }
+
         // expected format: host[:port](,host[:port])*
         int hostIdx = 0;
         int portIdx = -1;
@@ -221,6 +203,12 @@ public class LogAlertSocket implements Closeable {
             char c = socketAddress.charAt(i);
             switch (c) {
                 case ':':
+                    if (portIdx != -1) {
+                        throw new LogError(String.format(
+                                "Unexpected ':' found at position %d: %s",
+                                i,
+                                socketAddress));
+                    }
                     portIdx = i;
                     break;
 
@@ -228,27 +216,42 @@ public class LogAlertSocket implements Closeable {
                     setHostPort(hostIdx, portIdx, i);
                     hostIdx = i + 1;
                     portIdx = -1;
-                    hostPortLimit++;
                     break;
             }
         }
         setHostPort(hostIdx, portIdx, len);
-        hostPortLimit++;
         currentHostPortIdx = rand.nextInt(hostPortLimit);
     }
 
+    private void setDefaultHostPort() {
+        hosts[currentHostPortIdx] = DEFAULT_HOST;
+        ports[currentHostPortIdx] = DEFAULT_PORT;
+        socketAddress = DEFAULT_HOST + ":" + DEFAULT_PORT;
+        currentHostPortIdx = 0;
+        hostPortLimit = 1;
+    }
+
     private void setHostPort(int hostIdx, int portLimit, int hostLimit) {
+        // host0:port0, host1 : port1 , ..., host9:port9
+        //              ^     ^       ^
+        //              |     |       hostLimit
+        //              |     portLimit
+        //              hostIdx
+
         String host;
-        if (portLimit == -1) {
+        boolean resolved = false;
+        if (portLimit == -1) { // no ':' was found
             host = socketAddress.substring(hostIdx, hostLimit).trim();
             if (host.isEmpty()) {
-                host = DEFAULT_HOST;
+                hosts[hostPortLimit] = DEFAULT_HOST;
+                resolved = true;
             }
             ports[hostPortLimit] = DEFAULT_PORT;
         } else {
             host = socketAddress.substring(hostIdx, portLimit).trim();
             if (host.isEmpty()) {
-                host = DEFAULT_HOST;
+                hosts[hostPortLimit] = DEFAULT_HOST;
+                resolved = true;
             }
             String port = socketAddress.substring(portLimit + 1, hostLimit).trim();
             if (port.isEmpty()) {
@@ -266,15 +269,18 @@ public class LogAlertSocket implements Closeable {
                 }
             }
         }
-        try {
-            hosts[hostPortLimit] = InetAddress.getByName(host).getHostAddress();
-        } catch (UnknownHostException e) {
-            throw new LogError(String.format(
-                    "Invalid host value [%s] at position %d for socketAddress: %s",
-                    host,
-                    hostIdx,
-                    socketAddress
-            ));
+        if (!resolved) {
+            try {
+                hosts[hostPortLimit] = InetAddress.getByName(host).getHostAddress();
+            } catch (UnknownHostException e) {
+                throw new LogError(String.format(
+                        "Invalid host value [%s] at position %d for socketAddress: %s",
+                        host,
+                        hostIdx,
+                        socketAddress
+                ));
+            }
         }
+        hostPortLimit++;
     }
 }

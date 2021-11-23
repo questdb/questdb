@@ -47,6 +47,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private static final String CLUSTER_ENV = "CLUSTER_NAME";
     private static final String INSTANCE_ENV = "INSTANCE_NAME";
     private static final String MESSAGE_ENV = "ALERT_MESSAGE";
+    private static final String MESSAGE_ENV_VALUE = "${" + MESSAGE_ENV + "}";
 
 
     private final int level;
@@ -74,7 +75,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         if (!alertProps.contains(INSTANCE_ENV)) {
             alertProps.put(INSTANCE_ENV, DEFAULT_ENV_VALUE);
         }
-        alertProps.put(MESSAGE_ENV, "${" + MESSAGE_ENV + "}");
+        alertProps.put(MESSAGE_ENV, MESSAGE_ENV_VALUE);
     }
 
     // changed by introspection
@@ -118,8 +119,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
             }
         }
         socket = new LogAlertSocket(ff, socketAddress, nBufferSize);
-        loadAlertTemplate();
-        socket.connectSocket();
+        loadLogAlertTemplate();
+        socket.connect();
     }
 
     @Override
@@ -134,23 +135,23 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         return writeSequence.consumeAll(alertsSource, alertsProcessor);
     }
 
-    public void setBufferSize(String bufferSize) {
+    @VisibleForTesting
+    void setBufferSize(String bufferSize) {
         this.bufferSize = bufferSize;
     }
 
-    public int getBufferSize() {
-        return socket.getOutBufferSize();
-    }
-
-    public void setLocation(String location) {
+    @VisibleForTesting
+    void setLocation(String location) {
         this.location = location;
     }
 
-    public String getLocation() {
+    @VisibleForTesting
+    String getLocation() {
         return location;
     }
 
-    public void setSocketAddress(String socketAddress) {
+    @VisibleForTesting
+    void setSocketAddress(String socketAddress) {
         this.socketAddress = socketAddress;
     }
 
@@ -164,8 +165,12 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         return alertBuilder;
     }
 
+    @VisibleForTesting
+    int getBufferSize() {
+        return socket.getOutBufferSize();
+    }
 
-    private void loadAlertTemplate() {
+    private void loadLogAlertTemplate() {
         final long now = clock.getTicks();
         if (location.isEmpty()) {
             location = DEFAULT_ALERT_TPT_FILE;
@@ -217,8 +222,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
 
     @VisibleForTesting
     void onLogRecord(LogRecordSink logRecord) {
-        final int logRecordLen = logRecord.length();
-        if ((logRecord.getLevel() & level) != 0 && logRecordLen > 0) {
+        final int len = logRecord.length();
+        if ((logRecord.getLevel() & level) != 0 && len > 0) {
             alertBuilder
                     .rewindToMark()
                     .put(logRecord)

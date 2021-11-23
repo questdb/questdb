@@ -32,7 +32,7 @@ public class HttpLogAlertBuilder extends LogRecordSink {
     private static final String QDB_VERSION = "7.71.1";
     private static final String HEADER_BODY_SEPARATOR = "\r\n\r\n";
     private static final String CL_MARKER = "######"; // 999999 / (1024*2) == 488 half a Gb payload max
-    private static final int CL_MARKER_LEN = 6;
+    private static final int CL_MARKER_LEN = CL_MARKER.length();
     private static final int NOT_SET = -1;
 
     private long mark = NOT_SET;
@@ -103,15 +103,15 @@ public class HttpLogAlertBuilder extends LogRecordSink {
                 case '\n':
                     break;
 
-                case '\t':
+                case '\t': // replace tab
                     put(' ');
                     break;
 
-                case '$':
+                case '$': // escape
                     put("\\\\$");
                     break;
 
-                case '"':
+                case '"': // escape
                     put("\\\"");
                     break;
 
@@ -136,7 +136,7 @@ public class HttpLogAlertBuilder extends LogRecordSink {
 
     @Override
     public HttpLogAlertBuilder put(Sinkable sinkable) {
-        sinkable.toSink(this);
+        super.put(sinkable);
         return this;
     }
 

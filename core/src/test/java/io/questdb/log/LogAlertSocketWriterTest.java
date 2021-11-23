@@ -79,7 +79,7 @@ public class LogAlertSocketWriterTest {
             Assert.assertNotNull(alertBuilder);
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
-                            "Host: 192.168.1.58\r\n" +
+                            "Host: "+ LogAlertSocket.localHostIp +"\r\n" +
                             "User-Agent: QuestDB/7.71.1\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
@@ -116,7 +116,7 @@ public class LogAlertSocketWriterTest {
 
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
-                            "Host: 192.168.1.58\r\n" +
+                            "Host: "+ LogAlertSocket.localHostIp +"\r\n" +
                             "User-Agent: QuestDB/7.71.1\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
