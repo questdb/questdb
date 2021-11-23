@@ -901,6 +901,7 @@ public final class SqlParser {
         final int modelPosition = lexer.getPosition();
 
         UpdateModel updateModel = this.updateModelPool;
+        updateModel.setModelPosition(modelPosition);
         QueryModel fromModel = queryModelPool.next();
         fromModel.setModelPosition(modelPosition);
         tok = tok(lexer, "UPDATE, WITH or table name expected");
@@ -939,6 +940,8 @@ public final class SqlParser {
                 } else {
                     throw SqlException.$((lexer.lastTokenPosition()), "empty where clause");
                 }
+            } else if (tok != null) {
+                throw errUnexpected(lexer, tok);
             }
 
             updateModel.setFromModel(fromModel);
@@ -1914,6 +1917,7 @@ public final class SqlParser {
         tableAliasStop.add("group");
         tableAliasStop.add("except");
         tableAliasStop.add("intersect");
+        tableAliasStop.add("from");
         //
         columnAliasStop.add("from");
         columnAliasStop.add(",");

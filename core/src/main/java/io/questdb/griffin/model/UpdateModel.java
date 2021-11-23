@@ -27,8 +27,6 @@ package io.questdb.griffin.model;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
-import static io.questdb.griffin.model.QueryModel.*;
-
 public class UpdateModel implements Mutable, ExecutionModel, Sinkable {
     private ExpressionNode updateTableAlias;
     private final ObjList<ExpressionNode> updatedColumns = new ObjList<>();
@@ -107,11 +105,6 @@ public class UpdateModel implements Mutable, ExecutionModel, Sinkable {
             nestedToSink0(sink, fromModel.getNestedModel());
             sink.put(")");
         }
-
-        if (fromModel != null && fromModel.getWhereClause() != null) {
-            sink.put(" where ");
-            sink.put(fromModel.getWhereClause());
-        }
     }
 
 
@@ -133,40 +126,11 @@ public class UpdateModel implements Mutable, ExecutionModel, Sinkable {
             sink.put(')');
         }
 
-        if (model.getLatestBy().size() > 0) {
-            sink.put(" latest by ");
-            for (int i = 0, n = model.getLatestBy().size(); i < n; i++) {
-                if (i > 0) {
-                    sink.put(',');
-                }
-                model.getLatestBy().getQuick(i).toSink(sink);
-            }
-        }
-
         if (model.getOrderedJoinModels().size() > 1) {
             for (int i = 0, n = model.getOrderedJoinModels().size(); i < n; i++) {
                 QueryModel joinedModel = model.getJoinModels().getQuick(model.getOrderedJoinModels().getQuick(i));
                 if (joinedModel != model) {
-                    switch (joinedModel.getJoinType()) {
-                        case JOIN_OUTER:
-                            sink.put(" outer join ");
-                            break;
-                        case JOIN_ASOF:
-                            sink.put(" asof join ");
-                            break;
-                        case JOIN_SPLICE:
-                            sink.put(" splice join ");
-                            break;
-                        case JOIN_CROSS:
-                            sink.put(" cross join ");
-                            break;
-                        case JOIN_LT:
-                            sink.put(" lt join ");
-                            break;
-                        default:
-                            sink.put(" join ");
-                            break;
-                    }
+                    sink.put(" join ");
 
                     if (joinedModel.getWhereClause() != null) {
                         sink.put('(');

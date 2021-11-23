@@ -1893,7 +1893,7 @@ class SqlOptimiser {
             }
             int timestampIndex = metadata.getTimestampIndex();
             if (timestampIndex < 0) {
-                throw SqlException.$(updateModel.getPosition(), "UPDATE query can only be executed on partitioned tables");
+                throw SqlException.$(updateModel.getPosition(), "UPDATE query can only be executed on tables with Designated timestamp");
             }
 
             tempList.clear(metadata.getColumnCount());

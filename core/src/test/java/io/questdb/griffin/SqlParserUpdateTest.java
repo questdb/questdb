@@ -67,9 +67,36 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
     public void testUpdateNonPartitionedTableFails() throws Exception {
         assertSyntaxError(
                 "update tblx set x = 1",
-                0,
+                7,
                 "UPDATE query can only be executed on partitioned tables",
                 modelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
+    public void testUpdateNoSetFails() throws Exception {
+        assertSyntaxError(
+                "update tblx x = 1",
+                "update tblx x ".length(),
+                "SET expected",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL)
+                        .timestamp("tt")
+        );
+    }
+
+    @Test
+    public void testUpdateNoTimestampFails() throws Exception {
+        assertSyntaxError(
+                "update tblx set x = 1",
+                7,
+                "PDATE query can only be executed on tables with Designated timestamp",
+                partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
                         .col("s", ColumnType.SYMBOL)
@@ -120,6 +147,47 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
                         .col("tt", ColumnType.INT)
                         .timestamp(),
                 partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+    }
+
+    @Test
+    public void testUpdateJoinTableWithDoubleFromFails() throws Exception {
+        assertSyntaxError(
+                "update tblx set tt = 1 from tblx from tbly where x = y and x > 10",
+                "update tblx set tt = 1 from tblx ".length(),
+                "unexpected token: from",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("tt", ColumnType.INT)
+                        .timestamp(),
+                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+    }
+
+    @Test
+    public void testUpdateJoinInvalidSyntaxFails() throws Exception {
+        assertSyntaxError(
+                "update tblx set tt = 1 join tblx on x = y and x > 10",
+                "update tblx set tt = 1 ".length(),
+                "FROM, WHERE or EOF expected",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("tt", ColumnType.INT)
+                        .timestamp(),
+                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+    }
+
+    @Test
+    public void testUpdateEmptyWhereFails() throws Exception {
+        assertSyntaxError(
+                "update tblx set tt = 1 where ",
+                "update tblx set tt = 1 where".length(),
+                "empty where clause",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("tt", ColumnType.INT)
+                        .timestamp());
     }
 
     @Test
