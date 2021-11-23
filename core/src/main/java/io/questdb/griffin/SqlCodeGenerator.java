@@ -76,7 +76,7 @@ public class SqlCodeGenerator implements Mutable {
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
-    private final FilterExprIRSerializer irSerializer = new FilterExprIRSerializer();
+    private final FilterExprIRSerializer jitIRSerializer = new FilterExprIRSerializer();
     private final FunctionParser functionParser;
     private final CairoEngine engine;
     private final BytecodeAssembler asm = new BytecodeAssembler();
@@ -705,26 +705,30 @@ public class SqlCodeGenerator implements Mutable {
                 f.close();
             }
         }
-        // TODO what about FREEBSD_ARM64?
-        final boolean arm = Os.type == Os.LINUX_ARM64 || Os.type == Os.OSX_ARM64;
-        final boolean optimize = factory.supportPageFrameCursor() && !arm;
-        if (optimize) {
-            MemoryCARWImpl mem = new MemoryCARWImpl(1024, 1, MemoryTag.NATIVE_DEFAULT);
-            try {
-                int jitOptions = irSerializer.of(mem, factory.getMetadata()).serialize(filter, false, false);
-                f.close();
-                final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
-                final int topDownColumnCount = topDownColumns.size();
-                final IntList columnIndexes = new IntList();
-                for (int i = 0; i < topDownColumnCount; i++) {
-                    int columnIndex = factory.getMetadata().getColumnIndexQuiet(topDownColumns.getQuick(i).getName());
-                    columnIndexes.add(columnIndex);
+        boolean useJit = executionContext.getJitMode() != SqlExecutionContext.JIT_MODE_DISABLED;
+        if (useJit) {
+            // TODO what about FREEBSD_ARM64?
+            final boolean arm = Os.type == Os.LINUX_ARM64 || Os.type == Os.OSX_ARM64;
+            final boolean optimize = factory.supportPageFrameCursor() && !arm;
+            if (optimize) {
+                MemoryCARWImpl mem = new MemoryCARWImpl(1024, 1, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    boolean scalarMode = executionContext.getJitMode() == SqlExecutionContext.JIT_MODE_FORCE_SCALAR;
+                    int jitOptions = jitIRSerializer.of(mem, factory.getMetadata()).serialize(filter, scalarMode, false);
+                    f.close();
+                    final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
+                    final int topDownColumnCount = topDownColumns.size();
+                    final IntList columnIndexes = new IntList();
+                    for (int i = 0; i < topDownColumnCount; i++) {
+                        int columnIndex = factory.getMetadata().getColumnIndexQuiet(topDownColumns.getQuick(i).getName());
+                        columnIndexes.add(columnIndex);
+                    }
+                    return new CompiledFilterRecordCursorFactory(factory, columnIndexes, mem, jitOptions);
+                } catch (SqlException e) {
+                    mem.close();
+                } finally {
+                    jitIRSerializer.clear();
                 }
-                return new CompiledFilterRecordCursorFactory(factory, columnIndexes, mem, jitOptions);
-            } catch (SqlException e) {
-                mem.close();
-            } finally {
-                irSerializer.clear();
             }
         }
         return new FilteredRecordCursorFactory(factory, f);
