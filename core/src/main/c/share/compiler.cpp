@@ -1043,7 +1043,7 @@ struct JitCompiler {
 
         Gp stop = c.newGpq();
         c.mov(stop, rows_size);
-        c.sub(stop, step + 1); // stop = rows_size - step + 1
+        c.sub(stop, step - 1); // stop = rows_size - step + 1
 
         c.cmp(input_index, stop);
         c.jge(l_exit);
