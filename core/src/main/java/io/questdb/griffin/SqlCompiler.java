@@ -92,6 +92,8 @@ public class SqlCompiler implements Closeable {
     private final TextLoader textLoader;
     private final FilesFacade ff;
 
+    static final double MAX_FLOAT_VALUE = Float.MAX_VALUE;
+    static final double MIN_FLOAT_VALUE = Float.MIN_VALUE;
 
     public SqlCompiler(CairoEngine engine) {
         this(engine, null);
@@ -191,6 +193,7 @@ public class SqlCompiler implements Closeable {
         asm.setupPool();
         int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/griffin/rowcopier"));
         int interfaceClassIndex = asm.poolClass(RecordToRowCopier.class);
+        int stackMapTableIndex = asm.poolUtf8("StackMapTable");
 
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
         int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
@@ -234,6 +237,10 @@ public class SqlCompiler implements Closeable {
         int truncateGeoHashTypes = asm.poolMethod(ColumnType.class, "truncateGeoHashTypes", "(JII)J");
         int encodeCharAsGeoByte = asm.poolMethod(GeoHashes.class, "encodeChar", "(C)B");
 
+        int valueException = asm.poolMethod(SqlException.class, "inconvertibleValue","(III)Lio/questdb/griffin/SqlException;");
+        int maxFloat = asm.poolDoubleConst(MAX_FLOAT_VALUE);
+        int minFloat = asm.poolDoubleConst(MIN_FLOAT_VALUE);
+        
         int copyNameIndex = asm.poolUtf8("copy");
         int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;)V");
 
@@ -245,7 +252,7 @@ public class SqlCompiler implements Closeable {
         asm.methodCount(2);
         asm.defineDefaultConstructor();
 
-        asm.startMethod(copyNameIndex, copySigIndex, 6, 3);
+        asm.startMethod(copyNameIndex, copySigIndex, 10, 3);
 
         int n = toColumnFilter.getColumnCount();
         for (int i = 0; i < n; i++) {
@@ -557,6 +564,29 @@ public class SqlCompiler implements Closeable {
                             asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.FLOAT:
+                            asm.dup2();
+                            asm.ldc2_w(minFloat);
+                            asm.dcmpg();
+                            int if1 = asm.iflt();//jump to exception position
+                            asm.dup2();
+                            asm.ldc2_w(maxFloat);
+                            asm.dcmpg();
+                            int if2 = asm.ifle();//jump to main branch
+                            
+                            int exceptionPosition = asm.position();
+                            asm.setJmp(if1, exceptionPosition);
+                            //exception handler
+                            asm.iconst(i);
+                            asm.iconst(fromColumnType);
+                            asm.iconst(toColumnTypeTag);
+                            asm.invokeStatic(valueException);  
+                            asm.athrow();
+                            //there's not enough information in this scope so it's probably better to throw (or return) failed position and enrich
+                            //it outside with column type and actual value
+                            //it might be better to create a shared exception block at method start/end 
+                            
+                            int mainBranch = asm.position();
+                            asm.setJmp(if2, mainBranch);
                             asm.d2f();
                             asm.invokeInterface(wPutFloat, 2);
                             break;
@@ -778,6 +808,7 @@ public class SqlCompiler implements Closeable {
                 && toTag >= ColumnType.BYTE
                 && toTag <= ColumnType.DOUBLE
                 && fromTag < toTag)
+                || (fromTag == ColumnType.DOUBLE && toTag == ColumnType.FLOAT)
                 || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOBYTE)
                 || (fromTag == ColumnType.CHAR && toTag == ColumnType.GEOBYTE && ColumnType.getGeoHashBits(to) < 6)
                 || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOSHORT)

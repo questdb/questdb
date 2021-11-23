@@ -100,9 +100,13 @@ public class BytecodeAssembler {
         putShort(offset);
     }
 
+    public void athrow() {
+        putByte(0xbf);
+    }
+
     public void d2f() {
         putShort(0x90);
-    }
+    } //why not putByte? is the nop intentional ? 
 
     public void d2i() {
         putShort(0x8E);
@@ -110,6 +114,10 @@ public class BytecodeAssembler {
 
     public void d2l() {
         putShort(0x8F);
+    }
+
+    public void dcmpg() {
+        putByte(0x98);
     }
 
     public void defineClass(int thisClassIndex) {
@@ -164,6 +172,14 @@ public class BytecodeAssembler {
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    public void dup() {
+        putByte(0x59);
+    }
+
+    public void dup2() {
+        putByte(0x5c);
     }
 
     public void endMethod() {
@@ -268,6 +284,14 @@ public class BytecodeAssembler {
 
     public int if_icmpne() {
         return genericGoto(0xa0);
+    }
+
+    public int ifle() {
+        return genericGoto(0x9e);
+    }
+
+    public int iflt() {
+        return genericGoto(0x9b);
     }
 
     public int ifne() {
@@ -449,6 +473,14 @@ public class BytecodeAssembler {
         return poolInterfaceMethod(classIndex, poolNameAndType(poolUtf8(name), poolUtf8(sig)));
     }
 
+    public int poolDoubleConst(double value) {
+        putByte(0x06);
+        putDouble(value);
+        int index = poolCount;
+        poolCount += 2;
+        return index;
+    }
+
     public int poolLongConst(long value) {
         putByte(0x05);
         putLong(value);
@@ -551,6 +583,13 @@ public class BytecodeAssembler {
         putByte(0);
     }
 
+    public void putDouble(double value) {
+        if (buf.remaining() < 4) {
+            resize();
+        }
+        buf.putDouble(value);
+    }
+    
     public void putLong(long value) {
         if (buf.remaining() < 4) {
             resize();
