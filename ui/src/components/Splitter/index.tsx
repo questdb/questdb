@@ -169,6 +169,8 @@ export const Splitter = ({
         (min == null && max == null)
       ) {
         setGhostPosition(position)
+      } else if (min != null && position <= min && firstChild.current) {
+        setGhostPosition(firstChild.current.getBoundingClientRect().left)
       }
     },
     [direction, max, min],
@@ -226,12 +228,14 @@ export const Splitter = ({
         firstChild.current.getBoundingClientRect()[measure] +
         (ghostPosition - originalPosition)
 
+      const basis = size < 0 ? 0 : size
+
       setOriginalPosition(0)
       setGhostPosition(0)
-      setBasis(size)
+      setBasis(basis)
 
       if (onChange) {
-        onChange(size)
+        onChange(basis)
       }
     }
   }, [direction, ghostPosition, onChange, originalPosition, pressed])
