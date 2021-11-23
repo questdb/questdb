@@ -35,16 +35,18 @@ import org.jetbrains.annotations.NotNull;
 public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
     private final RecordCursorFactory factory;
     private final CompiledFilterRecordCursor cursor;
+    private final int options;
     private final MemoryAR filter;
     private final DirectLongList rows;
     private final DirectLongList columns;
 
-    public CompiledFilterRecordCursorFactory(RecordCursorFactory factory, @NotNull IntList columnIndexes, MemoryAR filter) {
+    public CompiledFilterRecordCursorFactory(RecordCursorFactory factory, @NotNull IntList columnIndexes, MemoryAR filter, int options) {
         assert !(factory instanceof FilteredRecordCursorFactory);
         assert !(factory instanceof CompiledFilterRecordCursorFactory);
         this.factory = factory;
         this.cursor = new CompiledFilterRecordCursor(columnIndexes, filter);
         this.filter = filter;
+        this.options = options;
         this.rows = new DirectLongList(1024);
         this.columns = new DirectLongList(10);
     }
@@ -59,7 +61,7 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        this.cursor.of(factory, rows, columns, executionContext);
+        this.cursor.of(factory, rows, columns, executionContext, options);
         return this.cursor;
     }
 

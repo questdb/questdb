@@ -89,16 +89,16 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testColumnTypes() throws Exception {
-        Map<String, String[]> expectedTypeToColumn = new HashMap<>();
-        expectedTypeToColumn.put("i8", new String[]{"aboolean", "abyte", "ageobyte"});
-        expectedTypeToColumn.put("i16", new String[]{"ashort", "ageoshort", "achar"});
-        expectedTypeToColumn.put("i32", new String[]{"anint", "ageoint", "asymbol"});
-        expectedTypeToColumn.put("i64", new String[]{"along", "ageolong", "adate", "atimestamp"});
-        expectedTypeToColumn.put("f32", new String[]{"afloat"});
-        expectedTypeToColumn.put("f64", new String[]{"adouble"});
+        Map<String, String[]> typeToColumn = new HashMap<>();
+        typeToColumn.put("i8", new String[]{"aboolean", "abyte", "ageobyte"});
+        typeToColumn.put("i16", new String[]{"ashort", "ageoshort", "achar"});
+        typeToColumn.put("i32", new String[]{"anint", "ageoint", "asymbol"});
+        typeToColumn.put("i64", new String[]{"along", "ageolong", "adate", "atimestamp"});
+        typeToColumn.put("f32", new String[]{"afloat"});
+        typeToColumn.put("f64", new String[]{"adouble"});
 
-        for (String type : expectedTypeToColumn.keySet()) {
-            for (String col : expectedTypeToColumn.get(type)) {
+        for (String type : typeToColumn.keySet()) {
+            for (String col : typeToColumn.get(type)) {
                 setUp1();
                 serialize(col + " < " + col);
                 assertIR("(" + type + " " + col + ")(" + type + " " + col + ")(<)(ret)");
@@ -243,6 +243,54 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i16 0L)(i16 ashort)(neg)(>)(ret)");
     }
 
+    @Test
+    public void testOptionsDebugFlag() throws Exception {
+        int options = serialize("abyte = 0", false, true);
+        Assert.assertEquals(0b00001001, options);
+    }
+
+    @Test
+    public void testOptionsScalarFlag() throws Exception {
+        int options = serialize("abyte = 0", true, false);
+        Assert.assertEquals(0b00000000, options);
+    }
+
+    @Test
+    public void testOptionsSingleSize() throws Exception {
+        Map<String, Integer> filterToOptions = new HashMap<>();
+        filterToOptions.put("abyte = 0", 0b00001000);
+        filterToOptions.put("ashort = 0", 0b00001010);
+        filterToOptions.put("anint = 0", 0b00001100);
+        filterToOptions.put("afloat = 0", 0b00001100);
+        filterToOptions.put("afloat = 0 or anint = 0", 0b00001100);
+        filterToOptions.put("along = 0", 0b00001110);
+        filterToOptions.put("adouble = 0", 0b00001110);
+        filterToOptions.put("along = 0 or adouble = 0", 0b00001110);
+
+        for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
+            setUp1();
+            int options = serialize(entry.getKey(), false, false);
+            Assert.assertEquals("options mismatch for filter: " + entry.getKey(), (int) entry.getValue(), options);
+        }
+    }
+
+    @Test
+    public void testOptionsMixedSizes() throws Exception {
+        Map<String, Integer> filterToOptions = new HashMap<>();
+        filterToOptions.put("abyte = 0 or ashort = 0", 0b00010010);
+        filterToOptions.put("anint = 0 or abyte = 0", 0b00010100);
+        filterToOptions.put("afloat = 0 or abyte = 0", 0b00010100);
+        filterToOptions.put("along = 0 or ashort = 0", 0b00010110);
+        filterToOptions.put("adouble = 0 or ashort = 0", 0b00010110);
+        filterToOptions.put("afloat = 0 or adouble = 0", 0b00010110);
+
+        for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
+            setUp1();
+            int options = serialize(entry.getKey(), false, false);
+            Assert.assertEquals("options mismatch for filter: " + entry.getKey(), (int) entry.getValue(), options);
+        }
+    }
+
     @Test(expected = SqlException.class)
     public void testUnsupportedSingleConstantExpression() throws Exception {
         serialize("true");
@@ -338,9 +386,13 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
         serialize("ageolong = 0");
     }
 
-    private void serialize(CharSequence seq) throws SqlException {
+    private int serialize(CharSequence seq) throws SqlException {
+        return serialize(seq, false, false);
+    }
+
+    private int serialize(CharSequence seq, boolean scalar, boolean debug) throws SqlException {
         ExpressionNode node = expr(seq);
-        serializer.of(irMem, metadata).serialize(node);
+        return serializer.of(irMem, metadata).serialize(node, scalar, debug);
     }
 
     private void assertIR(String expectedIR) {

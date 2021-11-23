@@ -34,6 +34,10 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.*;
 
+/**
+ * Intermediate representation (IR) serializer for filters (think, WHERE clause)
+ * to be used in SQL JIT compiler.
+ */
 public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
 
     // Column type codes
@@ -87,9 +91,42 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         return this;
     }
 
-    public void serialize(ExpressionNode node) throws SqlException {
+    /**
+     * Writes IR of the filter described by the given expression tree to memory.
+     *
+     * @param node filter expression tree's root node.
+     * @param scalar set scalar instructions execution hint in returned options.
+     * @param debug set enable debug flag in returned options.
+     * @return JIT compiler options stored in a single int in the following way:
+     * <ul>
+     *     <li>1 LSB - debug flag.</li>
+     *     <li>2-3 LSBs - filter's arithmetic type size (widest type size): 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B.</li>
+     *     <li>4-5 LSBs - filter's execution hint: 0 - scalar, 1 - single size (SIMD-friendly), 2 - mixed sizes</li>
+     * </ul>
+     * <br/>
+     * Examples:
+     * <ul>
+     *     <li>00000000 00000000 00000000 00010100 - 4B, mixed types, debug off</li>
+     *     <li>00000000 00000000 00000000 00000111 - 8B, scalar, debug on</li>
+     * </ul>
+     * @throws SqlException thrown when IR serialization failed.
+     */
+    public int serialize(ExpressionNode node, boolean scalar, boolean debug) throws SqlException {
         traverseAlgo.traverse(node, this);
         memory.putByte(RET);
+
+        int options = debug ? 1 : 0;
+        int typeSize = arithmeticContext.globalTypeSize;
+        if (typeSize > 0) {
+            // typeSize is 2 ^ n, so number of trailing zeros is equal to log2
+            int log2 = Integer.numberOfTrailingZeros(typeSize);
+            options = options | (log2 << 1);
+        }
+        if (!scalar) {
+            int executionHint = arithmeticContext.globalHasMixedTypes ? 2 : 1;
+            options = options | (executionHint << 3);
+        }
+        return options;
     }
 
     @Override
@@ -104,13 +141,6 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
     public boolean descend(ExpressionNode node) throws SqlException {
         // Check if we're at the start of an arithmetic expression
         arithmeticContext.onNodeDescended(node);
-
-        // Check for root expression level constant
-        if (arithmeticContext.rootNode == null && node.type == ExpressionNode.CONSTANT) {
-            throw SqlException.position(node.position)
-                    .put("constant outside of arithmetic expression: ")
-                    .put(node.token);
-        }
 
         // Look ahead for negative const
         if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, "-")) {
@@ -146,10 +176,10 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
             serializeOperator(node.position, node.token, argCount);
         }
 
-        arithmeticContext.onNodeVisited(node);
+        boolean contextLeft = arithmeticContext.onNodeVisited(node);
 
         // We're out of arithmetic expression: backfill constants and clean up
-        if (node == arithmeticContext.rootNode) {
+        if (contextLeft) {
             try {
                 backfillNodes.forEach((key, value) -> {
                     try {
@@ -162,8 +192,6 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
             } catch (SqlWrapperException e) {
                 throw e.wrappedException;
             }
-
-            arithmeticContext.clear();
         }
     }
 
@@ -184,7 +212,13 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         memory.putLong(index);
     }
 
-    private void serializeConstantStub(final ExpressionNode node) {
+    private void serializeConstantStub(final ExpressionNode node) throws SqlException {
+        if (!arithmeticContext.isActive()) {
+            throw SqlException.position(node.position)
+                    .put("constant outside of arithmetic expression: ")
+                    .put(node.token);
+        }
+
         long offset = memory.getAppendOffset();
         backfillNodes.put(offset, node);
         memory.putByte(UNDEFINED_CODE);
@@ -221,13 +255,13 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         }
 
         if (SqlKeywords.isNullKeyword(token)) {
-            boolean geoHashExpression = ExpressionType.GEO_HASH == arithmeticContext.type;
+            boolean geoHashExpression = ExpressionType.GEO_HASH == arithmeticContext.expressionType;
             serializeNull(position, typeCode, geoHashExpression);
             return;
         }
 
         if (Chars.isQuoted(token)) {
-            if (ExpressionType.CHAR != arithmeticContext.type) {
+            if (ExpressionType.CHAR != arithmeticContext.expressionType) {
                 throw SqlException.position(position).put("char constant in non-char expression: ").put(token);
             }
             final int len = token.length();
@@ -241,7 +275,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         }
 
         if (SqlKeywords.isTrueKeyword(token)) {
-            if (ExpressionType.BOOLEAN != arithmeticContext.type) {
+            if (ExpressionType.BOOLEAN != arithmeticContext.expressionType) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
             memory.putByte(IMM_I1);
@@ -250,7 +284,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         }
 
         if (SqlKeywords.isFalseKeyword(token)) {
-            if (ExpressionType.BOOLEAN != arithmeticContext.type) {
+            if (ExpressionType.BOOLEAN != arithmeticContext.expressionType) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
             memory.putByte(IMM_I1);
@@ -258,7 +292,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
             return;
         }
 
-        if (ExpressionType.NUMERIC != arithmeticContext.type) {
+        if (ExpressionType.NUMERIC != arithmeticContext.expressionType) {
             throw SqlException.position(position).put("numeric constant in non-numeric expression: ").put(token);
         }
         serializeNumber(position, token, typeCode, negate);
@@ -444,86 +478,127 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         return Chars.equals(token, ">=");
     }
 
+    private static int constantTypeSize(int typeCode) {
+        switch (typeCode) {
+            case IMM_I1:
+                return 1;
+            case IMM_I2:
+                return 2;
+            case IMM_I4:
+            case IMM_F4:
+                return 4;
+            case IMM_I8:
+            case IMM_F8:
+                return 8;
+            default:
+                return 0;
+        }
+    }
+
     private class ArithmeticExpressionContext implements Mutable {
 
-        ExpressionNode rootNode;
+        private ExpressionNode rootNode;
         // expected constant type; calculated based on the "widest" column type
         // in the expression (contains IMM_* or UNDEFINED_CODE value)
         byte constantTypeCode;
-        ExpressionType type;
+        ExpressionType expressionType;
+
+        // global (per filter) context fields (used for JIT options)
+        private int globalTypeSize; // type size in bytes
+        private boolean globalHasMixedTypes;
 
         @Override
         public void clear() {
             rootNode = null;
             constantTypeCode = UNDEFINED_CODE;
-            type = null;
+            expressionType = null;
+            globalTypeSize = 0;
+            globalHasMixedTypes = false;
+        }
+
+        public boolean isActive() {
+            return rootNode != null;
         }
 
         public void onNodeDescended(final ExpressionNode node) {
             if (rootNode == null && isTopLevelArithmeticOperation(node)) {
                 rootNode = node;
                 constantTypeCode = UNDEFINED_CODE;
-                type = null;
+                expressionType = null;
             }
         }
 
-        public void onNodeVisited(final ExpressionNode node) throws SqlException {
-            if (node.type != ExpressionNode.LITERAL) {
-                return;
+        public boolean onNodeVisited(final ExpressionNode node) throws SqlException {
+            boolean leftContext = false;
+            if (node == rootNode) {
+                rootNode = null;
+                leftContext = true;
             }
 
-            final int index = metadata.getColumnIndexQuiet(node.token);
-            if (index == -1) {
-                throw SqlException.invalidColumn(node.position, node.token);
+            if (node.type == ExpressionNode.LITERAL) {
+                final int index = metadata.getColumnIndexQuiet(node.token);
+                if (index == -1) {
+                    throw SqlException.invalidColumn(node.position, node.token);
+                }
+
+                int columnType = metadata.getColumnType(index);
+
+                updateExpressionType(node.position, columnType);
+                updateTypeCode(node.position, columnType);
+
+                int newTypeSize = constantTypeSize(constantTypeCode);
+                if (globalTypeSize > 0 && newTypeSize != globalTypeSize) {
+                    globalHasMixedTypes = true;
+                }
+                if (newTypeSize > globalTypeSize) {
+                    globalTypeSize = newTypeSize;
+                }
             }
 
-            int columnType = metadata.getColumnType(index);
-
-            updateType(node.position, columnType);
-            updateConstantTypeCode(node.position, columnType);
+            return leftContext;
         }
 
-        private void updateType(int position, int columnType) throws SqlException {
+        private void updateExpressionType(int position, int columnType) throws SqlException {
             switch (columnType) {
                 case ColumnType.BOOLEAN:
-                    if (type != null && type != ExpressionType.BOOLEAN) {
+                    if (expressionType != null && expressionType != ExpressionType.BOOLEAN) {
                         throw SqlException.position(position)
                                 .put("non-boolean column in boolean expression: ")
                                 .put(ColumnType.nameOf(columnType));
                     }
-                    type = ExpressionType.BOOLEAN;
+                    expressionType = ExpressionType.BOOLEAN;
                     break;
                 case ColumnType.GEOBYTE:
                 case ColumnType.GEOSHORT:
                 case ColumnType.GEOINT:
                 case ColumnType.GEOLONG:
-                    if (type != null && type != ExpressionType.GEO_HASH) {
+                    if (expressionType != null && expressionType != ExpressionType.GEO_HASH) {
                         throw SqlException.position(position)
                                 .put("non-geohash column in geohash expression: ")
                                 .put(ColumnType.nameOf(columnType));
                     }
-                    type = ExpressionType.GEO_HASH;
+                    expressionType = ExpressionType.GEO_HASH;
                     break;
                 case ColumnType.CHAR:
-                    if (type != null && type != ExpressionType.CHAR) {
+                    if (expressionType != null && expressionType != ExpressionType.CHAR) {
                         throw SqlException.position(position)
                                 .put("non-char column in char expression: ")
                                 .put(ColumnType.nameOf(columnType));
                     }
-                    type = ExpressionType.CHAR;
+                    expressionType = ExpressionType.CHAR;
                     break;
                 default:
-                    if (type != null && type != ExpressionType.NUMERIC) {
+                    if (expressionType != null && expressionType != ExpressionType.NUMERIC) {
                         throw SqlException.position(position)
                                 .put("non-numeric column in numeric expression: ")
                                 .put(ColumnType.nameOf(columnType));
                     }
-                    type = ExpressionType.NUMERIC;
+                    expressionType = ExpressionType.NUMERIC;
                     break;
             }
         }
 
-        private void updateConstantTypeCode(int position, int columnType) throws SqlException {
+        private void updateTypeCode(int position, int columnType) throws SqlException {
             byte code = columnTypeCode(columnType);
             switch (code) {
                 case MEM_I1:

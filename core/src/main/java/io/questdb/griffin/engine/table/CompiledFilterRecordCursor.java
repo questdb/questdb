@@ -109,7 +109,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
         throw new UnsupportedOperationException();
     }
 
-    void of(RecordCursorFactory factory, DirectLongList rows, DirectLongList columns, SqlExecutionContext executionContext) throws SqlException {
+    void of(RecordCursorFactory factory, DirectLongList rows, DirectLongList columns, SqlExecutionContext executionContext, int options) throws SqlException {
         this.rows = rows;
         this.columns = columns;
         this.pageFrameCursor = factory.getPageFrameCursor(executionContext);
@@ -117,7 +117,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
         this.next = nextPage;
         //todo: error reporting
         //todo: how not to recompile it?
-        this.filterFnAddress = FiltersCompiler.compileFunction(filterAddress, filterSize, 0);
+        this.filterFnAddress = FiltersCompiler.compileFunction(filterAddress, filterSize, options);
     }
 
     private boolean nextRow() {

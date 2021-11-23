@@ -711,7 +711,7 @@ public class SqlCodeGenerator implements Mutable {
         if (optimize) {
             MemoryCARWImpl mem = new MemoryCARWImpl(1024, 1, MemoryTag.NATIVE_DEFAULT);
             try {
-                irSerializer.of(mem, factory.getMetadata()).serialize(filter);
+                int jitOptions = irSerializer.of(mem, factory.getMetadata()).serialize(filter, false, false);
                 f.close();
                 final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
                 final int topDownColumnCount = topDownColumns.size();
@@ -720,7 +720,7 @@ public class SqlCodeGenerator implements Mutable {
                     int columnIndex = factory.getMetadata().getColumnIndexQuiet(topDownColumns.getQuick(i).getName());
                     columnIndexes.add(columnIndex);
                 }
-                return new CompiledFilterRecordCursorFactory(factory, columnIndexes, mem);
+                return new CompiledFilterRecordCursorFactory(factory, columnIndexes, mem, jitOptions);
             } catch (SqlException e) {
                 mem.close();
             } finally {
