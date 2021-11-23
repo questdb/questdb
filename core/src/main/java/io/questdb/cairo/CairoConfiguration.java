@@ -276,6 +276,8 @@ public interface CairoConfiguration {
 
     long getWriterAsyncCommandBusyWaitTimeout();
 
+    long getWriterAsyncCommandMaxTimeout();
+
     int getWriterCommandQueueCapacity();
 
     int getWriterTickRowsCountMod();

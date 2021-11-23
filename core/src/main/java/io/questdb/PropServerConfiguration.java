@@ -358,6 +358,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerDataIndexValueAppendPageSize;
     private long symbolCacheWaitUsBeforeReload;
     private final int writerTockRowsCountMod;
+    private final long writerAsyncCommandMaxWaitTimeout;
 
     public PropServerConfiguration(
             String root,
@@ -771,6 +772,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.metricsEnabled = getBoolean(properties, env, "metrics.enabled", false);
             this.writerAsyncCommandBusyWaitTimeout = getLong(properties, env, "cairo.writer.alter.busy.wait.timeout.micro", 500_000);
+            this.writerAsyncCommandMaxWaitTimeout = getLong(properties, env, "cairo.writer.alter.max.wait.timeout.micro", 30_000_000L);
             this.writerTockRowsCountMod = Numbers.ceilPow2(getInt(properties, env, "cairo.writer.tick.rows.count", 1024)) - 1;
             this.writerAsyncCommandQueueCapcity = Numbers.ceilPow2(getInt(properties, env, "cairo.writer.command.queue.capacity", 32));
 
@@ -1831,6 +1833,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWriterAsyncCommandBusyWaitTimeout() {
             return writerAsyncCommandBusyWaitTimeout;
+        }
+
+        @Override
+        public long getWriterAsyncCommandMaxTimeout() {
+            return writerAsyncCommandMaxWaitTimeout;
         }
 
         @Override

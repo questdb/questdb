@@ -35,6 +35,7 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
+import io.questdb.griffin.QueryFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
@@ -72,6 +73,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final int floatScale;
     private final int doubleScale;
     private final SCSequence eventSubSequence = new SCSequence();
+    private QueryFuture continueExecution;
     private Rnd rnd;
     private RecordCursorFactory recordCursorFactory;
     private RecordCursor cursor;
@@ -132,6 +134,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryState = QUERY_PREFIX;
         columnIndex = 0;
         countRows = false;
+        if (continueExecution != null) {
+            continueExecution.close();
+            continueExecution = null;
+        }
     }
 
     @Override
@@ -160,6 +166,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return LOG.error().$('[').$(getFd()).$("] ");
     }
 
+    public QueryFuture getContinueExecution() {
+        return continueExecution;
+    }
+
     public HttpConnectionContext getHttpConnectionContext() {
         return httpConnectionContext;
     }
@@ -174,6 +184,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public SCSequence getEventSubSequence() {
         return eventSubSequence;
+    }
+
+    public void setContinueExecution(QueryFuture execution) {
+        continueExecution = execution;
     }
 
     public void setRnd(Rnd rnd) {
@@ -222,6 +236,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void startExecutionTimer() {
         this.executeStartNanos = nanosecondClock.getTicks();
+    }
+
+    public long getExecutionTime() {
+        return nanosecondClock.getTicks() - this.executeStartNanos;
     }
 
     static void prepareExceptionJson(HttpChunkedResponseSocket socket, int position, CharSequence message, CharSequence query) throws PeerDisconnectedException, PeerIsSlowToReadException {

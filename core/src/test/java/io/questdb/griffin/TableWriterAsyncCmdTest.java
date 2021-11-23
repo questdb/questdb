@@ -38,8 +38,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.griffin.CompiledQuery.QUERY_COMPLETE;
-import static io.questdb.griffin.CompiledQuery.QUERY_NO_RESPONSE;
+import static io.questdb.griffin.QueryFuture.QUERY_COMPLETE;
+import static io.questdb.griffin.QueryFuture.QUERY_NO_RESPONSE;
 
 public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
 

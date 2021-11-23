@@ -26,9 +26,11 @@ package io.questdb.griffin;
 
 import java.io.Closeable;
 
-import static io.questdb.griffin.CompiledQuery.QUERY_COMPLETE;
-
 public interface QueryFuture extends Closeable {
+    int QUERY_NO_RESPONSE = 0;
+    int QUERY_STARTED = 1;
+    int QUERY_COMPLETE = 2;
+
     /***
      * Blocking wait for query completion. Returns immediately if query has executed synchronously
      * Waits in busy waiting for cairo.writer.alter.busy.wait.timeout.micro microseconds and throws timeout

@@ -265,9 +265,6 @@ public class CompiledQueryImpl implements CompiledQuery {
                 long writerAsyncCommandBusyWaitTimeout,
                 int queryTableNamePosition
         ) throws SqlException {
-            if (writerAsyncCommandBusyWaitTimeout < 2) {
-                return QUERY_NO_RESPONSE;
-            }
             assert eventSubSeq != null : "No sequence to wait on";
             assert commandId > -1 : "No command id to wait for";
 

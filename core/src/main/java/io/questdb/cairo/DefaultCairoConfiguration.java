@@ -407,7 +407,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getWriterAsyncCommandBusyWaitTimeout() {
-        return 500_000;
+        return 500_000L;
+    }
+
+    @Override
+    public long getWriterAsyncCommandMaxTimeout() {
+        return 30_000_000L;
     }
 
     @Override

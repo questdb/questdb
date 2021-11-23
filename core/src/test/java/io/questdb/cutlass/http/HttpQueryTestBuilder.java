@@ -29,13 +29,14 @@ import io.questdb.TelemetryJob;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.TableStructureChangesException;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import org.junit.rules.TemporaryFolder;
@@ -52,7 +53,9 @@ public class HttpQueryTestBuilder {
     private HttpServerConfigurationBuilder serverConfigBuilder;
     private HttpRequestProcessorBuilder textImportProcessor;
     private int workerCount = 1;
-    private long maxWriterWaitTimeout = 500_000;
+    private long startWriterWaitTimeout = 500_000;
+    private long maxWriterWaitTimeout = 30_000_000L;
+    private FilesFacade filesFacade = new FilesFacadeImpl();
 
     public int getWorkerCount() {
         return this.workerCount;
@@ -95,8 +98,17 @@ public class HttpQueryTestBuilder {
             CairoConfiguration cairoConfiguration = configuration;
             if (cairoConfiguration == null) {
                 cairoConfiguration = new DefaultCairoConfiguration(baseDir) {
+                    public FilesFacade getFilesFacade() {
+                        return filesFacade;
+                    }
+
                     @Override
                     public long getWriterAsyncCommandBusyWaitTimeout() {
+                        return startWriterWaitTimeout;
+                    }
+
+                    @Override
+                    public long getWriterAsyncCommandMaxTimeout() {
                         return maxWriterWaitTimeout;
                     }
                 };
@@ -217,13 +229,23 @@ public class HttpQueryTestBuilder {
         });
     }
 
-    public HttpQueryTestBuilder withAlterTableMaxWaitTimeout(long maxWriterWaitTimeout) {
+    public HttpQueryTestBuilder withAlterTableMaxtWaitTimeout(long maxWriterWaitTimeout) {
         this.maxWriterWaitTimeout = maxWriterWaitTimeout;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withAlterTableStartWaitTimeout(long startWriterWaitTimeout) {
+        this.startWriterWaitTimeout = startWriterWaitTimeout;
         return this;
     }
 
     public HttpQueryTestBuilder withCustomTextImportProcessor(HttpRequestProcessorBuilder textQueryProcessor) {
         this.textImportProcessor = textQueryProcessor;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withFilesFacade(FilesFacade ff) {
+        this.filesFacade = ff;
         return this;
     }
 

@@ -61,6 +61,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final NanosecondClock nanosecondClock;
     private final HttpSqlExecutionInterruptor interrupter;
     private final Metrics metrics;
+    private final long alterStartTimeout;
+    private final long alterStartFullTimeoutNs;
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
@@ -108,6 +110,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.nanosecondClock = engine.getConfiguration().getNanosecondClock();
         this.interrupter = new HttpSqlExecutionInterruptor(configuration.getInterruptorConfiguration());
         this.metrics = metrics;
+        this.alterStartTimeout = engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout();
+        this.alterStartFullTimeoutNs = engine.getConfiguration().getWriterAsyncCommandMaxTimeout() * 1000;
     }
 
     @Override
@@ -118,15 +122,26 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     public void execute0(JsonQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        metrics.jsonQuery().markStart();
-        state.startExecutionTimer();
+
+        QueryFuture continueExecution = state.getContinueExecution();
         final HttpConnectionContext context = state.getHttpConnectionContext();
-        // do not set random for new request to avoid copying random from previous request into next one
-        // the only time we need to copy random from state is when we resume request execution
-        sqlExecutionContext.with(context.getCairoSecurityContext(), null, null, context.getFd(), interrupter.of(context.getFd()));
-        state.info().$("exec [q='").utf8(state.getQuery()).$("']").$();
+
+        if (continueExecution == null) {
+            metrics.jsonQuery().markStart();
+            state.startExecutionTimer();
+            // do not set random for new request to avoid copying random from previous request into next one
+            // the only time we need to copy random from state is when we resume request execution
+            sqlExecutionContext.with(context.getCairoSecurityContext(), null, null, context.getFd(), interrupter.of(context.getFd()));
+            state.info().$("exec [q='").utf8(state.getQuery()).$("']").$();
+        }
+
         final RecordCursorFactory factory = QueryCache.getInstance().poll(state.getQuery());
         try {
+            if (continueExecution != null) {
+                retryQueryExecution(state, continueExecution);
+                return;
+            }
+
             if (factory != null) {
                 try {
                     sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, Telemetry.ORIGIN_HTTP_JSON);
@@ -160,6 +175,21 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             throw ServerDisconnectException.INSTANCE;
         }
     }
+
+    private void retryQueryExecution(JsonQueryProcessorState state, QueryFuture continueExecution) throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
+        if (continueExecution.await(0) != QueryFuture.QUERY_COMPLETE) {
+            if (state.getExecutionTime() < alterStartFullTimeoutNs) {
+                throw EntryUnavailableException.instance("retry alter table wait");
+            } else {
+                throw SqlException.$(0, "Timeout on waiting ALTER table to finish execution");
+            }
+        } else {
+            continueExecution.close();
+            state.setContinueExecution(null);
+            sendConfirmation(state, configuration.getKeepAliveHeader());
+        }
+    }
+
 
     @Override
     public void onRequestComplete(
@@ -265,6 +295,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CompiledQuery cq,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        sendConfirmation(state, keepAliveHeader);
+    }
+
+    private static void sendConfirmation(JsonQueryProcessorState state, CharSequence keepAliveHeader) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         header(socket, keepAliveHeader);
@@ -344,11 +378,25 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CompiledQuery cc,
             CharSequence keepAliveHeader
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, SqlException {
-        try (QueryFuture execution = cc.execute(state.getEventSubSequence())) {
-            execution.await();
+        QueryFuture queryFuture = null;
+        try {
+            queryFuture = cc.execute(state.getEventSubSequence());
+            int waitResult = queryFuture.await(alterStartTimeout);
+            if (waitResult == QueryFuture.QUERY_NO_RESPONSE) {
+                throw SqlException.$(0, "Timeout expired on waiting for the ALTER TABLE execution start");
+            } else if (waitResult == QueryFuture.QUERY_STARTED) {
+                state.setContinueExecution(queryFuture);
+                queryFuture = null;
+                throw EntryUnavailableException.instance("retry alter table wait");
+            }
+        } finally {
+            if (queryFuture != null) {
+                queryFuture.close();
+            }
         }
         sendConfirmation(state, cc, keepAliveHeader);
     }
+
 
     private void executeInsert(
             JsonQueryProcessorState state,

@@ -31,6 +31,10 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.str.LPSZ;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -170,7 +174,7 @@ public class DispatcherWriterQueueTest {
                         new HttpServerConfigurationBuilder()
                                 .withReceiveBufferSize(50)
                 )
-                .withAlterTableMaxWaitTimeout(10)
+                .withAlterTableStartWaitTimeout(10)
                 .run((engine) -> {
             setupSql(engine);
             try {
@@ -183,8 +187,8 @@ public class DispatcherWriterQueueTest {
                     // Writer locked, supposed to return timeout error
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=alter+table+x+add+column+y+int HTTP/1.1\r\n",
-                            "82\r\n" +
-                                    "{\"query\":\"alter table x add column y int\",\"error\":\"Timeout expired on waiting for the ALTER TABLE execution result\",\"position\":12}\r\n" +
+                            "80\r\n" +
+                                    "{\"query\":\"alter table x add column y int\",\"error\":\"Timeout expired on waiting for the ALTER TABLE execution start\",\"position\":0}\r\n" +
                                     "00\r\n" +
                                     "\r\n"
                     );
@@ -195,21 +199,66 @@ public class DispatcherWriterQueueTest {
         });
     }
 
+    @Test
+    public void testAlterTableAddIndexContinuesAfterStartTimeoutExpired() throws Exception {
+        HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
+                )
+                .withAlterTableStartWaitTimeout(500_000)
+                .withAlterTableMaxtWaitTimeout(20_000_000)
+                .withFilesFacade(new FilesFacadeImpl() {
+                    @Override
+                    public long openRW(LPSZ name) {
+                        if (Chars.endsWith(name, "x/default/s.v")) {
+                            try {
+                                Thread.sleep(600);
+                            } catch (InterruptedException e) {
+                                e.printStackTrace();
+                            }
+                        }
+                        return super.openRW(name);
+                    }
+                });
+
+        runAlterOnBusyTable((writer, rdr) -> {
+                    TableWriterMetadata metadata = writer.getMetadata();
+                    int columnIndex = metadata.getColumnIndex("s");
+                    Assert.assertTrue(metadata.isColumnIndexed(columnIndex));
+                },
+                1,
+                0,
+                queryTestBuilder,
+                "alter+table+x+alter+column+s+add+index");
+    }
+
     private void runAlterOnBusyTable(
             final AlterVerifyAction alterVerifyAction,
             int httpWorkers,
             int errorsExpected,
             final String... httpAlterQueries
     ) throws Exception {
-        new HttpQueryTestBuilder()
+        HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
                 .withTempFolder(temp)
                 .withWorkerCount(httpWorkers)
                 .withHttpServerConfigBuilder(
-                        new HttpServerConfigurationBuilder()
-                                .withReceiveBufferSize(50)
+                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
                 )
-                .withAlterTableMaxWaitTimeout(2_000_000)
-                .run((engine) -> {
+                .withAlterTableStartWaitTimeout(2_000_000);
+
+        runAlterOnBusyTable(alterVerifyAction, httpWorkers, errorsExpected, queryTestBuilder, httpAlterQueries);
+    }
+
+    private void runAlterOnBusyTable(
+            AlterVerifyAction alterVerifyAction,
+            int httpWorkers,
+            int errorsExpected,
+            HttpQueryTestBuilder queryTestBuilder,
+            final String... httpAlterQueries
+    ) throws Exception {
+        queryTestBuilder.run((engine) -> {
             setupSql(engine);
             compiler.compile("create table IF NOT EXISTS x as (" +
                     " select rnd_symbol('a', 'b', 'c') as s," +
@@ -263,10 +312,10 @@ public class DispatcherWriterQueueTest {
                 throw error;
             }
 
-            Assert.assertEquals(0, finished.getCount());
             Assert.assertEquals(errorsExpected, errors.get());
+            Assert.assertEquals(0, finished.getCount());
             engine.releaseAllReaders();
-            try(TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
                 alterVerifyAction.run(writer, rdr);
             }
             writer.close();
