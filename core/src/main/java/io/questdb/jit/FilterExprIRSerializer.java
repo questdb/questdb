@@ -118,7 +118,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         int options = debug ? 1 : 0;
         int typeSize = arithmeticContext.globalTypeSize;
         if (typeSize > 0) {
-            // typeSize is 2 ^ n, so number of trailing zeros is equal to log2
+            // typeSize is 2^n, so number of trailing zeros is equal to log2
             int log2 = Integer.numberOfTrailingZeros(typeSize);
             options = options | (log2 << 1);
         }
@@ -455,11 +455,14 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         }
     }
 
-    private static boolean isTopLevelArithmeticOperation(ExpressionNode node) {
+    private static boolean isTopLevelOperation(ExpressionNode node) {
+        final CharSequence token = node.token;
+        if (SqlKeywords.isNotKeyword(token)) {
+            return true;
+        }
         if (node.paramCount < 2) {
             return false;
         }
-        final CharSequence token = node.token;
         if (Chars.equals(token, "=")) {
             return true;
         }
@@ -521,10 +524,12 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         }
 
         public void onNodeDescended(final ExpressionNode node) {
-            if (rootNode == null && isTopLevelArithmeticOperation(node)) {
+            boolean columnNode = node.type == ExpressionNode.LITERAL;
+            if (rootNode == null && (isTopLevelOperation(node) || columnNode)) {
                 rootNode = node;
                 constantTypeCode = UNDEFINED_CODE;
-                expressionType = null;
+                // Root column node implies boolean expression
+                expressionType = columnNode ? ExpressionType.BOOLEAN : null;
             }
         }
 

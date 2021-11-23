@@ -107,6 +107,18 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testBooleanColumnAsRootNode() throws Exception {
+        serialize("aboolean and anint > 0");
+        assertIR("(i32 0L)(i32 anint)(>)(i8 aboolean)(&&)(ret)");
+    }
+
+    @Test
+    public void testNegatedBooleanColumnAsRootNode() throws Exception {
+        serialize("not aboolean and anint > 0");
+        assertIR("(i32 0L)(i32 anint)(>)(i8 aboolean)(!)(&&)(ret)");
+    }
+
+    @Test
     public void testBooleanOperators() throws Exception {
         serialize("aboolean and not aboolean or aboolean");
         assertIR("(i8 aboolean)(i8 aboolean)(!)(i8 aboolean)(&&)(||)(ret)");
@@ -227,8 +239,8 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testBooleanConstant() throws Exception {
-        serialize("aboolean = true or aboolean = false");
-        assertIR("(i8 0L)(i8 aboolean)(=)(i8 1L)(i8 aboolean)(=)(||)(ret)");
+        serialize("aboolean = true or not aboolean = not false");
+        assertIR("(i8 0L)(!)(i8 aboolean)(=)(!)(i8 1L)(i8 aboolean)(=)(||)(ret)");
     }
 
     @Test
@@ -258,13 +270,26 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testOptionsSingleSize() throws Exception {
         Map<String, Integer> filterToOptions = new HashMap<>();
+        // 1B
+        filterToOptions.put("not aboolean", 0b00001000);
         filterToOptions.put("abyte = 0", 0b00001000);
+        filterToOptions.put("ageobyte <> null", 0b00001000);
+        // 2B
         filterToOptions.put("ashort = 0", 0b00001010);
+        filterToOptions.put("ageoshort <> null", 0b00001010);
+        filterToOptions.put("achar = 'a'", 0b00001010);
+        // 4B
         filterToOptions.put("anint = 0", 0b00001100);
+        filterToOptions.put("ageoint <> null", 0b00001100);
         filterToOptions.put("afloat = 0", 0b00001100);
-        filterToOptions.put("afloat = 0 or anint = 0", 0b00001100);
+        filterToOptions.put("asymbol <> null", 0b00001100);
+        // 8B
         filterToOptions.put("along = 0", 0b00001110);
+        filterToOptions.put("ageolong <> null", 0b00001110);
+        filterToOptions.put("adate <> null", 0b00001110);
+        filterToOptions.put("atimestamp <> null", 0b00001110);
         filterToOptions.put("adouble = 0", 0b00001110);
+        filterToOptions.put("afloat = 0 or anint = 0", 0b00001100);
         filterToOptions.put("along = 0 or adouble = 0", 0b00001110);
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
@@ -277,9 +302,13 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testOptionsMixedSizes() throws Exception {
         Map<String, Integer> filterToOptions = new HashMap<>();
+        // 2B
+        filterToOptions.put("aboolean or ashort = 0", 0b00010010);
         filterToOptions.put("abyte = 0 or ashort = 0", 0b00010010);
+        // 4B
         filterToOptions.put("anint = 0 or abyte = 0", 0b00010100);
         filterToOptions.put("afloat = 0 or abyte = 0", 0b00010100);
+        // 8B
         filterToOptions.put("along = 0 or ashort = 0", 0b00010110);
         filterToOptions.put("adouble = 0 or ashort = 0", 0b00010110);
         filterToOptions.put("afloat = 0 or adouble = 0", 0b00010110);
@@ -294,6 +323,11 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     @Test(expected = SqlException.class)
     public void testUnsupportedSingleConstantExpression() throws Exception {
         serialize("true");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedSingleNonBooleanColumnExpression() throws Exception {
+        serialize("anint");
     }
 
     @Test(expected = SqlException.class)
@@ -386,8 +420,8 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
         serialize("ageolong = 0");
     }
 
-    private int serialize(CharSequence seq) throws SqlException {
-        return serialize(seq, false, false);
+    private void serialize(CharSequence seq) throws SqlException {
+        serialize(seq, false, false);
     }
 
     private int serialize(CharSequence seq, boolean scalar, boolean debug) throws SqlException {
