@@ -272,18 +272,19 @@ inline static void avx2_mul(asmjit::x86::Compiler &c, jit_value_t &dst, jit_valu
             //            __m256i product = _mm256_blendv_epi8(mask,muleven,mulodd);        // interleave even and odd
             //            return product
         {
-            asmjit::x86::Ymm y2 = c.newYmm();
-            c.vpsrlw(y2, lhs.ymm(), 8);
-            asmjit::x86::Ymm y3 = c.newYmm();
-            c.vpsrlw(y3, rhs.ymm(), 8);
-            c.vpmullw(y2, y3, y2);
-            c.vpmullw(lhs.ymm(), rhs.ymm(), lhs.ymm());
-            c.vpsllw(rhs.ymm(), y2, 8);
+            asmjit::x86::Ymm aodd = c.newYmm();
+            c.vpsrlw(aodd, lhs.ymm(), 8);
+            asmjit::x86::Ymm bodd = c.newYmm();
+            c.vpsrlw(bodd, rhs.ymm(), 8);
+            c.vpmullw(lhs.ymm(), lhs.ymm(), rhs.ymm()); // muleven
+            c.vpmullw(aodd, aodd, bodd); // mulodd
+            c.vpsllw(aodd, aodd, 8); // mulodd
             uint8_t array[] = {255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0,
                                255, 0, 255, 0, 255, 0, 255, 0, 255, 0};
             asmjit::x86::Mem c0 = c.newConst(asmjit::ConstPool::kScopeLocal, &array, 32);
-            c.vmovdqa(y2, c0);
-            c.vpblendvb(dst.ymm(), y2, lhs.ymm(), rhs.ymm());
+            asmjit::x86::Ymm mask = c.newYmm();
+            c.vmovdqa(mask, c0);
+            c.vpblendvb(dst.ymm(), aodd, lhs.ymm(), mask);
         }
             break;
         case i16:
