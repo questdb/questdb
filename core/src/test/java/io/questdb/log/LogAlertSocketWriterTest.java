@@ -285,7 +285,11 @@ public class LogAlertSocketWriterTest {
             try {
                 LogAlertSocketWriter.readFile(fileName, 0, 0, ff);
             } catch (LogError e) {
-                Assert.assertEquals("Cannot read VTJWCPSWHY [errno=2]", e.getMessage());
+                String message = e.getMessage();
+                Assert.assertTrue(
+                        message.equals("Template file is too big") ||
+                                message.startsWith("Cannot read VTJWCPSWHY [errno=")
+                );
             }
         }
     }
