@@ -137,6 +137,7 @@ public class HttpLogAlertBuilder extends LogRecordSink {
 
                 default:
                     put(c);
+                    break;
             }
         }
         return this;
