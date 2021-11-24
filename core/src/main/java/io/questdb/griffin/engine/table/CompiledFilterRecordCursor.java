@@ -363,7 +363,8 @@ class CompiledFilterRecordCursor implements RecordCursor {
             return columnIndexes.getQuick(columnIndex);
         }
 
-        void getLong256(long addr, CharSink sink) {
+        void getLong256(long offset, CharSink sink) {
+            final long addr = offset + Long.BYTES * 4;
             final long a, b, c, d;
             a = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4);
             b = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3);
@@ -373,8 +374,8 @@ class CompiledFilterRecordCursor implements RecordCursor {
         }
 
         void getLong256(int columnIndex, Long256Acceptor sink) {
-            long columnAddress = getColumnAddress(columnIndex);
-            long addr = columnAddress + index * Long.BYTES * 4;
+            final long columnAddress = getColumnAddress(columnIndex);
+            final long addr = columnAddress + index * Long256.BYTES  + Long.BYTES * 4;
             sink.setAll(
                     Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4),
                     Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3),
