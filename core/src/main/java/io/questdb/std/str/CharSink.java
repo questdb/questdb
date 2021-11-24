@@ -30,9 +30,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 
 public interface CharSink {
 
-    default int encodeSurrogate(char c, CharSequence in, int pos, int hi) {
-        throw new UnsupportedOperationException();
-    }
+    int encodeSurrogate(char c, CharSequence in, int pos, int hi);
 
     default CharSink encodeUtf8(CharSequence cs) {
         return encodeUtf8(cs, 0, cs.length());

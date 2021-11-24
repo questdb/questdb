@@ -190,6 +190,25 @@ public class CharsTest {
         }
     }
 
+    @Test
+    public void testIsQuoted() {
+        Assert.assertTrue(Chars.isQuoted("'banana'"));
+        Assert.assertTrue(Chars.isQuoted("''"));
+        Assert.assertTrue(Chars.isQuoted("\"banana\""));
+        Assert.assertTrue(Chars.isQuoted("\"\""));
+    }
+
+    @Test
+    public void testIsNotQuoted() {
+        Assert.assertFalse(Chars.isQuoted("'banana\""));
+        Assert.assertFalse(Chars.isQuoted("banana\""));
+        Assert.assertFalse(Chars.isQuoted("\"banana"));
+        Assert.assertFalse(Chars.isQuoted("\"banana'"));
+        Assert.assertFalse(Chars.isQuoted("'"));
+        Assert.assertFalse(Chars.isQuoted("\""));
+        Assert.assertFalse(Chars.isQuoted("banana"));
+    }
+
     private void assertThat(String expected, ObjList<Path> list) {
         Assert.assertEquals(expected, list.toString());
         for (int i = 0, n = list.size(); i < n; i++) {

@@ -409,7 +409,8 @@ public final class Chars {
             return false;
         }
 
-        return isQuote(s.charAt(0)) && isQuote(s.charAt(s.length() - 1));
+        char open = s.charAt(0);
+        return isQuote(open) && open == s.charAt(s.length() - 1);
     }
 
     public static int lastIndexOf(CharSequence s, char c) {

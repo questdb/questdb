@@ -100,7 +100,11 @@ public class LogAlertSocketWriterTest {
                             "    },\n" +
                             "    \"Annotations\": {\n" +
                             "      \"description\": \"ERROR/GLOBAL/GLOBAL/GLOBAL/GLOBAL\",\n" +
-                            "      \"message\": \"\\\\$Sîne klâwen durh die wolken sint geslagen,er stîget ûf mit grôzer kraft,ich sih in grâwen tägelîch als er wil tagen,den tac, der \\\"im\\\" \\\\${KARTOFEN} geselleschafterwenden wil, dem werden man,den ich mit sorgen în verliez.ich bringe in hinnen, ob ich kan.sîn vil manegiu tugent michz leisten hiez.\\\\$\"\n" +
+                            "      \"message\": \"\\\\$Sîne klâwen durh die wolken sint geslagen,er " +
+                            "stîget ûf mit grôzer kraft,ich sih in grâwen tägelîch als er wil tagen,den " +
+                            "tac, der \\\"im\\\" \\\\${KARTOFEN} geselleschafterwenden wil, dem werden " +
+                            "man,den ich mit sorgen în verliez.ich bringe in hinnen, ob ich kan.sîn vil " +
+                            "manegiu tugent michz leisten hiez.\\\\$\"\n" +
                             "    }\n" +
                             "  }\n" +
                             "]",
