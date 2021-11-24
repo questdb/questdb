@@ -115,5 +115,14 @@ public final class AllowAllSqlSecurityContext {
         public long getNow() {
             return 0;
         }
+
+        @Override
+        public int getJitMode() {
+            return SqlExecutionContext.JIT_MODE_ENABLED;
+        }
+
+        @Override
+        public void setJitMode(int jitMode) {
+        }
     };
 }
