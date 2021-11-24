@@ -1,5 +1,5 @@
 import React, { useContext, useEffect, useState } from "react"
-import Editor, { Monaco } from "@monaco-editor/react"
+import Editor, { Monaco, loader } from "@monaco-editor/react"
 import dracula from "./dracula"
 import { editor } from "monaco-editor"
 import { theme } from "../../../theme"
@@ -30,6 +30,12 @@ import {
   language as QuestDBLanguage,
 } from "./questdb-sql"
 import { color } from "../../../utils"
+
+loader.config({
+  paths: {
+    vs: "/vs",
+  },
+})
 
 type IStandaloneCodeEditor = editor.IStandaloneCodeEditor
 

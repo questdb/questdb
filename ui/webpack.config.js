@@ -75,6 +75,16 @@ const devPlugins = [
       files: "./src/**/*.ts[x]",
     },
   }),
+  new CopyWebpackPlugin({
+    patterns: [
+      {
+        from: "node_modules/monaco-editor/min/vs/loader.js",
+        to: "vs/loader.js",
+      },
+      { from: "node_modules/monaco-editor/min/vs/editor", to: "vs/editor" },
+      { from: "node_modules/monaco-editor/min/vs/base", to: "vs/base" },
+    ],
+  }),
 ]
 
 const devLoaders = [
@@ -86,7 +96,17 @@ const devLoaders = [
 ]
 
 const prodPlugins = [
-  new CopyWebpackPlugin({ patterns: [{ from: "./assets/", to: "assets/" }] }),
+  new CopyWebpackPlugin({
+    patterns: [
+      { from: "./assets/", to: "assets/" },
+      {
+        from: "node_modules/monaco-editor/min/vs/loader.js",
+        to: "vs/loader.js",
+      },
+      { from: "node_modules/monaco-editor/min/vs/editor", to: "vs/editor" },
+      { from: "node_modules/monaco-editor/min/vs/base", to: "vs/base" },
+    ],
+  }),
 ]
 
 module.exports = {
