@@ -30,12 +30,12 @@ import io.questdb.std.str.CharSink;
 public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     public static final ObjectFactory<InsertModel> FACTORY = InsertModel::new;
     private final CharSequenceHashSet columnSet = new CharSequenceHashSet();
-    private final ObjList<ObjList<ExpressionNode>> rowValuesTuples = new ObjList<>();
+    private final ObjList<ObjList<ExpressionNode>> rowTupleValues = new ObjList<>();
+    private final IntList endOfRowTupleValuesPositions = new IntList();
     private final IntList columnPositions = new IntList();
     private ExpressionNode tableName;
     private QueryModel queryModel;
     private int selectKeywordPosition;
-    private int endOfValuesPosition;
     private long batchSize = -1;
     private long commitLag = 0;
 
@@ -50,8 +50,8 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return false;
     }
 
-    public void addRow(ObjList<ExpressionNode> row) {
-        rowValuesTuples.add(row);
+    public void addRowTupleValues(ObjList<ExpressionNode> row) {
+        rowTupleValues.add(row);
     }
 
     @Override
@@ -60,12 +60,12 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.queryModel = null;
         this.columnSet.clear();
         this.columnPositions.clear();
-        for (int i = 0; i < this.rowValuesTuples.size(); i++) {
-            this.rowValuesTuples.get(i).clear();
+        for (int i = 0, n = this.rowTupleValues.size(); i < n; i++) {
+            this.rowTupleValues.get(i).clear();
         }
-        this.rowValuesTuples.clear();
+        this.rowTupleValues.clear();
         this.selectKeywordPosition = 0;
-        this.endOfValuesPosition = 0;
+        this.endOfRowTupleValuesPositions.clear();
         this.batchSize = -1;
         this.commitLag = 0;
     }
@@ -78,8 +78,8 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return columnSet;
     }
 
-    public ObjList<ExpressionNode> getRowValues(int index) {
-        return rowValuesTuples.get(index);
+    public ObjList<ExpressionNode> getRowTupleValues(int index) {
+        return rowTupleValues.get(index);
     }
 
     public int getSelectKeywordPosition() {
@@ -119,7 +119,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.commitLag = lag;
     }
 
-    public int getRowTupleCount() { return rowValuesTuples.size(); }
+    public int getRowTupleCount() { return rowTupleValues.size(); }
 
     public ExpressionNode getTableName() {
         return tableName;
@@ -129,12 +129,12 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.tableName = tableName;
     }
 
-    public int getEndOfValuesPosition() {
-        return endOfValuesPosition;
+    public int getEndOfRowTupleValuesPosition(int index) {
+        return endOfRowTupleValuesPositions.get(index);
     }
 
-    public void setEndOfValuesPosition(int endOfValuesPosition) {
-        this.endOfValuesPosition = endOfValuesPosition;
+    public void addEndOfRowTupleValuesPosition(int endOfValuesPosition) {
+        endOfRowTupleValuesPositions.add(endOfValuesPosition);
     }
 
     @Override
@@ -164,14 +164,14 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
             queryModel.toSink(sink);
         } else {
             sink.put("values ");
-            for (int t = 0; t < rowValuesTuples.size(); t++) {
-                ObjList<ExpressionNode> columnValues = rowValuesTuples.get(t);
+            for (int t = 0, s = rowTupleValues.size(); t < s; t++) {
+                ObjList<ExpressionNode> rowValues = rowTupleValues.get(t);
                 sink.put('(');
-                for (int i = 0, m = columnValues.size(); i < m; i++) {
+                for (int i = 0, m = rowValues.size(); i < m; i++) {
                     if (i > 0) {
                         sink.put(", ");
                     }
-                    sink.put(columnValues.getQuick(i));
+                    sink.put(rowValues.getQuick(i));
                 }
                 sink.put(')');
             }

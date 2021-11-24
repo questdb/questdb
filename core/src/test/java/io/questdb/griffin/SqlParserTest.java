@@ -2775,7 +2775,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testInsertColumnValueMismatch() throws Exception {
         assertSyntaxError("insert into x (a,b) values (?)",
-                15,
+                29,
                 "value count does not match column count",
                 modelOf("x")
                         .col("a", ColumnType.INT)

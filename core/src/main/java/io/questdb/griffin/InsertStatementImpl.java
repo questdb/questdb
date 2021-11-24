@@ -92,7 +92,7 @@ public class InsertStatementImpl implements InsertStatement {
     }
 
     private void initContext(SqlExecutionContext executionContext) throws SqlException {
-        for (int i = 0; i < insertRows.size(); i++) {
+        for (int i = 0, n = insertRows.size(); i < n; i++) {
             InsertRowImpl row = insertRows.get(i);
             row.initContext(executionContext);
         }
@@ -103,7 +103,7 @@ public class InsertStatementImpl implements InsertStatement {
 
         @Override
         public long execute() {
-            for (int i = 0; i < insertRows.size(); i++)  {
+            for (int i = 0, n = insertRows.size(); i < n; i++) {
                 InsertRowImpl row = insertRows.get(i);
                 row.append(writer);
             }

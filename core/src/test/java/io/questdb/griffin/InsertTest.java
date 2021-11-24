@@ -505,7 +505,7 @@ public class InsertTest extends AbstractGriffinTest {
                 compiler.compile("insert into balances values (1, 'USD')", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(37, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "not enough values");
+                TestUtils.assertContains(e.getFlyweightMessage(), "row value count does not match column count [expected=3, actual=2, tuple=1]");
             }
         });
     }
@@ -841,8 +841,8 @@ public class InsertTest extends AbstractGriffinTest {
             try {
                 compiler.compile("insert into trades VALUES (1, 'USDJPY'), ('USDFJD');", sqlExecutionContext);
             } catch (SqlException e) {
-                Assert.assertEquals(51, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "not enough values [expected=2, actual=1, row=2]");
+                Assert.assertEquals(50, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "row value count does not match column count [expected=2, actual=1, tuple=2]");
             }
         });
     }

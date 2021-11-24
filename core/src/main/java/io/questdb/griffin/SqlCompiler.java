@@ -1797,11 +1797,11 @@ public class SqlCompiler implements Closeable {
         )) {
             final long structureVersion = reader.getVersion();
             final RecordMetadata metadata = reader.getMetadata();
-            final InsertStatementImpl insertStatement = new InsertStatementImpl(engine, Chars.toString(name.token), structureVersion);
+            final InsertStatementImpl insertStatement = new InsertStatementImpl(engine, reader.getTableName(), structureVersion);
             final int writerTimestampIndex = metadata.getTimestampIndex();
             final CharSequenceHashSet columnSet = model.getColumnSet();
             final int columnSetSize = columnSet.size();
-            for (int t = 0; t < model.getRowTupleCount(); t++) {
+            for (int t = 0, n = model.getRowTupleCount(); t < n; t++) {
                 Function timestampFunction = null;
                 listColumnFilter.clear();
                 if (columnSetSize > 0) {
@@ -1809,7 +1809,7 @@ public class SqlCompiler implements Closeable {
                     for (int i = 0; i < columnSetSize; i++) {
                         int index = metadata.getColumnIndexQuiet(columnSet.get(i));
                         if (index > -1) {
-                            final ExpressionNode node = model.getRowValues(t).getQuick(i);
+                            final ExpressionNode node = model.getRowTupleValues(t).getQuick(i);
 
                                 Function function = functionParser.parseFunction(
                                         node,
@@ -1840,13 +1840,13 @@ public class SqlCompiler implements Closeable {
                         }
                     } else {
                         final int columnCount = metadata.getColumnCount();
-                        final ObjList<ExpressionNode> values = model.getRowValues(t);
+                        final ObjList<ExpressionNode> values = model.getRowTupleValues(t);
                         final int valueCount = values.size();
                         if (columnCount != valueCount) {
                             throw SqlException.$(
-                                    model.getEndOfValuesPosition(),
-                                    "not enough values [expected=").put(columnCount).put(", actual=").put(values.size())
-                                    .put(", row=").put(t+1).put(']');
+                                    model.getEndOfRowTupleValuesPosition(t),
+                                    "row value count does not match column count [expected=").put(columnCount).put(", actual=").put(values.size())
+                                    .put(", tuple=").put(t+1).put(']');
                         }
                         valueFunctions = new ObjList<>(columnCount);
 
@@ -1854,21 +1854,21 @@ public class SqlCompiler implements Closeable {
                             final ExpressionNode node = values.getQuick(i);
 
                             Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
-                                validateAndConsume(
-                                        model,
-                                        t,
-                                        valueFunctions,
-                                        metadata,
-                                        writerTimestampIndex,
-                                        i,
-                                        i,
-                                        function,
-                                        node.position,
-                                        executionContext.getBindVariableService()
-                                );
+                            validateAndConsume(
+                                    model,
+                                    t,
+                                    valueFunctions,
+                                    metadata,
+                                    writerTimestampIndex,
+                                    i,
+                                    i,
+                                    function,
+                                    node.position,
+                                    executionContext.getBindVariableService()
+                            );
 
-                                if (writerTimestampIndex == i) {
-                                    timestampFunction = function;
+                            if (writerTimestampIndex == i) {
+                                timestampFunction = function;
                             }
                         }
                     }
@@ -2031,12 +2031,14 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(tableName.position, "literal expected");
         }
 
-        int rowTupleCount = model.getRowTupleCount();
         int columnSetSize = model.getColumnSet().size();
 
-        for (int i = 0; i < rowTupleCount; i++) {
-            if (columnSetSize > 0 && columnSetSize != model.getRowValues(i).size()) {
-                throw SqlException.$(model.getColumnPosition(0), "row value count does not match column count [tuple=" + (i + 1) + "]");
+        for (int i = 0, n = model.getRowTupleCount(); i < n; i++) {
+            if (columnSetSize > 0 && columnSetSize != model.getRowTupleValues(i).size()) {
+                throw SqlException.$(
+                        model.getEndOfRowTupleValuesPosition(i),
+                        "row value count does not match column count [expected=").put(columnSetSize).put(", actual=").put(model.getRowTupleValues(i).size())
+                        .put(", tuple=").put(i+1).put(']');
             }
         }
 
@@ -2280,7 +2282,7 @@ public class SqlCompiler implements Closeable {
             if (metadataColumnIndex == writerTimestampIndex) {
                 return function;
             }
-           if (ColumnType.isGeoHash(columnType)) {
+            if (ColumnType.isGeoHash(columnType)) {
                 switch (ColumnType.tagOf(function.getType())) {
                     case ColumnType.GEOBYTE:
                     case ColumnType.GEOSHORT:
@@ -2303,7 +2305,7 @@ public class SqlCompiler implements Closeable {
         throw SqlException.inconvertibleTypes(
                 functionPosition,
                 function.getType(),
-                model.getRowValues(tupleIndex).getQuick(bottomUpColumnIndex).token,
+                model.getRowTupleValues(tupleIndex).getQuick(bottomUpColumnIndex).token,
                 metadata.getColumnType(metadataColumnIndex),
                 metadata.getColumnName(metadataColumnIndex)
         );

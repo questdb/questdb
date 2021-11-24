@@ -1105,18 +1105,15 @@ public final class SqlParser {
                     rowValues.add(expectExpr(lexer));
                 } while (Chars.equals((tok = tok(lexer, "','")), ','));
                 expectTok(tok, lexer.lastTokenPosition(), ')');
-                model.addRow(rowValues);
-                // Next token should be ',' for row separation or ';' for end of statement
-                if (lexer.hasNext()) {
-                    tok = optTok(lexer);
-                    if (Chars.equals(tok, ";")){
-                        break;
-                    }
-                    expectTok(tok , lexer.lastTokenPosition(), ',');
+                model.addRowTupleValues(rowValues);
+                model.addEndOfRowTupleValuesPosition(lexer.lastTokenPosition());
+                tok = optTok(lexer);
+                // no more tokens or ';' should indicate end of statement
+                if (tok == null || Chars.equals(tok, ';')) {
+                    return model;
                 }
-            } while (lexer.hasNext());
-            model.setEndOfValuesPosition(lexer.lastTokenPosition());
-            return model;
+                expectTok(tok, lexer.lastTokenPosition(), ',');
+            } while (true);
         }
 
         throw err(lexer, "'select' or 'values' expected");
