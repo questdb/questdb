@@ -41,7 +41,6 @@ export const getQueryFromCursor = (
 ): Request | undefined => {
   const text = editor.getValue()
   const position = editor.getCursorPosition()
-  console.log(position)
   let row = 0
 
   let column = 0

@@ -17,6 +17,10 @@ const Dracula: editor.IStandaloneThemeData = {
       token: "string",
     },
     {
+      foreground: "50fa7b",
+      token: "number",
+    },
+    {
       foreground: "f1fa8c",
       token: "string.sql",
     },
@@ -255,6 +259,7 @@ const Dracula: editor.IStandaloneThemeData = {
     "editor.foreground": "#f8f8f2",
     "editor.hoverHighlightBackground": "#8be9fd50",
     "editor.lineHighlightBorder": "#44475a",
+    "editor.lineHighlightBackground": "#44475a",
     "editor.rangeHighlightBackground": "#bd93f915",
     "editor.selectionBackground": "#44475a",
     "editor.selectionHighlightBackground": "#424450",

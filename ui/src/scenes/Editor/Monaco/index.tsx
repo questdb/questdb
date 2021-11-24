@@ -281,7 +281,7 @@ const MonacoEditor = () => {
         options={{
           fontSize: 14,
           fontFamily: theme.fontMonospace,
-          renderLineHighlight: "none",
+          renderLineHighlight: "gutter",
           minimap: {
             enabled: false,
           },
