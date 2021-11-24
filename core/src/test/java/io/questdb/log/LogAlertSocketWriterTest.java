@@ -79,7 +79,7 @@ public class LogAlertSocketWriterTest {
             Assert.assertNotNull(alertBuilder);
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
-                            "Host: "+ LogAlertSocket.localHostIp +"\r\n" +
+                            "Host: " + LogAlertSocket.localHostIp + "\r\n" +
                             "User-Agent: QuestDB/7.71.1\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
@@ -120,7 +120,7 @@ public class LogAlertSocketWriterTest {
 
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
-                            "Host: "+ LogAlertSocket.localHostIp +"\r\n" +
+                            "Host: " + LogAlertSocket.localHostIp + "\r\n" +
                             "User-Agent: QuestDB/7.71.1\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
@@ -313,7 +313,11 @@ public class LogAlertSocketWriterTest {
             try {
                 LogAlertSocketWriter.readFile(fileName, buffPtr, 17, ff);
             } catch (LogError e) {
-                Assert.assertEquals("Template file is too big", e.getMessage());
+                String message = e.getMessage();
+                Assert.assertTrue(
+                        message.equals("Template file is too big") ||
+                                message.startsWith("Cannot read VTJWCPSWHY [errno=")
+                );
             }
         } finally {
             if (fd != -1) {
