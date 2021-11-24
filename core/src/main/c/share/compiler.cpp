@@ -46,7 +46,22 @@ static JitGlobalContext gGlobalContext;
 inline static void avx2_not(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &rhs) {
     asmjit::x86::Mem c0 = c.newInt32Const(asmjit::ConstPool::kScopeLocal, -1);
     asmjit::x86::Ymm mask = c.newYmm();
-    c.vpbroadcastd(mask, c0);
+    switch (rhs.dtype()) {
+        case i8:
+            c.vpbroadcastb(mask, c0);
+            break;
+        case i16:
+            c.vpbroadcastw(mask, c0);
+            break;
+        case i32:
+        case f32:
+            c.vpbroadcastd(mask, c0);
+            break;
+        case i64:
+        case f64:
+            c.vpbroadcastq(mask, c0);
+            break;
+    }
     c.vpxor(dst.ymm(), rhs.ymm(), mask);
 }
 
@@ -119,6 +134,26 @@ inline static void avx2_not_null(asmjit::x86::Compiler &c, jit_value_t &dst, jit
         c.vpcmpeqq(rmask, rhs.ymm(), lnulls);
         c.vpor(dst.ymm(), lmask, rmask);
         c.vpxor(dst.ymm(), dst.ymm(), lneg);
+    }
+}
+
+inline static void avx2_not_null(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &rhs) {
+    if(rhs.dtype() == i32) {
+        asmjit::x86::Ymm rmask = c.newYmm();
+        int32_t inulls_a[8] = {int_null, int_null, int_null, int_null, int_null, int_null, int_null, int_null};
+        int32_t ineg_a[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
+        asmjit::x86::Mem inulls = c.newConst(asmjit::ConstPool::kScopeLocal, &inulls_a, 32);
+        asmjit::x86::Mem ineg = c.newConst(asmjit::ConstPool::kScopeLocal, &ineg_a, 32);
+        c.vpcmpeqd(rmask, rhs.ymm(), inulls);
+        c.vpxor(dst.ymm(), rmask, ineg);
+    } else {
+        asmjit::x86::Ymm rmask = c.newYmm();
+        int64_t lnulls_a[4] = {long_null, long_null, long_null, long_null};
+        int64_t lneg_a[4] = {-1ll, -1ll, -1ll, -1ll};
+        asmjit::x86::Mem lneg = c.newConst(asmjit::ConstPool::kScopeLocal, &lneg_a, 32);
+        asmjit::x86::Mem lnulls = c.newConst(asmjit::ConstPool::kScopeLocal, &lnulls_a, 32);
+        c.vpcmpeqq(rmask, rhs.ymm(), lnulls);
+        c.vpxor(dst.ymm(), rmask, lneg);
     }
 }
 
@@ -319,6 +354,141 @@ inline static void avx2_mul(asmjit::x86::Compiler &c, jit_value_t &dst, jit_valu
             break;
         case f64:
             c.vsubpd(dst.ymm(), lhs.ymm(), rhs.ymm());
+            break;
+        default:
+            break;
+    }
+}
+
+inline static void avx2_div_unrolled(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &rhs) {
+    switch (lhs.dtype()) {
+        case i8:
+        case i16:
+        case i32:
+        case i64: {
+            asmjit::x86::Mem lhs_m = c.newStack(32, 32);
+            asmjit::x86::Mem rhs_m = c.newStack(32, 32);
+
+            lhs_m.setSize(32);
+            rhs_m.setSize(32);
+
+            c.vmovdqu(lhs_m, lhs.ymm());
+            c.vmovdqu(rhs_m, rhs.ymm());
+
+            asmjit::x86::Gp a = c.newGpq();
+            asmjit::x86::Gp b = c.newGpq();
+            asmjit::x86::Gp r = c.newGpq();
+            asmjit::x86::Gp ar = c.newGpq();
+
+            switch (lhs.dtype()) {
+                case i8: {
+                    auto size = 1;
+                    auto step = 32;
+
+                    lhs_m.setSize(size);
+                    rhs_m.setSize(size);
+                    for (int32_t i = 0; i < step; ++i) {
+                        lhs_m.setOffset(i * size);
+                        c.movsx(a.r32(), lhs_m);
+                        rhs_m.setOffset(i * size);
+                        c.movsx(b.r32(), rhs_m);
+
+                        c.cdq(r.r32(), a.r32());
+                        c.idiv(r.r32(), a.r32(), b.r32());
+                        c.mov(lhs_m, a.r8());
+                    }
+
+                }
+                    break;
+                case i16: {
+                    auto size = 2;
+                    auto step = 16;
+
+                    lhs_m.setSize(size);
+                    rhs_m.setSize(size);
+
+                    for (int32_t i = 0; i < step; ++i) {
+                        lhs_m.setOffset(i * size);
+                        c.movsx(a.r32(), lhs_m);
+                        rhs_m.setOffset(i * size);
+                        c.movsx(b.r32(), rhs_m);
+                        c.cdq(r.r32(), a.r32());
+                        c.idiv(r.r32(), a.r32(), b.r32());
+                        c.mov(lhs_m, a.r16());
+                    }
+                }
+                    break;
+                case i32: {
+                    auto size = 4;
+                    auto step = 8;
+
+                    lhs_m.setSize(size);
+                    rhs_m.setSize(size);
+
+                    for (int32_t i = 0; i < step; ++i) {
+                        asmjit::Label l_zero = c.newLabel();
+                        lhs_m.setOffset(i * size);
+                        c.mov(a.r32(), lhs_m);
+                        rhs_m.setOffset(i * size);
+                        c.mov(b.r32(), rhs_m);
+                        c.mov(r.r32(), int_null);
+
+                        c.cmp(r.r32(), a.r32());
+                        c.je(l_zero);
+                        c.cmp(r.r32(), b.r32());
+                        c.je(l_zero);
+                        c.test(b.r32(), b.r32());
+                        c.je(l_zero);
+
+                        c.cdq(r.r32(), a.r32());
+                        c.idiv(r.r32(), a.r32(), b.r32());
+                        c.mov(r.r32(), a.r32());
+                        c.bind(l_zero);
+                        c.mov(lhs_m, r.r32());
+                    }
+                }
+                    break;
+                default: {
+                    auto size = 8;
+                    auto step = 4;
+
+                    lhs_m.setSize(size);
+                    rhs_m.setSize(size);
+
+                    for (int32_t i = 0; i < step; ++i) {
+                        asmjit::Label l_zero = c.newLabel();
+                        lhs_m.setOffset(i * size);
+                        c.mov(a, lhs_m);
+                        rhs_m.setOffset(i * size);
+                        c.mov(b, rhs_m);
+                        c.movabs(r, long_null);
+                        c.cmp(r, a);
+                        c.je(l_zero);
+                        c.cmp(r, b);
+                        c.je(l_zero);
+                        c.test(b, b);
+                        c.je(l_zero);
+
+                        c.cqo(r, a);
+                        c.idiv(r, a, b);
+                        c.mov(r, a);
+                        c.bind(l_zero);
+                        c.mov(lhs_m, r);
+                    }
+                }
+                    break;
+            }
+
+            lhs_m.resetOffset();
+            lhs_m.setSize(32);
+            c.vmovdqu(dst.ymm(), lhs_m);
+        }
+            break;
+        case f32:
+            c.vdivps(dst.ymm(), lhs.ymm(), rhs.ymm());
+            break;
+        case f64:
+            c.vdivpd(dst.ymm(), lhs.ymm(), rhs.ymm());
             break;
         default:
             break;
@@ -988,8 +1158,7 @@ struct JitCompiler {
                                     c.je(l_zero);
                                     c.cmp(r, rhs.gp());
                                     c.je(l_zero);
-                                    c.mov(r, rhs.gp());
-                                    c.test(r, r);
+                                    c.test(rhs.gp(), rhs.gp());
                                     c.je(l_zero);
 
                                     c.xor_(r, r);
@@ -1166,7 +1335,7 @@ struct JitCompiler {
                     } else {
                         Ymm r = c.newYmm();
                         jit_value_t v(r, arg.dtype(), arg.dkind());
-                        avx2_not_null(c, v, arg, arg);
+                        avx2_not_null(c, v, arg);
                         avx2_neg(c, arg, arg);
                         avx2_not(c, v, v);
                         avx2_select_byte(c, arg, arg, v);
@@ -1292,12 +1461,12 @@ struct JitCompiler {
                             break;
                         case DIV:
                             if (!null_check || is_float(lhs) || is_float(rhs)) {
-                                avx2_div(c, lhs, lhs, rhs);
+                                avx2_div_unrolled(c, lhs, lhs, rhs);
                             } else {
                                 Ymm r = c.newYmm();
                                 jit_value_t v(r, lhs.dtype(), lhs.dkind());
                                 avx2_not_null(c, v, lhs, rhs);
-                                avx2_div(c, lhs, lhs, rhs);
+                                avx2_div_unrolled(c, lhs, lhs, rhs);
                                 avx2_not(c, v, v);
                                 avx2_select_byte(c, lhs, lhs, v);
                             }
@@ -1381,11 +1550,13 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
     CodeHolder code;
     code.init(gGlobalContext.rt.environment());
     FileLogger logger(stdout);
-    logger.addFlags(FormatOptions::kFlagRegCasts |
-                    FormatOptions::kFlagExplainImms |
-                    FormatOptions::kFlagAnnotations);
-
-    code.setLogger(&logger);
+    bool debug = options & 1;
+    if(debug) {
+        logger.addFlags(FormatOptions::kFlagRegCasts |
+        FormatOptions::kFlagExplainImms |
+        FormatOptions::kFlagAnnotations);
+        code.setLogger(&logger);
+    }
     code.setErrorHandler(&gGlobalContext.errorHandler);
     x86::Compiler c(&code);
     JitCompiler compiler(c);
