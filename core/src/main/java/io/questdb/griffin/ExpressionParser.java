@@ -1011,21 +1011,27 @@ class ExpressionParser {
                         }
                     } else {
                         ExpressionNode last;
+                        // Handle `timestamp with time zone`
                         if ((last = this.opStack.peek()) != null && SqlKeywords.isTimestampKeyword(last.token) && SqlKeywords.isWithKeyword(tok)) {
                             CharSequence withTok = GenericLexer.immutableOf(tok);
                             int withTokPosition = lexer.getPosition();
-
-                            CharSequence timeTok = SqlUtil.fetchNext(lexer);
-                            if (SqlKeywords.isTimeKeyword(timeTok)) {
-                                CharSequence zoneTok = SqlUtil.fetchNext(lexer);
-                                if (SqlKeywords.isZoneKeyword(zoneTok)) {
-                                    // Skip "with time zone" part of "timestamp with time zone" for Postgres compatibility #740, #980
-                                    continue;
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok != null && SqlKeywords.isTimeKeyword(tok)) {
+                                tok = SqlUtil.fetchNext(lexer);
+                                if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
+                                    CharSequence zoneTok = GenericLexer.immutableOf(tok);
+                                    int zoneTokPosition = lexer.getTokenHi();
+                                    tok = SqlUtil.fetchNext(lexer);
+                                    // Next token is string literal, or we are in 'as' part of cast function
+                                    boolean isInActiveCastAs = (castBraceCountStack.size() > 0 && (castBraceCountStack.size() == castAsCount));
+                                    if (tok != null && (isInActiveCastAs|| tok.charAt(0) == '\'')) {
+                                        lexer.backTo(zoneTokPosition, zoneTok);
+                                        continue;
+                                    }
+                                    throw SqlException.$(zoneTokPosition, "String literal expected after 'timestamp with time zone'");
                                 }
                             }
-
                             lexer.backTo(withTokPosition, withTok);
-                            tok = withTok;
                         }
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input
