@@ -26,11 +26,20 @@ package io.questdb.log;
 
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.util.Arrays;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public class LogAlertSocketTest {
 
@@ -91,18 +100,98 @@ public class LogAlertSocketTest {
     }
 
     @Test
-    public void testParseNullSocketAddress() throws Exception {
+    public void testParseSocketNullAddress() throws Exception {
         String[] expectedHosts = {LogAlertSocket.DEFAULT_HOST};
         int[] expectedPorts = {LogAlertSocket.DEFAULT_PORT};
         assertSocketAddress(null, expectedHosts, expectedPorts);
     }
 
     @Test
-    public void testParseBadSocketAddress() throws Exception {
+    public void testParseSocketBadAddress() throws Exception {
         assertLogError("::", "Unexpected ':' found at position 1: ::");
         assertLogError("does not exist", "Invalid host value [does not exist] at position 0 for socketAddress: does not exist");
         assertLogError("localhost:banana", "Invalid port value [banana] at position 10 for socketAddress: localhost:banana");
         assertLogError(",:si", "Invalid port value [si] at position 2 for socketAddress: ,:si");
+    }
+
+    @Test
+    public void testFailOver() throws IOException {
+        try (LogAlertSocket alertSkt = new LogAlertSocket(ff, "localhost:1234,localhost:1243")) {
+            final String ACK = "Ack";
+            final String DEATH_PILL = ".ByE.";
+            final String logMessage = "Something";
+            final HttpLogAlertBuilder builder = new HttpLogAlertBuilder(alertSkt)
+                    .putHeader("localhost")
+                    .setMark();
+
+            // start servers
+            final int numHosts = alertSkt.getNumberOfHosts();
+            Assert.assertEquals(2, numHosts);
+            final CountDownLatch haltLatch = new CountDownLatch(numHosts);
+            final CountDownLatch firstServerCompleted = new CountDownLatch(1);
+            final Thread[] servers = new Thread[numHosts];
+            for (int i = 0; i < numHosts; i++) {
+                final int portNumber = alertSkt.getPorts()[i];
+                servers[i] = new Thread(() -> {
+                    try (
+                            ServerSocket serverSkt = new ServerSocket(portNumber);
+                            Socket clientSkt = serverSkt.accept();
+                            BufferedReader in = new BufferedReader(new InputStreamReader(clientSkt.getInputStream()));
+                            PrintWriter out = new PrintWriter(clientSkt.getOutputStream(), true)
+                    ) {
+                        System.out.printf("Listening on port [%d]%n", portNumber);
+                        StringSink inputLine = new StringSink();
+                        while (true) {
+                            String line = in.readLine();
+                            if (line == null || line.equals(DEATH_PILL)) {
+                                break;
+                            }
+                            inputLine.put(line).put('\n');
+                        }
+                        System.out.printf("Received [%d]:%n%s%n", portNumber, inputLine);
+                        out.print(ACK);
+                        System.out.printf("Sent [%d]: %s%n", portNumber, ACK);
+                    } catch (IOException e) {
+                        Assert.fail(e.getMessage());
+                    } finally {
+                        firstServerCompleted.countDown();
+                        haltLatch.countDown();
+                        System.out.printf("Bye [%d]%n", portNumber);
+                    }
+                });
+                servers[i].start();
+            }
+            alertSkt.connect();
+            alertSkt.send(builder
+                            .rewindToMark()
+                            .put(logMessage)
+                            .put('\n')
+                            .put(DEATH_PILL)
+                            .put('\n')
+                            .$(),
+                    ack -> Assert.assertEquals(ack, ACK)
+            );
+            try {
+                firstServerCompleted.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Assert.fail("timed-out");
+            }
+
+            builder.clear();
+            builder.put(DEATH_PILL).put('\n');
+            for (int i=0; i< numHosts; i++) {
+                alertSkt.send(builder.length(), ack -> Assert.assertEquals(ack, ACK));
+            }
+
+            try {
+                haltLatch.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Assert.fail("timed-out");
+            }
+            for (int i=0; i< servers.length; i++) {
+                Assert.assertEquals(Thread.State.TERMINATED, servers[i].getState());
+            }
+        }
     }
 
     private void assertLogError(String socketAddress, String expected) throws Exception {
@@ -122,8 +211,8 @@ public class LogAlertSocketTest {
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (LogAlertSocket socket = new LogAlertSocket(ff, socketAddress, 1024)) {
-                Assert.assertEquals(expectedHosts.length, socket.getHostPortLimit());
-                Assert.assertEquals(expectedPorts.length, socket.getHostPortLimit());
+                Assert.assertEquals(expectedHosts.length, socket.getNumberOfHosts());
+                Assert.assertEquals(expectedPorts.length, socket.getNumberOfHosts());
                 for (int i = 0; i < expectedHosts.length; i++) {
                     Assert.assertEquals(expectedHosts[i], socket.getHosts()[i]);
                     Assert.assertEquals(expectedPorts[i], socket.getPorts()[i]);

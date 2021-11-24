@@ -39,6 +39,10 @@ public class HttpLogAlertBuilder extends LogRecordSink {
     private long contentLenStart;
     private long bodyStart;
 
+    public HttpLogAlertBuilder(LogAlertSocket laSkt) {
+        this(laSkt.getOutBufferPtr(), laSkt.getOutBufferSize());
+    }
+
     public HttpLogAlertBuilder(long address, long addressSize) {
         super(address, addressSize);
         contentLenStart = _wptr;
@@ -60,13 +64,14 @@ public class HttpLogAlertBuilder extends LogRecordSink {
         return this;
     }
 
-    public void $() {
+    public int $() {
         char[] len = Long.toString(_wptr - bodyStart).toCharArray();
         long q = contentLenStart;
         for (int i = 0, limit = CL_MARKER_LEN - len.length; i < limit; i++) {
             Chars.asciiPut(' ', q++);
         }
         Chars.asciiCopyTo(len, 0, len.length, q);
+        return length();
     }
 
     public HttpLogAlertBuilder setMark() {

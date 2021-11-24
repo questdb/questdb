@@ -264,7 +264,7 @@ public class LogAlertSocketWriterTest {
                 Unsafe.getUnsafe().putByte(p++, (byte) 0);
             }
 
-            DirectByteCharSequence file = LogAlertSocketWriter.readFile(fileName, buffPtr, buffPtr + buffSize, ff);
+            DirectByteCharSequence file = LogAlertSocketWriter.readFile(fileName, buffPtr, buffSize, ff);
             Assert.assertEquals(bytes.length, file.length());
             Assert.assertEquals(fileContent, Chars.stringFromUtf8Bytes(buffPtr, buffPtr + file.length()));
             ff.remove(path);
@@ -290,26 +290,31 @@ public class LogAlertSocketWriterTest {
     public void testReadFileTooBig() {
         final String fileName = rand.nextString(10);
         final String fileContent = "Pchnąć w tę łódź jeża lub osiem skrzyń fig";
-        final int buffSize = fileContent.length() * 3;
+        final int buffSize = fileContent.length() * 4;
         final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
         Path path = new Path();
+        long fd = -1;
         try {
+
             final byte[] bytes = fileContent.getBytes(Files.UTF_8);
+            final int len = bytes.length;
             long p = buffPtr;
-            for (int i = 0; i < bytes.length; i++) {
+            for (int i = 0; i < len; i++) {
                 Unsafe.getUnsafe().putByte(p++, bytes[i]);
             }
+
             path.put(fileName).$();
-            long fd = ff.openAppend(path);
-            ff.truncate(fd, 0);
-            ff.append(fd, buffPtr, bytes.length);
-            ff.close(fd);
+            fd = ff.openCleanRW(path, buffSize);
+            ff.append(fd, buffPtr, len);
             try {
-                LogAlertSocketWriter.readFile(fileName, 0, 0, ff);
+                LogAlertSocketWriter.readFile(fileName, buffPtr, 17, ff);
             } catch (LogError e) {
                 Assert.assertEquals("Template file is too big", e.getMessage());
             }
         } finally {
+            if (fd != -1) {
+                ff.close(fd);
+            }
             ff.remove(path);
             path.close();
             Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);

@@ -196,7 +196,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                     readFile(
                             location,
                             socket.getInBufferPtr(),
-                            socket.getInBufferLimit(),
+                            socket.getInBufferSize(),
                             ff
                     ),
                     now,
@@ -209,46 +209,54 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         ObjList<Sinkable> components = dollar$.getLocationComponents();
         if (dollar$.getKeyOffset(MESSAGE_ENV) < 0 || components.size() < 3) {
             throw new LogError(String.format(
-                    "Bad template, no ${%s} declaration found %s",
-                    MESSAGE_ENV,
+                    "Bad template, no %s declaration found %s",
+                    MESSAGE_ENV_VALUE,
                     location));
         }
-        alertBuilder = new HttpLogAlertBuilder(socket.getOutBufferPtr(), socket.getOutBufferSize())
+        alertBuilder = new HttpLogAlertBuilder(socket)
                 .putHeader(LogAlertSocket.localHostIp)
                 .put(components.getQuick(0))
                 .setMark(); // mark the end of the first static block in buffer
-        alertFooter = components.getQuick(2).toString();
+        alertFooter = components.getQuick(2).toString(); // this is the last static block
     }
 
     @VisibleForTesting
     void onLogRecord(LogRecordSink logRecord) {
         final int len = logRecord.length();
         if ((logRecord.getLevel() & level) != 0 && len > 0) {
-            alertBuilder
-                    .rewindToMark()
-                    .put(logRecord)
-                    .put(alertFooter)
-                    .$();
-            socket.send(alertBuilder.length());
+            socket.send(
+                    alertBuilder
+                            .rewindToMark()
+                            .put(logRecord)
+                            .put(alertFooter)
+                            .$()
+            );
         }
     }
 
     @VisibleForTesting
-    static DirectByteCharSequence readFile(String location, long address, long limit, FilesFacade ff) {
+    static DirectByteCharSequence readFile(String location, long address, long addressSize, FilesFacade ff) {
         try (Path path = new Path()) {
             path.of(location);
             long fdTemplate = ff.openRO(path.$());
             if (fdTemplate == -1) {
                 throw new LogError(String.format(
-                        "Cannot read %s [errno=%d]", location, ff.errno()));
+                        "Cannot read %s [errno=%d]",
+                        location,
+                        ff.errno()
+                ));
             }
             long size = ff.length(fdTemplate);
-            if (size > limit - address) {
+            if (size > addressSize) {
                 throw new LogError("Template file is too big");
             }
             if (size < 0 || size != ff.read(fdTemplate, address, size, 0)) {
                 throw new LogError(String.format(
-                        "Cannot read %s [size=%d, errno=%d]", location, size, ff.errno()));
+                        "Cannot read %s [errno=%d, size=%d]",
+                        location,
+                        ff.errno(),
+                        size
+                ));
             }
             DirectByteCharSequence template = new DirectByteCharSequence();
             template.of(address, address + size);
