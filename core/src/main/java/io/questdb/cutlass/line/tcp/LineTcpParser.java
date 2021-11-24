@@ -25,10 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.griffin.SqlKeywords;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
@@ -73,43 +70,6 @@ public class LineTcpParser implements Closeable {
     private boolean scape;
     private boolean nextValueCanBeOpenQuote;
     private boolean hasNonAscii;
-
-    public static long sanitizeEnd(long lo, long hi) {
-        long p = hi - 1;
-        OUT:
-        while (p >= lo) {
-            switch (Unsafe.getUnsafe().getByte(p)) {
-                case '\0':
-                case '\t':
-                case '\\':
-                case '/':
-                    p--;
-                    break;
-                default:
-                    break OUT;
-            }
-        }
-        return p + 1;
-    }
-
-    public static long sanitizeStart(long lo, long hi) {
-        long p = lo;
-        OUT:
-        while (p < hi) {
-            switch (Unsafe.getUnsafe().getByte(p)) {
-                case '\0':
-                case '\t':
-                case '\\':
-                case '.':
-                case '/':
-                    p++;
-                    break;
-                default:
-                    break OUT;
-            }
-        }
-        return p;
-    }
 
     @Override
     public void close() {
@@ -278,6 +238,66 @@ public class LineTcpParser implements Closeable {
         return ParseResult.BUFFER_UNDERFLOW;
     }
 
+    public boolean sanitizeMeasurementName(long lo, long hi) {
+        // start of measurement
+        long pLo = lo;
+        OUT:
+        while (pLo < hi) {
+            switch (Unsafe.getUnsafe().getByte(pLo)) {
+                case '\0':
+                case '\t':
+                case '\\':
+                case '.':
+                case '/':
+                    pLo++;
+                    break;
+                default:
+                    break OUT;
+            }
+        }
+
+        long pHi = hi - 1;
+        OUT:
+        while (pHi >= pLo) {
+            switch (Unsafe.getUnsafe().getByte(pHi)) {
+                case '\0':
+                case '\t':
+                case '\\':
+                case '/':
+                    pHi--;
+                    break;
+                default:
+                    break OUT;
+            }
+        }
+
+        // middle of measurement
+        long p = pLo;
+        while (p < pHi) {
+            final byte b = Unsafe.getUnsafe().getByte(p);
+            switch (b) {
+                case '.':
+                case '\\':
+                case '/':
+                    pHi--;
+                    Vect.memmove(p, p + 1, pHi - p);
+                    break;
+                default:
+                    p++;
+                    break;
+            }
+        }
+
+        // high boundary is excluded
+        pHi++;
+
+        if (pLo < pHi) {
+            measurementName.of(pLo, pHi);
+            return true;
+        }
+        return false;
+    }
+
     public void shl(long shl) {
         bufAt -= shl;
         entityLo -= shl;
@@ -417,10 +437,7 @@ public class LineTcpParser implements Closeable {
     private boolean expectTableName(byte endOfEntityByte, long bufHi) {
         tagsComplete = endOfEntityByte == (byte) ' ';
         if (endOfEntityByte == (byte) ',' || tagsComplete) {
-            long hi = sanitizeEnd(entityLo, bufAt - nEscapedChars);
-            long lo = sanitizeStart(entityLo, hi);
-            if (lo < hi) {
-                measurementName.of(lo, hi);
+            if (sanitizeMeasurementName(entityLo, bufAt - nEscapedChars)) {
                 entityHandler = entityNameHandler;
                 return true;
             }
@@ -676,4 +693,12 @@ public class LineTcpParser implements Closeable {
             return true;
         }
     }
+
+
+
+
+
+
+
+
 }
