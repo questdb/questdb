@@ -43,6 +43,26 @@ if (!process.env.NODE_ENV) {
   process.env.NODE_ENV = "development"
 }
 
+const monacoPatterns = [
+  {
+    from: "node_modules/monaco-editor/min/vs/loader.js",
+    to: "vs/loader.js",
+  },
+  {
+    from: "node_modules/monaco-editor/min/vs/editor/editor.main.js",
+    to: "vs/editor/editor.main.js",
+  },
+  {
+    from: "node_modules/monaco-editor/min/vs/editor/editor.main.nls.js",
+    to: "vs/editor/editor.main.nls.js",
+  },
+  {
+    from: "node_modules/monaco-editor/min/vs/editor/editor.main.css",
+    to: "vs/editor/editor.main.css",
+  },
+  { from: "node_modules/monaco-editor/min/vs/base", to: "vs/base" },
+]
+
 const basePlugins = [
   new CleanWebpackPlugin(),
   new HtmlWebpackPlugin({
@@ -76,14 +96,7 @@ const devPlugins = [
     },
   }),
   new CopyWebpackPlugin({
-    patterns: [
-      {
-        from: "node_modules/monaco-editor/min/vs/loader.js",
-        to: "vs/loader.js",
-      },
-      { from: "node_modules/monaco-editor/min/vs/editor", to: "vs/editor" },
-      { from: "node_modules/monaco-editor/min/vs/base", to: "vs/base" },
-    ],
+    patterns: monacoPatterns,
   }),
 ]
 
@@ -97,15 +110,7 @@ const devLoaders = [
 
 const prodPlugins = [
   new CopyWebpackPlugin({
-    patterns: [
-      { from: "./assets/", to: "assets/" },
-      {
-        from: "node_modules/monaco-editor/min/vs/loader.js",
-        to: "vs/loader.js",
-      },
-      { from: "node_modules/monaco-editor/min/vs/editor", to: "vs/editor" },
-      { from: "node_modules/monaco-editor/min/vs/base", to: "vs/base" },
-    ],
+    patterns: [{ from: "./assets/", to: "assets/" }, ...monacoPatterns],
   }),
 ]
 
