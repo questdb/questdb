@@ -115,7 +115,7 @@ public class HttpLogAlertBuilder extends LogRecordSink {
         final int len = logRecord.length();
         final long address = logRecord.getAddress();
         for (long p = address, limit = address + len; p < limit; p++) {
-            char c = (char) Unsafe.getUnsafe().getByte(p);
+            byte c = Unsafe.getUnsafe().getByte(p);
             switch (c) {
                 case '\b': // ignore chars
                 case '\f':
