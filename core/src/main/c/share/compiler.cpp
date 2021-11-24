@@ -1326,6 +1326,24 @@ struct JitCompiler {
                     registers.pop();
                     auto rhs = registers.top();
                     registers.pop();
+                    if(lhs.dtype() != rhs.dtype()) {
+                        if (rhs.dtype() == i32 && lhs.dtype() == f32) {
+                            // rhs int to float
+                            c.vcvtdq2ps(rhs.ymm(), rhs.ymm());
+                            rhs = jit_value_t(rhs.ymm(), f32, rhs.dkind());
+                        }
+                        if (lhs.dtype() == i32 && rhs.dtype() == f32) {
+                            // lhs int to float
+                            c.vcvtdq2ps(lhs.ymm(), lhs.ymm());
+                            lhs = jit_value_t(lhs.ymm(), f32, lhs.dkind());
+                        }
+                        if (rhs.dtype() == i64 && lhs.dtype() == f64) {
+                            // rhs long to double. inefficient!
+                        }
+                        if (lhs.dtype() == i64 && rhs.dtype() == f64) {
+                            // rhs long to double. inefficient!
+                        }
+                    }
                     switch (ic) {
                         case AND:
                             avx2_and(c, lhs, lhs, rhs);
