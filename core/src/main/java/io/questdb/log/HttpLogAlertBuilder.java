@@ -33,10 +33,13 @@ public class HttpLogAlertBuilder extends LogRecordSink {
     private static final String HEADER_BODY_SEPARATOR = "\r\n\r\n";
     private static final String CL_MARKER = "######"; // 999999 / (1024*2) == 488 half a Gb payload max
     private static final int CL_MARKER_LEN = CL_MARKER.length();
+    private static final int CL_MARKER_MAX_LEN = (int) Math.pow(10, CL_MARKER_LEN) - 1;
     private static final int NOT_SET = -1;
+
 
     private long mark = NOT_SET;
     private long contentLenStart;
+    private long contentLenEnd;
     private long bodyStart;
 
     public HttpLogAlertBuilder(LogAlertSocket laSkt) {
@@ -46,6 +49,7 @@ public class HttpLogAlertBuilder extends LogRecordSink {
     public HttpLogAlertBuilder(long address, long addressSize) {
         super(address, addressSize);
         contentLenStart = _wptr;
+        contentLenEnd = _wptr;
         bodyStart = _wptr;
     }
 
@@ -59,18 +63,29 @@ public class HttpLogAlertBuilder extends LogRecordSink {
                 .put("Content-Length: ");
         contentLenStart = _wptr;
         put(CL_MARKER);
+        contentLenEnd = _wptr - 1;
         put(HEADER_BODY_SEPARATOR);
         bodyStart = _wptr;
         return this;
     }
 
     public int $() {
-        char[] len = Long.toString(_wptr - bodyStart).toCharArray();
-        long q = contentLenStart;
-        for (int i = 0, limit = CL_MARKER_LEN - len.length; i < limit; i++) {
-            Chars.asciiPut(' ', q++);
+        // take the body length and format it into the ###### contentLength marker
+        int bodyLen = (int) (_wptr - bodyStart);
+        if (bodyLen > CL_MARKER_MAX_LEN) {
+            throw new LogError("Content too long");
         }
-        Chars.asciiCopyTo(len, 0, len.length, q);
+        long p = contentLenEnd;
+        int n = bodyLen, rem = n % 10;
+        while (n > 10) {
+            Unsafe.getUnsafe().putByte(p--, (byte) (rem + 48));
+            n /= 10;
+            rem = n % 10;
+        }
+        Unsafe.getUnsafe().putByte(p--, (byte) (rem + 48));
+        while (p > contentLenStart - 1) {
+            Unsafe.getUnsafe().putByte(p--, (byte) ' ');
+        }
         return length();
     }
 
@@ -92,7 +107,7 @@ public class HttpLogAlertBuilder extends LogRecordSink {
     public void clear() {
         super.clear();
         mark = NOT_SET;
-        contentLenStart = _wptr;
+        contentLenEnd = _wptr;
         bodyStart = _wptr;
     }
 
