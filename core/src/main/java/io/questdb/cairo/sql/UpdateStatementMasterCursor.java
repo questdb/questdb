@@ -27,7 +27,9 @@ package io.questdb.cairo.sql;
 import java.io.Closeable;
 
 public interface UpdateStatementMasterCursor extends Closeable {
-    Record next(Record master);
+    void setMaster(Record master);
+    Record getRecord();
+    boolean hasNext();
 
     @Override
     void close();

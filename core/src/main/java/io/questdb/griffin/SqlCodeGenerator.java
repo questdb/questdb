@@ -507,6 +507,16 @@ public class SqlCodeGenerator implements Mutable {
             int joinType
     ) throws SqlException {
         UpdateStatementBuilder updateBuilder = (UpdateStatementBuilder) master;
+        if (joinType == JOIN_CROSS) {
+            return updateBuilder.withJoin(
+                    new UpdateCrossJoinRecordCursorFactory(
+                            metadata,
+                            master,
+                            slave,
+                            master.getMetadata().getColumnCount()
+                    )
+            );
+        }
         if (joinType != JOIN_INNER) {
             throw SqlException.$(0, "Only INNER joins are supported with UPDATE statements. Please specify join condition in WHERE clause.");
         }
@@ -839,12 +849,7 @@ public class SqlCodeGenerator implements Mutable {
 
                         switch (joinType) {
                             case JOIN_CROSS:
-                                master = new CrossJoinRecordCursorFactory(
-                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                        master,
-                                        slave,
-                                        masterMetadata.getColumnCount()
-                                );
+                                master = createCrossJoin(master, masterAlias, slaveModel, slave, masterMetadata, slaveMetadata);
                                 masterAlias = null;
                                 break;
                             case JOIN_ASOF:
@@ -987,7 +992,11 @@ public class SqlCodeGenerator implements Mutable {
                 // check if there are post-filters
                 ExpressionNode filter = slaveModel.getPostJoinWhereClause();
                 if (filter != null) {
-                    master = new FilteredRecordCursorFactory(master, functionParser.parseFunction(filter, master.getMetadata(), executionContext));
+                    if (!(master instanceof UpdateStatementBuilder)) {
+                        master = new FilteredRecordCursorFactory(master, functionParser.parseFunction(filter, master.getMetadata(), executionContext));
+                    } else {
+                        ((UpdateStatementBuilder) master).withFilter(functionParser.parseFunction(filter, master.getMetadata(), executionContext));
+                    }
                 }
             }
 
@@ -1013,6 +1022,27 @@ public class SqlCodeGenerator implements Mutable {
             Misc.free(master);
             throw e;
         }
+    }
+
+    @NotNull
+    private RecordCursorFactory createCrossJoin(
+            RecordCursorFactory master,
+            CharSequence masterAlias,
+            QueryModel slaveModel,
+            RecordCursorFactory slave,
+            RecordMetadata masterMetadata,
+            RecordMetadata slaveMetadata
+    ) throws SqlException {
+        RecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
+        if (!(master instanceof UpdateStatementBuilder)) {
+            return new CrossJoinRecordCursorFactory(
+                    joinMetadata,
+                    master,
+                    slave,
+                    masterMetadata.getColumnCount()
+            );
+        }
+        return createUpdateStatementJoin(joinMetadata, master, slave, JOIN_CROSS);
     }
 
     @NotNull

@@ -1876,6 +1876,11 @@ class SqlOptimiser {
         QueryModel optimizedModel = optimise(updateModel.getQueryModel(), sqlExecutionContext);
         updateModel.setFromModel(optimizedModel);
         validateUpdateColumns(updateModel, sqlExecutionContext);
+        validateUpdateJoins(updateModel, sqlExecutionContext);
+    }
+
+    private void validateUpdateJoins(UpdateModel updateModel, SqlExecutionContext sqlExecutionContext) {
+
     }
 
     private void validateUpdateColumns(UpdateModel updateModel, SqlExecutionContext executionContext) throws SqlException {

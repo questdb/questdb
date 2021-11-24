@@ -731,6 +731,7 @@ public class TableWriter implements Closeable {
 
         ObjList<MemoryCMARW> updateMemory = null;
         try (RecordCursor recordCursor = rowIdFactory.getCursor(executionContext)) {
+            updateStatement.init(recordCursor, executionContext);
             if (updateStatement.getJoinRecordCursorFactory() != null) {
                 joinCursor = updateStatement.getJoinRecordCursorFactory().getCursor(executionContext);
             }
@@ -749,13 +750,22 @@ public class TableWriter implements Closeable {
                 long rowId = masterRecord.getRowId();
                 Record record = masterRecord;
                 if (joinCursor != null) {
-                    record = joinCursor.next(record);
-                    if (record == null) {
-                        continue;
+                    joinCursor.setMaster(record);
+                    record = joinCursor.getRecord();
+                    boolean found = false;
+                    while(joinCursor.hasNext()) {
+                        if (postJoinFilter == null || postJoinFilter.getBool(record)) {
+                            // Found joint record which satisfies post join filter
+                            found = true;
+                            break;
+                        }
                     }
-                }
 
-                if (postJoinFilter != null && !postJoinFilter.getBool(record)) {
+                    if (!found) {
+                         continue;
+                    }
+
+                } else if (postJoinFilter != null && !postJoinFilter.getBool(record)) {
                     continue;
                 }
 

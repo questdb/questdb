@@ -34,7 +34,6 @@ public class UpdateModel implements Mutable, ExecutionModel, Sinkable {
     private QueryModel fromModel;
     private int position;
     private CharSequence updateTableName;
-    private final QueryWithClauseModel withModel = new QueryWithClauseModel();
 
     public int getPosition() {
         return position;
@@ -56,7 +55,6 @@ public class UpdateModel implements Mutable, ExecutionModel, Sinkable {
     public void clear() {
         updatedColumns.clear();
         updateColumnExpressions.clear();
-        withModel.clear();
         updateTableName = null;
         updateTableAlias = null;
     }
@@ -64,10 +62,6 @@ public class UpdateModel implements Mutable, ExecutionModel, Sinkable {
     @Override
     public int getModelType() {
         return UPDATE;
-    }
-
-    public QueryWithClauseModel getWithModel() {
-        return withModel;
     }
 
     public void setUpdateTableAlias(ExpressionNode updateTableAlias) {
@@ -102,163 +96,8 @@ public class UpdateModel implements Mutable, ExecutionModel, Sinkable {
         }
         if (fromModel != null && fromModel.getNestedModel() != null) {
             sink.put(" from (");
-            nestedToSink0(sink, fromModel.getNestedModel());
+            fromModel.toSink(sink);
             sink.put(")");
-        }
-    }
-
-
-    private static void nestedToSink0(CharSink sink, QueryModel model) {
-        if (model.getTableName() != null) {
-            model.getTableName().toSink(sink);
-        } else {
-            sink.put('(');
-            nestedToSink0(sink, model.getNestedModel());
-            sink.put(')');
-        }
-        if (model.getAlias() != null) {
-            aliasToSink(model.getAlias().token, sink);
-        }
-
-        if (model.getTimestamp() != null) {
-            sink.put(" timestamp (");
-            model.getTimestamp().toSink(sink);
-            sink.put(')');
-        }
-
-        if (model.getOrderedJoinModels().size() > 1) {
-            for (int i = 0, n = model.getOrderedJoinModels().size(); i < n; i++) {
-                QueryModel joinedModel = model.getJoinModels().getQuick(model.getOrderedJoinModels().getQuick(i));
-                if (joinedModel != model) {
-                    sink.put(" join ");
-
-                    if (joinedModel.getWhereClause() != null) {
-                        sink.put('(');
-                        nestedToSink0(sink, joinedModel);
-                        sink.put(')');
-                        if (joinedModel.getAlias() != null) {
-                            aliasToSink(joinedModel.getAlias().token, sink);
-                        } else if (model.getTableName() != null) {
-                            aliasToSink(joinedModel.getTableName().token, sink);
-                        }
-                    } else {
-                        nestedToSink0(sink, joinedModel);
-                    }
-
-                    JoinContext jc = joinedModel.getContext();
-                    if (jc != null && jc.aIndexes.size() > 0) {
-                        // join clause
-                        sink.put(" on ");
-                        for (int k = 0, z = jc.aIndexes.size(); k < z; k++) {
-                            if (k > 0) {
-                                sink.put(" and ");
-                            }
-                            jc.aNodes.getQuick(k).toSink(sink);
-                            sink.put(" = ");
-                            jc.bNodes.getQuick(k).toSink(sink);
-                        }
-                    }
-
-                    if (joinedModel.getPostJoinWhereClause() != null) {
-                        sink.put(" post-join-where ");
-                        model.getPostJoinWhereClause().toSink(sink);
-                    }
-                }
-            }
-        }
-
-        if (model.getWhereClause() != null) {
-            sink.put(" where ");
-            model.getWhereClause().toSink(sink);
-        }
-
-        if (model.getConstWhereClause() != null) {
-            sink.put(" const-where ");
-            model.getConstWhereClause().toSink(sink);
-        }
-
-        if (model.getSampleBy() != null) {
-            sink.put(" sample by ");
-            model.getSampleBy().toSink(sink);
-
-            final int fillCount = model.getSampleByFill().size();
-            if (fillCount > 0) {
-                sink.put(" fill(");
-                sink.put(model.getSampleByFill().getQuick(0));
-
-                if (fillCount > 1) {
-                    for (int i = 1; i < fillCount; i++) {
-                        sink.put(',');
-                        sink.put(model.getSampleByFill().getQuick(i));
-                    }
-                }
-                sink.put(')');
-            }
-
-            if (model.getSampleByTimezoneName() != null || model.getSampleByOffset() != null) {
-                sink.put(" align to calendar");
-                if (model.getSampleByTimezoneName()  != null) {
-                    sink.put(" time zone ");
-                    sink.put(model.getSampleByTimezoneName() );
-                }
-
-                if(model.getSampleByOffset() != null) {
-                    sink.put(" with offset ");
-                    sink.put(model.getSampleByOffset());
-                }
-            }
-        }
-
-        if (model.getOrderHash().size() > 0 && model.getOrderHash().size() > 0) {
-            sink.put(" order by ");
-
-            ObjList<CharSequence> columnNames = model.getOrderHash().keys();
-            for (int i = 0, n = columnNames.size(); i < n; i++) {
-                if (i > 0) {
-                    sink.put(", ");
-                }
-
-                CharSequence key = columnNames.getQuick(i);
-                sink.put(key);
-                if (model.getOrderHash().get(key) == 1) {
-                    sink.put(" desc");
-                }
-            }
-        }
-
-        if (model.getLimitLo() != null || model.getLimitHi() != null) {
-            sink.put(" limit ");
-            if (model.getLimitLo() != null) {
-                model.getLimitLo().toSink(sink);
-            }
-            if (model.getLimitHi() != null) {
-                sink.put(',');
-                model.getLimitHi().toSink(sink);
-            }
-        }
-
-        if (model.getUnionModel() != null) {
-            if (model.getSetOperationType() == QueryModel.SET_OPERATION_INTERSECT) {
-                sink.put(" intersect ");
-            } else if (model.getSetOperationType()  == QueryModel.SET_OPERATION_EXCEPT) {
-                sink.put(" except ");
-            } else {
-                sink.put(" union ");
-                if (model.getSetOperationType()  == QueryModel.SET_OPERATION_UNION_ALL) {
-                    sink.put("all ");
-                }
-            }
-            nestedToSink0(sink, model.getUnionModel());
-        }
-    }
-
-    private static void aliasToSink(CharSequence alias, CharSink sink) {
-        sink.put(' ');
-        boolean quote = Chars.indexOf(alias, ' ') != -1;
-        if (quote) {
-            sink.put('\'').put(alias).put('\'');
-        } else {
-            sink.put(alias);
         }
     }
 

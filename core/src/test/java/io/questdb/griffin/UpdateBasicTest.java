@@ -170,12 +170,97 @@ public class UpdateBasicTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUpdateWithJoinAndPostJoinFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            compiler.compile("create table down as" +
+                    " (select x * 100 as y," +
+                    " timestamp_sequence(0, 1000000) ts" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET x = y" +
+                    " FROM down " +
+                    " WHERE up.ts = down.ts and up.x < down.y and up.x < 4 and down.y > 100;");
+
+            assertSql("up", "ts\tx\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\n" +
+                    "1970-01-01T00:00:01.000000Z\t200\n" +
+                    "1970-01-01T00:00:02.000000Z\t300\n" +
+                    "1970-01-01T00:00:03.000000Z\t4\n" +
+                    "1970-01-01T00:00:04.000000Z\t5\n");
+        });
+    }
+
+    @Test
+    public void testUpdateWithFullCrossJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            compiler.compile("create table down as" +
+                    " (select x * 100 as y," +
+                    " timestamp_sequence(0, 1000000) ts" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET x = y" +
+                    " FROM down " +
+                    " WHERE up.x < 4;");
+
+            assertSql("up", "ts\tx\n" +
+                    "1970-01-01T00:00:00.000000Z\t100\n" +
+                    "1970-01-01T00:00:01.000000Z\t100\n" +
+                    "1970-01-01T00:00:02.000000Z\t100\n" +
+                    "1970-01-01T00:00:03.000000Z\t4\n" +
+                    "1970-01-01T00:00:04.000000Z\t5\n");
+        });
+    }
+
+    @Test
+    public void testUpdateWithJoinNotEquals() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " x * 100 as x" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            compiler.compile("create table down as" +
+                    " (select x * 50 as y," +
+                    " timestamp_sequence(0, 1000000) ts" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET x = y + 1" +
+                    " FROM down " +
+                    " WHERE up.x < down.y;");
+
+            assertSql("up",
+                    "ts\tx\n" +
+                    "1970-01-01T00:00:00.000000Z\t151\n" +
+                    "1970-01-01T00:00:01.000000Z\t251\n" +
+                    "1970-01-01T00:00:02.000000Z\t300\n" +
+                    "1970-01-01T00:00:03.000000Z\t400\n" +
+                    "1970-01-01T00:00:04.000000Z\t500\n");
+        });
+    }
+
+    @Test
     public void testUpdateWith2TableJoinInWithClause() throws Exception {
         assertMemoryLeak(() -> {
 
             createTablesToJoin("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
-                    " rnd_symbol('a', 'b', null) s," +
+                    " rnd_symbol('a', 'b', 'c', null) s," +
                     " x" +
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY");
@@ -188,10 +273,10 @@ public class UpdateBasicTest extends AbstractGriffinTest {
             assertSql("up",
                     "ts\ts\tx\n" +
                             "1970-01-01T00:00:00.000000Z\ta\t101\n" +
-                            "1970-01-01T00:00:01.000000Z\ta\t101\n" +
+                            "1970-01-01T00:00:01.000000Z\tc\t2\n" +
                             "1970-01-01T00:00:02.000000Z\tb\t303\n" +
                             "1970-01-01T00:00:03.000000Z\t\t505\n" +
-                            "1970-01-01T00:00:04.000000Z\t\t505\n");
+                            "1970-01-01T00:00:04.000000Z\tb\t303\n");
         });
     }
 

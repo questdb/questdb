@@ -112,6 +112,7 @@ public class UpdateHashJoinRecordCursorFactory implements UpdateStatementMasterC
         private RecordCursor masterCursor;
         private RecordCursor slaveCursor;
         private boolean useSlaveCursor;
+        private Record masterRecord;
 
         public UpdateHashJoinRecordCursor(int columnSplit, Map joinKeyMap, RecordChain slaveChain) {
             this.recordA = new JoinRecord(columnSplit);
@@ -120,21 +121,28 @@ public class UpdateHashJoinRecordCursorFactory implements UpdateStatementMasterC
         }
 
         @Override
-        public Record next(Record master) {
+        public void setMaster(Record master) {
+            this.masterRecord = master;
             MapKey key = joinKeyMap.withKey();
-            key.put(master, masterSink);
+            key.put(masterRecord, masterSink);
             MapValue value = key.findValue();
             if (value != null) {
                 slaveChain.of(value.getLong(0));
-                // we know cursor has values
-                // advance to get first value
-                slaveChain.hasNext();
                 useSlaveCursor = true;
-                recordA.of(master, slaveChain.getRecord());
-                return recordA;
+                recordA.of(masterRecord, slaveChain.getRecord());
+            } else {
+                useSlaveCursor = false;
             }
+        }
 
-            return null;
+        @Override
+        public Record getRecord() {
+            return recordA;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return useSlaveCursor && slaveChain.hasNext();
         }
 
         @Override

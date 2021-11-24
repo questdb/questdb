@@ -141,10 +141,16 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
         return rowIdFactory.recordCursorSupportsRandomAccess();
     }
 
-    public UpdateStatementBuilder withFilter(Function filter) {
+    public UpdateStatementBuilder withFilter(Function filter) throws SqlException {
         if (joinRecordCursorFactory == null) {
+            if (masterFilter != null) {
+                throw SqlException.$(position, "Post join filter composing is not supported");
+            }
             masterFilter = filter;
         } else {
+            if (postJoinFilter != null) {
+                throw SqlException.$(position, "Post join filter composing is not supported");
+            }
             postJoinFilter = filter;
         }
         return this;
