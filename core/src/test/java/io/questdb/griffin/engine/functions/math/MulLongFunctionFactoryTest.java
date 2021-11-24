@@ -30,34 +30,34 @@ import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.std.Numbers;
 import org.junit.Test;
 
-public class MulIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class MulLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testLeftNan() throws SqlException {
-        call(Numbers.INT_NaN, 5).andAssert(Numbers.INT_NaN);
+        call(Numbers.LONG_NaN, 5L).andAssert(Numbers.LONG_NaN);
     }
 
     @Test
     public void testMulByZero() throws SqlException {
-        call(10, 0).andAssert(0);
+        call(10L, 0L).andAssert(0L);
     }
 
     @Test
     public void testRightNan() throws SqlException {
-        call(123, Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
+        call(123L, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN);
     }
 
     @Test
     public void testBothNan() throws SqlException {
-        call(Numbers.INT_NaN, Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
+        call(Numbers.LONG_NaN, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN);
     }
 
     @Test
     public void testSimple() throws SqlException {
-        call(10, 81).andAssert(810);
+        call(10L, 81L).andAssert(810L);
     }
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new MulIntFunctionFactory();
+        return new MulLongFunctionFactory();
     }
 }
