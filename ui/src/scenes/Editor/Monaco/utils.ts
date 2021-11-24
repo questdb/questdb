@@ -26,7 +26,7 @@ import { Monaco } from "@monaco-editor/react"
 
 type IStandaloneCodeEditor = editor.IStandaloneCodeEditor
 
-export const QuestDBLanguage: string = "questdb-sql"
+export const QuestDBLanguageName: string = "questdb-sql"
 
 export type Request = Readonly<{
   query: string
@@ -291,7 +291,7 @@ export const clearModelMarkers = (
   const model = editor.getModel()
 
   if (model) {
-    monaco.editor.setModelMarkers(model, QuestDBLanguage, [])
+    monaco.editor.setModelMarkers(model, QuestDBLanguageName, [])
   }
 }
 
@@ -304,7 +304,7 @@ export const setErrorMarker = (
   const model = editor.getModel()
 
   if (model) {
-    monaco.editor.setModelMarkers(model, QuestDBLanguage, [
+    monaco.editor.setModelMarkers(model, QuestDBLanguageName, [
       {
         message,
         severity: monaco.MarkerSeverity.Error,

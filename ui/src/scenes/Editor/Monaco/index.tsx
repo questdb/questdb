@@ -10,7 +10,7 @@ import {
   getErrorRange,
   getQueryRequestFromEditor,
   getQueryRequestFromLastExecutedQuery,
-  QuestDBLanguage,
+  QuestDBLanguageName,
   Request,
   setErrorMarker,
   clearModelMarkers,
@@ -25,7 +25,10 @@ import { NotificationType } from "types"
 import QueryResult from "../QueryResult"
 import Loader from "../Loader"
 import styled from "styled-components"
-import { language as QuestDBLanguageConfig } from "./questdb-sql"
+import {
+  conf as QuestDBLanguageConf,
+  language as QuestDBLanguage,
+} from "./questdb-sql"
 import { color } from "../../../utils"
 
 type IStandaloneCodeEditor = editor.IStandaloneCodeEditor
@@ -62,10 +65,14 @@ const MonacoEditor = () => {
     editor: IStandaloneCodeEditor,
     monaco: Monaco,
   ) => {
-    monaco.languages.register({ id: QuestDBLanguage })
+    monaco.languages.register({ id: QuestDBLanguageName })
     monaco.languages.setMonarchTokensProvider(
+      QuestDBLanguageName,
       QuestDBLanguage,
-      QuestDBLanguageConfig,
+    )
+    monaco.languages.setLanguageConfiguration(
+      QuestDBLanguageName,
+      QuestDBLanguageConf,
     )
 
     if (monacoRef) {
@@ -269,7 +276,7 @@ const MonacoEditor = () => {
   return (
     <Content>
       <Editor
-        defaultLanguage={QuestDBLanguage}
+        defaultLanguage={QuestDBLanguageName}
         onMount={handleEditorDidMount}
         options={{
           fontSize: 14,
@@ -279,6 +286,7 @@ const MonacoEditor = () => {
             enabled: false,
           },
         }}
+        theme="vs-dark"
       />
       <Loader show={!!request} />
     </Content>
