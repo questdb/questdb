@@ -458,8 +458,8 @@ inline static void avx2_div_unrolled(asmjit::x86::Compiler &c, jit_value_t &dst,
                     for (int32_t i = 0; i < step; ++i) {
                         asmjit::Label l_zero = c.newLabel();
                         lhs_m.setOffset(i * size);
-                        c.mov(a, lhs_m);
                         rhs_m.setOffset(i * size);
+                        c.mov(a, lhs_m);
                         c.mov(b, rhs_m);
                         c.movabs(r, long_null);
                         c.cmp(r, a);
@@ -749,8 +749,10 @@ struct JitCompiler {
                     asmjit::x86::Gp col = c.newGpq();
                     auto column_input_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
                     c.mov(col, ptr(cols_ptr, 8 * column_input_index, 8));
-                    c.movsxd(col, asmjit::x86::Mem(col, input_index, 2, 0, 4));
-                    registers.push(jit_value_t(col, i32, kMemory));
+
+                    asmjit::x86::Gp addr = c.newGpq();
+                    c.movsxd(addr, asmjit::x86::Mem(col, input_index, 2, 0, 4));
+                    registers.push(jit_value_t(addr, i32, kMemory));
                 }
                     break;
                 case MEM_I8: {
@@ -833,35 +835,13 @@ struct JitCompiler {
                         c.subpd(r, arg.xmm());
                         arg = r;
                     } else {
-                        if(!null_check) {
-                            c.neg(arg.gp());
+                        if(arg.dtype() == i32) {
+                            asmjit::x86::Gp t = c.newGpd();
+                            c.mov(t, arg.gp().r32());
+                            c.neg(t); // downcast register to turn-on overflow logic for int32_t null value
+                            c.movsxd(arg.gp(), t);
                         } else {
-                            switch (arg.dtype()) {
-                                case i8:
-                                case i16:
-                                    c.neg(arg.gp());
-                                    break;
-                                case i32:
-                                {
-                                    asmjit::x86::Gp t = c.newGpq();
-                                    c.mov(t, arg.gp());
-                                    c.cmp(t, int_null);
-                                    c.cmove(arg.gp(), t);
-                                }
-                                    break;
-                                case i64:
-                                {
-                                    asmjit::x86::Gp t = c.newGpq();
-                                    c.mov(t, arg.gp());
-                                    asmjit::x86::Gp n = c.newGpq();
-                                    c.mov(n, long_null);
-                                    c.cmp(t, n);
-                                    c.cmove(arg.gp(), t);
-                                }
-                                    break;
-                                default:
-                                    break;
-                            }
+                            c.neg(arg.gp());
                         }
                     }
                     registers.push(arg);
@@ -1330,16 +1310,7 @@ struct JitCompiler {
                 case NEG: {
                     auto arg = registers.top();
                     registers.pop();
-                    if(!null_check) {
-                        avx2_neg(c, arg, arg);
-                    } else {
-                        Ymm r = c.newYmm();
-                        jit_value_t v(r, arg.dtype(), arg.dkind());
-                        avx2_not_null(c, v, arg);
-                        avx2_neg(c, arg, arg);
-                        avx2_not(c, v, v);
-                        avx2_select_byte(c, arg, arg, v);
-                    }
+                    avx2_neg(c, arg, arg);
                     registers.push(arg);
                 }
                     break;
