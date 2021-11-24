@@ -25,12 +25,18 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.griffin.SqlKeywords;
-import io.questdb.std.*;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
 
 public class LineTcpParser implements Closeable {
+    private static final Log LOG = LogFactory.getLog(LineTcpParser.class);
     public static final long NULL_TIMESTAMP = Numbers.LONG_NaN;
     public static final byte ENTITY_TYPE_NULL = 0;
     public static final byte ENTITY_TYPE_TAG = 1;
@@ -143,13 +149,13 @@ public class LineTcpParser implements Closeable {
             boolean endOfLine = false;
             boolean appendByte = false;
             switch (b) {
-                case (byte) '\n':
-                case (byte) '\r':
+                case '\n':
+                case '\r':
                     endOfLine = true;
                     b = '\n';
-                case (byte) '=':
-                case (byte) ',':
-                case (byte) ' ':
+                case '=':
+                case ',':
+                case ' ':
                     isQuotedFieldValue = false;
                     if (!entityHandler.completeEntity(b, bufHi)) {
                         // parse of key or value is unsuccessful
@@ -183,7 +189,7 @@ public class LineTcpParser implements Closeable {
                     }
                     break;
 
-                case (byte) '\\':
+                case '\\':
                     // escape next character
                     // look forward, skip the slash
                     if ((bufAt + 1) >= bufHi) {
@@ -196,7 +202,7 @@ public class LineTcpParser implements Closeable {
                     appendByte = true;
                     break;
 
-                case (byte) '"':
+                case '"':
                     if (nextValueCanBeOpenQuote && ++nQuoteCharacters == 1) {
                         // This means that the processing resumed from "
                         // and it's allowed to start quoted value at this point
@@ -238,64 +244,18 @@ public class LineTcpParser implements Closeable {
         return ParseResult.BUFFER_UNDERFLOW;
     }
 
-    public boolean sanitizeMeasurementName(long lo, long hi) {
-        // start of measurement
-        long pLo = lo;
-        OUT:
-        while (pLo < hi) {
-            switch (Unsafe.getUnsafe().getByte(pLo)) {
-                case '\0':
-                case '\t':
-                case '\\':
-                case '.':
-                case '/':
-                    pLo++;
-                    break;
-                default:
-                    break OUT;
+    public boolean isValidMeasurementName(long lo, long hi) {
+        final int len = (int) (hi - lo);
+        for (int i = 0; i < len; i++) {
+            byte b = Unsafe.getUnsafe().getByte(lo + i);
+            if (b == 0 || b == '\\' || b == '/' || b == '.') {
+                if (b == '.' && (((i + 1) < len && Unsafe.getUnsafe().getByte(lo + i + 1) != '.') || (i + 1) == len)) {
+                    continue;
+                }
+                return false;
             }
         }
-
-        long pHi = hi - 1;
-        OUT:
-        while (pHi >= pLo) {
-            switch (Unsafe.getUnsafe().getByte(pHi)) {
-                case '\0':
-                case '\t':
-                case '\\':
-                case '/':
-                    pHi--;
-                    break;
-                default:
-                    break OUT;
-            }
-        }
-
-        // middle of measurement
-        long p = pLo;
-        while (p < pHi) {
-            final byte b = Unsafe.getUnsafe().getByte(p);
-            switch (b) {
-                case '.':
-                case '\\':
-                case '/':
-                    pHi--;
-                    Vect.memmove(p, p + 1, pHi - p);
-                    break;
-                default:
-                    p++;
-                    break;
-            }
-        }
-
-        // high boundary is excluded
-        pHi++;
-
-        if (pLo < pHi) {
-            measurementName.of(pLo, pHi);
-            return true;
-        }
-        return false;
+        return true;
     }
 
     public void shl(long shl) {
@@ -437,10 +397,13 @@ public class LineTcpParser implements Closeable {
     private boolean expectTableName(byte endOfEntityByte, long bufHi) {
         tagsComplete = endOfEntityByte == (byte) ' ';
         if (endOfEntityByte == (byte) ',' || tagsComplete) {
-            if (sanitizeMeasurementName(entityLo, bufAt - nEscapedChars)) {
+            long hi = bufAt - nEscapedChars;
+            measurementName.of(entityLo, hi);
+            if (isValidMeasurementName(entityLo, hi)) {
                 entityHandler = entityNameHandler;
                 return true;
             }
+            LOG.info().$("invalid measurement name [name=`").$(measurementName).$("`]").$();
             errorCode = ErrorCode.INVALID_MEASUREMENT_NAME;
             return false;
         }

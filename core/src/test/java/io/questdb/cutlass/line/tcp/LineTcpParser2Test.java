@@ -250,6 +250,126 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     }
 
     @Test
+    public void testInvalidMeasurementNamePrefix1() {
+        assertThat(
+                "--ERROR=INVALID_MEASUREMENT_NAME--",
+                "../measurement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNameMid1() {
+        assertThat(
+                "--ERROR=INVALID_MEASUREMENT_NAME--",
+                "mea..surement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNameMid2() {
+        assertThat(
+                "--ERROR=INVALID_MEASUREMENT_NAME--",
+                "mea/surement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNameMid3() {
+        assertThat(
+                "--ERROR=INVALID_MEASUREMENT_NAME--",
+                "mea\0surement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNameMid4() {
+        assertThat(
+                "--ERROR=INVALID_MEASUREMENT_NAME--",
+                "mea\\\\surement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNameEnd1() {
+        assertThat(
+                "--ERROR=INVALID_MEASUREMENT_NAME--",
+                "measurement\\\\,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNameEnd2() {
+        assertThat(
+                "--ERROR=INVALID_MEASUREMENT_NAME--",
+                "measurement..,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNameEnd3() {
+        assertThat(
+                "--ERROR=INVALID_MEASUREMENT_NAME--",
+                "measurement/,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNameEnd4() {
+        assertThat(
+                "--ERROR=INVALID_MEASUREMENT_NAME--",
+                "measurement\0,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNamePrefix4() {
+        assertThat(
+                "--ERROR=INVALID_MEASUREMENT_NAME--",
+                "..measurement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testValidMeasurementNameDot1() {
+        assertThat(
+                ".measurement,tag=value,tag2=value field=10000i\n",
+                ".measurement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testValidMeasurementNameDot2() {
+        assertThat(
+                "meas.urement,tag=value,tag2=value field=10000i\n",
+                "meas.urement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testValidMeasurementNameDot3() {
+        assertThat(
+                "measurement.,tag=value,tag2=value field=10000i\n",
+                "measurement.,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNamePrefix2() {
+        assertThat(
+                "--ERROR=INVALID_MEASUREMENT_NAME--",
+                "\0measurement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNamePrefix3() {
+        assertThat(
+                "--ERROR=INVALID_MEASUREMENT_NAME--",
+                "\\\\measurement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
     public void testMangledMeasurementNameFromBothEnds() {
         assertThat(
                 "--ERROR=INVALID_MEASUREMENT_NAME--",
