@@ -449,8 +449,20 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testI64Neg() throws Exception {
+        final String query = "select * from x where -a = -4";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " cast(x as long) a, " +
+                " cast(x as short) b" +
+                " from long_sequence(100)) timestamp(k)";
+
+        assertQuery(query, ddl);
+    }
+
+    @Test
     public void testI64NegNulls() throws Exception {
-        final String query = "select * from x where -i64a = null or -i64b = null";
+        final String query = "select * from x where -i64a <> null and -i64b = null";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_long(-10, 10, 1) i64a," +
@@ -492,7 +504,6 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
         assertQuery(query, ddl);
     }
 
-    @Ignore
     @Test
     public void testI64DivNulls() throws Exception {
         final String query = "select * from x where i64a / i64b = null";
