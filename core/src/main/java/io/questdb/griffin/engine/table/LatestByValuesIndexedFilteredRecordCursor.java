@@ -28,6 +28,7 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
@@ -62,13 +63,18 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
     }
 
     @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) {
+    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
+        filter.init(this, executionContext);
+
         final int keyCount = symbolKeys.size();
         found.clear();
         DataFrame frame;
+        // frame metadata is based on TableReader, which is "full" metadata
+        // this cursor works with subset of columns, which warrants column index remap
+        int frameColumnIndex = columnIndexes.getQuick(columnIndex);
         while ((frame = this.dataFrameCursor.next()) != null && found.size() < keyCount) {
             final int partitionIndex = frame.getPartitionIndex();
-            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
             this.recordA.jumpTo(partitionIndex, 0);
@@ -78,12 +84,13 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
                 int index = found.keyIndex(symbolKey);
                 if (index > -1) {
                     RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
-                    if (cursor.hasNext()) {
+                    while (cursor.hasNext()) {
                         final long row = cursor.next();
                         recordA.setRecordIndex(row);
                         if (filter.getBool(recordA)) {
                             rows.add(Rows.toRowID(partitionIndex, row));
                             found.addAt(index, symbolKey);
+                            break;
                         }
                     }
                 }

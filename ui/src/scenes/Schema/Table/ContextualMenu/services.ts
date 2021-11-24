@@ -79,7 +79,7 @@ export const formatTableSchemaQueryResult = (
     }
 
     if (partitionBy !== "NONE") {
-      query += ` PARTITION_BY ${partitionBy}`
+      query += ` PARTITION BY ${partitionBy}`
     }
 
     return `${query};`
