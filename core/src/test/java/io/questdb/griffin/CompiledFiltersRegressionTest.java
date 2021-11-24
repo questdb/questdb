@@ -85,6 +85,21 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntFloatMixed() throws Exception {
+        final String query = "select * from x where -2*f32 + 2.0*i32 = 0";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " cast(x as byte) i8," +
+                " cast(x as short) i16," +
+                " cast(x as int) i32," +
+                " cast(x as long) i64," +
+                " cast(x as float) f32," +
+                " cast(x as double) f64" +
+                " from long_sequence(10)) timestamp(k) partition by DAY";
+        assertQuery(query, ddl);
+    }
+
+    @Test
     public void testEqConst() throws Exception {
         final String query = "select * from x where i8 = 1 and i16 = 1 and i32 = 1 and i64 = 1 and f32 = 1.0 and f64 = 1.0";
         final String ddl = "create table x as " +
