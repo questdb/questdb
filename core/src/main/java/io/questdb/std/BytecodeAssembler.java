@@ -396,6 +396,11 @@ public class BytecodeAssembler {
         putShort(index);
     }
 
+    public void ldc_w(int index) {
+        putByte(0x13);
+        putShort(index);
+    }
+
     public void lload(int value) {
         optimisedIO(lload_0, lload_1, lload_2, lload_3, lload, value);
     }

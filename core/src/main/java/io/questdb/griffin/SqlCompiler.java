@@ -193,7 +193,6 @@ public class SqlCompiler implements Closeable {
         asm.setupPool();
         int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/griffin/rowcopier"));
         int interfaceClassIndex = asm.poolClass(RecordToRowCopier.class);
-        int stackMapTableIndex = asm.poolUtf8("StackMapTable");
 
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
         int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
@@ -237,9 +236,26 @@ public class SqlCompiler implements Closeable {
         int truncateGeoHashTypes = asm.poolMethod(ColumnType.class, "truncateGeoHashTypes", "(JII)J");
         int encodeCharAsGeoByte = asm.poolMethod(GeoHashes.class, "encodeChar", "(C)B");
 
-        int valueException = asm.poolMethod(SqlException.class, "inconvertibleValue","(III)Lio/questdb/griffin/SqlException;");
-        int maxFloat = asm.poolDoubleConst(MAX_FLOAT_VALUE);
-        int minFloat = asm.poolDoubleConst(MIN_FLOAT_VALUE);
+        int checkDoubleBounds = asm.poolMethod(RecordToRowCopierUtils.class, "checkDoubleBounds","(DDDIII)V");
+        int checkLongBounds = asm.poolMethod(RecordToRowCopierUtils.class, "checkLongBounds","(JJJIII)V");
+        
+        int maxDoubleFloat = asm.poolDoubleConst(Float.MAX_VALUE);
+        int minDoubleFloat = asm.poolDoubleConst(-Float.MAX_VALUE);
+        int maxDoubleLong = asm.poolDoubleConst(Long.MAX_VALUE);
+        int minDoubleLong = asm.poolDoubleConst(Long.MIN_VALUE);
+        int maxDoubleInt = asm.poolDoubleConst(Integer.MAX_VALUE);
+        int minDoubleInt = asm.poolDoubleConst(Integer.MIN_VALUE);
+        int maxDoubleShort = asm.poolDoubleConst(Short.MAX_VALUE);
+        int minDoubleShort = asm.poolDoubleConst(Short.MIN_VALUE);
+        int maxDoubleByte = asm.poolDoubleConst(Byte.MAX_VALUE);
+        int minDoubleByte = asm.poolDoubleConst(Byte.MIN_VALUE);
+
+        int maxLongInt = asm.poolLongConst(Integer.MAX_VALUE);
+        int minLongInt = asm.poolLongConst(Integer.MIN_VALUE);
+        int maxLongShort = asm.poolLongConst(Short.MAX_VALUE);
+        int minLongShort = asm.poolLongConst(Short.MIN_VALUE);
+        int maxLongByte = asm.poolLongConst(Byte.MAX_VALUE);
+        int minLongByte = asm.poolLongConst(Byte.MIN_VALUE);
         
         int copyNameIndex = asm.poolUtf8("copy");
         int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;)V");
@@ -252,7 +268,7 @@ public class SqlCompiler implements Closeable {
         asm.methodCount(2);
         asm.defineDefaultConstructor();
 
-        asm.startMethod(copyNameIndex, copySigIndex, 10, 3);
+        asm.startMethod(copyNameIndex, copySigIndex, 15, 3);
 
         int n = toColumnFilter.getColumnCount();
         for (int i = 0; i < n; i++) {
@@ -294,10 +310,14 @@ public class SqlCompiler implements Closeable {
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
+                            addCheckIntBoundsCall(asm, checkLongBounds, minLongShort, maxLongShort, i, fromColumnType, toColumnTypeTag);
+                            
                             asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
+                            addCheckIntBoundsCall(asm, checkLongBounds, minLongByte, maxLongByte, i, fromColumnType, toColumnTypeTag);
+                            
                             asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
                             break;
@@ -318,6 +338,8 @@ public class SqlCompiler implements Closeable {
                     asm.invokeInterface(rGetLong);
                     switch (toColumnTypeTag) {
                         case ColumnType.INT:
+                            addCheckLongBoundsCall(asm, checkLongBounds, minLongInt, maxLongInt, i, fromColumnType, toColumnTypeTag);
+                            
                             asm.l2i();
                             asm.invokeInterface(wPutInt, 2);
                             break;
@@ -328,11 +350,15 @@ public class SqlCompiler implements Closeable {
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
+                            addCheckLongBoundsCall(asm, checkLongBounds, minLongShort, maxLongShort, i, fromColumnType, toColumnTypeTag);
+                            
                             asm.l2i();
                             asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
+                            addCheckLongBoundsCall(asm, checkLongBounds, minLongByte, maxLongByte, i, fromColumnType, toColumnTypeTag);
+                            
                             asm.l2i();
                             asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
@@ -476,6 +502,8 @@ public class SqlCompiler implements Closeable {
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.BYTE:
+                            addCheckIntBoundsCall(asm, checkLongBounds, minLongByte, maxLongByte, i, fromColumnType, toColumnTypeTag);
+                            
                             asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
                             break;
@@ -500,27 +528,39 @@ public class SqlCompiler implements Closeable {
                     asm.invokeInterface(rGetFloat);
                     switch (toColumnTypeTag) {
                         case ColumnType.INT:
+                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleInt, maxDoubleInt, i, fromColumnType, toColumnTypeTag);
+                            
                             asm.f2i();
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
+                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, i, fromColumnType, toColumnTypeTag);
+                            
                             asm.f2l();
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
+                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, i, fromColumnType, toColumnTypeTag);
+                            
                             asm.f2l();
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
+                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, i, fromColumnType, toColumnTypeTag);
+                            
                             asm.f2l();
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
+                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleShort, maxDoubleShort, i, fromColumnType, toColumnTypeTag);
+                            
                             asm.f2i();
                             asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
+                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleByte, maxDoubleByte, i, fromColumnType, toColumnTypeTag);
+                            
                             asm.f2i();
                             asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
@@ -538,55 +578,46 @@ public class SqlCompiler implements Closeable {
                     asm.invokeInterface(rGetDouble);
                     switch (toColumnTypeTag) {
                         case ColumnType.INT:
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleInt, maxDoubleInt, i, fromColumnType, toColumnTypeTag);
+
                             asm.d2i();
                             asm.invokeInterface(wPutInt,2);
                             break;
                         case ColumnType.LONG:
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, i, fromColumnType, toColumnTypeTag);
+
                             asm.d2l();
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, i, fromColumnType, toColumnTypeTag);
+
                             asm.d2l();
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, i, fromColumnType, toColumnTypeTag);
+
                             asm.d2l();
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleShort, maxDoubleShort, i, fromColumnType, toColumnTypeTag);
+
                             asm.d2i();
                             asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleByte, maxDoubleByte, i, fromColumnType, toColumnTypeTag);
+
                             asm.d2i();
                             asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.FLOAT:
-                            asm.dup2();
-                            asm.ldc2_w(minFloat);
-                            asm.dcmpg();
-                            int if1 = asm.iflt();//jump to exception position
-                            asm.dup2();
-                            asm.ldc2_w(maxFloat);
-                            asm.dcmpg();
-                            int if2 = asm.ifle();//jump to main branch
-                            
-                            int exceptionPosition = asm.position();
-                            asm.setJmp(if1, exceptionPosition);
-                            //exception handler
-                            asm.iconst(i);
-                            asm.iconst(fromColumnType);
-                            asm.iconst(toColumnTypeTag);
-                            asm.invokeStatic(valueException);  
-                            asm.athrow();
-                            //there's not enough information in this scope so it's probably better to throw (or return) failed position and enrich
-                            //it outside with column type and actual value
-                            //it might be better to create a shared exception block at method start/end 
-                            
-                            int mainBranch = asm.position();
-                            asm.setJmp(if2, mainBranch);
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleFloat, maxDoubleFloat, i, fromColumnType, toColumnTypeTag);
+
                             asm.d2f();
                             asm.invokeInterface(wPutFloat, 2);
                             break;
@@ -786,6 +817,63 @@ public class SqlCompiler implements Closeable {
         return asm.newInstance();
     }
 
+    private static void addCheckDoubleBoundsCall(BytecodeAssembler asm, int checkDoubleBounds, int min, int max, int i, int fromColumnType, int toColumnType) {
+        asm.dup2();
+        
+        asm.ldc2_w(min);
+        asm.ldc2_w(max);
+        asm.iconst(i);
+        asm.iconst(fromColumnType);
+        asm.iconst(toColumnType);
+        asm.invokeStatic(checkDoubleBounds);
+    }
+
+    private static void addCheckFloatBoundsCall(BytecodeAssembler asm, int checkDoubleBounds, int min, int max, int i, int fromColumnType, int toColumnType) {
+        asm.dup();
+        asm.f2d();
+
+        asm.ldc2_w(min);
+        asm.ldc2_w(max);
+        asm.iconst(i);
+        asm.iconst(fromColumnType);
+        asm.iconst(toColumnType);
+        asm.invokeStatic(checkDoubleBounds);
+    }
+
+    private static void addCheckLongBoundsCall(BytecodeAssembler asm, int checkLongBounds, int min, int max, int i, int fromColumnType, int toColumnType) {
+        asm.dup2();
+        
+        asm.ldc2_w(min);
+        asm.ldc2_w(max);
+        asm.iconst(i);
+        asm.iconst(fromColumnType);
+        asm.iconst(toColumnType);
+        asm.invokeStatic(checkLongBounds);
+    }
+
+    private static void addCheckIntBoundsCall(BytecodeAssembler asm, int checkLongBounds, int min, int max, int i, int fromColumnType, int toColumnType) {
+        asm.dup();
+        asm.i2l();
+
+        asm.ldc2_w(min);
+        asm.ldc2_w(max);
+        asm.iconst(i);
+        asm.iconst(fromColumnType);
+        asm.iconst(toColumnType);
+        asm.invokeStatic(checkLongBounds);
+    }
+
+    /*
+    private static void addCheckFloatBoundsCall(BytecodeAssembler asm, int checkFloatBounds, int min, int max, int i, int fromColumnType, int toColumnType) {
+        asm.dup();
+        asm.ldc_w(min);
+        asm.ldc_w(max);
+        asm.iconst(i);
+        asm.iconst(fromColumnType);
+        asm.iconst(toColumnType);
+        asm.invokeStatic(checkFloatBounds);
+    }*/
+
     public static void configureLexer(GenericLexer lexer) {
         for (int i = 0, k = sqlControlSymbols.size(); i < k; i++) {
             lexer.defineSymbol(sqlControlSymbols.getQuick(i));
@@ -804,11 +892,18 @@ public class SqlCompiler implements Closeable {
         return (toTag == fromTag && (ColumnType.getGeoHashBits(to) <= ColumnType.getGeoHashBits(from)
                 || ColumnType.getGeoHashBits(from) == 0) /* to account for typed NULL assignment */)
                 || fromTag == ColumnType.NULL
+                //widening conversions
                 || (fromTag >= ColumnType.BYTE
                 && toTag >= ColumnType.BYTE
                 && toTag <= ColumnType.DOUBLE
                 && fromTag < toTag)
-                || (fromTag == ColumnType.DOUBLE && toTag == ColumnType.FLOAT)
+                //narrowing conversions
+                || (fromTag == ColumnType.DOUBLE && (toTag == ColumnType.FLOAT || (toTag >= ColumnType.BYTE && toTag <= ColumnType.LONG )) )
+                || (fromTag == ColumnType.FLOAT  && toTag >= ColumnType.BYTE && toTag <= ColumnType.LONG)
+                || (fromTag == ColumnType.LONG   && toTag >= ColumnType.BYTE && toTag <= ColumnType.INT)
+                || (fromTag == ColumnType.INT    && toTag >= ColumnType.BYTE && toTag <= ColumnType.SHORT)
+                || (fromTag == ColumnType.SHORT  && toTag == ColumnType.BYTE )
+                
                 || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOBYTE)
                 || (fromTag == ColumnType.CHAR && toTag == ColumnType.GEOBYTE && ColumnType.getGeoHashBits(to) < 6)
                 || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOSHORT)
@@ -2388,7 +2483,23 @@ public class SqlCompiler implements Closeable {
     private interface ExecutableMethod {
         CompiledQuery execute(ExecutionModel model, SqlExecutionContext sqlExecutionContext) throws SqlException;
     }
-
+    
+    public static class RecordToRowCopierUtils {
+        private RecordToRowCopierUtils(){}
+        //used by copier
+        static void checkDoubleBounds( double value, double min, double max, int position, int fromType, int toType) throws SqlException {
+            if ( value < min || value > max ){
+                throw SqlException.inconvertibleValue( position, value, fromType, toType );
+            }
+        }
+        //used by copier
+        static void checkLongBounds( long value, long min, long max, int position, int fromType, int toType) throws SqlException {
+            if ( value < min || value > max ){
+                throw SqlException.inconvertibleValue( position, value, fromType, toType );
+            }
+        }
+    }
+    
     public interface RecordToRowCopier {
         void copy(Record record, TableWriter.Row row);
     }
