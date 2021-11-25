@@ -29,7 +29,6 @@ import io.questdb.std.*;
 
 public class HttpLogAlertBuilder extends LogRecordSink {
 
-    private static final String QDB_VERSION = "7.71.1";
     private static final String HEADER_BODY_SEPARATOR = "\r\n\r\n";
     private static final String CL_MARKER = "######"; // 999999 / (1024*2) == 488 half a Gb payload max
     private static final int CL_MARKER_LEN = CL_MARKER.length();
@@ -58,7 +57,7 @@ public class HttpLogAlertBuilder extends LogRecordSink {
         clear();
         put("POST /api/v1/alerts HTTP/1.1\r\n")
                 .put("Host: ").put(localHostIp).put("\r\n")
-                .put("User-Agent: QuestDB/").put(QDB_VERSION).put("\r\n")
+                .put("User-Agent: QuestDB/LogAlert").put("\r\n")
                 .put("Accept: */*\r\n")
                 .put("Content-Type: application/json\r\n")
                 .put("Content-Length: ");

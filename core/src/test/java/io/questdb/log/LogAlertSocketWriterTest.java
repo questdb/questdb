@@ -80,7 +80,7 @@ public class LogAlertSocketWriterTest {
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
                             "Host: " + LogAlertSocket.localHostIp + "\r\n" +
-                            "User-Agent: QuestDB/7.71.1\r\n" +
+                            "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
                             "Content-Length:    722\r\n" +
@@ -121,7 +121,7 @@ public class LogAlertSocketWriterTest {
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
                             "Host: " + LogAlertSocket.localHostIp + "\r\n" +
-                            "User-Agent: QuestDB/7.71.1\r\n" +
+                            "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
                             "Content-Length:    429\r\n" +

@@ -55,14 +55,14 @@ public class HttpLogAlertBuilderTest {
         Assert.assertEquals(
                 "POST /api/v1/alerts HTTP/1.1\r\n" +
                         "Host: localhost\r\n" +
-                        "User-Agent: QuestDB/7.71.1\r\n" +
+                        "User-Agent: QuestDB/LogAlert\r\n" +
                         "Accept: */*\r\n" +
                         "Content-Type: application/json\r\n" +
                         "Content-Length: ######\r\n" +
                         "\r\n",
                 Chars.stringFromUtf8Bytes(bufferPtr, alertBuilder.getMark())
         );
-        Assert.assertEquals(146, alertBuilder.length());
+        Assert.assertEquals(148, alertBuilder.length());
     }
 
     @Test
@@ -71,17 +71,17 @@ public class HttpLogAlertBuilderTest {
         Assert.assertEquals(
                 "POST /api/v1/alerts HTTP/1.1\r\n" +
                         "Host: localhost\r\n" +
-                        "User-Agent: QuestDB/7.71.1\r\n" +
+                        "User-Agent: QuestDB/LogAlert\r\n" +
                         "Accept: */*\r\n" +
                         "Content-Type: application/json\r\n" +
                         "Content-Length:      0\r\n" +
                         "\r\n",
                 Chars.stringFromUtf8Bytes(bufferPtr, alertBuilder.getMark())
         );
-        Assert.assertEquals(146, alertBuilder.length());
+        Assert.assertEquals(148, alertBuilder.length());
         Assert.assertEquals("POST /api/v1/alerts HTTP/1.1\r\n" +
                 "Host: localhost\r\n" +
-                "User-Agent: QuestDB/7.71.1\r\n" +
+                "User-Agent: QuestDB/LogAlert\r\n" +
                 "Accept: */*\r\n" +
                 "Content-Type: application/json\r\n" +
                 "Content-Length:      0\r\n" +
@@ -101,7 +101,7 @@ public class HttpLogAlertBuilderTest {
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
                             "Host: localhost\r\n" +
-                            "User-Agent: QuestDB/7.71.1\r\n" +
+                            "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
                             "Content-Length:     89\r\n" +
@@ -109,14 +109,14 @@ public class HttpLogAlertBuilderTest {
                             "Hello, my name is Íñigo Montoya, you killed my father, prepare to ∑π¬µ∫√ç©!!",
                     alertBuilder.toString()
             );
-            Assert.assertEquals(235, alertBuilder.length());
+            Assert.assertEquals(237, alertBuilder.length());
 
             String randomMsg = "Yup, this is a random message.";
             alertBuilder.rewindToMark().put(randomMsg, 5, randomMsg.length()).$();
-            Assert.assertEquals(171, alertBuilder.length());
+            Assert.assertEquals(173, alertBuilder.length());
             Assert.assertEquals("POST /api/v1/alerts HTTP/1.1\r\n" +
                     "Host: localhost\r\n" +
-                    "User-Agent: QuestDB/7.71.1\r\n" +
+                    "User-Agent: QuestDB/LogAlert\r\n" +
                     "Accept: */*\r\n" +
                     "Content-Type: application/json\r\n" +
                     "Content-Length:     25\r\n" +
@@ -142,7 +142,7 @@ public class HttpLogAlertBuilderTest {
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
                             "Host: localhost\r\n" +
-                            "User-Agent: QuestDB/7.71.1\r\n" +
+                            "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
                             "Content-Length:      7\r\n" +
@@ -150,7 +150,7 @@ public class HttpLogAlertBuilderTest {
                             " \\\\$\\\"\\",
                     alertBuilder.toString()
             );
-            Assert.assertEquals(153, alertBuilder.length());
+            Assert.assertEquals(155, alertBuilder.length());
         } finally {
             if (msgPtr != 0) {
                 Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
@@ -171,7 +171,7 @@ public class HttpLogAlertBuilderTest {
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
                             "Host: localhost\r\n" +
-                            "User-Agent: QuestDB/7.71.1\r\n" +
+                            "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
                             "Content-Length:     28\r\n" +
@@ -179,7 +179,7 @@ public class HttpLogAlertBuilderTest {
                             "test: Tres, Dos, Uno, Zero!!",
                     alertBuilder.toString()
             );
-            Assert.assertEquals(174, alertBuilder.length());
+            Assert.assertEquals(176, alertBuilder.length());
         } finally {
             if (msgPtr != 0) {
                 Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
