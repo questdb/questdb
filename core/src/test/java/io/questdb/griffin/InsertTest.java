@@ -505,7 +505,7 @@ public class InsertTest extends AbstractGriffinTest {
                 compiler.compile("insert into balances values (1, 'USD')", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(37, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "not enough values");
+                TestUtils.assertContains(e.getFlyweightMessage(), "row value count does not match column count [expected=3, actual=2, tuple=1]");
             }
         });
     }
@@ -734,6 +734,160 @@ public class InsertTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testInsertMultipleRows() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table trades (ts timestamp, sym symbol) timestamp(ts);", sqlExecutionContext);
+            executeInsert("insert into trades VALUES (1262599200000000, 'USDJPY'), (3262599300000000, 'USDFJD');");
+
+            String expected = "ts\tsym\n" +
+                    "2010-01-04T10:00:00.000000Z\tUSDJPY\n" +
+                    "2073-05-21T13:35:00.000000Z\tUSDFJD\n";
+
+            assertReader(expected, "trades");
+        });
+    }
+
+    @Test
+    public void testInsertMultipleRowsExtraParentheses() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table trades (i INT, sym symbol)", sqlExecutionContext);
+            executeInsert("insert into trades VALUES ((1), 'USD'), ((2), (('FJD')));");
+
+            String expected = "i\tsym\n" +
+                    "1\tUSD\n" +
+                    "2\tFJD\n";
+
+            assertReader(expected, "trades");
+        });
+    }
+
+    @Test
+    public void testInsertMultipleRowsOutOfOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table trades (ts timestamp) timestamp(ts);", sqlExecutionContext);
+            try {
+                executeInsert("insert into trades VALUES (1), (3), (2);");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Cannot insert rows out of order.");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertMultipleRowsFailTypeConversion() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table trades (sym symbol)", sqlExecutionContext);
+            try {
+                compiler.compile("insert into trades VALUES ('USDJPY'), (1), ('USDFJD');", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(39, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: INT -> SYMBOL [from=1, to=sym]");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertMultipleRowsFailInvalidSyntax() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table trades (i int, sym symbol)", sqlExecutionContext);
+
+            // No comma delimiter between rows
+            try {
+                compiler.compile("insert into trades VALUES (1, 'USDJPY')(2, 'USDFJD');", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(39, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "',' expected");
+            }
+
+            // Empty row
+            try {
+                compiler.compile("insert into trades VALUES (1, 'USDJPY'), ();", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(42, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "Expression expected");
+            }
+
+            // Empty row with comma delimiter inside
+            try {
+                compiler.compile("insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'), (,);", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(57, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "Expression expected");
+            }
+
+            // Empty row column
+            try {
+                compiler.compile("insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'), (3,);", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(59, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "Expression expected");
+            }
+
+            // Multi row insert can't end in comma token
+            try {
+                compiler.compile("insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'),;", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(55, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "'(' expected");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertMultipleRowsFailRowWrongColumnCount() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table trades (i int, sym symbol)", sqlExecutionContext);
+            try {
+                compiler.compile("insert into trades VALUES (1, 'USDJPY'), ('USDFJD');", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(50, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "row value count does not match column count [expected=2, actual=1, tuple=2]");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertMultipleRowsBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table trades (ts timestamp, sym symbol) timestamp(ts);", sqlExecutionContext);
+            final String sql = "insert into trades VALUES (1262599200000000, $1), (3262599300000000, $2);";
+            final CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
+            InsertStatement insert = cq.getInsertStatement();
+            try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
+                bindVariableService.setStr(0, "USDJPY");
+                bindVariableService.setStr(1, "USDFJD");
+                method.execute();
+                method.commit();
+            }
+            String expected = "ts\tsym\n" +
+                    "2010-01-04T10:00:00.000000Z\tUSDJPY\n" +
+                    "2073-05-21T13:35:00.000000Z\tUSDFJD\n";
+            assertReader(expected, "trades");
+        });
+    }
+
+    @Test
+    public void testInsertMultipleRowsMissingBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t (ts timestamp, i int) timestamp(ts);", sqlExecutionContext);
+            final String sql = "insert into t VALUES (1262599200000000, $1), (3262599300000000, $2);";
+            final CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
+            InsertStatement insert = cq.getInsertStatement();
+            try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
+                bindVariableService.setInt(0, 1);
+                method.execute();
+                method.commit();
+            }
+            String expected = "ts\ti\n" +
+                    "2010-01-04T10:00:00.000000Z\t1\n" +
+                    "2073-05-21T13:35:00.000000Z\tNaN\n";
+            assertReader(expected, "t");
+        });
+    }
+    
     private void assertInsertTimestamp(String expected, String ddl2, String exceptionType, boolean commitInsert) throws Exception {
         if (commitInsert) {
             compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts)", sqlExecutionContext);
