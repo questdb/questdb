@@ -24,21 +24,22 @@
 
 package io.questdb.log;
 
+import io.questdb.VisibleForTesting;
 import io.questdb.std.*;
 
 
 public class HttpLogAlertBuilder extends LogRecordSink {
 
-    private static final String HEADER_BODY_SEPARATOR = "\r\n\r\n";
-    private static final String CL_MARKER = "######"; // 999999 / (1024*2) == 488 half a Gb payload max
-    private static final int CL_MARKER_LEN = CL_MARKER.length();
+    static final String CRLF = "\r\n";
+    private static final String CL_MARKER = "#######";
+    private static final int CL_MARKER_LEN = CL_MARKER.length(); // number of digits available for contentLength
     private static final int CL_MARKER_MAX_LEN = (int) Math.pow(10, CL_MARKER_LEN) - 1;
-    private static final int NOT_SET = -1;
+    private static final int MARK_NOT_SET = -1;
 
 
-    private long mark = NOT_SET;
-    private long contentLenStartLimit;
-    private long contentLenEnd;
+    private long mark = MARK_NOT_SET;
+    private boolean hasContentLengthMarker;
+    private long contentLengthEnd;
     private long bodyStart;
     private Sinkable footer;
 
@@ -48,23 +49,19 @@ public class HttpLogAlertBuilder extends LogRecordSink {
 
     public HttpLogAlertBuilder(long address, long addressSize) {
         super(address, addressSize);
-        contentLenStartLimit = _wptr;
-        contentLenEnd = _wptr;
+        contentLengthEnd = _wptr;
         bodyStart = _wptr;
     }
 
     public HttpLogAlertBuilder putHeader(CharSequence localHostIp) {
         clear();
-        put("POST /api/v1/alerts HTTP/1.1\r\n")
-                .put("Host: ").put(localHostIp).put("\r\n")
-                .put("User-Agent: QuestDB/LogAlert").put("\r\n")
-                .put("Accept: */*\r\n")
-                .put("Content-Type: application/json\r\n")
-                .put("Content-Length: ");
-        contentLenStartLimit = _wptr - 1;
-        put(CL_MARKER);
-        contentLenEnd = _wptr - 1;
-        put(HEADER_BODY_SEPARATOR);
+        put("POST /api/v1/alerts HTTP/1.1").put(CRLF)
+                .put("Host: ").put(localHostIp).put(CRLF)
+                .put("User-Agent: QuestDB/LogAlert").put(CRLF)
+                .put("Accept: */*").put(CRLF)
+                .put("Content-Type: application/json").put(CRLF)
+                .putContentLengthMarker();
+        put(CRLF); // header/body separator
         bodyStart = _wptr;
         return this;
     }
@@ -75,20 +72,23 @@ public class HttpLogAlertBuilder extends LogRecordSink {
         }
 
         // take the body length and format it into the ###### contentLength marker
-        int bodyLen = (int) (_wptr - bodyStart);
-        if (bodyLen > CL_MARKER_MAX_LEN) {
-            throw new LogError("Content too long");
-        }
-        long p = contentLenEnd;
-        int n = bodyLen, rem = n % 10;
-        while (n > 10) {
+        if (hasContentLengthMarker) {
+            int bodyLen = (int) (_wptr - bodyStart);
+            if (bodyLen > CL_MARKER_MAX_LEN) {
+                throw new LogError("Content too long");
+            }
+            long p = contentLengthEnd;
+            int n = bodyLen, rem = n % 10;
+            while (n > 9) {
+                Unsafe.getUnsafe().putByte(p--, (byte) ('0' + rem));
+                n /= 10;
+                rem = n % 10;
+            }
             Unsafe.getUnsafe().putByte(p--, (byte) ('0' + rem));
-            n /= 10;
-            rem = n % 10;
-        }
-        Unsafe.getUnsafe().putByte(p--, (byte) ('0' + rem));
-        while (p > contentLenStartLimit) {
-            Unsafe.getUnsafe().putByte(p--, (byte) ' ');
+            int lpadLen = (int) (CL_MARKER_LEN - contentLengthEnd + p);
+            for (int lpad = 0; lpad < lpadLen; lpad++) {
+                Unsafe.getUnsafe().putByte(p--, (byte) ' ');
+            }
         }
         return length();
     }
@@ -109,16 +109,18 @@ public class HttpLogAlertBuilder extends LogRecordSink {
     }
 
     public HttpLogAlertBuilder rewindToMark() {
-        this._wptr = mark == NOT_SET ? address : mark;
+        _wptr = mark == MARK_NOT_SET ? address : mark;
         return this;
     }
 
     @Override
     public void clear() {
         super.clear();
-        mark = NOT_SET;
-        contentLenEnd = _wptr;
+        mark = MARK_NOT_SET;
+        contentLengthEnd = _wptr;
         bodyStart = _wptr;
+        footer = null;
+        hasContentLengthMarker = false;
     }
 
     public HttpLogAlertBuilder put(LogRecordSink logRecord) {
@@ -180,5 +182,13 @@ public class HttpLogAlertBuilder extends LogRecordSink {
     @Override
     public String toString() {
         return Chars.stringFromUtf8Bytes(address, _wptr);
+    }
+
+    @VisibleForTesting
+    void putContentLengthMarker() {
+        put("Content-Length:").put(CL_MARKER);
+        contentLengthEnd = _wptr - 1; // will scan backwards from here
+        put(CRLF);
+        hasContentLengthMarker = true;
     }
 }

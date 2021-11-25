@@ -37,6 +37,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.log.HttpLogAlertBuilder.CRLF;
+
 public class LogAlertSocketTest {
 
     @Test
@@ -133,9 +135,10 @@ public class LogAlertSocketTest {
             // connect to a server and send something
             alertSkt.send(builder
                             .rewindToMark()
-                            .put("Something\n")
+                            .put("Something")
+                            .put(CRLF)
                             .put(MockAlertTarget.DEATH_PILL)
-                            .put('\n')
+                            .put(CRLF)
                             .$());
             try {
                 firstServerCompleted.await(5, TimeUnit.SECONDS);
@@ -146,7 +149,7 @@ public class LogAlertSocketTest {
             // by now there is only one server surviving, and we are connected to the other.
             // send a death pill and kill the surviving server.
             builder.clear();
-            builder.put(MockAlertTarget.DEATH_PILL).put('\n');
+            builder.put(MockAlertTarget.DEATH_PILL).put(CRLF);
             Assert.assertTrue(
                     alertSkt.send(
                             builder.length(),
@@ -182,9 +185,10 @@ public class LogAlertSocketTest {
             Assert.assertFalse(
                     alertSkt.send(builder
                                     .rewindToMark()
-                                    .put("Something\n")
+                                    .put("Something")
+                                    .put(CRLF)
                                     .put(MockAlertTarget.DEATH_PILL)
-                                    .put('\n')
+                                    .put(CRLF)
                                     .$(),
                             10,
                             ack -> Assert.assertEquals(ack, LogAlertSocket.NACK)
@@ -247,12 +251,11 @@ public class LogAlertSocketTest {
                     BufferedReader in = new BufferedReader(new InputStreamReader(clientSkt.getInputStream()));
                     PrintWriter out = new PrintWriter(clientSkt.getOutputStream(), true)
             ) {
-                System.out.printf("Listening on port [%d]%n", portNumber);
                 StringSink inputLine = new StringSink();
                 while (endState.get() == null) {
                     String line = in.readLine();
                     if (line != null) {
-                        inputLine.put(line).put('\n');
+                        inputLine.put(line).put(CRLF);
                         if (line.equals(DEATH_PILL)) {
                             break;
                         }
@@ -260,13 +263,10 @@ public class LogAlertSocketTest {
                         break;
                     }
                 }
-                System.out.printf("Received [%d]:%n%s%n", portNumber, inputLine);
                 out.print(ACK);
-                System.out.printf("Sent [%d]: %s%n", portNumber, ACK);
             } catch (IOException e) {
                 Assert.fail(e.getMessage());
             } finally {
-                System.out.printf("Bye [%d]%n", portNumber);
                 endState.set(State.TERMINATED);
                 if (onTargetEnd != null) {
                     onTargetEnd.run();

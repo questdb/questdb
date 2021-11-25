@@ -31,7 +31,7 @@ import java.io.UnsupportedEncodingException;
 
 public class HttpLogAlertBuilderTest {
 
-    private static final long bufferSize = 1024;
+    private static final int bufferSize = 1024;
     private static long bufferPtr;
     private static long bufferLimit;
     private HttpLogAlertBuilder alertBuilder;
@@ -59,7 +59,7 @@ public class HttpLogAlertBuilderTest {
                         "User-Agent: QuestDB/LogAlert\r\n" +
                         "Accept: */*\r\n" +
                         "Content-Type: application/json\r\n" +
-                        "Content-Length: ######\r\n" +
+                        "Content-Length:#######\r\n" +
                         "\r\n",
                 Chars.stringFromUtf8Bytes(bufferPtr, alertBuilder.getMark())
         );
@@ -190,5 +190,49 @@ public class HttpLogAlertBuilderTest {
                 Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
             }
         }
+    }
+
+    @Test
+    public void testContentLengthNoMarker() {
+        alertBuilder.clear();
+        Assert.assertEquals(0, alertBuilder.$());
+        Assert.assertEquals("", alertBuilder.toString());
+
+        alertBuilder.clear();
+        Assert.assertEquals(12, alertBuilder.put("clairvoyance").$());
+        Assert.assertEquals("clairvoyance", alertBuilder.toString());
+    }
+
+    @Test
+    public void testContentLengthMarker() {
+        alertBuilder.clear();
+        alertBuilder.putContentLengthMarker();
+        Assert.assertEquals(24, alertBuilder.$());
+        Assert.assertEquals("Content-Length:     24\r\n", alertBuilder.toString());
+
+        alertBuilder.clear();
+        alertBuilder.putContentLengthMarker();
+        Assert.assertEquals(36, alertBuilder.put("clairvoyance").$());
+        Assert.assertEquals("Content-Length:     36\r\nclairvoyance", alertBuilder.toString());
+
+        alertBuilder.clear();
+        alertBuilder.putContentLengthMarker();
+        Assert.assertEquals("Content-Length:#######\r\n", alertBuilder.toString());
+        int limit = bufferSize - alertBuilder.length();
+        for (int i = 0; i < limit; i++) {
+            alertBuilder.put('Q');
+        }
+        alertBuilder.$();
+        Assert.assertEquals(bufferSize, alertBuilder.length());
+        Assert.assertTrue(alertBuilder
+                .toString()
+                .startsWith("Content-Length:   1024\r\nQQQQQQQQQQQQQQQQQQQQQQ"));
+        Assert.assertTrue(alertBuilder
+                .toString()
+                .endsWith("QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ" +
+                        "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ" +
+                        "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ" +
+                        "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ" +
+                        "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"));
     }
 }
