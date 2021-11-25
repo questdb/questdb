@@ -46,72 +46,72 @@ public class LogAlertSocketTest {
     private static final FilesFacade ff = FilesFacadeImpl.INSTANCE;
 
     @Test
-    public void testParseSocketAddressEmpty() throws Exception {
+    public void testParseAlertTargetsEmpty() throws Exception {
         String[] expectedHosts = {LogAlertSocket.DEFAULT_HOST};
         int[] expectedPorts = {LogAlertSocket.DEFAULT_PORT};
-        assertSocketAddress("", expectedHosts, expectedPorts);
-        assertSocketAddress(":", expectedHosts, expectedPorts);
-        assertSocketAddress(":    ", expectedHosts, expectedPorts);
-        assertSocketAddress("  :  ", expectedHosts, expectedPorts);
-        assertSocketAddress("    :", expectedHosts, expectedPorts);
-        assertSocketAddress("     ", expectedHosts, expectedPorts);
-        assertSocketAddress("\"\"", expectedHosts, expectedPorts);
-        assertSocketAddress("\":\"", expectedHosts, expectedPorts);
-        assertSocketAddress("\"     \"", expectedHosts, expectedPorts);
-        assertSocketAddress("\":     \"", expectedHosts, expectedPorts);
-        assertSocketAddress("\"  :  \"", expectedHosts, expectedPorts);
-        assertSocketAddress("\"     :\"", expectedHosts, expectedPorts);
+        assertAlertTargets("", expectedHosts, expectedPorts);
+        assertAlertTargets(":", expectedHosts, expectedPorts);
+        assertAlertTargets(":    ", expectedHosts, expectedPorts);
+        assertAlertTargets("  :  ", expectedHosts, expectedPorts);
+        assertAlertTargets("    :", expectedHosts, expectedPorts);
+        assertAlertTargets("     ", expectedHosts, expectedPorts);
+        assertAlertTargets("\"\"", expectedHosts, expectedPorts);
+        assertAlertTargets("\":\"", expectedHosts, expectedPorts);
+        assertAlertTargets("\"     \"", expectedHosts, expectedPorts);
+        assertAlertTargets("\":     \"", expectedHosts, expectedPorts);
+        assertAlertTargets("\"  :  \"", expectedHosts, expectedPorts);
+        assertAlertTargets("\"     :\"", expectedHosts, expectedPorts);
     }
 
     @Test
-    public void testParseSocketAddressMultipleEmpty0() throws Exception {
+    public void testParseAlertTargetsMultipleEmpty0() throws Exception {
         String[] expectedHosts = {LogAlertSocket.DEFAULT_HOST, LogAlertSocket.DEFAULT_HOST};
         int[] expectedPorts = {LogAlertSocket.DEFAULT_PORT, LogAlertSocket.DEFAULT_PORT};
-        assertSocketAddress(",    ", expectedHosts, expectedPorts);
-        assertSocketAddress("  ,  ", expectedHosts, expectedPorts);
-        assertSocketAddress("    ,", expectedHosts, expectedPorts);
-        assertSocketAddress(":,    ", expectedHosts, expectedPorts);
-        assertSocketAddress("  ,:  ", expectedHosts, expectedPorts);
-        assertSocketAddress("  :  ,", expectedHosts, expectedPorts);
-        assertSocketAddress(",", expectedHosts, expectedPorts);
-        assertSocketAddress("\",    \"", expectedHosts, expectedPorts);
-        assertSocketAddress("\"  ,  \"", expectedHosts, expectedPorts);
-        assertSocketAddress("\"    ,\"", expectedHosts, expectedPorts);
-        assertSocketAddress("\",\"", expectedHosts, expectedPorts);
+        assertAlertTargets(",    ", expectedHosts, expectedPorts);
+        assertAlertTargets("  ,  ", expectedHosts, expectedPorts);
+        assertAlertTargets("    ,", expectedHosts, expectedPorts);
+        assertAlertTargets(":,    ", expectedHosts, expectedPorts);
+        assertAlertTargets("  ,:  ", expectedHosts, expectedPorts);
+        assertAlertTargets(",", expectedHosts, expectedPorts);
+        assertAlertTargets("\",    \"", expectedHosts, expectedPorts);
+        assertAlertTargets("\"  ,  \"", expectedHosts, expectedPorts);
+        assertAlertTargets("\"    ,\"", expectedHosts, expectedPorts);
+        assertAlertTargets("\",\"", expectedHosts, expectedPorts);
     }
 
     @Test
-    public void testParseSocketAddressMultipleEmpty1() throws Exception {
+    public void testParseAlertTargetsMultipleEmpty1() throws Exception {
         String[] expectedHosts = new String[9];
         int[] expectedPorts = new int[9];
         Arrays.fill(expectedHosts, LogAlertSocket.DEFAULT_HOST);
         Arrays.fill(expectedPorts, LogAlertSocket.DEFAULT_PORT);
-        assertSocketAddress(",,, :,: ,,,    :,", expectedHosts, expectedPorts);
+        assertAlertTargets(",,, :,:,,,    :,", expectedHosts, expectedPorts);
     }
 
     @Test
-    public void testParseSocketAddress() throws Exception {
+    public void testParseAlertTargets() throws Exception {
         String[] expectedHosts = new String[3];
         int[] expectedPorts = new int[3];
         Arrays.fill(expectedHosts, LogAlertSocket.DEFAULT_HOST);
         Arrays.fill(expectedPorts, LogAlertSocket.DEFAULT_PORT);
         expectedPorts[1] = 1234;
-        assertSocketAddress("localhost,127.0.0.1:1234,localhost:", expectedHosts, expectedPorts);
+        assertAlertTargets("localhost,127.0.0.1:1234,localhost:", expectedHosts, expectedPorts);
     }
 
     @Test
-    public void testParseSocketNullAddress() throws Exception {
+    public void testParseAlertTargetsNull() throws Exception {
         String[] expectedHosts = {LogAlertSocket.DEFAULT_HOST};
         int[] expectedPorts = {LogAlertSocket.DEFAULT_PORT};
-        assertSocketAddress(null, expectedHosts, expectedPorts);
+        assertAlertTargets(null, expectedHosts, expectedPorts);
     }
 
     @Test
-    public void testParseSocketBadAddress() throws Exception {
+    public void testParseAlertTargetsBad() throws Exception {
         assertLogError("::", "Unexpected ':' found at position 1: ::");
         assertLogError("does not exist", "Invalid host value [does not exist] at position 0 for socketAddress: does not exist");
         assertLogError("localhost:banana", "Invalid port value [banana] at position 10 for socketAddress: localhost:banana");
         assertLogError(",:si", "Invalid port value [si] at position 2 for socketAddress: ,:si");
+        assertLogError("  :  ,", "Invalid port value [  ] at position 3 for socketAddress:   :  ,");
     }
 
     @Test
@@ -125,13 +125,13 @@ public class LogAlertSocketTest {
                     .setMark();
 
             // start servers
-            final int numHosts = alertSkt.getNumberOfHosts();
+            final int numHosts = alertSkt.getNumberOfAlertHosts();
             Assert.assertEquals(2, numHosts);
             final CountDownLatch haltLatch = new CountDownLatch(numHosts);
             final CountDownLatch firstServerCompleted = new CountDownLatch(1);
             final Thread[] servers = new Thread[numHosts];
             for (int i = 0; i < numHosts; i++) {
-                final int portNumber = alertSkt.getPorts()[i];
+                final int portNumber = alertSkt.getAlertPorts()[i];
                 servers[i] = new Thread(() -> {
                     try (
                             ServerSocket serverSkt = new ServerSocket(portNumber);
@@ -204,18 +204,18 @@ public class LogAlertSocketTest {
         });
     }
 
-    public void assertSocketAddress(
+    public void assertAlertTargets(
             String socketAddress,
             String[] expectedHosts,
             int[] expectedPorts
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (LogAlertSocket socket = new LogAlertSocket(ff, socketAddress, 1024)) {
-                Assert.assertEquals(expectedHosts.length, socket.getNumberOfHosts());
-                Assert.assertEquals(expectedPorts.length, socket.getNumberOfHosts());
+                Assert.assertEquals(expectedHosts.length, socket.getNumberOfAlertHosts());
+                Assert.assertEquals(expectedPorts.length, socket.getNumberOfAlertHosts());
                 for (int i = 0; i < expectedHosts.length; i++) {
-                    Assert.assertEquals(expectedHosts[i], socket.getHosts()[i]);
-                    Assert.assertEquals(expectedPorts[i], socket.getPorts()[i]);
+                    Assert.assertEquals(expectedHosts[i], socket.getAlertHosts()[i]);
+                    Assert.assertEquals(expectedPorts[i], socket.getAlertPorts()[i]);
                 }
             }
         });

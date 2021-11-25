@@ -164,7 +164,7 @@ public class LogAlertSocketWriterTest {
             writer.bindProperties();
             Assert.assertEquals(LogAlertSocket.OUT_BUFFER_SIZE, writer.getBufferSize());
             Assert.assertEquals(LogAlertSocketWriter.DEFAULT_ALERT_TPT_FILE, writer.getLocation());
-            Assert.assertEquals(LogAlertSocket.DEFAULT_HOST + ":" + LogAlertSocket.DEFAULT_PORT, writer.getSocketAddress());
+            Assert.assertEquals(LogAlertSocket.DEFAULT_HOST + ":" + LogAlertSocket.DEFAULT_PORT, writer.getAlertTargets());
             writer.close();
 
             writer.setBufferSize("1978");
@@ -181,7 +181,7 @@ public class LogAlertSocketWriterTest {
             }
             Assert.assertEquals(1978, writer.getBufferSize());
             Assert.assertEquals("/log-file.conf", writer.getLocation());
-            Assert.assertEquals("127.0.0.1:8989", writer.getSocketAddress());
+            Assert.assertEquals("127.0.0.1:8989", writer.getAlertTargets());
         }
     }
 
@@ -237,7 +237,7 @@ public class LogAlertSocketWriterTest {
             writer.setSocketAddress("\"\"");
             writer.bindProperties();
             Assert.assertNotNull(LogAlertSocket.localHostIp);
-            Assert.assertEquals("127.0.0.1:9093", writer.getSocketAddress());
+            Assert.assertEquals("127.0.0.1:9093", writer.getAlertTargets());
         }
     }
 

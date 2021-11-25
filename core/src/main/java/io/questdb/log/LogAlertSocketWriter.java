@@ -55,7 +55,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private final MicrosecondClock clock;
     private final FilesFacade ff;
     private final SCSequence writeSequence;
-    private final RingQueue<LogRecordSink> alertsSource;
+    private final RingQueue<LogRecordSink> alertsSourceQueue;
     private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
     private final DollarExpr dollar$ = new DollarExpr();
     private final CharSequenceObjHashMap<CharSequence> alertProps = DollarExpr.adaptMap(System.getenv());
@@ -103,7 +103,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     ) {
         this.ff = ff;
         this.clock = clock;
-        this.alertsSource = alertsSrc;
+        this.alertsSourceQueue = alertsSrc;
         this.writeSequence = writeSequence;
         this.level = level & ~(1 << Numbers.msb(LogLevel.ADVISORY)); // switch off ADVISORY
     }
@@ -132,7 +132,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
 
     @Override
     public boolean runSerially() {
-        return writeSequence.consumeAll(alertsSource, alertsProcessor);
+        return writeSequence.consumeAll(alertsSourceQueue, alertsProcessor);
     }
 
     @VisibleForTesting
@@ -156,8 +156,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     }
 
     @VisibleForTesting
-    String getSocketAddress() {
-        return socket.getSocketAddress();
+    String getAlertTargets() {
+        return socket.getAlertTargets();
     }
 
     @VisibleForTesting
