@@ -38,9 +38,10 @@ public class HttpLogAlertBuilder extends LogRecordSink {
 
 
     private long mark = NOT_SET;
-    private long contentLenStart;
+    private long contentLenStartLimit;
     private long contentLenEnd;
     private long bodyStart;
+    private Sinkable footer;
 
     public HttpLogAlertBuilder(LogAlertSocket laSkt) {
         this(laSkt.getOutBufferPtr(), laSkt.getOutBufferSize());
@@ -48,7 +49,7 @@ public class HttpLogAlertBuilder extends LogRecordSink {
 
     public HttpLogAlertBuilder(long address, long addressSize) {
         super(address, addressSize);
-        contentLenStart = _wptr;
+        contentLenStartLimit = _wptr;
         contentLenEnd = _wptr;
         bodyStart = _wptr;
     }
@@ -61,7 +62,7 @@ public class HttpLogAlertBuilder extends LogRecordSink {
                 .put("Accept: */*\r\n")
                 .put("Content-Type: application/json\r\n")
                 .put("Content-Length: ");
-        contentLenStart = _wptr;
+        contentLenStartLimit = _wptr - 1;
         put(CL_MARKER);
         contentLenEnd = _wptr - 1;
         put(HEADER_BODY_SEPARATOR);
@@ -70,6 +71,10 @@ public class HttpLogAlertBuilder extends LogRecordSink {
     }
 
     public int $() {
+        if (footer != null) {
+            footer.toSink(this);
+        }
+
         // take the body length and format it into the ###### contentLength marker
         int bodyLen = (int) (_wptr - bodyStart);
         if (bodyLen > CL_MARKER_MAX_LEN) {
@@ -78,15 +83,21 @@ public class HttpLogAlertBuilder extends LogRecordSink {
         long p = contentLenEnd;
         int n = bodyLen, rem = n % 10;
         while (n > 10) {
-            Unsafe.getUnsafe().putByte(p--, (byte) (rem + 48));
+            Unsafe.getUnsafe().putByte(p--, (byte) ('0' + rem));
             n /= 10;
             rem = n % 10;
         }
-        Unsafe.getUnsafe().putByte(p--, (byte) (rem + 48));
-        while (p > contentLenStart - 1) {
+        Unsafe.getUnsafe().putByte(p--, (byte) ('0' + rem));
+        while (p > contentLenStartLimit) {
             Unsafe.getUnsafe().putByte(p--, (byte) ' ');
         }
         return length();
+    }
+
+
+    public HttpLogAlertBuilder setFooter(Sinkable footer) {
+        this.footer = footer;
+        return this;
     }
 
     public HttpLogAlertBuilder setMark() {
@@ -136,7 +147,7 @@ public class HttpLogAlertBuilder extends LogRecordSink {
                     break;
 
                 default:
-                    put(c);
+                    put((char) c);
                     break;
             }
         }

@@ -173,7 +173,7 @@ public class DollarExpr implements Sinkable {
     }
 
     private Sinkable resolveEnv(int dollarOffset, int envStart, int envEnd) {
-        String envKey = originalTxt.subSequence(envStart, envEnd).toString().trim();
+        CharSequence envKey = originalTxt.subSequence(envStart, envEnd);
         final CharSequence envValue = props.get(envKey);
         if (envValue == null) {
             throw new LogError("Undefined property: " + envKey);

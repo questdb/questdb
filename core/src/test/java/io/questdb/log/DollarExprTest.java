@@ -84,7 +84,7 @@ public class DollarExprTest {
         int position = ENV.get("JSON_FILE").length() + 1;
         assertFail("$JSON_FILE$", "Unexpected '$' at position " + position);
         assertFail("$COCO$", "Undefined property: COCO");
-        assertFail("$ COCO  $", "Undefined property: COCO");
+        assertFail("$ COCO  $", "Undefined property:  COCO  ");
         assertFail("${COCO", "Missing '}' at position 6");
         assertFail("$JSON_FILE}", "Mismatched '{}' at position 10");
         assertFail("${date:}", "Missing expression at position 7");

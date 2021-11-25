@@ -167,9 +167,7 @@ public class HttpLogAlertBuilderTest {
         try {
             LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
             logRecord.put(msg);
-
-            Sinkable sinkable = sink1 -> sink1.put("Tres, Dos, Uno, Zero!!");
-            alertBuilder.put(logRecord).put(sinkable).$();
+            alertBuilder.put(logRecord).put(s -> s.put("Tres, Dos, Uno, Zero!!")).$();
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
                             "Host: localhost\r\n" +

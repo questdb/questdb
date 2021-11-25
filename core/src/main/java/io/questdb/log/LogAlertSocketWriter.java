@@ -34,6 +34,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.*;
 
@@ -60,7 +61,6 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private final CharSequenceObjHashMap<CharSequence> alertProps = DollarExpr.adaptMap(System.getenv());
     private HttpLogAlertBuilder alertBuilder;
     private LogAlertSocket socket;
-    private String alertFooter;
 
     {
         if (!alertProps.contains(ORG_ID_ENV)) {
@@ -175,18 +175,14 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         if (location.isEmpty()) {
             location = DEFAULT_ALERT_TPT_FILE;
         }
-        location = dollar$.resolveEnv(location, now).toString();
+        location = dollar$.resolveEnv(location, now).toString(); // location may contain dollar expressions
 
         // read template, resolve env vars within (except $ALERT_MESSAGE)
         boolean wasRead = false;
         try (InputStream is = LogAlertSocketWriter.class.getResourceAsStream(location)) {
             if (is != null) {
-                byte[] buff = new byte[LogAlertSocket.IN_BUFFER_SIZE];
-                int n = is.read(buff, 0, buff.length);
-                if (n > 0) {
-                    dollar$.resolve(new String(buff, 0, n, Files.UTF_8), now, alertProps);
-                    wasRead = true;
-                }
+                dollar$.resolve(CharSequenceView.of(is), now, alertProps);
+                wasRead = true;
             }
         } catch (IOException e) {
             // it was not a resource ("/resource_name")
@@ -203,7 +199,6 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                     alertProps
             );
         }
-
         // consolidate/check/load template to the outbound socket buffer
         dollar$.resolve(dollar$.toString(), now, alertProps);
         ObjList<Sinkable> components = dollar$.getLocationComponents();
@@ -215,22 +210,16 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         }
         alertBuilder = new HttpLogAlertBuilder(socket)
                 .putHeader(LogAlertSocket.localHostIp)
-                .put(components.getQuick(0))
-                .setMark(); // mark the end of the first static block in buffer
-        alertFooter = components.getQuick(2).toString(); // this is the last static block
+                .put(components.getQuick(0)) // // this is the first static block
+                .setMark() // mark in buffer, message is appended here onLogRecord
+                .setFooter(components.getQuick(2)); // this is the final static block
     }
 
     @VisibleForTesting
     void onLogRecord(LogRecordSink logRecord) {
         final int len = logRecord.length();
         if ((logRecord.getLevel() & level) != 0 && len > 0) {
-            socket.send(
-                    alertBuilder
-                            .rewindToMark()
-                            .put(logRecord)
-                            .put(alertFooter)
-                            .$()
-            );
+            socket.send(alertBuilder.rewindToMark().put(logRecord).$());
         }
     }
 
@@ -261,6 +250,45 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
             DirectByteCharSequence template = new DirectByteCharSequence();
             template.of(address, address + size);
             return template;
+        }
+    }
+
+    private static class CharSequenceView implements CharSequence {
+        private static final byte[] BUFF = new byte[LogAlertSocket.IN_BUFFER_SIZE];
+
+        static CharSequenceView of(InputStream is) throws IOException {
+            return new CharSequenceView(is);
+        }
+
+        private final int lo;
+        private final int len;
+
+        private CharSequenceView(InputStream is) throws IOException {
+            this(0, is.read(BUFF, 0, BUFF.length));
+        }
+
+        private CharSequenceView(int lo, int len) {
+            this.lo = lo;
+            this.len = len;
+        }
+
+        @Override
+        public int length() {
+            return len;
+        }
+
+        @Override
+        public char charAt(int index) {
+            if (index > -1 && index < len) {
+                return (char) BUFF[lo + index];
+            }
+            throw new IndexOutOfBoundsException("Index out of range: " + index);
+        }
+
+        @NotNull
+        @Override
+        public CharSequenceView subSequence(int start, int end) {
+            return new CharSequenceView(lo + start, end - start);
         }
     }
 }
