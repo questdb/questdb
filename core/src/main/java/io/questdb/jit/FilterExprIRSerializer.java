@@ -34,6 +34,8 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.*;
 
+import java.util.Arrays;
+
 /**
  * Intermediate representation (IR) serializer for filters (think, WHERE clause)
  * to be used in SQL JIT compiler.
@@ -115,15 +117,16 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         traverseAlgo.traverse(node, this);
         memory.putByte(RET);
 
+        TypesObserver typesObserver = arithmeticContext.typesObserver;
         int options = debug ? 1 : 0;
-        int typeSize = arithmeticContext.globalTypeSize;
+        byte typeSize = typesObserver.maxSize();
         if (typeSize > 0) {
             // typeSize is 2^n, so number of trailing zeros is equal to log2
             int log2 = Integer.numberOfTrailingZeros(typeSize);
             options = options | (log2 << 1);
         }
         if (!scalar) {
-            int executionHint = arithmeticContext.globalHasMixedTypes ? 2 : 1;
+            int executionHint = typesObserver.hasMixedSizes() ? 2 : 1;
             options = options | (executionHint << 3);
         }
         return options;
@@ -196,7 +199,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
     }
 
     private void serializeColumn(int position, final CharSequence token) throws SqlException {
-        final int index = metadata.getColumnIndexQuiet(token);
+        int index = metadata.getColumnIndexQuiet(token);
         if (index == -1) {
             throw SqlException.invalidColumn(position, token);
         }
@@ -506,17 +509,15 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         byte constantTypeCode;
         ExpressionType expressionType;
 
-        // global (per filter) context fields (used for JIT options)
-        private int globalTypeSize; // type size in bytes
-        private boolean globalHasMixedTypes;
+        // container for all observed types
+        final TypesObserver typesObserver = new TypesObserver();
 
         @Override
         public void clear() {
             rootNode = null;
             constantTypeCode = UNDEFINED_CODE;
             expressionType = null;
-            globalTypeSize = 0;
-            globalHasMixedTypes = false;
+            typesObserver.clear();
         }
 
         public boolean isActive() {
@@ -541,7 +542,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
             }
 
             if (node.type == ExpressionNode.LITERAL) {
-                final int index = metadata.getColumnIndexQuiet(node.token);
+                int index = metadata.getColumnIndexQuiet(node.token);
                 if (index == -1) {
                     throw SqlException.invalidColumn(node.position, node.token);
                 }
@@ -550,14 +551,6 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
 
                 updateExpressionType(node.position, columnType);
                 updateTypeCode(node.position, columnType);
-
-                int newTypeSize = constantTypeSize(constantTypeCode);
-                if (globalTypeSize > 0 && newTypeSize != globalTypeSize) {
-                    globalHasMixedTypes = true;
-                }
-                if (newTypeSize > globalTypeSize) {
-                    globalTypeSize = newTypeSize;
-                }
             }
 
             return leftContext;
@@ -605,6 +598,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
 
         private void updateTypeCode(int position, int columnType) throws SqlException {
             byte code = columnTypeCode(columnType);
+            typesObserver.observe(code);
             switch (code) {
                 case MEM_I1:
                     if (constantTypeCode == UNDEFINED_CODE) {
@@ -645,6 +639,75 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                             .put("expected numeric column type: ")
                             .put(ColumnType.nameOf(columnType));
             }
+        }
+    }
+
+    private static class TypesObserver implements Mutable {
+
+        private static final int I1_INDEX = 0;
+        private static final int I2_INDEX = 1;
+        private static final int I4_INDEX = 2;
+        private static final int F4_INDEX = 3;
+        private static final int I8_INDEX = 4;
+        private static final int F8_INDEX = 5;
+        private static final int TYPES_COUNT = F8_INDEX + 1;
+
+        private final byte[] types = new byte[TYPES_COUNT];
+
+        public void observe(byte code) {
+            switch (code) {
+                case MEM_I1:
+                    types[I1_INDEX] = 1;
+                    break;
+                case MEM_I2:
+                    types[I2_INDEX] = 2;
+                    break;
+                case MEM_I4:
+                    types[I4_INDEX] = 4;
+                    break;
+                case MEM_F4:
+                    types[F4_INDEX] = 4;
+                    break;
+                case MEM_I8:
+                    types[I8_INDEX] = 8;
+                    break;
+                case MEM_F8:
+                    types[F8_INDEX] = 8;
+                    break;
+            }
+        }
+
+        public byte maxSize() {
+            for (int i = types.length - 1; i > -1; i--) {
+                byte size = types[i];
+                if (size > 0) {
+                    return size;
+                }
+            }
+            return 0;
+        }
+
+        public boolean hasMixedSizes() {
+            byte size = 0;
+            for (byte s : types) {
+                size = size == 0 ? s : size;
+                if (size > 0) {
+                    if (s > 0 && s != size) {
+                        return true;
+                    }
+                } else {
+                    size = s;
+                }
+            }
+            // Treat double + long combination as mixed types to force scalar mode in
+            // JIT compiler. That's because AVX-2 does not have an instruction to
+            // convert longs to doubles. We may want to revisit this in the future.
+            return types[I8_INDEX] > 0 && types[F8_INDEX] > 0;
+        }
+
+        @Override
+        public void clear() {
+            Arrays.fill(types, (byte) 0);
         }
     }
 

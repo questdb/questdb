@@ -274,15 +274,18 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
         filterToOptions.put("not aboolean", 0b00001000);
         filterToOptions.put("abyte = 0", 0b00001000);
         filterToOptions.put("ageobyte <> null", 0b00001000);
+        filterToOptions.put("abyte + abyte = 0", 0b00001000);
         // 2B
         filterToOptions.put("ashort = 0", 0b00001010);
         filterToOptions.put("ageoshort <> null", 0b00001010);
         filterToOptions.put("achar = 'a'", 0b00001010);
+        filterToOptions.put("ashort * ashort = 0", 0b00001010);
         // 4B
         filterToOptions.put("anint = 0", 0b00001100);
         filterToOptions.put("ageoint <> null", 0b00001100);
         filterToOptions.put("afloat = 0", 0b00001100);
         filterToOptions.put("asymbol <> null", 0b00001100);
+        filterToOptions.put("anint / anint = 0", 0b00001100);
         // 8B
         filterToOptions.put("along = 0", 0b00001110);
         filterToOptions.put("ageolong <> null", 0b00001110);
@@ -290,7 +293,6 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
         filterToOptions.put("atimestamp <> null", 0b00001110);
         filterToOptions.put("adouble = 0", 0b00001110);
         filterToOptions.put("afloat = 0 or anint = 0", 0b00001100);
-        filterToOptions.put("along = 0 or adouble = 0", 0b00001110);
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
             setUp1();
@@ -300,18 +302,27 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testOptionsLongDoubleTreatedAsMixedSizes() throws Exception {
+        int options = serialize("adouble = 0 and along = 0", false, false);
+        Assert.assertEquals(0b00010110, options);
+    }
+
+    @Test
     public void testOptionsMixedSizes() throws Exception {
         Map<String, Integer> filterToOptions = new HashMap<>();
         // 2B
         filterToOptions.put("aboolean or ashort = 0", 0b00010010);
         filterToOptions.put("abyte = 0 or ashort = 0", 0b00010010);
+        filterToOptions.put("abyte + ashort = 0", 0b00010010);
         // 4B
         filterToOptions.put("anint = 0 or abyte = 0", 0b00010100);
         filterToOptions.put("afloat = 0 or abyte = 0", 0b00010100);
+        filterToOptions.put("afloat / abyte = 0", 0b00010100);
         // 8B
         filterToOptions.put("along = 0 or ashort = 0", 0b00010110);
         filterToOptions.put("adouble = 0 or ashort = 0", 0b00010110);
         filterToOptions.put("afloat = 0 or adouble = 0", 0b00010110);
+        filterToOptions.put("anint * along = 0", 0b00010110);
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
             setUp1();
