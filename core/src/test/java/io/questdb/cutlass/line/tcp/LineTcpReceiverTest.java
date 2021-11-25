@@ -796,7 +796,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                             .$(0);
                     lineTcpSender
                             .metric("table")
-                            .tag("tag 2", "value=\2") // Invalid column name, last line is not saved
+                            .tag("tag/2", "value=\2") // Invalid column name, last line is not saved
                             .$(Timestamps.DAY_MICROS * 1000L);
                     lineTcpSender.flush();
                 }
@@ -948,12 +948,12 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                             .$(0);
                     lineTcpSender
                             .metric("table")
-                            .tag("tag 2", "value=\2") // Invalid column name, last line is not saved
+                            .tag("tag/2", "value=\2") // Invalid column name, last line is not saved
                             .$(Timestamps.DAY_MICROS * 1000L);
                     // Repeat
                     lineTcpSender
                             .metric("table")
-                            .tag("tag 2", "value=\2") // Invalid column name, last line is not saved
+                            .tag("tag/2", "value=\2") // Invalid column name, last line is not saved
                             .$(Timestamps.DAY_MICROS * 1000L);
                     lineTcpSender.flush();
                 }
@@ -992,7 +992,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                 try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
                     lineTcpSender
                             .metric("table")
-                            .tag("tag 2", "value=\2") // Invalid column name, line is not saved
+                            .tag("tag/2", "value=\2") // Invalid column name, line is not saved
                             .$(0);
                     lineTcpSender
                             .metric("table")
