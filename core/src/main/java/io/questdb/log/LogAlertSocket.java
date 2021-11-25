@@ -228,11 +228,6 @@ public class LogAlertSocket implements Closeable {
     }
 
     @VisibleForTesting
-    int getAlertHostIdx() {
-        return alertHostIdx;
-    }
-
-    @VisibleForTesting
     String[] getAlertHosts() {
         return alertHosts;
     }
