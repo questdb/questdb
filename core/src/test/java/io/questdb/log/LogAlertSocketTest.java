@@ -136,10 +136,7 @@ public class LogAlertSocketTest {
                             .put("Something\n")
                             .put(MockAlertTarget.DEATH_PILL)
                             .put('\n')
-                            .$(),
-                    numHosts,
-                    ack -> Assert.assertEquals(ack, MockAlertTarget.ACK)
-            );
+                            .$());
             try {
                 firstServerCompleted.await(5, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
