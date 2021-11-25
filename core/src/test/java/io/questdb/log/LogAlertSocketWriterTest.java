@@ -46,12 +46,6 @@ public class LogAlertSocketWriterTest {
     @Test
     public void test_BindProperties_AlertTemplateAndBuilder_OnLogRecord() {
         String message = "$Sîne klâwen durh die wolken sint geslagen,\r\n" +
-                "er stîget ûf mit grôzer kraft,\r\n" +
-                "ich sih in grâwen tägelîch als er wil tagen,\r\n" +
-                "den tac, der \"im\" ${KARTOFEN} geselleschaft\r\n" +
-                "erwenden wil, dem werden man,\r\n" +
-                "den ich mit sorgen în verliez.\r\n" +
-                "ich bringe in hinnen, ob ich kan.\r\n" +
                 "sîn vil manegiu tugent michz leisten hiez.$\r\n";
         int len = message.length();
 
@@ -67,23 +61,18 @@ public class LogAlertSocketWriterTest {
                 LogLevel.ERROR
         )) {
             writer.bindProperties();
-            HttpLogAlertBuilder alertBuilder = writer.getAlertBuilder();
 
-            // put message in a log record
             LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
             recordSink.setLevel(LogLevel.ERROR);
-            recordSink.put(message.toCharArray(), 0, len);
-
+            recordSink.put(message);
             writer.onLogRecord(recordSink);
-
-            Assert.assertNotNull(alertBuilder);
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
                             "Host: " + LogAlertSocket.localHostIp + "\r\n" +
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:    722\r\n" +
+                            "Content-Length:    502\r\n" +
                             "\r\n" +
                             "[\n" +
                             "  {\n" +
@@ -100,25 +89,18 @@ public class LogAlertSocketWriterTest {
                             "    },\n" +
                             "    \"Annotations\": {\n" +
                             "      \"description\": \"ERROR/GLOBAL/GLOBAL/GLOBAL/GLOBAL\",\n" +
-                            "      \"message\": \"\\\\$Sîne klâwen durh die wolken sint geslagen,er " +
-                            "stîget ûf mit grôzer kraft,ich sih in grâwen tägelîch als er wil tagen,den " +
-                            "tac, der \\\"im\\\" \\\\${KARTOFEN} geselleschafterwenden wil, dem werden " +
-                            "man,den ich mit sorgen în verliez.ich bringe in hinnen, ob ich kan.sîn vil " +
+                            "      \"message\": \"\\\\$Sîne klâwen durh die wolken sint geslagen,sîn vil " +
                             "manegiu tugent michz leisten hiez.\\\\$\"" +
                             "\n" +
                             "    }\n" +
                             "  }\n" +
                             "]",
-                    alertBuilder.toString()
+                    writer.getAlertBuilder().toString()
             );
 
-            message = "A second log message";
-            len = message.length();
             recordSink.clear();
-            recordSink.put(message.toCharArray(), 0, len);
-
+            recordSink.put("A second log message");
             writer.onLogRecord(recordSink);
-
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
                             "Host: " + LogAlertSocket.localHostIp + "\r\n" +
@@ -146,7 +128,7 @@ public class LogAlertSocketWriterTest {
                             "    }\n" +
                             "  }\n" +
                             "]",
-                    alertBuilder.toString()
+                    writer.getAlertBuilder().toString()
             );
         } finally {
             Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);

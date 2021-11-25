@@ -58,18 +58,18 @@ public class DollarExprTest {
         );
         assertParseEquals(
                 "${date:   dd }",
-                "   01 ",
-                "[   01 ]"
+                "01",
+                "[01]"
         );
         assertParseEquals(
                 "${date:   dd/MM/y }",
-                "   01/01/1970 ",
-                "[   01/01/1970 ]"
+                "01/01/1970",
+                "[01/01/1970]"
         );
         assertParseEquals(
                 "${date:   MM/dd/y}",
-                "   01/01/1970",
-                "[   01/01/1970]"
+                "01/01/1970",
+                "[01/01/1970]"
         );
         assertParseEquals(
                 "${date:yyyy-MM-dd HH:mm:ss}",

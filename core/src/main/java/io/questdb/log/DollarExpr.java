@@ -116,7 +116,7 @@ public class DollarExpr implements Sinkable {
                         }
                         int formatStart = keyStart + DATE_FORMAT_KEY.length();
                         if (Chars.startsWith(originalTxt, keyStart, formatStart, DATE_FORMAT_KEY)) {
-                            txtComponents.add(resolveDate(formatStart, i));
+                            txtComponents.add(new SDate(formatStart, i));
                         } else {
                             txtComponents.add(resolveEnv(dollarStart, dollarStart + 2, i));
                         }
@@ -168,7 +168,9 @@ public class DollarExpr implements Sinkable {
     @Override
     public String toString() {
         resolveSink.clear();
-        toSink(resolveSink);
+        for (int i = 0, n = txtComponents.size(); i < n; i++) {
+            resolveSink.put(txtComponents.getQuick(i));
+        }
         return resolveSink.toString();
     }
 
@@ -182,21 +184,40 @@ public class DollarExpr implements Sinkable {
         return sink -> sink.put(envValue);
     }
 
-    private Sinkable resolveDate(int start, int end) {
-        final DateFormat dateFormat;
-        String dateFormatStr = originalTxt.subSequence(start, end).toString().trim();
-        if (dateFormatStr.isEmpty()) {
-            throw new LogError("Missing expression at position " + start);
+    private class SDate implements Sinkable {
+
+        private final DateFormat dateFormat;
+
+        SDate(int start, int end) {
+            if (end - start < 1) {
+                throw new LogError("Missing expression at position " + start);
+            }
+            int actualStart = start;
+            int actualEnd = end;
+            while (originalTxt.charAt(actualStart) == ' ' && actualStart < actualEnd) {
+                actualStart++;
+            }
+            while (originalTxt.charAt(actualEnd - 1) == ' ' && actualEnd > actualStart) {
+                actualEnd--;
+            }
+            if (actualEnd - actualStart < 1) {
+                throw new LogError("Missing expression at position " + actualStart);
+            }
+            dateFormat = dateCompiler.compile(originalTxt, actualStart, actualEnd, false);
         }
-        dateFormat = dateCompiler.compile(originalTxt, start, end, false);
-        return sink -> dateFormat.format(dateValue, TimestampFormatUtils.enLocale, null, sink);
+
+        @Override
+        public void toSink(CharSink sink) {
+            // TODO: this is horrendously slow (DollarExprTest.testSuccessfulParse())
+            dateFormat.format(dateValue, TimestampFormatUtils.enLocale, null, sink);
+        }
     }
 
     private class SSubStr implements Sinkable {
         protected final int start;
         protected final int end;
 
-        public SSubStr(int start, int end) {
+        SSubStr(int start, int end) {
             this.start = start;
             this.end = end;
         }
