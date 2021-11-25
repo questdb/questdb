@@ -25,6 +25,7 @@ export const conf: monaco.languages.LanguageConfiguration = {
     { open: '"', close: '"' },
     { open: "'", close: "'" },
   ],
+  wordPattern: /'?\w[\w'-.]*[?!,;:"]*/,
 }
 
 export const language: monaco.languages.IMonarchLanguage = {
