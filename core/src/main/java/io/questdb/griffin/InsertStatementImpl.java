@@ -25,48 +25,26 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Misc;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class InsertStatementImpl implements InsertStatement {
-    private final VirtualRecord virtualRecord;
-    private final SqlCompiler.RecordToRowCopier copier;
-    private final Function timestampFunction;
-    private final RowFactory rowFactory;
     private final long structureVersion;
     private final String tableName;
     private final InsertMethodImpl insertMethod = new InsertMethodImpl();
+    private final ObjList<InsertRowImpl> insertRows = new ObjList<>();
     private final CairoEngine engine;
 
     public InsertStatementImpl(
             CairoEngine engine,
             String tableName,
-            VirtualRecord virtualRecord,
-            SqlCompiler.RecordToRowCopier copier,
-            Function timestampFunction,
             long structureVersion
     ) {
         this.engine = engine;
         this.tableName = tableName;
-        this.virtualRecord = virtualRecord;
-        this.copier = copier;
-        this.timestampFunction = timestampFunction;
-        if (timestampFunction != null) {
-            if (!ColumnType.isString(timestampFunction.getType())) {
-                rowFactory = this::getRowWithTimestamp;
-            } else {
-                rowFactory = this::getRowWithStringTimestamp;
-            }
-        } else {
-            rowFactory = this::getRowWithoutTimestamp;
-        }
         this.structureVersion = structureVersion;
     }
     @Override
@@ -108,36 +86,16 @@ public class InsertStatementImpl implements InsertStatement {
         insertMethod.close();
     }
 
-    private TableWriter.Row getRowWithTimestamp(TableWriter tableWriter) {
-        long timestamp = timestampFunction.getTimestamp(null);
-        return tableWriter.newRow(timestamp);
-    }
-
-    private TableWriter.Row getRowWithStringTimestamp(TableWriter tableWriter) {
-        CharSequence tsStr = timestampFunction.getStr(null);
-        try {
-            long timestamp = IntervalUtils.parseFloorPartialDate(tsStr);
-            return tableWriter.newRow(timestamp);
-        } catch (NumericException e) {
-            throw CairoException.instance(0).put("Invalid timestamp: ").put(tsStr);
-        }
-    }
-
-    private TableWriter.Row getRowWithoutTimestamp(TableWriter tableWriter) {
-        return tableWriter.newRow();
+    @Override
+    public void addInsertRow(InsertRowImpl row) {
+        insertRows.add(row);
     }
 
     private void initContext(SqlExecutionContext executionContext) throws SqlException {
-        final ObjList<? extends Function> functions = virtualRecord.getFunctions();
-        Function.init(functions, null, executionContext);
-        if (timestampFunction != null) {
-            timestampFunction.init(null, executionContext);
+        for (int i = 0, n = insertRows.size(); i < n; i++) {
+            InsertRowImpl row = insertRows.get(i);
+            row.initContext(executionContext);
         }
-    }
-
-    @FunctionalInterface
-    private interface RowFactory {
-        TableWriter.Row getRow(TableWriter tableWriter);
     }
 
     private class InsertMethodImpl implements InsertMethod {
@@ -145,9 +103,10 @@ public class InsertStatementImpl implements InsertStatement {
 
         @Override
         public long execute() {
-            final TableWriter.Row row = rowFactory.getRow(writer);
-            copier.copy(virtualRecord, row);
-            row.append();
+            for (int i = 0, n = insertRows.size(); i < n; i++) {
+                InsertRowImpl row = insertRows.get(i);
+                row.append(writer);
+            }
             return 1;
         }
 

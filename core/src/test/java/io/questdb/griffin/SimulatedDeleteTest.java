@@ -38,7 +38,7 @@ public class SimulatedDeleteTest extends AbstractGriffinTest {
             execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'EUR', 650.50, 6000000002);", sqlExecutionContext).getInsertStatement());
             execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'USD', 900.75, 6000000003);", sqlExecutionContext).getInsertStatement());
             execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'EUR', 880.20, 6000000004);", sqlExecutionContext).getInsertStatement());
-            execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, inactive, timestamp) values (1, 'USD', true, 6000000006));", sqlExecutionContext).getInsertStatement());
+            execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, inactive, timestamp) values (1, 'USD', true, 6000000006);", sqlExecutionContext).getInsertStatement());
 
             assertSql(
                     "(select * from balances latest by balance_ccy where cust_id=1) where not inactive;",
