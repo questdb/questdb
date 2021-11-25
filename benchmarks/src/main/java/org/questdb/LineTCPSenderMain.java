@@ -30,27 +30,22 @@ import io.questdb.std.Rnd;
 
 public class LineTCPSenderMain {
     public static void main(String[] args) {
-        final long count = 10_000_000;
+        final long count = 30_000_000;
         String hostIPv4 = "127.0.0.1";
         int port = 9009; // 8089 influx
-        int bufferCapacity = 256 * 1024;
+        int bufferCapacity = 4 * 1024;
 
         final Rnd rnd = new Rnd();
         long start = System.nanoTime();
         try (LineTcpSender sender = new LineTcpSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
             for (int i = 0; i < count; i++) {
-                // if ((i & 0x1) == 0) {
                 sender.metric("weather");
-                // } else {
-                // sender.metric("weather2");
-                // }
                 sender
                         .tag("location", "london")
-                        .tag("by", rnd.nextString(5))
+                        .tag("by", "blah")
                         .field("temp", rnd.nextPositiveLong())
-                        .field("ok", rnd.nextPositiveInt())
-                        .$(rnd.nextLong(5000000000000L));
-//                sender.$();
+                        .field("ok", rnd.nextPositiveInt());
+                sender.$();
             }
             sender.flush();
         }
