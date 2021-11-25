@@ -27,9 +27,7 @@ package io.questdb.griffin;
 import io.questdb.Metrics;
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.table.CompiledFilterRecordCursorFactory;
 import io.questdb.log.Log;
@@ -48,7 +46,9 @@ import java.util.List;
 @RunWith(Parameterized.class)
 public class CompiledFiltersRegressionTest extends AbstractCairoTest {
 
-    private final static Log LOG = LogFactory.getLog(CompiledFiltersRegressionTest.class);
+    private static final Log LOG = LogFactory.getLog(CompiledFiltersRegressionTest.class);
+    private static final int N_SIMD_NO_TAIL = 128;
+    private static final int N_SIMD_WITH_TAIL = N_SIMD_NO_TAIL + 3;
 
     @Parameterized.Parameters(name = "{0}")
     public static Object[] data() {
@@ -552,34 +552,51 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntegerComparisons() throws Exception {
+    public void testIntegerColumnToConstComparisons() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_byte() abyte," +
-                " rnd_short() ashort," +
-                " rnd_int() anint," +
-                " rnd_long() along " +
-                " from long_sequence(100)) timestamp(k) partition by DAY";
+                " rnd_byte() i8," +
+                " rnd_short() i16," +
+                " rnd_int() i32," +
+                " rnd_long() i64 " +
+                " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
         filterGen.clear()
-                .withAnyOf("", "-")
-                .withAnyOf("abyte", "ashort", "anint", "along")
-                .withAnyOf(" = ", " != ", " > ", " >= ", " < ", " <= ")
+                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
+                .withComparisonOperator()
                 .withAnyOf("-50", "0", "50");
         assertGeneratedQuery("select * from x", ddl);
     }
 
     @Test
-    public void testFloatComparisons() throws Exception {
+    public void testFloatColumnToConstComparisons() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_float() afloat," +
-                " rnd_double() adouble " +
-                " from long_sequence(100)) timestamp(k) partition by DAY";
+                " rnd_float() f32," +
+                " rnd_double() f64 " +
+                " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
         filterGen.clear()
-                .withAnyOf("", "-")
-                .withAnyOf("afloat", "adouble")
-                .withAnyOf(" = ", " != ", " > ", " >= ", " < ", " <= ")
-                .withAnyOf("-50", "-25.5", "0", "25.5", "50");
+                .withOptionalNegation().withAnyOf("f32", "f64")
+                .withComparisonOperator()
+                .withAnyOf("-50", "-25.5", "0", "0.0", "0.000", "25.5", "50");
+        assertGeneratedQuery("select * from x", ddl);
+    }
+
+    @Test
+    public void testColumnArithmetics() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_byte() i8," +
+                " rnd_short() i16," +
+                " rnd_int() i32," +
+                " rnd_long() i64," +
+                " rnd_float() f32," +
+                " rnd_double() f64 " +
+                " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
+        filterGen.clear()
+                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
+                .withArithmeticOperator()
+                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
+                .withAnyOf(" = 0");
         assertGeneratedQuery("select * from x", ddl);
     }
 
@@ -590,14 +607,17 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 compiler.compile(ddl, sqlExecutionContext);
             }
 
+            long maxSize = 0;
             List<String> filters = filterGen.generate();
             LOG.info().$("generated ").$(filters.size()).$(" filter expressions for base query: ").$(baseQuery).$();
             Assert.assertTrue(filters.size() > 0);
             for (String filter : filters) {
-                runQuery(baseQuery + " where " + filter, forceScalarJit);
+                long size = runQuery(baseQuery + " where " + filter, forceScalarJit);
+                maxSize = Math.max(maxSize, size);
 
                 TestUtils.assertEquals("result mismatch for filter: " + filter, sink, jitSink);
             }
+            Assert.assertTrue(maxSize > 0);
         });
     }
 
@@ -614,13 +634,16 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
         });
     }
 
-    private void runQuery(CharSequence query, boolean forceScalarJit) throws SqlException {
+    private long runQuery(CharSequence query, boolean forceScalarJit) throws SqlException {
+        long resultSize;
+
         sqlExecutionContext.setJitMode(SqlExecutionContext.JIT_MODE_DISABLED);
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         RecordCursorFactory factory = cc.getRecordCursorFactory();
         Assert.assertFalse(factory instanceof CompiledFilterRecordCursorFactory);
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+        try (CountingRecordCursor cursor = new CountingRecordCursor(factory.getCursor(sqlExecutionContext))) {
             TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+            resultSize = cursor.count();
         } finally {
             Misc.free(factory);
         }
@@ -635,6 +658,8 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
         } finally {
             Misc.free(factory);
         }
+
+        return resultSize;
     }
 
     private enum JitMode {
@@ -642,6 +667,10 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     }
 
     private static class FilterGenerator {
+
+        private static final String[] COMPARISON_OPERATORS = new String[]{" = ", " != ", " > ", " >= ", " < ", " <= "};
+        private static final String[] ARITHMETIC_OPERATORS = new String[]{" + ", " - ", " * ", " / "};
+        private static final String[] OPTIONAL_NEGATION = new String[]{"", "-"};
 
         private final List<String[]> filterParts = new ArrayList<>();
 
@@ -652,6 +681,21 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
 
         public FilterGenerator withAnyOf(String... parts) {
             filterParts.add(parts);
+            return this;
+        }
+
+        public FilterGenerator withOptionalNegation() {
+            filterParts.add(OPTIONAL_NEGATION);
+            return this;
+        }
+
+        public FilterGenerator withComparisonOperator() {
+            filterParts.add(COMPARISON_OPERATORS);
+            return this;
+        }
+
+        public FilterGenerator withArithmeticOperator() {
+            filterParts.add(ARITHMETIC_OPERATORS);
             return this;
         }
 
@@ -684,6 +728,64 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 sb.setLength(0);
             }
             return filters;
+        }
+    }
+
+    private static class CountingRecordCursor implements RecordCursor {
+
+        private final RecordCursor delegate;
+        private long count;
+
+        public CountingRecordCursor(RecordCursor delegate) {
+            this.delegate = delegate;
+        }
+
+        public long count() {
+            return count;
+        }
+
+        @Override
+        public void close() {
+            delegate.close();
+        }
+
+        @Override
+        public Record getRecord() {
+            return delegate.getRecord();
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return delegate.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public boolean hasNext() {
+            boolean hasNext = delegate.hasNext();
+            if (hasNext) {
+                count++;
+            }
+            return hasNext;
+        }
+
+        @Override
+        public Record getRecordB() {
+            return delegate.getRecordB();
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            delegate.recordAt(record, atRowId);
+        }
+
+        @Override
+        public void toTop() {
+            delegate.toTop();
+        }
+
+        @Override
+        public long size() {
+            return delegate.size();
         }
     }
 
