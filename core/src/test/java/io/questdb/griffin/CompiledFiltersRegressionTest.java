@@ -32,6 +32,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.table.CompiledFilterRecordCursorFactory;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -39,8 +41,14 @@ import org.junit.*;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
 @RunWith(Parameterized.class)
 public class CompiledFiltersRegressionTest extends AbstractCairoTest {
+
+    private final static Log LOG = LogFactory.getLog(CompiledFiltersRegressionTest.class);
 
     @Parameterized.Parameters(name = "{0}")
     public static Object[] data() {
@@ -51,6 +59,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     public JitMode jitMode;
 
     protected static final StringSink jitSink = new StringSink();
+    private static final FilterGenerator filterGen = new FilterGenerator();
     protected static BindVariableService bindVariableService;
     protected static SqlExecutionContext sqlExecutionContext;
     protected static SqlCompiler compiler;
@@ -542,54 +551,148 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
         assertQuery(query, ddl);
     }
 
-    private void assertQuery(CharSequence query, CharSequence ddl) throws Exception {
-        assertQuery(query, ddl, jitMode == JitMode.SCALAR);
+    @Test
+    public void testIntegerComparisons() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_byte() abyte," +
+                " rnd_short() ashort," +
+                " rnd_int() anint," +
+                " rnd_long() along " +
+                " from long_sequence(100)) timestamp(k) partition by DAY";
+        filterGen.clear()
+                .withAnyOf("", "-")
+                .withAnyOf("abyte", "ashort", "anint", "along")
+                .withAnyOf(" = ", " != ", " > ", " >= ", " < ", " <= ")
+                .withAnyOf("-50", "0", "50");
+        assertGeneratedQuery("select * from x", ddl);
     }
 
-    protected static void assertQuery(
-            CharSequence query,
-            CharSequence ddl,
-            boolean forceScalarJit
-    ) throws Exception {
+    @Test
+    public void testFloatComparisons() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_float() afloat," +
+                " rnd_double() adouble " +
+                " from long_sequence(100)) timestamp(k) partition by DAY";
+        filterGen.clear()
+                .withAnyOf("", "-")
+                .withAnyOf("afloat", "adouble")
+                .withAnyOf(" = ", " != ", " > ", " >= ", " < ", " <= ")
+                .withAnyOf("-50", "-25.5", "0", "25.5", "50");
+        assertGeneratedQuery("select * from x", ddl);
+    }
+
+    private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl) throws Exception {
+        final boolean forceScalarJit = jitMode == JitMode.SCALAR;
         assertMemoryLeak(() -> {
             if (ddl != null) {
                 compiler.compile(ddl, sqlExecutionContext);
             }
 
-            int jitMode = forceScalarJit ? SqlExecutionContext.JIT_MODE_FORCE_SCALAR : SqlExecutionContext.JIT_MODE_ENABLED;
-            sqlExecutionContext.setJitMode(jitMode);
-            CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-            RecordCursorFactory factory = cc.getRecordCursorFactory();
-            Assert.assertTrue(factory instanceof CompiledFilterRecordCursorFactory);
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                TestUtils.printCursor(cursor, factory.getMetadata(), true, jitSink, printer);
-            } finally {
-                Misc.free(factory);
+            List<String> filters = filterGen.generate();
+            LOG.info().$("generated ").$(filters.size()).$(" filter expressions for base query: ").$(baseQuery).$();
+            Assert.assertTrue(filters.size() > 0);
+            for (String filter : filters) {
+                runQuery(baseQuery + " where " + filter, forceScalarJit);
+
+                TestUtils.assertEquals("result mismatch for filter: " + filter, sink, jitSink);
+            }
+        });
+    }
+
+    private void assertQuery(CharSequence query, CharSequence ddl) throws Exception {
+        final boolean forceScalarJit = jitMode == JitMode.SCALAR;
+        assertMemoryLeak(() -> {
+            if (ddl != null) {
+                compiler.compile(ddl, sqlExecutionContext);
             }
 
-            sqlExecutionContext.setJitMode(SqlExecutionContext.JIT_MODE_DISABLED);
-            cc = compiler.compile(query, sqlExecutionContext);
-            factory = cc.getRecordCursorFactory();
-            Assert.assertFalse(factory instanceof CompiledFilterRecordCursorFactory);
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
-            } finally {
-                Misc.free(factory);
-            }
+            runQuery(query, forceScalarJit);
 
             TestUtils.assertEquals(sink, jitSink);
         });
+    }
+
+    private void runQuery(CharSequence query, boolean forceScalarJit) throws SqlException {
+        sqlExecutionContext.setJitMode(SqlExecutionContext.JIT_MODE_DISABLED);
+        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+        RecordCursorFactory factory = cc.getRecordCursorFactory();
+        Assert.assertFalse(factory instanceof CompiledFilterRecordCursorFactory);
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+        } finally {
+            Misc.free(factory);
+        }
+
+        int jitMode = forceScalarJit ? SqlExecutionContext.JIT_MODE_FORCE_SCALAR : SqlExecutionContext.JIT_MODE_ENABLED;
+        sqlExecutionContext.setJitMode(jitMode);
+        cc = compiler.compile(query, sqlExecutionContext);
+        factory = cc.getRecordCursorFactory();
+        Assert.assertTrue(factory instanceof CompiledFilterRecordCursorFactory);
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            TestUtils.printCursor(cursor, factory.getMetadata(), true, jitSink, printer);
+        } finally {
+            Misc.free(factory);
+        }
     }
 
     private enum JitMode {
         SCALAR, VECTORIZED
     }
 
-    // test const expr
-    // test null
-    // test filter on subquery
-    // test interval and filter
-    // test wrong type expression a+b
-    // test join
-    // test latestby
+    private static class FilterGenerator {
+
+        private final List<String[]> filterParts = new ArrayList<>();
+
+        private FilterGenerator clear() {
+            filterParts.clear();
+            return this;
+        }
+
+        public FilterGenerator withAnyOf(String... parts) {
+            filterParts.add(parts);
+            return this;
+        }
+
+        /**
+         * Generates a simple cartesian product of the given filter expression parts.
+         *
+         * The algorithm originates from Generating All n-tuple, of The Art Of Computer
+         * Programming by Knuth.
+         */
+        public List<String> generate() {
+            if (filterParts.size() == 0) {
+                return Collections.emptyList();
+            }
+
+            int combinations = 1;
+            for (String[] parts : filterParts) {
+                combinations *= parts.length;
+            }
+
+            final List<String> filters = new ArrayList<>();
+            final StringBuilder sb = new StringBuilder();
+
+            for (int i = 0; i < combinations; i++) {
+                int j = 1;
+                for (String[] parts : filterParts) {
+                    sb.append(parts[(i / j) % parts.length]);
+                    j *= parts.length;
+                }
+                filters.add(sb.toString());
+                sb.setLength(0);
+            }
+            return filters;
+        }
+    }
+
+    // TODO: test the following
+    // const expr
+    // null
+    // filter on subquery
+    // interval and filter
+    // wrong type expression a+b
+    // join
+    // latest by
 }
