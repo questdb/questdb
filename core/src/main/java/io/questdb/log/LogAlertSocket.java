@@ -38,6 +38,8 @@ import java.util.function.Consumer;
 
 public class LogAlertSocket implements Closeable {
 
+    public static final String NACK = "NACK";
+
     public static final String localHostIp;
 
     static {
@@ -53,19 +55,19 @@ public class LogAlertSocket implements Closeable {
     public static final int IN_BUFFER_SIZE = 2 * 1024 * 1024;
     public static final int OUT_BUFFER_SIZE = 4 * 1024 * 1024;
     private static final int HOSTS_LIMIT = 12; // will never happen
-    private static final int FAIL_OVER_LIMIT = 100;
+    private static final int FAILOVER_LIMIT = 100;
 
 
     private final Rnd rand;
     private final NetworkFacade nf;
-    private final String[] alertHosts = new String[HOSTS_LIMIT];
-    private final int[] alertPorts = new int[HOSTS_LIMIT];
+    private final String[] alertHosts = new String[HOSTS_LIMIT]; // indexed by alertHostIdx < alertHostsCount
+    private final int[] alertPorts = new int[HOSTS_LIMIT]; // indexed by alertHostIdx < alertHostsCount
     private final int outBufferSize;
     private final int inBufferSize;
     private long outBufferPtr;
     private long inBufferPtr;
-    private int numAlertHosts;
-    private int currentAlertHostIdx;
+    private int alertHostsCount;
+    private int alertHostIdx;
     private long fdSocketAddress = -1; // tcp/ip host:port address
     private long fdSocket = -1;
     private String alertTargets; // host[:port](,host[:port])*
@@ -90,12 +92,12 @@ public class LogAlertSocket implements Closeable {
     }
 
     public void connect() {
-        fdSocketAddress = nf.sockaddr(alertHosts[currentAlertHostIdx], alertPorts[currentAlertHostIdx]);
+        fdSocketAddress = nf.sockaddr(alertHosts[alertHostIdx], alertPorts[alertHostIdx]);
         fdSocket = nf.socketTcp(true);
         System.out.printf(
                 "Connecting with: %s:%d%n",
-                alertHosts[currentAlertHostIdx],
-                alertPorts[currentAlertHostIdx]
+                alertHosts[alertHostIdx],
+                alertPorts[alertHostIdx]
         );
         if (fdSocket > -1) {
             if (nf.connect(fdSocket, fdSocketAddress) != 0) {
@@ -117,15 +119,15 @@ public class LogAlertSocket implements Closeable {
     }
 
     public boolean send(int len) {
-        return send(len, null);
+        return send(len, FAILOVER_LIMIT, null);
     }
 
-    public boolean send(int len, Consumer<String> ackReceiver) {
+    public boolean send(int len, int maxSendAttempts, Consumer<String> ackReceiver) {
         if (len < 1) {
             return false;
         }
 
-        int sendAttempts = FAIL_OVER_LIMIT;
+        int sendAttempts = maxSendAttempts;
         while (sendAttempts > 0) {
             if (fdSocket > 0) {
                 int remaining = len;
@@ -166,10 +168,9 @@ public class LogAlertSocket implements Closeable {
 
             // fail to the next host and attempt to send again
             freeSocket();
-            int alertHostIdx = currentAlertHostIdx;
-            currentAlertHostIdx = (currentAlertHostIdx + 1) % numAlertHosts;
-            System.err.printf("Failing over to: %d%n", currentAlertHostIdx);
-            if (alertHostIdx == currentAlertHostIdx) {
+            int alertHostIdx = this.alertHostIdx;
+            this.alertHostIdx = (this.alertHostIdx + 1) % alertHostsCount;
+            if (alertHostIdx == this.alertHostIdx) {
                 LockSupport.parkNanos(250_000_000); // 1/4th a second
             }
             connect();
@@ -181,9 +182,11 @@ public class LogAlertSocket implements Closeable {
             System.err.printf(
                     "%sNo alert hosts are available after %d attempts, giving up sending alert.%n",
                     LogLevel.ERROR_HEADER,
-                    FAIL_OVER_LIMIT
+                    maxSendAttempts
             );
-
+            if (ackReceiver != null) {
+                ackReceiver.accept(NACK);
+            }
         }
         return success;
     }
@@ -225,6 +228,11 @@ public class LogAlertSocket implements Closeable {
     }
 
     @VisibleForTesting
+    int getAlertHostIdx() {
+        return alertHostIdx;
+    }
+
+    @VisibleForTesting
     String[] getAlertHosts() {
         return alertHosts;
     }
@@ -235,8 +243,8 @@ public class LogAlertSocket implements Closeable {
     }
 
     @VisibleForTesting
-    int getNumberOfAlertHosts() {
-        return numAlertHosts;
+    int getAlertHostsCount() {
+        return alertHostsCount;
     }
 
     private void freeSocket() {
@@ -302,15 +310,15 @@ public class LogAlertSocket implements Closeable {
             }
         }
         setHostPort(hostIdx, portIdx, len);
-        currentAlertHostIdx = rand.nextInt(numAlertHosts);
+        alertHostIdx = rand.nextInt(alertHostsCount);
     }
 
     private void setDefaultHostPort() {
-        alertHosts[currentAlertHostIdx] = DEFAULT_HOST;
-        alertPorts[currentAlertHostIdx] = DEFAULT_PORT;
+        alertHosts[alertHostIdx] = DEFAULT_HOST;
+        alertPorts[alertHostIdx] = DEFAULT_PORT;
         alertTargets = DEFAULT_HOST + ":" + DEFAULT_PORT;
-        currentAlertHostIdx = 0;
-        numAlertHosts = 1;
+        alertHostIdx = 0;
+        alertHostsCount = 1;
     }
 
     private void setHostPort(int hostIdx, int portLimit, int hostLimit) {
@@ -324,19 +332,19 @@ public class LogAlertSocket implements Closeable {
         int hostEnd = hostLimit;
         if (portLimit == -1) { // no ':' was found
             if (hostIdx + 1 > hostLimit) {
-                alertHosts[numAlertHosts] = DEFAULT_HOST;
+                alertHosts[alertHostsCount] = DEFAULT_HOST;
                 hostResolved = true;
             }
-            alertPorts[numAlertHosts] = DEFAULT_PORT;
+            alertPorts[alertHostsCount] = DEFAULT_PORT;
         } else {
             if (hostIdx + 1 > portLimit) {
-                alertHosts[numAlertHosts] = DEFAULT_HOST;
+                alertHosts[alertHostsCount] = DEFAULT_HOST;
                 hostResolved = true;
             } else {
                 hostEnd = portLimit;
             }
             if (portLimit + 2 > hostLimit) {
-                alertPorts[numAlertHosts] = DEFAULT_PORT;
+                alertPorts[alertHostsCount] = DEFAULT_PORT;
             } else {
                 int port = 0;
                 int scale = 1;
@@ -354,13 +362,13 @@ public class LogAlertSocket implements Closeable {
                         ));
                     }
                 }
-                alertPorts[numAlertHosts] = port;
+                alertPorts[alertHostsCount] = port;
             }
         }
         if (!hostResolved) {
             String host = alertTargets.substring(hostIdx, hostEnd).trim();
             try {
-                alertHosts[numAlertHosts] = InetAddress.getByName(host).getHostAddress();
+                alertHosts[alertHostsCount] = InetAddress.getByName(host).getHostAddress();
             } catch (UnknownHostException e) {
                 throw new LogError(String.format(
                         "Invalid host value [%s] at position %d for socketAddress: %s",
@@ -370,6 +378,6 @@ public class LogAlertSocket implements Closeable {
                 ));
             }
         }
-        numAlertHosts++;
+        alertHostsCount++;
     }
 }
