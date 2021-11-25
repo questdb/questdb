@@ -562,10 +562,10 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
     @Test
     public void testFieldWithUnquotedString() throws Exception {
         runInContext((receiver) -> {
-            sendLinger(receiver,  "tab raw_msg=____ 1619509249714000000\n", "tab");
-            sendLinger(receiver,  "tab raw_msg=__\"_ 1619509249714000000\n", "tab");
+            sendLinger(receiver,  "tab raw\\ msg=____ 1619509249714000000\n", "tab");
+            sendLinger(receiver,  "tab raw\\ msg=__\"_ 1619509249714000000\n", "tab");
 
-            String expected = "raw_msg\ttimestamp\n" +
+            String expected = "raw msg\ttimestamp\n" +
                     "____\t2021-04-27T07:40:49.714000Z\n" +
                     "__\"_\t2021-04-27T07:40:49.714000Z\n";
             assertTable(expected, "tab");
