@@ -118,7 +118,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                 throw new LogError("Invalid value for bufferSize");
             }
         }
-        socket = new LogAlertSocket(ff, socketAddress, nBufferSize);
+        socket = new LogAlertSocket(socketAddress, nBufferSize);
         loadLogAlertTemplate();
         socket.connect();
     }

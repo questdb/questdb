@@ -42,8 +42,8 @@ public class HttpLogAlertBuilder extends LogRecordSink {
     private long bodyStart;
     private Sinkable footer;
 
-    public HttpLogAlertBuilder(LogAlertSocket laSkt) {
-        this(laSkt.getOutBufferPtr(), laSkt.getOutBufferSize());
+    public HttpLogAlertBuilder(LogAlertSocket alertSkt) {
+        this(alertSkt.getOutBufferPtr(), alertSkt.getOutBufferSize());
     }
 
     public HttpLogAlertBuilder(long address, long addressSize) {

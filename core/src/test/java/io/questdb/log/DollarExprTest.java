@@ -51,29 +51,96 @@ public class DollarExprTest {
 
     @Test
     public void testSuccessfulParse() {
-        assertParseEquals("a/b/f/file.json", "[a/b/f/file.json]");
-        assertParseEquals("${date:   dd }", "[   01 ]");
-        assertParseEquals("${date:   dd/MM/y }", "[   01/01/1970 ]");
-        assertParseEquals("${date:   MM/dd/y}", "[   01/01/1970]");
-        assertParseEquals("${date:yyyy-MM-dd HH:mm:ss}", "[1970-01-01 00:00:00]");
-        assertParseEquals("${date:yyyy-MM-ddTHH:mm:ss}", "[1970-01-01T00:00:00]");
-        assertParseEquals("$JSON_FILE", "[file.json]");
-        assertParseEquals("${JSON_FILE}", "[file.json]");
-        assertParseEquals("a/b/f/$JSON_FILE", "[a/b/f/,file.json]");
-        assertParseEquals("a/b/f/${JSON_FILE}", "[a/b/f/,file.json]");
-        assertParseEquals("a/b/f/${date:y}/$JSON_FILE", "[a/b/f/,1970,/,file.json]");
-        assertParseEquals("${DATABASE_ROOT}/a/b/f/${date:y}/$JSON_FILE", "[c:/\\/\\,/a/b/f/,1970,/,file.json]");
-        assertParseEquals("{}", "[{}]");
-        assertParseEquals("{$JSON_FILE}", "[{,file.json,}]");
-        assertParseEquals("{${DATABASE_ROOT}}", "[{,c:/\\/\\,}]");
-        assertParseEquals("{$DATABASE_ROOT}", "[{,c:/\\/\\,}]");
+        assertParseEquals(
+                "a/b/f/file.json",
+                "a/b/f/file.json",
+                "[a/b/f/file.json]"
+        );
+        assertParseEquals(
+                "${date:   dd }",
+                "   01 ",
+                "[   01 ]"
+        );
+        assertParseEquals(
+                "${date:   dd/MM/y }",
+                "   01/01/1970 ",
+                "[   01/01/1970 ]"
+        );
+        assertParseEquals(
+                "${date:   MM/dd/y}",
+                "   01/01/1970",
+                "[   01/01/1970]"
+        );
+        assertParseEquals(
+                "${date:yyyy-MM-dd HH:mm:ss}",
+                "1970-01-01 00:00:00",
+                "[1970-01-01 00:00:00]"
+        );
+        assertParseEquals(
+                "${date:yyyy-MM-ddTHH:mm:ss}",
+                "1970-01-01T00:00:00",
+                "[1970-01-01T00:00:00]"
+        );
+        assertParseEquals(
+                "$JSON_FILE",
+                "file.json",
+                "[file.json]");
+        assertParseEquals(
+                "${JSON_FILE}",
+                "file.json",
+                "[file.json]"
+        );
+        assertParseEquals(
+                "a/b/f/$JSON_FILE",
+                "a/b/f/file.json",
+                "[a/b/f/,file.json]"
+        );
+        assertParseEquals(
+                "a/b/f/${JSON_FILE}",
+                "a/b/f/file.json",
+                "[a/b/f/,file.json]"
+        );
+        assertParseEquals(
+                "a/b/f/${date:y}/$JSON_FILE",
+                "a/b/f/1970/file.json",
+                "[a/b/f/,1970,/,file.json]"
+        );
+        assertParseEquals(
+                "${DATABASE_ROOT}/a/b/f/${date:y}/$JSON_FILE",
+                "c:/\\/\\/a/b/f/1970/file.json",
+                "[c:/\\/\\,/a/b/f/,1970,/,file.json]");
+        assertParseEquals(
+                "{}",
+                "{}",
+                "[{}]"
+        );
+        assertParseEquals(
+                "{$JSON_FILE}",
+                "{file.json}",
+                "[{,file.json,}]"
+        );
+        assertParseEquals(
+                "{${DATABASE_ROOT}}",
+                "{c:/\\/\\}",
+                "[{,c:/\\/\\,}]"
+        );
+        assertParseEquals(
+                "{$DATABASE_ROOT}",
+                "{c:/\\/\\}",
+                "[{,c:/\\/\\,}]"
+        );
 
         Map<String, String> props = new HashMap<>();
         props.put("A", "alpha");
         props.put("B", "betha");
         props.put("C", "cetha");
         props.put("Z", "zetha");
-        assertParseEquals("${A}/${B}/${C}/${date:y}/$Z", "[alpha,/,betha,/,cetha,/,1970,/,zetha]", props);
+        assertParseEquals(
+                "${A}/${B}/${C}/${date:y}/$Z",
+                "alpha/betha/cetha/1970/zetha",
+                "[alpha,/,betha,/,cetha,/,1970,/,zetha]",
+                props
+        );
     }
 
     @Test
@@ -110,15 +177,21 @@ public class DollarExprTest {
         Assert.assertEquals(dollar$.getKeyOffset("jane"), 23);
     }
 
-    private void assertParseEquals(String location, String expected) {
-        assertParseEquals(location, expected, ENV);
+    private void assertParseEquals(String location, String expected, String expectedLocation) {
+        assertParseEquals(location, expected, expectedLocation, ENV);
     }
 
-    private void assertParseEquals(String location, String expected, Map<String, String> props) {
+    private void assertParseEquals(
+            String location,
+            String expected,
+            String expectedLocation,
+            Map<String, String> props
+    ) {
         dollar$.resolve(location, 0, props);
         sink.clear();
         sink.put(dollar$.getLocationComponents());
-        Assert.assertEquals(expected, sink.toString());
+        Assert.assertEquals(expected, dollar$.toString());
+        Assert.assertEquals(expectedLocation, sink.toString());
     }
 
     private void assertFail(String location, String expected) {

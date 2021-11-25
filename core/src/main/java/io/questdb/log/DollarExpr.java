@@ -205,12 +205,5 @@ public class DollarExpr implements Sinkable {
         public void toSink(CharSink sink) {
             sink.put(originalTxt, start, end);
         }
-
-        @Override
-        public String toString() {
-            resolveSink.clear();
-            toSink(resolveSink);
-            return resolveSink.toString();
-        }
     }
 }

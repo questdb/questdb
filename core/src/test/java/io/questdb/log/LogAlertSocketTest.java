@@ -43,8 +43,6 @@ import java.util.concurrent.TimeUnit;
 
 public class LogAlertSocketTest {
 
-    private static final FilesFacade ff = FilesFacadeImpl.INSTANCE;
-
     @Test
     public void testParseAlertTargetsEmpty() throws Exception {
         String[] expectedHosts = {LogAlertSocket.DEFAULT_HOST};
@@ -115,8 +113,8 @@ public class LogAlertSocketTest {
     }
 
     @Test
-    public void testFailOver() throws IOException {
-        try (LogAlertSocket alertSkt = new LogAlertSocket(ff, "localhost:1234,localhost:1243")) {
+    public void testFailOver() {
+        try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1243")) {
             final String ACK = "Ack";
             final String DEATH_PILL = ".ByE.";
             final String logMessage = "Something";
@@ -196,7 +194,7 @@ public class LogAlertSocketTest {
 
     private void assertLogError(String socketAddress, String expected) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LogAlertSocket ignored = new LogAlertSocket(ff, socketAddress, 1024)) {
+            try (LogAlertSocket ignored = new LogAlertSocket(socketAddress, 1024)) {
                 Assert.fail();
             } catch (LogError logError) {
                 Assert.assertEquals(expected, logError.getMessage());
@@ -210,7 +208,7 @@ public class LogAlertSocketTest {
             int[] expectedPorts
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LogAlertSocket socket = new LogAlertSocket(ff, socketAddress, 1024)) {
+            try (LogAlertSocket socket = new LogAlertSocket(socketAddress, 1024)) {
                 Assert.assertEquals(expectedHosts.length, socket.getNumberOfAlertHosts());
                 Assert.assertEquals(expectedPorts.length, socket.getNumberOfAlertHosts());
                 for (int i = 0; i < expectedHosts.length; i++) {

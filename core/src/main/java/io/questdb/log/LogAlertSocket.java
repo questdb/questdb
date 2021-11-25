@@ -26,11 +26,14 @@ package io.questdb.log;
 
 import io.questdb.VisibleForTesting;
 import io.questdb.network.Net;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 
 import java.io.Closeable;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.concurrent.locks.LockSupport;
 import java.util.function.Consumer;
 
 public class LogAlertSocket implements Closeable {
@@ -54,7 +57,7 @@ public class LogAlertSocket implements Closeable {
 
 
     private final Rnd rand;
-    private final FilesFacade ff;
+    private final NetworkFacade nf;
     private final String[] alertHosts = new String[HOSTS_LIMIT];
     private final int[] alertPorts = new int[HOSTS_LIMIT];
     private final int outBufferSize;
@@ -67,16 +70,16 @@ public class LogAlertSocket implements Closeable {
     private long fdSocket = -1;
     private String alertTargets; // host[:port](,host[:port])*
 
-    public LogAlertSocket(FilesFacade ff, String alertTargets) {
-        this(ff, alertTargets, IN_BUFFER_SIZE, OUT_BUFFER_SIZE);
+    public LogAlertSocket(String alertTargets) {
+        this(NetworkFacadeImpl.INSTANCE, alertTargets, IN_BUFFER_SIZE, OUT_BUFFER_SIZE);
     }
 
-    public LogAlertSocket(FilesFacade ff, String alertTargets, int outBufferSize) {
-        this(ff, alertTargets, IN_BUFFER_SIZE, outBufferSize);
+    public LogAlertSocket(String alertTargets, int outBufferSize) {
+        this(NetworkFacadeImpl.INSTANCE, alertTargets, IN_BUFFER_SIZE, outBufferSize);
     }
 
-    public LogAlertSocket(FilesFacade ff, String alertTargets, int inBufferSize, int outBufferSize) {
-        this.ff = ff;
+    public LogAlertSocket(NetworkFacade nf, String alertTargets, int inBufferSize, int outBufferSize) {
+        this.nf = nf;
         this.rand = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
         this.alertTargets = alertTargets;
         parseAlertTargets();
@@ -87,26 +90,102 @@ public class LogAlertSocket implements Closeable {
     }
 
     public void connect() {
-        fdSocketAddress = Net.sockaddr(alertHosts[currentAlertHostIdx], alertPorts[currentAlertHostIdx]);
-        fdSocket = Net.socketTcp(true);
-        System.out.printf("Connecting with: %s:%d%n", alertHosts[currentAlertHostIdx], alertPorts[currentAlertHostIdx]);
+        fdSocketAddress = nf.sockaddr(alertHosts[currentAlertHostIdx], alertPorts[currentAlertHostIdx]);
+        fdSocket = nf.socketTcp(true);
+        System.out.printf(
+                "Connecting with: %s:%d%n",
+                alertHosts[currentAlertHostIdx],
+                alertPorts[currentAlertHostIdx]
+        );
         if (fdSocket > -1) {
-            if (Net.connect(fdSocket, fdSocketAddress) != 0) {
-                System.out.println(" E could not connect");
+            if (nf.connect(fdSocket, fdSocketAddress) != 0) {
+                System.err.printf(
+                        "%sCould not connect [errno=%d]%n",
+                        LogLevel.ERROR_HEADER,
+                        nf.errno()
+                );
                 freeSocket();
             }
         } else {
-            System.out.println(" E could not create TCP socket [errno=" + ff.errno() + "]");
+            System.out.printf(
+                    "%sCould not create TCP socket [errno=%d]",
+                    LogLevel.ERROR_HEADER,
+                    nf.errno()
+            );
             freeSocket();
         }
     }
 
-    public void send(int len) {
-        send(len, 0, null);
+    public boolean send(int len) {
+        return send(len, null);
     }
 
-    public void send(int len, Consumer<String> ackReceiver) {
-        send(len, 0, ackReceiver);
+    public boolean send(int len, Consumer<String> ackReceiver) {
+        if (len < 1) {
+            return false;
+        }
+
+        int sendAttempts = FAIL_OVER_LIMIT;
+        while (sendAttempts > 0) {
+            if (fdSocket > 0) {
+                int remaining = len;
+                long p = outBufferPtr;
+                boolean sendFail = false;
+                while (remaining > 0) {
+                    int n = nf.send(fdSocket, p, remaining);
+                    if (n > 0) {
+                        remaining -= n;
+                        p += n;
+                    } else {
+                        System.err.printf(
+                                "%sCould not send [errno=%d, n=%d]%n",
+                                LogLevel.ERROR_HEADER,
+                                nf.errno(),
+                                n
+                        );
+                        sendFail = true;
+                        // do fail over, could not send
+                        break;
+                    }
+                }
+                if (!sendFail) {
+                    // receive ack
+                    p = inBufferPtr;
+                    final int n = nf.recv(fdSocket, p, inBufferSize);
+                    if (n > 0) {
+                        if (ackReceiver != null) {
+                            ackReceiver.accept(Chars.stringFromUtf8Bytes(inBufferPtr, inBufferPtr + n));
+                        } else {
+                            Net.dumpAscii(p, n);
+                        }
+                        break;
+                    }
+                    // do fail over, ack was not received
+                }
+            }
+
+            // fail to the next host and attempt to send again
+            freeSocket();
+            int alertHostIdx = currentAlertHostIdx;
+            currentAlertHostIdx = (currentAlertHostIdx + 1) % numAlertHosts;
+            System.err.printf("Failing over to: %d%n", currentAlertHostIdx);
+            if (alertHostIdx == currentAlertHostIdx) {
+                LockSupport.parkNanos(250_000_000); // 1/4th a second
+            }
+            connect();
+            sendAttempts--;
+        }
+
+        boolean success = sendAttempts > 0;
+        if (!success) {
+            System.err.printf(
+                    "%sNo alert hosts are available after %d attempts, giving up sending alert.%n",
+                    LogLevel.ERROR_HEADER,
+                    FAIL_OVER_LIMIT
+            );
+
+        }
+        return success;
     }
 
     @Override
@@ -138,53 +217,6 @@ public class LogAlertSocket implements Closeable {
 
     public long getInBufferSize() {
         return inBufferSize;
-    }
-
-    private void send(int len, int failOverLevel, Consumer<String> ackReceiver) {
-        if (fdSocket > 0) {
-            //
-            int remaining = len;
-            long p = outBufferPtr;
-            boolean sendFail = false;
-            while (remaining > 0) {
-                int n = Net.send(fdSocket, p, remaining);
-                if (n > 0) {
-                    remaining -= n;
-                    p += n;
-                } else {
-                    System.out.println("could not send [n=" + n + " [errno=" + ff.errno() + "]");
-                    sendFail = true;
-                }
-            }
-            if (sendFail) {
-                failOver(len, failOverLevel + 1, ackReceiver);
-            } else {
-                // receive ack
-                p = inBufferPtr;
-                final int n = Net.recv(fdSocket, p, inBufferSize);
-                if (n > 0) {
-                    if (ackReceiver != null) {
-                        ackReceiver.accept(Chars.stringFromUtf8Bytes(inBufferPtr, inBufferPtr + n));
-                    } else {
-                        Net.dumpAscii(p, n);
-                    }
-                } else {
-                    failOver(len, failOverLevel + 1, ackReceiver);
-                }
-            }
-        } else {
-            failOver(len, failOverLevel + 1, ackReceiver);
-        }
-    }
-
-    private void failOver(int len, int failOverLevel, Consumer<String> ackReceiver) {
-        freeSocket();
-        currentAlertHostIdx = (currentAlertHostIdx + 1) % numAlertHosts;
-        if (failOverLevel < FAIL_OVER_LIMIT) {
-            System.out.printf("Failing over to: %d%n", currentAlertHostIdx);
-            connect();
-            send(len, failOverLevel, ackReceiver);
-        }
     }
 
     @VisibleForTesting

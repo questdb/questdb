@@ -104,7 +104,8 @@ public class LogAlertSocketWriterTest {
                             "stîget ûf mit grôzer kraft,ich sih in grâwen tägelîch als er wil tagen,den " +
                             "tac, der \\\"im\\\" \\\\${KARTOFEN} geselleschafterwenden wil, dem werden " +
                             "man,den ich mit sorgen în verliez.ich bringe in hinnen, ob ich kan.sîn vil " +
-                            "manegiu tugent michz leisten hiez.\\\\$\"\n" +
+                            "manegiu tugent michz leisten hiez.\\\\$\"" +
+                            "\n" +
                             "    }\n" +
                             "  }\n" +
                             "]",
@@ -194,12 +195,12 @@ public class LogAlertSocketWriterTest {
                 null,
                 LogLevel.ERROR
         )) {
-            writer.setLocation("some-silly/path.conf");
+            writer.setLocation("some-silly-path.conf");
             try {
                 writer.bindProperties();
                 Assert.fail();
             } catch (LogError e) {
-                Assert.assertEquals("Cannot read some-silly/path.conf [errno=2]", e.getMessage());
+                Assert.assertEquals("Cannot read some-silly-path.conf [errno=2]", e.getMessage());
             }
         }
     }

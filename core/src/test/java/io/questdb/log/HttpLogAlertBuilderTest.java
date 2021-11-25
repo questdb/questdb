@@ -51,6 +51,7 @@ public class HttpLogAlertBuilderTest {
     public void setUp() {
         alertBuilder = new HttpLogAlertBuilder(bufferPtr, bufferLimit);
         alertBuilder.putHeader("localhost");
+        alertBuilder.setFooter(s -> s.put("\nF.O.O.T.E.R"));
         alertBuilder.setMark();
         Assert.assertEquals(
                 "POST /api/v1/alerts HTTP/1.1\r\n" +
@@ -67,6 +68,7 @@ public class HttpLogAlertBuilderTest {
 
     @Test
     public void testEmptyMessage() {
+        alertBuilder.setFooter(null);
         alertBuilder.$(); // we are adding nothing, just finish the build
         Assert.assertEquals(
                 "POST /api/v1/alerts HTTP/1.1\r\n" +
@@ -97,6 +99,7 @@ public class HttpLogAlertBuilderTest {
         try {
             LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
             logRecord.put(msg);
+            alertBuilder.setFooter(null);
             alertBuilder.put(logRecord).$();
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
@@ -145,12 +148,13 @@ public class HttpLogAlertBuilderTest {
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:      7\r\n" +
+                            "Content-Length:     19\r\n" +
                             "\r\n" +
-                            " \\\\$\\\"\\",
+                            " \\\\$\\\"\\" +
+                            "\nF.O.O.T.E.R",
                     alertBuilder.toString()
             );
-            Assert.assertEquals(155, alertBuilder.length());
+            Assert.assertEquals(167, alertBuilder.length());
         } finally {
             if (msgPtr != 0) {
                 Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
@@ -159,7 +163,7 @@ public class HttpLogAlertBuilderTest {
     }
 
     @Test
-    public void testSinkable() throws UnsupportedEncodingException {
+    public void testSinkable() {
         final String msg = "test: ";
         final byte[] msgBytes = msg.getBytes(Files.UTF_8);
         final int len = msgBytes.length;
@@ -174,12 +178,13 @@ public class HttpLogAlertBuilderTest {
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:     28\r\n" +
+                            "Content-Length:     40\r\n" +
                             "\r\n" +
-                            "test: Tres, Dos, Uno, Zero!!",
+                            "test: Tres, Dos, Uno, Zero!!" +
+                            "\nF.O.O.T.E.R",
                     alertBuilder.toString()
             );
-            Assert.assertEquals(176, alertBuilder.length());
+            Assert.assertEquals(188, alertBuilder.length());
         } finally {
             if (msgPtr != 0) {
                 Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
