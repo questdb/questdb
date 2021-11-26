@@ -32,6 +32,7 @@ import org.junit.Test;
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -113,7 +114,7 @@ public class LogAlertSocketTest {
 
     @Test
     public void testFailOver() {
-        try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1342")) {
+        try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1242")) {
             final HttpLogAlertBuilder builder = new HttpLogAlertBuilder(alertSkt)
                     .putHeader("localhost")
                     .setMark();
@@ -151,11 +152,7 @@ public class LogAlertSocketTest {
             // send a death pill and kill the surviving server.
             builder.clear();
             builder.put(MockAlertTarget.DEATH_PILL).put(CRLF);
-            Assert.assertTrue(
-                    alertSkt.send(
-                            builder.length(),
-                            ack -> Assert.assertEquals(ack, MockAlertTarget.ACK)
-                    ));
+            Assert.assertTrue(alertSkt.send(builder.length()));
 
             // wait for haltness
             try {
@@ -164,7 +161,7 @@ public class LogAlertSocketTest {
                 Assert.fail("timed-out");
             }
             // all servers should be done.
-            for (int i = 0; i < servers.length; i++) {
+            for (int i = 0; i < numHosts; i++) {
                 Assert.assertFalse(servers[i].isRunning());
             }
         }
@@ -250,6 +247,7 @@ public class LogAlertSocketTest {
                         BufferedReader in = new BufferedReader(new InputStreamReader(clientSkt.getInputStream()));
                         PrintWriter out = new PrintWriter(clientSkt.getOutputStream(), true)
                 ) {
+                    clientSkt.setSoTimeout(2000);
                     StringSink inputLine = new StringSink();
                     while (true) {
                         String line = in.readLine();
@@ -263,13 +261,13 @@ public class LogAlertSocketTest {
                         }
                     }
                     out.print(ACK);
-                    if (onTargetEnd != null) {
-                        onTargetEnd.run();
-                    }
                 } catch (IOException e) {
                     Assert.fail(e.getMessage());
                 } finally {
                     isRunning.set(false);
+                    if (onTargetEnd != null) {
+                        onTargetEnd.run();
+                    }
                 }
             }
         }

@@ -125,7 +125,7 @@ public class LogAlertSocket implements Closeable {
             return false;
         }
 
-        int sendAttempts = alertHostsCount;
+        int sendAttempts = 2 * alertHostsCount; // empirical, say twice per host at most
         while (sendAttempts > 0) {
             if (fdSocket > 0) {
                 int remaining = len;
