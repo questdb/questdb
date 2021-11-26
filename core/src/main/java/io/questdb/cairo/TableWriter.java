@@ -770,12 +770,13 @@ public class TableWriter implements Closeable {
                 }
 
                 int partitionIndex = Rows.toPartitionIndex(rowId);
+                long partitionRowId = Rows.toLocalRowID(rowId);
                 if (partitionIndex != currentPartitionIndex) {
                     openPartitionColumnsForUpdate(updateMemory, partitionIndex, updateToColumnMap);
                     currentPartitionIndex = partitionIndex;
                 }
 
-                updateColumnValues(updateToColumnMap, columnCount, updateMemory, rowId, updateStatement.getColumnMapper(), record);
+                updateColumnValues(updateToColumnMap, columnCount, updateMemory, partitionRowId, updateStatement.getColumnMapper(), record);
                 rowsUpdated++;
             }
         } finally {
