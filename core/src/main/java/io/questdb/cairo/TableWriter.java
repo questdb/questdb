@@ -42,7 +42,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.*;
@@ -89,7 +88,6 @@ public class TableWriter implements Closeable {
     private final int rootLen;
     private final MemoryMR metaMem;
     private final int partitionBy;
-    private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final LongList columnTops;
     private final FilesFacade ff;
     private final DateFormat partitionDirFmt;
@@ -136,7 +134,8 @@ public class TableWriter implements Closeable {
     private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<>(O3Basket::new, 64);
     private final TxnScoreboard txnScoreboard;
     private final StringSink o3Sink = new StringSink();
-    private final NativeLPSZ o3NativeLPSZ = new NativeLPSZ();
+    private final StringSink fileNameSink = new StringSink();
+    private final StringSink o3FileNameSink = new StringSink();
     private final RingQueue<O3PartitionUpdateTask> o3PartitionUpdateQueue;
     private final MPSequence o3PartitionUpdatePubSeq;
     private final SCSequence o3PartitionUpdateSubSeq;
@@ -1932,7 +1931,7 @@ public class TableWriter implements Closeable {
                     O3PurgeDiscoveryJob.discoverPartitions(
                             ff,
                             o3Sink,
-                            o3NativeLPSZ,
+                            o3FileNameSink,
                             rowValueIsNotNull, // reuse, this is only called from writer close
                             purgeQueue,
                             purgePubSeq,
@@ -3902,10 +3901,11 @@ public class TableWriter implements Closeable {
     private void removeColumnFiles(CharSequence columnName, int columnType, RemoveFileLambda removeLambda) {
         try {
             ff.iterateDir(path.$(), (file, type) -> {
-                nativeLPSZ.of(file);
-                if (type == Files.DT_DIR && IGNORED_FILES.excludes(nativeLPSZ)) {
+                fileNameSink.clear();
+                Chars.utf8DecodeZ(file, fileNameSink);
+                if (type == Files.DT_DIR && IGNORED_FILES.excludes(fileNameSink)) {
                     path.trimTo(rootLen);
-                    path.concat(nativeLPSZ);
+                    path.concat(fileNameSink);
                     int plen = path.length();
                     removeLambda.remove(ff, dFile(path, columnName));
                     removeLambda.remove(ff, iFile(path.trimTo(plen), columnName));
@@ -3967,10 +3967,11 @@ public class TableWriter implements Closeable {
     private void removeIndexFiles(CharSequence columnName) {
         try {
             ff.iterateDir(path.$(), (file, type) -> {
-                nativeLPSZ.of(file);
-                if (type == Files.DT_DIR && IGNORED_FILES.excludes(nativeLPSZ)) {
+                fileNameSink.clear();
+                Chars.utf8DecodeZ(file, fileNameSink);
+                if (type == Files.DT_DIR && IGNORED_FILES.excludes(fileNameSink)) {
                     path.trimTo(rootLen);
-                    path.concat(nativeLPSZ);
+                    path.concat(file);
                     int plen = path.length();
                     removeFileAndOrLog(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName));
                     removeFileAndOrLog(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
@@ -4014,33 +4015,35 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void removePartitionDirectories0(long name, int type) {
+    private void removePartitionDirectories0(long pName, int type) {
         path.trimTo(rootLen);
-        path.concat(name).$();
-        nativeLPSZ.of(name);
+        path.concat(pName).$();
+        fileNameSink.clear();
+        Chars.utf8DecodeZ(pName, fileNameSink);
         int errno;
-        if (IGNORED_FILES.excludes(nativeLPSZ) && type == Files.DT_DIR && (errno = ff.rmdir(path)) != 0) {
+        if (IGNORED_FILES.excludes(fileNameSink) && type == Files.DT_DIR && (errno = ff.rmdir(path)) != 0) {
             LOG.info().$("could not remove [path=").$(path).$(", errno=").$(errno).$(']').$();
         }
     }
 
     private void removePartitionDirsNotAttached(long pName, int type) {
-        nativeLPSZ.of(pName);
-        if (!isDots(nativeLPSZ) && type == Files.DT_DIR) {
-            if (Chars.endsWith(nativeLPSZ, DETACHED_DIR_MARKER)) {
+        fileNameSink.clear();
+        Chars.utf8DecodeZ(pName, fileNameSink);
+        if (!isDots(fileNameSink) && type == Files.DT_DIR) {
+            if (Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER)) {
                 // Do not remove detached partitions
                 // They are probably about to be attached.
                 return;
             }
             try {
                 long txn = 0;
-                int txnSep = Chars.indexOf(nativeLPSZ, '.');
+                int txnSep = Chars.indexOf(fileNameSink, '.');
                 if (txnSep < 0) {
-                    txnSep = nativeLPSZ.length();
+                    txnSep = fileNameSink.length();
                 } else {
-                    txn = Numbers.parseLong(nativeLPSZ, txnSep + 1, nativeLPSZ.length());
+                    txn = Numbers.parseLong(fileNameSink, txnSep + 1, fileNameSink.length());
                 }
-                long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, 0, txnSep, null);
+                long dirTimestamp = partitionDirFmt.parse(fileNameSink, 0, txnSep, null);
                 if (txn <= txWriter.txn &&
                         (txWriter.attachedPartitionsContains(dirTimestamp) || txWriter.isActivePartition(dirTimestamp))) {
                     return;
@@ -4127,12 +4130,13 @@ public class TableWriter implements Closeable {
     private void renameColumnFiles(CharSequence columnName, CharSequence newName, int columnType) {
         try {
             ff.iterateDir(path.$(), (file, type) -> {
-                nativeLPSZ.of(file);
-                if (type == Files.DT_DIR && IGNORED_FILES.excludes(nativeLPSZ)) {
+                fileNameSink.clear();
+                Chars.utf8DecodeZ(file, fileNameSink);
+                if (type == Files.DT_DIR && IGNORED_FILES.excludes(fileNameSink)) {
                     path.trimTo(rootLen);
-                    path.concat(nativeLPSZ);
+                    path.concat(file);
                     other.trimTo(rootLen);
-                    other.concat(nativeLPSZ);
+                    other.concat(file);
                     int plen = path.length();
                     renameFileOrLog(ff, dFile(path.trimTo(plen), columnName), dFile(other.trimTo(plen), newName));
                     renameFileOrLog(ff, iFile(path.trimTo(plen), columnName), iFile(other.trimTo(plen), newName));

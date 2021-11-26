@@ -31,8 +31,8 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -148,15 +148,16 @@ public class EngineMigration {
             copyPath.of(root);
             final int rootLen = path.length();
 
-            final NativeLPSZ nativeLPSZ = new NativeLPSZ();
+            final StringSink sink = new StringSink();
             ff.iterateDir(path.$(), (name, type) -> {
                 if (type == Files.DT_DIR) {
-                    nativeLPSZ.of(name);
-                    if (Chars.notDots(nativeLPSZ)) {
+                    sink.clear();
+                    Chars.utf8DecodeZ(name, sink);
+                    if (Chars.notDots(sink)) {
                         path.trimTo(rootLen);
-                        path.concat(nativeLPSZ);
+                        path.concat(name);
                         copyPath.trimTo(rootLen);
-                        copyPath.concat(nativeLPSZ);
+                        copyPath.concat(name);
                         final int plen = path.length();
                         path.concat(TableUtils.META_FILE_NAME);
 

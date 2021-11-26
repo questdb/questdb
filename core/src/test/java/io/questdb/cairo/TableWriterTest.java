@@ -41,7 +41,6 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
@@ -3475,17 +3474,16 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 writer.removeColumn("supplier");
 
-                final NativeLPSZ lpsz = new NativeLPSZ();
                 try (Path path = new Path()) {
                     path.of(root).concat(model.getName());
                     final int plen = path.length();
                     FF.iterateDir(path.$(), (file, type) -> {
-                        lpsz.of(file);
-
-                        if (type == Files.DT_DIR && !Files.isDots(lpsz)) {
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.i").$()));
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.d").$()));
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.top").$()));
+                        sink.clear();
+                        Chars.utf8DecodeZ(file, sink);
+                        if (type == Files.DT_DIR && !Files.isDots(sink)) {
+                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(file).concat("supplier.i").$()));
+                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(file).concat("supplier.d").$()));
+                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(file).concat("supplier.top").$()));
                         }
                     });
                 }

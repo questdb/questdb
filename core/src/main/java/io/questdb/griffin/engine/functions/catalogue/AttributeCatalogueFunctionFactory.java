@@ -33,8 +33,8 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.*;
-import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_SIZE_MAP;
 
@@ -106,7 +106,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
         private final Path path;
         private final FilesFacade ff;
         private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();
-        private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
+        private final StringSink sink = new StringSink();
         private final int plimit;
         private final MemoryMR metaMem;
         private long findFileStruct = 0;
@@ -173,9 +173,10 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
                     foundMetadataFile = false;
                     final long pname = ff.findName(findFileStruct);
                     if (hasNextFile) {
-                        nativeLPSZ.of(pname);
+                        sink.clear();
+                        Chars.utf8DecodeZ(pname, sink);
                         if (
-                                ff.findType(findFileStruct) == Files.DT_DIR && Chars.notDots(nativeLPSZ)
+                                ff.findType(findFileStruct) == Files.DT_DIR && Chars.notDots(sink)
                         ) {
                             path.trimTo(plimit);
                             path.concat(pname);

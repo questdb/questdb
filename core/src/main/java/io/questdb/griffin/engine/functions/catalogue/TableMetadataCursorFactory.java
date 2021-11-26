@@ -32,8 +32,8 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
@@ -110,7 +110,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
         }
 
         private class TableListRecordCursor implements RecordCursor {
-            private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
+            private final StringSink sink = new StringSink();
             private final TableListRecord record = new TableListRecord();
             private long findPtr = 0;
             private TableReaderMetadata metaReader;
@@ -144,10 +144,11 @@ public class TableMetadataCursorFactory implements FunctionFactory {
                             return false;
                         }
                     }
-                    nativeLPSZ.of(ff.findName(findPtr));
+                    sink.clear();
+                    Chars.utf8DecodeZ(ff.findName(findPtr), sink);
                     int type = ff.findType(findPtr);
-                    if (type == Files.DT_DIR && nativeLPSZ.charAt(0) != '.') {
-                        if (record.open(nativeLPSZ)) {
+                    if (type == Files.DT_DIR && sink.charAt(0) != '.') {
+                        if (record.open(sink)) {
                             return true;
                         }
                     }
@@ -211,7 +212,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
                 @Override
                 public CharSequence getStr(int col) {
                     if (col == nameColumn) {
-                        return nativeLPSZ;
+                        return sink;
                     }
                     if (col == partitionByColumn) {
                         return PartitionBy.toString(partitionBy);
@@ -234,7 +235,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
                     return getStr(col).length();
                 }
 
-                public boolean open(NativeLPSZ tableName) {
+                public boolean open(CharSequence tableName) {
                     int pathLen = path.length();
                     try {
                         path.chop$().concat(tableName).concat(META_FILE_NAME).$();

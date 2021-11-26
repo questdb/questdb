@@ -31,10 +31,11 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 public class TableListRecordCursorFactory implements RecordCursorFactory {
     private static final RecordMetadata METADATA;
@@ -71,7 +72,7 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
     }
 
     private class TableListRecordCursor implements RecordCursor {
-        private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
+        private final StringSink sink = new StringSink();
         private final TableListRecord record = new TableListRecord();
         private long findPtr = 0;
 
@@ -101,9 +102,10 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
                         return false;
                     }
                 }
-                nativeLPSZ.of(ff.findName(findPtr));
+                sink.clear();
+                Chars.utf8DecodeZ(ff.findName(findPtr), sink);
                 int type = ff.findType(findPtr);
-                if (type == Files.DT_DIR && nativeLPSZ.charAt(0) != '.') {
+                if (type == Files.DT_DIR && sink.charAt(0) != '.') {
                     return true;
                 }
             }
@@ -138,7 +140,7 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
             @Override
             public CharSequence getStr(int col) {
                 if (col == 0) {
-                    return nativeLPSZ;
+                    return sink;
                 }
                 return null;
             }

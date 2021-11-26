@@ -46,8 +46,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -2489,16 +2489,15 @@ public class SqlCompiler implements Closeable {
         protected final Path srcPath = new Path();
         private final CharSequenceObjHashMap<RecordToRowCopier> tableBackupRowCopiedCache = new CharSequenceObjHashMap<>();
         private final ObjHashSet<CharSequence> tableNames = new ObjHashSet<>();
-        private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
         private final Path dstPath = new Path();
         private transient String cachedTmpBackupRoot;
         private transient int changeDirPrefixLen;
         private transient int currDirPrefixLen;
+        private final StringSink fileNameSink = new StringSink();
         private final FindVisitor confFilesBackupOnFind = (file, type) -> {
-            nativeLPSZ.of(file);
             if (type == Files.DT_FILE) {
-                srcPath.of(configuration.getConfRoot()).concat(nativeLPSZ).$();
-                dstPath.trimTo(currDirPrefixLen).concat(nativeLPSZ).$();
+                srcPath.of(configuration.getConfRoot()).concat(file).$();
+                dstPath.trimTo(currDirPrefixLen).concat(file).$();
                 LOG.info().$("backup copying config file [from=").$(srcPath).$(",to=").$(dstPath).I$();
                 if (ff.copy(srcPath, dstPath) < 0) {
                     throw CairoException.instance(ff.errno()).put("cannot backup conf file [to=").put(dstPath).put(']');
@@ -2507,13 +2506,14 @@ public class SqlCompiler implements Closeable {
         };
         private transient SqlExecutionContext currentExecutionContext;
         private final FindVisitor sqlDatabaseBackupOnFind = (file, type) -> {
-            nativeLPSZ.of(file);
-            if (type == Files.DT_DIR && nativeLPSZ.charAt(0) != '.') {
+            fileNameSink.clear();
+            Chars.utf8DecodeZ(file, fileNameSink);
+            if (type == Files.DT_DIR && !Files.isDots(fileNameSink)) {
                 try {
-                    backupTable(nativeLPSZ, currentExecutionContext);
+                    backupTable(fileNameSink, currentExecutionContext);
                 } catch (CairoException ex) {
                     LOG.error()
-                            .$("could not backup [path=").$(nativeLPSZ)
+                            .$("could not backup [path=").$(fileNameSink)
                             .$(", ex=").$(ex.getFlyweightMessage())
                             .$(", errno=").$(ex.getErrno())
                             .$(']').$();

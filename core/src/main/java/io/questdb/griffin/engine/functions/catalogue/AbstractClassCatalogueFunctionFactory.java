@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
@@ -116,7 +115,7 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
         private final DelegatingRecordImpl record = new DelegatingRecordImpl();
         private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();
         private final StaticReadingRecord staticReadingRecord = new StaticReadingRecord();
-        private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
+        private final StringSink sink = new StringSink();
         private final int plimit;
         private final int[] intValues = new int[5];
         private final long tempMem;
@@ -188,11 +187,11 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
 
         private boolean next0() {
             do {
-                final long pname = ff.findName(findFileStruct);
-                nativeLPSZ.of(pname);
-                if (ff.findType(findFileStruct) == Files.DT_DIR && Chars.notDots(nativeLPSZ)) {
+                sink.clear();
+                Chars.utf8DecodeZ(ff.findName(findFileStruct), sink);
+                if (ff.findType(findFileStruct) == Files.DT_DIR && Chars.notDots(sink)) {
                     path.trimTo(plimit);
-                    if (ff.exists(path.concat(pname).concat(TableUtils.META_FILE_NAME).$())) {
+                    if (ff.exists(path.concat(sink).concat(TableUtils.META_FILE_NAME).$())) {
                         // open metadata file and read id
                         long fd = ff.openRO(path);
                         if (fd > -1) {
