@@ -35,6 +35,7 @@ import java.net.Socket;
 import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.log.HttpLogAlertBuilder.CRLF;
@@ -134,12 +135,12 @@ public class LogAlertSocketTest {
 
             // connect to a server and send something
             alertSkt.send(builder
-                            .rewindToMark()
-                            .put("Something")
-                            .put(CRLF)
-                            .put(MockAlertTarget.DEATH_PILL)
-                            .put(CRLF)
-                            .$());
+                    .rewindToMark()
+                    .put("Something")
+                    .put(CRLF)
+                    .put(MockAlertTarget.DEATH_PILL)
+                    .put(CRLF)
+                    .$());
             try {
                 firstServerCompleted.await(5, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
@@ -164,7 +165,7 @@ public class LogAlertSocketTest {
             }
             // all servers should be done.
             for (int i = 0; i < servers.length; i++) {
-                Assert.assertEquals(Thread.State.TERMINATED, servers[i].getState());
+                Assert.assertFalse(servers[i].isRunning());
             }
         }
     }
@@ -227,47 +228,48 @@ public class LogAlertSocketTest {
 
         private final int portNumber;
         private final Runnable onTargetEnd;
-        private final AtomicReference<State> endState;
+        private final AtomicBoolean isRunning;
 
 
         MockAlertTarget(int portNumber, Runnable onTargetEnd) {
             this.portNumber = portNumber;
             this.onTargetEnd = onTargetEnd;
-            this.endState = new AtomicReference<>();
+            this.isRunning = new AtomicBoolean();
         }
 
-        @Override
-        public State getState() {
-            return endState.get();
+        boolean isRunning() {
+            return isRunning.get();
         }
 
         @Override
         public void run() {
-            try (
-                    ServerSocket serverSkt = new ServerSocket(portNumber);
-                    Socket clientSkt = serverSkt.accept();
-                    BufferedReader in = new BufferedReader(new InputStreamReader(clientSkt.getInputStream()));
-                    PrintWriter out = new PrintWriter(clientSkt.getOutputStream(), true)
-            ) {
-                StringSink inputLine = new StringSink();
-                while (endState.get() == null) {
-                    String line = in.readLine();
-                    if (line != null) {
-                        inputLine.put(line).put(CRLF);
-                        if (line.equals(DEATH_PILL)) {
+            if (isRunning.compareAndSet(false, true)) {
+                try (
+                        ServerSocket serverSkt = new ServerSocket(portNumber);
+                        Socket clientSkt = serverSkt.accept();
+                        BufferedReader in = new BufferedReader(new InputStreamReader(clientSkt.getInputStream()));
+                        PrintWriter out = new PrintWriter(clientSkt.getOutputStream(), true)
+                ) {
+                    StringSink inputLine = new StringSink();
+                    while (true) {
+                        String line = in.readLine();
+                        if (line != null) {
+                            inputLine.put(line).put(CRLF);
+                            if (line.equals(DEATH_PILL)) {
+                                break;
+                            }
+                        } else {
                             break;
                         }
-                    } else {
-                        break;
                     }
-                }
-                out.print(ACK);
-            } catch (IOException e) {
-                Assert.fail(e.getMessage());
-            } finally {
-                endState.set(State.TERMINATED);
-                if (onTargetEnd != null) {
-                    onTargetEnd.run();
+                    out.print(ACK);
+                    if (onTargetEnd != null) {
+                        onTargetEnd.run();
+                    }
+                } catch (IOException e) {
+                    Assert.fail(e.getMessage());
+                } finally {
+                    isRunning.set(false);
                 }
             }
         }
