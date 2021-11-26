@@ -37,6 +37,7 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.*;
+import java.util.function.Consumer;
 
 public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, LogWriter {
 
@@ -220,6 +221,14 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         final int len = logRecord.length();
         if ((logRecord.getLevel() & level) != 0 && len > 0) {
             socket.send(alertBuilder.rewindToMark().put(logRecord).$());
+        }
+    }
+
+    @VisibleForTesting
+    void onLogRecord(LogRecordSink logRecord, Consumer<String> ackReceiver) {
+        final int len = logRecord.length();
+        if ((logRecord.getLevel() & level) != 0 && len > 0) {
+            socket.send(alertBuilder.rewindToMark().put(logRecord).$(), ackReceiver);
         }
     }
 

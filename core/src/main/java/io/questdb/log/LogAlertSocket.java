@@ -54,9 +54,7 @@ public class LogAlertSocket implements Closeable {
     public static final int DEFAULT_PORT = 9093;
     public static final int IN_BUFFER_SIZE = 2 * 1024 * 1024;
     public static final int OUT_BUFFER_SIZE = 4 * 1024 * 1024;
-    private static final int HOSTS_LIMIT = 12; // will never happen
-    private static final int FAILOVER_LIMIT = 100;
-
+    private static final int HOSTS_LIMIT = 12;
 
     private final Rnd rand;
     private final NetworkFacade nf;
@@ -119,15 +117,15 @@ public class LogAlertSocket implements Closeable {
     }
 
     public boolean send(int len) {
-        return send(len, FAILOVER_LIMIT, null);
+        return send(len, null);
     }
 
-    public boolean send(int len, int maxSendAttempts, Consumer<String> ackReceiver) {
+    public boolean send(int len, Consumer<String> ackReceiver) {
         if (len < 1) {
             return false;
         }
 
-        int sendAttempts = maxSendAttempts;
+        int sendAttempts = alertHostsCount;
         while (sendAttempts > 0) {
             if (fdSocket > 0) {
                 int remaining = len;
@@ -182,7 +180,7 @@ public class LogAlertSocket implements Closeable {
             System.err.printf(
                     "%sNo alert hosts are available after %d attempts, giving up sending alert.%n",
                     LogLevel.ERROR_HEADER,
-                    maxSendAttempts
+                    alertHostsCount
             );
             if (ackReceiver != null) {
                 ackReceiver.accept(NACK);

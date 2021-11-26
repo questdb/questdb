@@ -65,7 +65,7 @@ public class LogAlertSocketWriterTest {
             LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
             recordSink.setLevel(LogLevel.ERROR);
             recordSink.put(message);
-            writer.onLogRecord(recordSink);
+            writer.onLogRecord(recordSink, ack -> Assert.assertEquals(LogAlertSocket.NACK, ack));
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
                             "Host: " + LogAlertSocket.localHostIp + "\r\n" +
@@ -100,7 +100,7 @@ public class LogAlertSocketWriterTest {
 
             recordSink.clear();
             recordSink.put("A second log message");
-            writer.onLogRecord(recordSink);
+            writer.onLogRecord(recordSink, ack -> Assert.assertEquals(LogAlertSocket.NACK, ack));
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
                             "Host: " + LogAlertSocket.localHostIp + "\r\n" +

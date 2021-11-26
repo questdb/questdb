@@ -112,7 +112,7 @@ public class LogAlertSocketTest {
 
     @Test
     public void testFailOver() {
-        try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1243")) {
+        try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1342")) {
             final HttpLogAlertBuilder builder = new HttpLogAlertBuilder(alertSkt)
                     .putHeader("localhost")
                     .setMark();
@@ -153,7 +153,6 @@ public class LogAlertSocketTest {
             Assert.assertTrue(
                     alertSkt.send(
                             builder.length(),
-                            numHosts,
                             ack -> Assert.assertEquals(ack, MockAlertTarget.ACK)
                     ));
 
@@ -190,7 +189,6 @@ public class LogAlertSocketTest {
                                     .put(MockAlertTarget.DEATH_PILL)
                                     .put(CRLF)
                                     .$(),
-                            10,
                             ack -> Assert.assertEquals(ack, LogAlertSocket.NACK)
                     ));
         }
