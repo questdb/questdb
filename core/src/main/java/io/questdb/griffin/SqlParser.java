@@ -65,7 +65,7 @@ public final class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCount0Ref = this::rewriteCount0;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcat0Ref = this::rewriteConcat0;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteTypeQualifier0Ref = this::rewriteTypeQualifier0;
-    private final QueryWithClauseModel topWithModel = new QueryWithClauseModel();
+    private final QueryWithClauseModel topLevelWithModel = new QueryWithClauseModel();
     private boolean subQueryMode = false;
 
     SqlParser(
@@ -140,7 +140,7 @@ public final class SqlParser {
         insertModelPool.clear();
         expressionTreeBuilder.reset();
         copyModelPool.clear();
-        topWithModel.clear();
+        topLevelWithModel.clear();
     }
 
     private CharSequence createColumnAlias(ExpressionNode node, QueryModel model) {
@@ -773,7 +773,7 @@ public final class SqlParser {
 
     @NotNull
     private ExecutionModel parseWith(GenericLexer lexer) throws SqlException {
-        parseWithClauses(lexer, topWithModel);
+        parseWithClauses(lexer, topLevelWithModel);
         CharSequence tok = tok(lexer, "'select', 'update' or name expected");
         if (!isUpdateKeyword(tok)) {
             // SELECT
@@ -791,7 +791,7 @@ public final class SqlParser {
         while (true) {
 
             QueryWithClauseModel parentWithClauses = prevModel != null ? prevModel.getWithClauses() : withClauses;
-            QueryWithClauseModel topWithClauses = model == null ? topWithModel : null;
+            QueryWithClauseModel topWithClauses = model == null ? topLevelWithModel : null;
 
             QueryModel unionModel = parseDml0(lexer, parentWithClauses, topWithClauses);
             if (prevModel == null) {
@@ -914,7 +914,7 @@ public final class SqlParser {
             nestedModel.setAlias(updateModel.getUpdateTableAlias());
             fromModel.setTableName(null);
             fromModel.setNestedModel(nestedModel);
-            fromModel.getWithClauses().addWithClauses(topWithModel);
+            fromModel.getWithClauses().addWithClauses(topLevelWithModel);
             fromModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
 
             tok = optTok(lexer);

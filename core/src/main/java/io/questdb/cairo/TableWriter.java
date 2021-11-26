@@ -847,22 +847,6 @@ public class TableWriter implements Closeable {
         o3ErrorCount.incrementAndGet();
     }
 
-    public void openPartitionColumnsForUpdate(ObjList<MemoryCMARW> updateMemory, int partitionIndex, IntList columnMap) {
-        long partitionTimestamp = txWriter.getPartitionTimestamp(partitionIndex);
-        try {
-            setStateForTimestamp(path, partitionTimestamp, false);
-            int pathTrimToLen = path.length();
-
-            for (int i = 0, n = columnMap.size(); i < n; i++) {
-                CharSequence name = metadata.getColumnName(columnMap.get(i));
-                MemoryCMARW colMem = updateMemory.get(i);
-                colMem.of(ff, dFile(path.trimTo(pathTrimToLen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
     public void removeColumn(CharSequence name) {
 
         checkDistressed();

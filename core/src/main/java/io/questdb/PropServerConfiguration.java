@@ -1885,6 +1885,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean enableDevelopmentUpdates() {
+            return false;
+        }
+
+        @Override
         public boolean enableTestFactories() {
             return false;
         }

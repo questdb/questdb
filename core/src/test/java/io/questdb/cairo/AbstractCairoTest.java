@@ -136,6 +136,11 @@ public class AbstractCairoTest {
                 }
                 return defaultMapType;
             }
+
+            @Override
+            public boolean enableDevelopmentUpdates() {
+                return true;
+            }
         };
         engine = new CairoEngine(configuration);
         messageBus = engine.getMessageBus();
