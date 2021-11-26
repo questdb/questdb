@@ -143,6 +143,12 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testMixedConstantColumn() throws Exception {
+        serialize("-3.5 + abyte + 42.5 + afloat = 0");
+        assertIR("(f32 0.0D)(f32 afloat)(f32 42.5D)(i8 abyte)(f32 -3.5D)(+)(+)(+)(=)(ret)");
+    }
+
+    @Test
     public void testNullConstantValues() throws Exception {
         String[][] columns = new String[][]{
                 {"abyte", "i8", "0L"},

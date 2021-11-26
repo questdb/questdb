@@ -69,6 +69,7 @@ final public class PostOrderTreeTraversalAlgo {
             while (!stack.isEmpty() || node != null) {
                 if (node != null) {
                     if (!visitor.descend(node)) {
+                        lastVisited = node;
                         node = null;
                         continue;
                     }
