@@ -77,7 +77,8 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
     static final byte JP = 29;                // jp a
     static final byte RET = 30;               // ret a
 
-    private static final byte UNDEFINED_CODE = -1;
+    static final byte UNDEFINED_CODE = -1;
+    static final int NOT_NULL_COLUMN_MASK = 1 << 31;
 
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final ArithmeticExpressionContext arithmeticContext = new ArithmeticExpressionContext();
@@ -212,7 +213,11 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                     .put(ColumnType.nameOf(columnType));
         }
         memory.putByte(typeCode);
-        memory.putLong(index);
+        if (!metadata.isColumnNullable(index)) {
+            memory.putLong(index | NOT_NULL_COLUMN_MASK);
+        } else {
+            memory.putLong(index);
+        }
     }
 
     private void serializeConstantStub(final ExpressionNode node) throws SqlException {

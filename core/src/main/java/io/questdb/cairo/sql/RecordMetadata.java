@@ -96,7 +96,6 @@ public interface RecordMetadata extends ColumnTypes {
      */
     String getColumnName(int columnIndex);
 
-
     /**
      * Retrieves column hash. Hash augments the name to ensure when column is removed and
      * then added with the same name the clients do not perceive this event as no-change.
@@ -164,6 +163,14 @@ public interface RecordMetadata extends ColumnTypes {
      * @return true if column is indexed, otherwise false.
      */
     boolean isColumnIndexed(int columnIndex);
+
+    /**
+     * @param columnIndex numeric index of the column
+     * @return true if the column may contain null values, otherwise false
+     */
+    default boolean isColumnNullable(int columnIndex) {
+        return true;
+    }
 
     /**
      * @param columnIndex numeric index of the column
