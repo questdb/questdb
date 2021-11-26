@@ -28,12 +28,28 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.sql.UpdateStatement;
+import io.questdb.griffin.update.InplaceUpdateExecution;
+import io.questdb.griffin.update.UpdateStatement;
+import io.questdb.std.Misc;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 public class UpdateBasicTest extends AbstractGriffinTest {
+    private InplaceUpdateExecution inplaceUpdate;
+
+    @Before
+    public void setUpUpdates() {
+        inplaceUpdate = new InplaceUpdateExecution(configuration);
+    }
+
+    @After
+    public void tearDownUpdate() {
+        inplaceUpdate = Misc.free(inplaceUpdate);
+    }
+
     @Test
     public void testUpdate2ColumnsWith2TableJoinInWithClause() throws Exception {
         assertMemoryLeak(() -> {
@@ -439,8 +455,7 @@ public class UpdateBasicTest extends AbstractGriffinTest {
                     sqlExecutionContext.getCairoSecurityContext(),
                     updateStatement.getUpdateTableName(),
                     "UPDATE")) {
-
-                tableWriter.executeUpdate(updateStatement, sqlExecutionContext);
+                inplaceUpdate.executeUpdate(tableWriter, updateStatement, sqlExecutionContext);
             }
         }
     }

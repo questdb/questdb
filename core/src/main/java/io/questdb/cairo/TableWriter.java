@@ -31,7 +31,6 @@ import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -703,170 +702,6 @@ public class TableWriter implements Closeable {
         commit(commitMode, metadata.getCommitLag());
     }
 
-    // This is very hacky way to update in place for testing only
-    // TODO: rewrite to production grade
-    public void executeUpdate(UpdateStatement updateStatement, SqlExecutionContext executionContext) throws SqlException {
-        if (inTransaction()) {
-            LOG.info().$("committing current transaction before UPDATE execution [table=").$(tableName).I$();
-            commit();
-        }
-
-        RecordMetadata updateMetadata = updateStatement.getValuesMetadata();
-        IntList updateToColumnMap = new IntList(updateMetadata.getColumnCount());
-
-        for (int i = 0, n = updateMetadata.getColumnCount(); i < n; i++) {
-            CharSequence columnName = updateMetadata.getColumnName(i);
-            int tableColumnIndex = metadata.getColumnIndex(columnName);
-            assert tableColumnIndex >= 0;
-            updateToColumnMap.add(tableColumnIndex);
-        }
-
-        RecordCursorFactory rowIdFactory = updateStatement.getRowIdFactory();
-        if (!rowIdFactory.supportPageFrameCursor()) {
-            throw SqlException.$(updateStatement.getPosition(), "Only simple UPDATE statements without joins are supported");
-        }
-
-        long rowsUpdated = 0;
-        UpdateStatementMasterCursor joinCursor = null;
-
-        ObjList<MemoryCMARW> updateMemory = null;
-        try (RecordCursor recordCursor = rowIdFactory.getCursor(executionContext)) {
-            updateStatement.init(recordCursor, executionContext);
-            if (updateStatement.getJoinRecordCursorFactory() != null) {
-                joinCursor = updateStatement.getJoinRecordCursorFactory().getCursor(executionContext);
-            }
-            Record masterRecord = recordCursor.getRecord();
-            int columnCount = updateMetadata.getColumnCount();
-            long currentPartitionIndex = -1L;
-            updateMemory = getUpdateColumnsMemory(columnCount);
-            Function filter = updateStatement.getRowIdFilter();
-            Function postJoinFilter = updateStatement.getPostJoinFilter();
-
-            while (recordCursor.hasNext()) {
-                if (filter != null && !filter.getBool(masterRecord)) {
-                    continue;
-                }
-
-                long rowId = masterRecord.getRowId();
-                Record record = masterRecord;
-                if (joinCursor != null) {
-                    joinCursor.setMaster(record);
-                    record = joinCursor.getRecord();
-                    boolean found = false;
-                    while(joinCursor.hasNext()) {
-                        if (postJoinFilter == null || postJoinFilter.getBool(record)) {
-                            // Found joint record which satisfies post join filter
-                            found = true;
-                            break;
-                        }
-                    }
-
-                    if (!found) {
-                         continue;
-                    }
-
-                } else if (postJoinFilter != null && !postJoinFilter.getBool(record)) {
-                    continue;
-                }
-
-                int partitionIndex = Rows.toPartitionIndex(rowId);
-                long partitionRowId = Rows.toLocalRowID(rowId);
-                if (partitionIndex != currentPartitionIndex) {
-                    openPartitionColumnsForUpdate(updateMemory, partitionIndex, updateToColumnMap);
-                    currentPartitionIndex = partitionIndex;
-                }
-
-                updateColumnValues(updateToColumnMap, columnCount, updateMemory, partitionRowId, updateStatement.getColumnMapper(), record);
-                rowsUpdated++;
-            }
-        } finally {
-            if (updateMemory != null) {
-                for(int i = 0; i < updateMemory.size(); i++) {
-                    updateMemory.getQuick(i).close(false);
-                }
-            }
-            if (joinCursor != null) {
-                joinCursor.close();
-            }
-        }
-        if (rowsUpdated > 0) {
-            commit();
-        }
-    }
-
-    private void updateColumnValues(
-            IntList updateToColumnMap,
-            int columnCount,
-            ObjList<MemoryCMARW> updateMemory,
-            long rowId,
-            RecordColumnMapper columnMapper,
-            Record record
-    ) throws SqlException {
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            int columnType = metadata.getColumnType(updateToColumnMap.get(columnIndex));
-            MemoryCMARW primaryColMem = updateMemory.get(columnIndex);
-
-            switch (columnType) {
-                case ColumnType.INT:
-                    primaryColMem.putInt(rowId << 2, columnMapper.getInt(record, columnIndex));
-                    break;
-                case ColumnType.FLOAT:
-                    primaryColMem.putFloat(rowId << 2, columnMapper.getFloat(record, columnIndex));
-                    break;
-                case ColumnType.LONG:
-                    primaryColMem.putLong(rowId << 3, columnMapper.getLong(record, columnIndex));
-                    break;
-                case ColumnType.TIMESTAMP:
-                    primaryColMem.putLong(rowId << 3, columnMapper.getTimestamp(record, columnIndex));
-                    break;
-                case ColumnType.DATE:
-                    primaryColMem.putLong(rowId << 3, columnMapper.getDate(record, columnIndex));
-                    break;
-                case ColumnType.DOUBLE:
-                    primaryColMem.putDouble(rowId << 3, columnMapper.getDouble(record, columnIndex));
-                    break;
-                case ColumnType.SHORT:
-                    primaryColMem.putShort(rowId << 1, columnMapper.getShort(record,columnIndex));
-                    break;
-                case ColumnType.CHAR:
-                    primaryColMem.putChar(rowId << 1, columnMapper.getChar(record, columnIndex));
-                    break;
-                case ColumnType.BYTE:
-                case ColumnType.BOOLEAN:
-                    primaryColMem.putLong(rowId, columnMapper.getByte(record, columnIndex));
-                    break;
-                default:
-                    throw SqlException.$(0, "Column type ")
-                            .put(ColumnType.nameOf(columnType))
-                            .put(" not supported for updates");
-            }
-        }
-    }
-
-    private ObjList<MemoryCMARW> getUpdateColumnsMemory(int columnCount) {
-        ObjList<MemoryCMARW> tempList = new ObjList<>();
-        for(int i = 0; i < columnCount; i++) {
-            tempList.add(Vm.getCMARWInstance());
-        }
-        return tempList;
-    }
-
-    private void openPartitionColumnsForUpdate(ObjList<MemoryCMARW> updateMemory, int partitionIndex, IntList columnMap) {
-        long partitionTimestamp = txWriter.getPartitionTimestamp(partitionIndex);
-        try {
-            setStateForTimestamp(path, partitionTimestamp, false);
-            int pathTrimToLen = path.length();
-
-            for (int i = 0, n = columnMap.size(); i < n; i++) {
-                CharSequence name = metadata.getColumnName(columnMap.get(i));
-                MemoryCMARW colMem = updateMemory.get(i);
-                colMem.of(ff, dFile(path.trimTo(pathTrimToLen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
     public int getColumnIndex(CharSequence name) {
         int index = metadata.getColumnIndexQuiet(name);
         if (index > -1) {
@@ -901,6 +736,10 @@ public class TableWriter implements Closeable {
 
     public int getPartitionCount() {
         return txWriter.getPartitionCount();
+    }
+
+    public long getPartitionTimestamp(int partitionIndex) {
+        return txWriter.getPartitionTimestamp(partitionIndex);
     }
 
     public long getRawMetaMemory() {
@@ -1006,6 +845,22 @@ public class TableWriter implements Closeable {
 
     public void o3BumpErrorCount() {
         o3ErrorCount.incrementAndGet();
+    }
+
+    public void openPartitionColumnsForUpdate(ObjList<MemoryCMARW> updateMemory, int partitionIndex, IntList columnMap) {
+        long partitionTimestamp = txWriter.getPartitionTimestamp(partitionIndex);
+        try {
+            setStateForTimestamp(path, partitionTimestamp, false);
+            int pathTrimToLen = path.length();
+
+            for (int i = 0, n = columnMap.size(); i < n; i++) {
+                CharSequence name = metadata.getColumnName(columnMap.get(i));
+                MemoryCMARW colMem = updateMemory.get(i);
+                colMem.of(ff, dFile(path.trimTo(pathTrimToLen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
     }
 
     public void removeColumn(CharSequence name) {

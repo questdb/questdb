@@ -22,12 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.update;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.UpdateModel;

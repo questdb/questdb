@@ -26,8 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.UpdateStatement;
 import io.questdb.cutlass.text.TextLoader;
+import io.questdb.griffin.update.UpdateStatement;
 
 public interface CompiledQuery {
     short SELECT = 1;

@@ -22,85 +22,82 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.update;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordColumnMapper;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
-import io.questdb.std.ObjList;
 
 import java.io.IOException;
 
-class FunctionsColumnMapper implements RecordColumnMapper, Mutable {
-    private ObjList<Function> valuesFunctions = null;
+class IndexColumnMapper implements RecordColumnMapper, Mutable {
+    private IntList selectChooseColumnMaps;
 
     @Override
     public void clear() {
-        valuesFunctions = null;
+        selectChooseColumnMaps = null;
     }
 
     @Override
     public void close() throws IOException {
-        Misc.freeObjList(valuesFunctions);
+        selectChooseColumnMaps = Misc.free(selectChooseColumnMaps);
     }
 
     @Override
     public long getByte(Record record, int columnIndex) {
-        return valuesFunctions.getQuick(columnIndex).getInt(record);
+        return record.getByte(selectChooseColumnMaps.get(columnIndex));
     }
 
     @Override
     public char getChar(Record record, int columnIndex) {
-        return valuesFunctions.getQuick(columnIndex).getChar(record);
+        return record.getChar(selectChooseColumnMaps.get(columnIndex));
     }
 
     @Override
     public long getDate(Record record, int columnIndex) {
-        return valuesFunctions.getQuick(columnIndex).getDate(record);
+        return record.getDate(selectChooseColumnMaps.get(columnIndex));
     }
 
     @Override
     public double getDouble(Record record, int columnIndex) {
-        return valuesFunctions.getQuick(columnIndex).getDouble(record);
+        return record.getDouble(selectChooseColumnMaps.get(columnIndex));
     }
 
     @Override
     public float getFloat(Record record, int columnIndex) {
-        return valuesFunctions.getQuick(columnIndex).getFloat(record);
+        return record.getFloat(selectChooseColumnMaps.get(columnIndex));
     }
 
     @Override
     public int getInt(Record record, int columnIndex) {
-        return valuesFunctions.getQuick(columnIndex).getInt(record);
+        return record.getInt(selectChooseColumnMaps.get(columnIndex));
     }
 
     @Override
     public long getLong(Record record, int columnIndex) {
-        return valuesFunctions.getQuick(columnIndex).getLong(record);
+        return record.getLong(selectChooseColumnMaps.get(columnIndex));
     }
 
     @Override
     public short getShort(Record record, int columnIndex) {
-        return valuesFunctions.getQuick(columnIndex).getShort(record);
+        return record.getShort(selectChooseColumnMaps.get(columnIndex));
     }
 
     @Override
     public long getTimestamp(Record record, int columnIndex) {
-        return valuesFunctions.getQuick(columnIndex).getTimestamp(record);
+        return record.getTimestamp(selectChooseColumnMaps.get(columnIndex));
     }
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        for(int i = 0, n = valuesFunctions.size(); i < n; i++) {
-            valuesFunctions.getQuick(i).init(symbolTableSource, executionContext);
-        }
     }
 
-    public FunctionsColumnMapper of(ObjList<Function> valuesFunctions) {
-        this.valuesFunctions = valuesFunctions;
+    IndexColumnMapper of(IntList selectChooseColumnMaps) {
+        this.selectChooseColumnMaps = selectChooseColumnMaps;
         return this;
     }
 }

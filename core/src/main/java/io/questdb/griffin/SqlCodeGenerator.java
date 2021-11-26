@@ -47,6 +47,7 @@ import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.griffin.engine.table.*;
 import io.questdb.griffin.engine.union.*;
 import io.questdb.griffin.model.*;
+import io.questdb.griffin.update.UpdateStatementBuilder;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;

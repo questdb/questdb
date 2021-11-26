@@ -42,6 +42,8 @@ import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLev
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
+import io.questdb.griffin.update.UpdateStatement;
+import io.questdb.griffin.update.UpdateStatementBuilder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
