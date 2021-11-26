@@ -48,7 +48,6 @@
     "monaco-editor": "^0.30.1",
     "ramda": "0.27.1",
     "react": "16.13.1",
-    "react-ace": "9.0.0",
     "react-contextmenu": "2.14.0",
     "react-dom": "16.13.1",
     "react-popper": "2.2.3",
