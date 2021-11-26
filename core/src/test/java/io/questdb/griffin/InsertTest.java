@@ -735,6 +735,33 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertTimestampWithTimeZone() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t (timestamp timestamp) timestamp(timestamp);", sqlExecutionContext);
+            executeInsert("insert into t values (timestamp with time zone '2020-12-31 15:15:51.663+00:00')");
+
+            String expected1 = "timestamp\n" +
+                    "2020-12-31T15:15:51.663000Z\n";
+
+            assertReader(expected1, "t");
+
+            executeInsert("insert into t values (cast('2021-12-31 15:15:51.663+00:00' as timestamp with time zone))");
+
+            String expected2 = expected1 +
+                    "2021-12-31T15:15:51.663000Z\n";
+
+            assertReader(expected2, "t");
+
+            try {
+                compiler.compile("insert into t values  (timestamp with time zone)", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(47, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "String literal expected after 'timestamp with time zone'");
+            }
+        });
+    }
+
+    @Test
     public void testInsertMultipleRows() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table trades (ts timestamp, sym symbol) timestamp(ts);", sqlExecutionContext);

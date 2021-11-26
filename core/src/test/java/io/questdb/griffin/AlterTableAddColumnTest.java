@@ -129,6 +129,32 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAddColumnWithSpaceInName() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createX();
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x add \"spa ce\" string", sqlExecutionContext).getType());
+
+                    assertQueryPlain(
+                            "c\tspa ce\n" +
+                                    "XYZ\t\n" +
+                                    "ABC\t\n" +
+                                    "ABC\t\n" +
+                                    "XYZ\t\n" +
+                                    "\t\n" +
+                                    "CDE\t\n" +
+                                    "CDE\t\n" +
+                                    "ABC\t\n" +
+                                    "\t\n" +
+                                    "XYZ\t\n",
+                            "select c, \"spa ce\" from x"
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testAddColumnWithoutUsingColumnKeyword() throws Exception {
         assertMemoryLeak(
                 () -> {
