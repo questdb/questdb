@@ -199,7 +199,7 @@ public class LineTcpParser implements Closeable {
                     bufAt++;
                     b = Unsafe.getUnsafe().getByte(bufAt);
                     if (b == '\\' && (entityHandler != entityValueHandler)) {
-                        return getError(ParseResult.ERROR);
+                        return getError();
                     }
                     hasNonAscii |= b < 0;
                     appendByte = true;
@@ -225,7 +225,7 @@ public class LineTcpParser implements Closeable {
                         bufAt += 1;
                         break;
                     } else if (isQuotedFieldValue) {
-                        return getError(ParseResult.ERROR);
+                        return getError();
                     }
 
                 default:
@@ -235,11 +235,11 @@ public class LineTcpParser implements Closeable {
 
                 case '\0':
                     LOG.info().$("could not parse [byte=\\0]").$();
-                    return getError(ParseResult.ERROR);
+                    return getError();
                 case '/':
                 case '.':
                     if (entityHandler != entityValueHandler) {
-                        return getError(ParseResult.ERROR);
+                        return getError();
                     }
                     appendByte = true;
                     nextValueCanBeOpenQuote = false;
@@ -427,7 +427,7 @@ public class LineTcpParser implements Closeable {
         }
     }
 
-    private ParseResult getError(ParseResult result) {
+    private ParseResult getError() {
         if (entityHandler == entityNameHandler) {
             errorCode = ErrorCode.INVALID_COLUMN_NAME;
         } else if (entityHandler == entityTableHandler) {
@@ -435,7 +435,7 @@ public class LineTcpParser implements Closeable {
         } else if (entityHandler == entityValueHandler) {
             errorCode = ErrorCode.INVALID_FIELD_VALUE;
         }
-        return result;
+        return ParseResult.ERROR;
     }
 
     private boolean prepareQuotedEntity(long openQuoteIdx, long bufHi) {
@@ -515,10 +515,9 @@ public class LineTcpParser implements Closeable {
         private final DirectByteCharSequence name = new DirectByteCharSequence();
         private final DirectByteCharSequence value = new DirectByteCharSequence();
         private byte type = ENTITY_TYPE_NONE;
-        private long integerValue;
+        private long longValue;
         private boolean booleanValue;
         private double floatValue;
-        private long timestampValue;
 
         public boolean getBooleanValue() {
             return booleanValue;
@@ -528,16 +527,12 @@ public class LineTcpParser implements Closeable {
             return floatValue;
         }
 
-        public long getIntegerValue() {
-            return integerValue;
+        public long getLongValue() {
+            return longValue;
         }
 
         public DirectByteCharSequence getName() {
             return name;
-        }
-
-        public long getTimestampValue() {
-            return timestampValue;
         }
 
         public byte getType() {
@@ -561,15 +556,7 @@ public class LineTcpParser implements Closeable {
             switch (last) {
                 case 'i':
                     if (valueLen > 1 && value.charAt(1) != 'x') {
-                        try {
-                            charSeq.of(value.getLo(), value.getHi() - 1);
-                            integerValue = Numbers.parseLong(charSeq);
-                            value.decHi(); // remove 'i'
-                            type = ENTITY_TYPE_INTEGER;
-                        } catch (NumericException notANumber) {
-                            type = ENTITY_TYPE_SYMBOL;
-                        }
-                        return true;
+                        return parseLong(ENTITY_TYPE_INTEGER);
                     }
                     if (valueLen > 3 && value.charAt(0) == '0' && (value.charAt(1) | 32) == 'x') {
                         value.decHi(); // remove 'i'
@@ -580,15 +567,7 @@ public class LineTcpParser implements Closeable {
                     return true;
                 case 't':
                     if (valueLen > 1) {
-                        try {
-                            charSeq.of(value.getLo(), value.getHi() - 1);
-                            timestampValue = Numbers.parseLong(charSeq);
-                            value.decHi(); // remove 't'
-                            type = ENTITY_TYPE_TIMESTAMP;
-                        } catch (NumericException notANumber) {
-                            type = ENTITY_TYPE_SYMBOL;
-                        }
-                        return true;
+                        return parseLong(ENTITY_TYPE_TIMESTAMP);
                     }
                     // fall through
                 case 'T':
@@ -643,6 +622,18 @@ public class LineTcpParser implements Closeable {
             }
         }
 
+        private boolean parseLong(byte entityType) {
+            try {
+                charSeq.of(value.getLo(), value.getHi() - 1);
+                longValue = Numbers.parseLong(charSeq);
+                value.decHi(); // remove 'i'
+                type = entityType;
+            } catch (NumericException notANumber) {
+                type = ENTITY_TYPE_SYMBOL;
+            }
+            return true;
+        }
+
         private void setName() {
             name.of(entityLo, bufAt - nEscapedChars);
         }
@@ -665,12 +656,4 @@ public class LineTcpParser implements Closeable {
             return true;
         }
     }
-
-
-
-
-
-
-
-
 }
