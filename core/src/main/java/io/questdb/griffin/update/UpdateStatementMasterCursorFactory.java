@@ -22,15 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.update;
+
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 
 import java.io.Closeable;
 
-public interface UpdateStatementMasterCursor extends Closeable {
-    void setMaster(Record master);
-    Record getRecord();
-    boolean hasNext();
-
-    @Override
-    void close();
+public interface UpdateStatementMasterCursorFactory extends Closeable {
+    UpdateStatementMasterCursor getCursor(SqlExecutionContext executionContext) throws SqlException;
+    RecordMetadata getMetadata();
 }

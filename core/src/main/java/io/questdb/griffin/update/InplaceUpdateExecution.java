@@ -36,7 +36,6 @@ import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 import static io.questdb.cairo.TableUtils.dFile;
 

@@ -36,6 +36,8 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
+import io.questdb.griffin.update.UpdateStatementMasterCursor;
+import io.questdb.griffin.update.UpdateStatementMasterCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
@@ -112,7 +114,6 @@ public class UpdateHashJoinRecordCursorFactory implements UpdateStatementMasterC
         private RecordCursor masterCursor;
         private RecordCursor slaveCursor;
         private boolean useSlaveCursor;
-        private Record masterRecord;
 
         public UpdateHashJoinRecordCursor(int columnSplit, Map joinKeyMap, RecordChain slaveChain) {
             this.recordA = new JoinRecord(columnSplit);
@@ -122,14 +123,13 @@ public class UpdateHashJoinRecordCursorFactory implements UpdateStatementMasterC
 
         @Override
         public void setMaster(Record master) {
-            this.masterRecord = master;
             MapKey key = joinKeyMap.withKey();
-            key.put(masterRecord, masterSink);
+            key.put(master, masterSink);
             MapValue value = key.findValue();
             if (value != null) {
                 slaveChain.of(value.getLong(0));
                 useSlaveCursor = true;
-                recordA.of(masterRecord, slaveChain.getRecord());
+                recordA.of(master, slaveChain.getRecord());
             } else {
                 useSlaveCursor = false;
             }

@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.update.UpdateStatementMasterCursor;
+import io.questdb.griffin.update.UpdateStatementMasterCursorFactory;
 import io.questdb.std.Misc;
 
 public class UpdateCrossJoinRecordCursorFactory implements UpdateStatementMasterCursorFactory {
