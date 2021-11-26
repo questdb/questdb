@@ -125,7 +125,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
             int log2 = Integer.numberOfTrailingZeros(typeSize);
             options = options | (log2 << 1);
         }
-        if (!scalar) {
+        if (!scalar && !typesObserver.forceScalarMode()) {
             int executionHint = typesObserver.hasMixedSizes() ? 2 : 1;
             options = options | (executionHint << 3);
         }
@@ -699,10 +699,16 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                     size = s;
                 }
             }
-            // Treat double + long combination as mixed types to force scalar mode in
-            // JIT compiler. That's because AVX-2 does not have an instruction to
-            // convert longs to doubles. We may want to revisit this in the future.
-            return types[I8_INDEX] > 0 && types[F8_INDEX] > 0;
+            return false;
+        }
+
+        /**
+         * For now, we force scalar mode of JIT compiler for double + long
+         * combinations. That's because AVX-2 does not have an instruction to
+         * convert longs to doubles. We may want to revisit this in the future.
+         */
+        public boolean forceScalarMode() {
+            return types[I8_INDEX] > 0 && types[F8_INDEX] > 0 && !hasMixedSizes();
         }
 
         @Override

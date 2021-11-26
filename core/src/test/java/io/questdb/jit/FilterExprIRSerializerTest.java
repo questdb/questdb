@@ -308,9 +308,9 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testOptionsLongDoubleTreatedAsMixedSizes() throws Exception {
+    public void testOptionsScalarModeForcedForLongDouble() throws Exception {
         int options = serialize("adouble = 0 and along = 0", false, false);
-        Assert.assertEquals(0b00010110, options);
+        Assert.assertEquals(0b00000110, options);
     }
 
     @Test
