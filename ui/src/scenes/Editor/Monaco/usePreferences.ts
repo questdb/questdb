@@ -40,9 +40,7 @@ export const usePreferences = () => {
     }
 
     if (editorLine && editorCol) {
-      setTimeout(() => {
-        editor.setPosition({ column: editorCol, lineNumber: editorLine })
-      }, 1000)
+      editor.setPosition({ column: editorCol, lineNumber: editorLine })
     }
   }
 

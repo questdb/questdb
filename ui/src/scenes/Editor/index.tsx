@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 import React, { CSSProperties, forwardRef, Ref } from "react"
+import styled from "styled-components"
 
 import { PaneWrapper } from "components"
 
@@ -33,14 +34,18 @@ type Props = Readonly<{
   style?: CSSProperties
 }>
 
+const EditorPaneWrapper = styled(PaneWrapper)`
+  overflow: hidden;
+`
+
 const Editor = ({
   innerRef,
   ...rest
 }: Props & { innerRef: Ref<HTMLDivElement> }) => (
-  <PaneWrapper ref={innerRef} {...rest}>
+  <EditorPaneWrapper ref={innerRef} {...rest}>
     <Menu />
     <Monaco />
-  </PaneWrapper>
+  </EditorPaneWrapper>
 )
 
 const EditorWithRef = (props: Props, ref: Ref<HTMLDivElement>) => (
