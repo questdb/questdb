@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
@@ -62,7 +61,6 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     private static BindVariableService bindVariableService;
     private static SqlExecutionContext sqlExecutionContext;
     private static SqlCompiler compiler;
-    private static Metrics metrics = Metrics.enabled();
 
     @BeforeClass
     public static void setUpStatic() {
@@ -93,465 +91,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntFloatMixed() throws Exception {
-        final String query = "select * from x where -2*f32 + 2.0*i32 = 0";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " cast(x as byte) i8," +
-                " cast(x as short) i16," +
-                " cast(x as int) i32," +
-                " cast(x as long) i64," +
-                " cast(x as float) f32," +
-                " cast(x as double) f64" +
-                " from long_sequence(10)) timestamp(k) partition by DAY";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testEqConst() throws Exception {
-        final String query = "select * from x where i8 = 1 and i16 = 1 and i32 = 1 and i64 = 1 and f32 = 1.0 and f64 = 1.0";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " cast(x as byte) i8," +
-                " cast(x as short) i16," +
-                " cast(x as int) i32," +
-                " cast(x as long) i64," +
-                " cast(x as float) f32," +
-                " cast(x as double) f64" +
-                " from long_sequence(10)) timestamp(k) partition by DAY";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testNotEqConst() throws Exception {
-        final String query = "select * from x where i8 <> 1 and i16 <> 1 and i32 <> 1 and i64 <> 1 and f32 <> 1.0000 and f64 <> 1.0";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " cast(x as byte) i8," +
-                " cast(x as short) i16," +
-                " cast(x as int) i32," +
-                " cast(x as long) i64," +
-                " cast(x as float) f32," +
-                " cast(x as double) f64" +
-                " from long_sequence(10)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testLtConst() throws Exception {
-        final String query = "select * from x where i8 < 2 and i16 < 2 and i32 < 2 and i64 < 2 and f32 < 2.0000 and f64 < 2.0";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " cast(x as byte) i8," +
-                " cast(x as short) i16," +
-                " cast(x as int) i32," +
-                " cast(x as long) i64," +
-                " cast(x as float) f32," +
-                " cast(x as double) f64" +
-                " from long_sequence(10)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testLeConst() throws Exception {
-        final String query = "select * from x where i8 <= 2 and i16 <= 2 and i32 <= 2 and i64 <= 2 and f32 <= 2.0000 and f64 <= 2.0";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " cast(x as byte) i8," +
-                " cast(x as short) i16," +
-                " cast(x as int) i32," +
-                " cast(x as long) i64," +
-                " cast(x as float) f32," +
-                " cast(x as double) f64" +
-                " from long_sequence(10)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testGtConst() throws Exception {
-        final String query = "select * from x where i8 > 9 and i16 > 9 and i32 > 9 and i64 > 9 and f32 > 9.0000 and f64 > 9.0";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " cast(x as byte) i8," +
-                " cast(x as short) i16," +
-                " cast(x as int) i32," +
-                " cast(x as long) i64," +
-                " cast(x as float) f32," +
-                " cast(x as double) f64" +
-                " from long_sequence(10)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testGeConst() throws Exception {
-        final String query = "select * from x where i8 >= 9 and i16 >= 9 and i32 >= 9 and i64 >= 9 and f32 >= 9.0000 and f64 >= 9.0";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " cast(x as byte) i8," +
-                " cast(x as short) i16," +
-                " cast(x as int) i32," +
-                " cast(x as long) i64," +
-                " cast(x as float) f32," +
-                " cast(x as double) f64" +
-                " from long_sequence(10)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testAddConst() throws Exception {
-        final String query = "select * from x where i8 + 1 = 10 and i16 + 1 = 10 and i32 + 1 = 10 and i64 + 1 = 10 " +
-                "and f32 + 1.0 = 10.0 and f64 + 1.0 = 10.0";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " cast(x as byte) i8," +
-                " cast(x as short) i16," +
-                " cast(x as int) i32," +
-                " cast(x as long) i64," +
-                " cast(x as float) f32," +
-                " cast(x as double) f64" +
-                " from long_sequence(10)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testSubConst() throws Exception {
-        final String query = "select * from x where i8 - 1 = 2 and i16 - 1 = 2 and i32 - 1 = 2 and i64 - 1 = 2 " +
-                "and f32 - 1.0 = 2.0 and f64 - 1.0 = 2.0";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " cast(x as byte) i8," +
-                " cast(x as short) i16," +
-                " cast(x as int) i32," +
-                " cast(x as long) i64," +
-                " cast(x as float) f32," +
-                " cast(x as double) f64" +
-                " from long_sequence(10)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testMulConst() throws Exception {
-        final String query = "select * from x where i8 * 2 = 4 and i16 * 2 = 4 and i32 * 2 = 4 and i64 * 2 = 4" +
-                " and f32 * 2.0 = 4.0 and f64 * 2.0 = 4.0";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " cast(x as byte) i8," +
-                " cast(x as short) i16," +
-                " cast(x as int) i32," +
-                " cast(x as long) i64," +
-                " cast(x as float) f32," +
-                " cast(x as double) f64" +
-                " from long_sequence(10)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testDivConst() throws Exception {
-        final String query = "select * from x where i8 / 2 = 4 and i16 / 2 = 4 and i32 / 2 = 4 and i64 / 2 = 4" +
-                " and f32 / 2.0 = 4.0 and f64 / 2.0 = 4.0";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " cast(x as byte) i8," +
-                " cast(x as short) i16," +
-                " cast(x as int) i32," +
-                " cast(x as long) i64," +
-                " cast(x as float) f32," +
-                " cast(x as double) f64" +
-                " from long_sequence(10)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testIntFloatCast() throws Exception {
-        final String query = "select * from x where " +
-                "i8 = f32 and " +
-                "i8 = f64 and " +
-                "i16 = f32 and " +
-                "i16 = f64 and " +
-                "i32 = f32 and " +
-                "i32 = f64 and " +
-                "i64 = f32 and " +
-                "i64 = f64";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " cast(x as byte) i8," +
-                " cast(x as short) i16," +
-                " cast(x as int) i32," +
-                " cast(x as long) i64," +
-                " cast(x as float) f32," +
-                " cast(x as double) f64" +
-                " from long_sequence(10)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testNegConst() throws Exception {
-        final String query = "select * from x where 20 + -i8 = 10 and -f32 * 2 = -20.0";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " cast(x as byte) i8," +
-                " cast(x as short) i16," +
-                " cast(x as int) i32," +
-                " cast(x as long) i64," +
-                " cast(x as float) f32," +
-                " cast(x as double) f64" +
-                " from long_sequence(10)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testOrNot() throws Exception {
-        final String query = "select * from x where i8 / 2 = 4 or i8 > 6 and not f64 = 10 and not i64 = 7";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " cast(x as byte) i8," +
-                " cast(x as short) i16," +
-                " cast(x as int) i32," +
-                " cast(x as long) i64," +
-                " cast(x as float) f32," +
-                " cast(x as double) f64" +
-                " from long_sequence(10)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testNull() throws Exception {
-        final String query = "select * from x where i8 <> null and i16 <> null and i32 <> null and i64 <> null and f32 <> null and f64 <> null";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " cast(x as byte) i8," +
-                " cast(x as short) i16," +
-                " cast(x as int) i32," +
-                " cast(x as long) i64," +
-                " cast(x as float) f32," +
-                " cast(x as double) f64" +
-                " from long_sequence(5)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testSelectAllTypesFromRecord() throws Exception {
-        final String query = "select * from x where b = true and kk < 10";
-        final String ddl = "create table x as (select" +
-                " cast(x as int) kk," +
-                " rnd_int() a," +
-                " rnd_boolean() b," +
-                " rnd_str(1,1,2) c," +
-                " rnd_double(2) d," +
-                " rnd_float(2) e," +
-                " rnd_short(10,1024) f," +
-                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                " rnd_symbol(4,4,4,2) i," +
-                " rnd_long() j," +
-                " timestamp_sequence(400000000000, 500000000) k," +
-                " rnd_byte(2,50) l," +
-                " rnd_bin(10, 20, 2) m," +
-                " rnd_str(5,16,2) n," +
-                " rnd_char() cc," +
-                " rnd_long256() l2," +
-                " rnd_geohash(1) hash1b," +
-                " rnd_geohash(2) hash2b," +
-                " rnd_geohash(3) hash3b," +
-                " rnd_geohash(5) hash1c," +
-                " rnd_geohash(10) hash2c," +
-                " rnd_geohash(20) hash4c," +
-                " rnd_geohash(40) hash8c" +
-                " from long_sequence(100)) timestamp(k) partition by DAY";
-
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testI32Nulls() throws Exception {
-        final String query = "select * from x where i32a = null or i32b = null";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int(-10, 10, 1) i32a," +
-                " rnd_int(-10, 10, 1) i32b" +
-                " from long_sequence(11)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testI32NotNulls() throws Exception {
-        final String query = "select * from x where i32a <> null and i32b <> null";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int(-10, 10, 1) i32a," +
-                " rnd_int(-10, 10, 1) i32b" +
-                " from long_sequence(11)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testI32NegNulls() throws Exception {
-        final String query = "select * from x where -i32a = null or -i32b = null";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int(-10, 10, 1) i32a," +
-                " rnd_int(-10, 10, 1) i32b" +
-                " from long_sequence(11)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testI32AddNulls() throws Exception {
-        final String query = "select * from x where i32a + i32b = null";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int(-10, 10, 1) i32a," +
-                " rnd_int(-10, 10, 1) i32b" +
-                " from long_sequence(11)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testI32SubNulls() throws Exception {
-        final String query = "select * from x where i32a - i32b = null";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int(-10, 10, 1) i32a," +
-                " rnd_int(-10, 10, 1) i32b" +
-                " from long_sequence(11)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testI32MulNulls() throws Exception {
-        final String query = "select * from x where i32a * i32b = null";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int(-10, 10, 1) i32a," +
-                " rnd_int(-10, 10, 1) i32b" +
-                " from long_sequence(11)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testI32DivNulls() throws Exception {
-        final String query = "select * from x where i32a / i32b = null";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int(-10, 10, 1) i32a," +
-                " rnd_int(-10, 10, 1) i32b" +
-                " from long_sequence(11)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testI32CmpIgnoreNulls() throws Exception {
-        final String query = "select * from x where i32a > i32b or i32a >= i32b or i32a < i32b or i32a <= i32b";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int(-10, 10, 1) i32a," +
-                " rnd_int(-10, 10, 1) i32b" +
-                " from long_sequence(11)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testI64Nulls() throws Exception {
-        final String query = "select * from x where i64a = null or i64b = null";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_long(-10, 10, 1) i64a," +
-                " rnd_long(-10, 10, 1) i64b" +
-                " from long_sequence(11)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testI64NotNulls() throws Exception {
-        final String query = "select * from x where i64a <> null and i64b <> null";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_long(-10, 10, 1) i64a," +
-                " rnd_long(-10, 10, 1) i64b" +
-                " from long_sequence(11)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testI64Neg() throws Exception {
-        final String query = "select * from x where -a = -4";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " cast(x as long) a, " +
-                " cast(x as short) b" +
-                " from long_sequence(100)) timestamp(k)";
-
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testI64NegNulls() throws Exception {
-        final String query = "select * from x where -i64a <> null and -i64b = null";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_long(-10, 10, 1) i64a," +
-                " rnd_long(-10, 10, 1) i64b" +
-                " from long_sequence(11)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testI64AddNulls() throws Exception {
-        final String query = "select * from x where i64a + i64b = null";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_long(-10, 10, 1) i64a," +
-                " rnd_long(-10, 10, 1) i64b" +
-                " from long_sequence(11)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testI64SubNulls() throws Exception {
-        final String query = "select * from x where i64a - i64b = null";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_long(-10, 10, 1) i64a," +
-                " rnd_long(-10, 10, 1) i64b" +
-                " from long_sequence(11)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testI64MulNulls() throws Exception {
-        final String query = "select * from x where i64a * i64b = null";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_long(-10, 10, 1) i64a," +
-                " rnd_long(-10, 10, 1) i64b" +
-                " from long_sequence(11)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testI64DivNulls() throws Exception {
-        final String query = "select * from x where i64a / i64b = null";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_long(-10, 10, 1) i64a," +
-                " rnd_long(-10, 10, 1) i64b" +
-                " from long_sequence(11)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testI64CmpIgnoreNulls() throws Exception {
-        final String query = "select * from x where i64a > i64b or i64a >= i64b or i64a < i64b or i64a <= i64b";
-        // final String query = "select * from x where i64a <> null and i64b <> null";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_long(-10, 10, 1) i64a," +
-                " rnd_long(-10, 10, 1) i64b" +
-                " from long_sequence(11)) timestamp(k)";
-        assertQuery(query, ddl);
-    }
-
-    @Test
-    public void testIntegerColumnToConstComparisons() throws Exception {
+    public void testIntegerColumnConstantComparison() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_byte() i8," +
@@ -567,7 +107,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFloatColumnToConstComparisons() throws Exception {
+    public void testFloatColumnConstantComparison() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_float() f32," +
@@ -577,6 +117,24 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 .withOptionalNegation().withAnyOf("f32", "f64")
                 .withComparisonOperator()
                 .withAnyOf("-50", "-25.5", "0", "0.0", "0.000", "25.5", "50");
+        assertGeneratedQuery("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testIntFloatColumnComparison() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_byte() i8," +
+                " rnd_short() i16," +
+                " rnd_int() i32," +
+                " rnd_long() i64," +
+                " rnd_float() f32," +
+                " rnd_double() f64 " +
+                " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
+        FilterGenerator gen = new FilterGenerator()
+                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
+                .withComparisonOperator()
+                .withOptionalNegation().withAnyOf("f32", "f64");
         assertGeneratedQuery("select * from x", ddl, gen);
     }
 
@@ -611,14 +169,91 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 " rnd_double() f64 " +
                 " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
         FilterGenerator gen = new FilterGenerator()
-                .withAnyOf("3", "-3.5")
-                .withArithmeticOperator()
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
+                .withArithmeticOperator()
+                .withAnyOf("3", "-3.5")
                 .withAnyOf(" + ")
                 .withAnyOf("42.5", "-42")
                 .withArithmeticOperator()
                 .withOptionalNegation().withAnyOf("f32", "f64")
                 .withAnyOf(" > 0");
+        assertGeneratedQuery("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testBooleanOperators() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_byte() i8," +
+                " rnd_short() i16," +
+                " rnd_double() f64 " +
+                " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
+        FilterGenerator gen = new FilterGenerator()
+                .withOptionalNot().withAnyOf("i8 / 2 = 4")
+                .withBooleanOperator()
+                .withOptionalNot().withAnyOf("i16 < 0")
+                .withBooleanOperator()
+                .withOptionalNot().withAnyOf("f64 > 7.5");
+        assertGeneratedQuery("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testNullComparison() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_byte(-10, 10) i8," +
+                " rnd_short(-10, 10) i16," +
+                " rnd_int(-10, 10, 10) i32," +
+                " rnd_long(-10, 10, 10) i64," +
+                " rnd_float(10) f32," +
+                " rnd_double(10) f64 " +
+                " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
+        FilterGenerator gen = new FilterGenerator()
+                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
+                .withAnyOf(" = ", " <> ")
+                .withAnyOf("null")
+                .withBooleanOperator()
+                .withOptionalNegation().withAnyOf("f32", "f64")
+                .withAnyOf(" = ", " <> ")
+                .withAnyOf("null");
+        assertGeneratedQuery("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testColumnArithmeticsNullComparison() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_byte(-10, 10) i8," +
+                " rnd_short(-10, 10) i16," +
+                " rnd_int(-10, 10, 10) i32," +
+                " rnd_long(-10, 10, 10) i64," +
+                " rnd_float(10) f32," +
+                " rnd_double(10) f64 " +
+                " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
+        FilterGenerator gen = new FilterGenerator()
+                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
+                .withArithmeticOperator()
+                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
+                .withAnyOf(" = ", " <> ")
+                .withAnyOf("null");
+        assertGeneratedQuery("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testIntFloatColumnComparisonIgnoreNull() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_byte(-10, 10) i8," +
+                " rnd_short(-10, 10) i16," +
+                " rnd_int(-10, 10, 10) i32," +
+                " rnd_long(-10, 10, 10) i64," +
+                " rnd_float(10) f32," +
+                " rnd_double(10) f64 " +
+                " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
+        FilterGenerator gen = new FilterGenerator()
+                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
+                .withComparisonOperator()
+                .withOptionalNegation().withAnyOf("f32", "f64");
         assertGeneratedQuery("select * from x", ddl, gen);
     }
 
@@ -662,7 +297,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
         sqlExecutionContext.setJitMode(SqlExecutionContext.JIT_MODE_DISABLED);
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         RecordCursorFactory factory = cc.getRecordCursorFactory();
-        Assert.assertFalse(factory instanceof CompiledFilterRecordCursorFactory);
+        Assert.assertFalse("JIT was enabled for query: " + query, factory instanceof CompiledFilterRecordCursorFactory);
         try (CountingRecordCursor cursor = new CountingRecordCursor(factory.getCursor(sqlExecutionContext))) {
             TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
             resultSize = cursor.count();
@@ -674,7 +309,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
         sqlExecutionContext.setJitMode(jitMode);
         cc = compiler.compile(query, sqlExecutionContext);
         factory = cc.getRecordCursorFactory();
-        Assert.assertTrue(factory instanceof CompiledFilterRecordCursorFactory);
+        Assert.assertTrue("JIT was not enabled for query: " + query, factory instanceof CompiledFilterRecordCursorFactory);
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             TestUtils.printCursor(cursor, factory.getMetadata(), true, jitSink, printer);
         } finally {
@@ -690,9 +325,11 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
 
     private static class FilterGenerator {
 
+        private static final String[] OPTIONAL_NEGATION = new String[]{"", "-"};
+        private static final String[] OPTIONAL_NOT = new String[]{"", " not "};
         private static final String[] COMPARISON_OPERATORS = new String[]{" = ", " != ", " > ", " >= ", " < ", " <= "};
         private static final String[] ARITHMETIC_OPERATORS = new String[]{" + ", " - ", " * ", " / "};
-        private static final String[] OPTIONAL_NEGATION = new String[]{"", "-"};
+        private static final String[] BOOLEAN_OPERATORS = new String[]{" and ", " or "};
 
         private final List<String[]> filterParts = new ArrayList<>();
 
@@ -706,6 +343,11 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
             return this;
         }
 
+        public FilterGenerator withOptionalNot() {
+            filterParts.add(OPTIONAL_NOT);
+            return this;
+        }
+
         public FilterGenerator withComparisonOperator() {
             filterParts.add(COMPARISON_OPERATORS);
             return this;
@@ -713,6 +355,11 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
 
         public FilterGenerator withArithmeticOperator() {
             filterParts.add(ARITHMETIC_OPERATORS);
+            return this;
+        }
+
+        public FilterGenerator withBooleanOperator() {
+            filterParts.add(BOOLEAN_OPERATORS);
             return this;
         }
 
@@ -807,8 +454,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     }
 
     // TODO: test the following
-    // const expr
-    // null
+    // geohash (+null), char, boolean, date, timestamp
     // filter on subquery
     // interval and filter
     // wrong type expression a+b
