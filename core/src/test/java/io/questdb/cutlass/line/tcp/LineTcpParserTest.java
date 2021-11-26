@@ -67,10 +67,10 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_STRING, "\"0x123a4\"");
         assertType(LineTcpParser.ENTITY_TYPE_STRING, "\"0x123a4 looks \\\" like=long256,\\\n but tis not!\"", "\"0x123a4 looks \" like=long256,\n but tis not!\"", LineTcpParser.ParseResult.MEASUREMENT_COMPLETE);
         assertType(LineTcpParser.ENTITY_TYPE_STRING, "\"0x123a4 looks like=long256, but tis not!\"");
-        assertType(LineTcpParser.ENTITY_TYPE_NONE, "\"0x123a4 looks \\\" like=long256,\\\n but tis not!",
-                LineTcpParser.ParseResult.ERROR); // missing closing '"'
-        assertType(LineTcpParser.ENTITY_TYPE_TAG, "0x123a4 looks \\\" like=long256,\\\n but tis not!\"",
-                LineTcpParser.ParseResult.ERROR); // wanted to be a string, missing opening '"'
+        assertError(LineTcpParser.ENTITY_TYPE_NONE, "\"0x123a4 looks \\\" like=long256,\\\n but tis not!"
+        ); // missing closing '"'
+        assertError(LineTcpParser.ENTITY_TYPE_TAG, "0x123a4 looks \\\" like=long256,\\\n but tis not!\""
+        ); // wanted to be a string, missing opening '"'
 
         assertType(LineTcpParser.ENTITY_TYPE_LONG256, "0x123i");
         assertType(LineTcpParser.ENTITY_TYPE_LONG256, "0x1i");
@@ -84,7 +84,7 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_FLOAT, "1");
 
         assertType(LineTcpParser.ENTITY_TYPE_SYMBOL, "aaa\"");
-        assertType(LineTcpParser.ENTITY_TYPE_NONE, "\"aaa", LineTcpParser.ParseResult.ERROR);
+        assertError(LineTcpParser.ENTITY_TYPE_NONE, "\"aaa");
 
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "123a4i");
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "oxi");
@@ -105,8 +105,8 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(type, value, value, LineTcpParser.ParseResult.MEASUREMENT_COMPLETE);
     }
 
-    private static void assertType(int type, String value, LineTcpParser.ParseResult expectedParseResult) throws Exception {
-        assertType(type, value, value, expectedParseResult);
+    private static void assertError(int type, String value) throws Exception {
+        assertType(type, value, value, LineTcpParser.ParseResult.ERROR);
     }
 
     private static void assertType(int type,
