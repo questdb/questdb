@@ -30,14 +30,16 @@ public final class LogLevel {
     public static final int DEBUG = 1;
     public static final int INFO = 2;
     public static final int ERROR = 4;
+    public static final int CRITICAL = 8;
     public static final int ADVISORY = 16;
-    public static final int ALL = DEBUG | INFO | ERROR | ADVISORY;
+    public static final int ALL = DEBUG | INFO | ERROR | CRITICAL | ADVISORY;
     public static final int MAX = Numbers.msb(LogLevel.ADVISORY) + 1;
     public static final int MASK = ~(-1 << (MAX));
 
     public static final String DEBUG_HEADER = " D ";
     public static final String INFO_HEADER = " I ";
     public static final String ERROR_HEADER = " E ";
+    public static final String CRITICAL_HEADER = " C ";
     public static final String ADVISORY_HEADER = " A ";
 
     private LogLevel() {

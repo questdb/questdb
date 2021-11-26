@@ -152,7 +152,7 @@ public class LogAlertSocketWriterTest {
 
             writer.setBufferSize("1978");
             writer.setLocation("/log-file.conf");
-            writer.setSocketAddress("127.0.0.1:8989");
+            writer.setAlertTargets("127.0.0.1:8989");
             try {
                 writer.bindProperties();
                 Assert.fail();
@@ -217,7 +217,7 @@ public class LogAlertSocketWriterTest {
                 LogLevel.ERROR
         )) {
             writer.setBufferSize(String.valueOf(1024));
-            writer.setSocketAddress("\"\"");
+            writer.setAlertTargets("\"\"");
             writer.bindProperties();
             Assert.assertNotNull(LogAlertSocket.localHostIp);
             Assert.assertEquals("127.0.0.1:9093", writer.getAlertTargets());

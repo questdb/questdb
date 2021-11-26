@@ -82,7 +82,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     // changed by introspection
     private String location = DEFAULT_ALERT_TPT_FILE;
     private String bufferSize;
-    private String socketAddress;
+    private String alertTargets;
 
 
     public LogAlertSocketWriter(RingQueue<LogRecordSink> alertsSrc, SCSequence writeSequence, int level) {
@@ -119,7 +119,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                 throw new LogError("Invalid value for bufferSize");
             }
         }
-        socket = new LogAlertSocket(socketAddress, nBufferSize);
+        socket = new LogAlertSocket(alertTargets, nBufferSize);
         loadLogAlertTemplate();
         socket.connect();
     }
@@ -152,8 +152,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     }
 
     @VisibleForTesting
-    void setSocketAddress(String socketAddress) {
-        this.socketAddress = socketAddress;
+    void setAlertTargets(String alertTargets) {
+        this.alertTargets = alertTargets;
     }
 
     @VisibleForTesting
