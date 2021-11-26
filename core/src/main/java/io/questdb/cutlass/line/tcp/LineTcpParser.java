@@ -237,8 +237,8 @@ public class LineTcpParser implements Closeable {
                     LOG.info().$("could not parse [byte=\\0]").$();
                     return getError();
                 case '/':
-                case '.':
                     if (entityHandler != entityValueHandler) {
+                        LOG.info().$("could not parse [byte=/]").$();
                         return getError();
                     }
                     appendByte = true;
