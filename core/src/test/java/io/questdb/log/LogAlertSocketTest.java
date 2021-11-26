@@ -30,14 +30,11 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.*;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.net.SocketTimeoutException;
+import java.net.*;
 import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.log.HttpLogAlertBuilder.CRLF;
 
@@ -135,6 +132,7 @@ public class LogAlertSocketTest {
             }
 
             // connect to a server and send something
+            System.out.printf("Sending 1...%n");
             alertSkt.send(builder
                     .rewindToMark()
                     .put("Something")
@@ -151,17 +149,19 @@ public class LogAlertSocketTest {
             // by now there is only one server surviving, and we are connected to the other.
             // send a death pill and kill the surviving server.
             builder.clear();
-            builder.put(MockAlertTarget.DEATH_PILL).put(CRLF);
-            Assert.assertTrue(alertSkt.send(builder.length()));
+            System.out.printf("Sending 2...%n");
+            alertSkt.send(builder.put(MockAlertTarget.DEATH_PILL).put(CRLF).$());
 
             // wait for haltness
             try {
-                haltLatch.await(90, TimeUnit.SECONDS);
+                haltLatch.await(30, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
                 Assert.fail("timed-out");
             }
+            System.out.printf("all halted%n");
             // all servers should be done.
             for (int i = 0; i < numHosts; i++) {
+                System.out.printf("%d: [%d] running? %b%n", i, servers[i].getPortNumber(), servers[i].isRunning());
                 Assert.assertFalse(servers[i].isRunning());
             }
         }
@@ -238,36 +238,65 @@ public class LogAlertSocketTest {
             return isRunning.get();
         }
 
+        int getPortNumber() {
+            return portNumber;
+        }
+
         @Override
         public void run() {
             if (isRunning.compareAndSet(false, true)) {
-                try (
-                        ServerSocket serverSkt = new ServerSocket(portNumber);
-                        Socket clientSkt = serverSkt.accept();
-                        BufferedReader in = new BufferedReader(new InputStreamReader(clientSkt.getInputStream()));
-                        PrintWriter out = new PrintWriter(clientSkt.getOutputStream(), true)
-                ) {
+                ServerSocket serverSkt = null;
+                Socket clientSkt = null;
+                BufferedReader in = null;
+                PrintWriter out = null;
+                try {
+                    serverSkt = new ServerSocket(portNumber);
+                    serverSkt.setReuseAddress(true);
+                    serverSkt.setSoTimeout(5000);
+
+                    clientSkt = serverSkt.accept();
+                    in = new BufferedReader(new InputStreamReader(clientSkt.getInputStream()));
+                    out = new PrintWriter(clientSkt.getOutputStream(), true);
                     clientSkt.setSoTimeout(2000);
+                    clientSkt.setReuseAddress(true);
+                    clientSkt.setTcpNoDelay(true);
+                    clientSkt.setKeepAlive(false);
+                    clientSkt.setSoLinger(false, 0);
+
+                    System.out.printf("[%d] started%n", portNumber);
                     StringSink inputLine = new StringSink();
-                    while (true) {
-                        String line = in.readLine();
-                        if (line != null) {
-                            inputLine.put(line).put(CRLF);
-                            if (line.equals(DEATH_PILL)) {
-                                break;
-                            }
-                        } else {
+                    String line = in.readLine();
+                    while (line != null) {
+                        inputLine.put(line).put(CRLF);
+                        if (line.equals(DEATH_PILL)) {
                             break;
                         }
+                        line = in.readLine();
                     }
+                    System.out.printf("[%d] received: %s%n", portNumber, inputLine);
                     out.print(ACK);
                 } catch (IOException e) {
                     Assert.fail(e.getMessage());
                 } finally {
+                    safeClose(out);
+                    safeClose(in);
+                    safeClose(clientSkt);
+                    safeClose(serverSkt);
                     isRunning.set(false);
                     if (onTargetEnd != null) {
                         onTargetEnd.run();
                     }
+                    System.out.printf("[%d] completed%n", portNumber);
+                }
+            }
+        }
+
+        private static void safeClose(Closeable target) {
+            if (target != null) {
+                try {
+                    target.close();
+                } catch (IOException ignored) {
+                    // ignore
                 }
             }
         }
