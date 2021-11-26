@@ -58,12 +58,11 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     @Parameterized.Parameter
     public JitMode jitMode;
 
-    protected static final StringSink jitSink = new StringSink();
-    private static final FilterGenerator filterGen = new FilterGenerator();
-    protected static BindVariableService bindVariableService;
-    protected static SqlExecutionContext sqlExecutionContext;
-    protected static SqlCompiler compiler;
-    protected static Metrics metrics = Metrics.enabled();
+    private static final StringSink jitSink = new StringSink();
+    private static BindVariableService bindVariableService;
+    private static SqlExecutionContext sqlExecutionContext;
+    private static SqlCompiler compiler;
+    private static Metrics metrics = Metrics.enabled();
 
     @BeforeClass
     public static void setUpStatic() {
@@ -560,11 +559,11 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 " rnd_int() i32," +
                 " rnd_long() i64 " +
                 " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
-        filterGen.clear()
+        FilterGenerator gen = new FilterGenerator()
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
                 .withComparisonOperator()
                 .withAnyOf("-50", "0", "50");
-        assertGeneratedQuery("select * from x", ddl);
+        assertGeneratedQuery("select * from x", ddl, gen);
     }
 
     @Test
@@ -574,11 +573,11 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 " rnd_float() f32," +
                 " rnd_double() f64 " +
                 " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
-        filterGen.clear()
+        FilterGenerator gen = new FilterGenerator()
                 .withOptionalNegation().withAnyOf("f32", "f64")
                 .withComparisonOperator()
                 .withAnyOf("-50", "-25.5", "0", "0.0", "0.000", "25.5", "50");
-        assertGeneratedQuery("select * from x", ddl);
+        assertGeneratedQuery("select * from x", ddl, gen);
     }
 
     @Test
@@ -592,15 +591,15 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 " rnd_float() f32," +
                 " rnd_double() f64 " +
                 " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
-        filterGen.clear()
+        FilterGenerator gen = new FilterGenerator()
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
                 .withArithmeticOperator()
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
                 .withAnyOf(" = 0");
-        assertGeneratedQuery("select * from x", ddl);
+        assertGeneratedQuery("select * from x", ddl, gen);
     }
 
-    private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl) throws Exception {
+    private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {
         final boolean forceScalarJit = jitMode == JitMode.SCALAR;
         assertMemoryLeak(() -> {
             if (ddl != null) {
@@ -608,7 +607,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
             }
 
             long maxSize = 0;
-            List<String> filters = filterGen.generate();
+            List<String> filters = gen.generate();
             LOG.info().$("generated ").$(filters.size()).$(" filter expressions for base query: ").$(baseQuery).$();
             Assert.assertTrue(filters.size() > 0);
             for (String filter : filters) {
@@ -673,11 +672,6 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
         private static final String[] OPTIONAL_NEGATION = new String[]{"", "-"};
 
         private final List<String[]> filterParts = new ArrayList<>();
-
-        private FilterGenerator clear() {
-            filterParts.clear();
-            return this;
-        }
 
         public FilterGenerator withAnyOf(String... parts) {
             filterParts.add(parts);

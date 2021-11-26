@@ -97,8 +97,8 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
      * Writes IR of the filter described by the given expression tree to memory.
      *
      * @param node filter expression tree's root node.
-     * @param scalar set scalar instructions execution hint in returned options.
-     * @param debug set enable debug flag in returned options.
+     * @param scalar set use only scalar instruction set execution hint in the returned options.
+     * @param debug set enable debug flag in the returned options.
      * @return JIT compiler options stored in a single int in the following way:
      * <ul>
      *     <li>1 LSB - debug flag.</li>
@@ -119,7 +119,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
 
         TypesObserver typesObserver = arithmeticContext.typesObserver;
         int options = debug ? 1 : 0;
-        byte typeSize = typesObserver.maxSize();
+        int typeSize = typesObserver.maxSize();
         if (typeSize > 0) {
             // typeSize is 2^n, so number of trailing zeros is equal to log2
             int log2 = Integer.numberOfTrailingZeros(typeSize);
@@ -677,7 +677,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
             }
         }
 
-        public byte maxSize() {
+        public int maxSize() {
             for (int i = types.length - 1; i > -1; i--) {
                 byte size = types[i];
                 if (size > 0) {
