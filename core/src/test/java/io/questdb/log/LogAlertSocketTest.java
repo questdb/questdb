@@ -158,7 +158,7 @@ public class LogAlertSocketTest {
 
             // wait for haltness
             try {
-                haltLatch.await(5, TimeUnit.SECONDS);
+                haltLatch.await(90, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
                 Assert.fail("timed-out");
             }
