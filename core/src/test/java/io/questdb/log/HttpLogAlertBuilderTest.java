@@ -217,6 +217,18 @@ public class HttpLogAlertBuilderTest {
 
         alertBuilder.clear();
         alertBuilder.putContentLengthMarker();
+        String message = "$Sîne klâwen durh die wolken sint geslagen,sîn vil manegiu tugent michz leisten hiez.$\r\n\";";
+        Assert.assertEquals(117, alertBuilder.put(message).$());
+        Assert.assertEquals("Content-Length:    117\r\n" + message, alertBuilder.toString());
+
+        alertBuilder.clear();
+        alertBuilder.putContentLengthMarker();
+        message = "2021-11-26T19:22:47.8658077Z 2021-11-26T19:22:47.860908Z E i.q.c.BitmapIndexBwdReader cursor could not consistently read index header [corrupt?] [timeout=5000000μs]\n";
+        Assert.assertEquals(190, alertBuilder.put(message).$());
+        Assert.assertEquals("Content-Length:    190\r\n" + message, alertBuilder.toString());
+
+        alertBuilder.clear();
+        alertBuilder.putContentLengthMarker();
         Assert.assertEquals("Content-Length:#######\r\n", alertBuilder.toString());
         int limit = bufferSize - alertBuilder.length();
         for (int i = 0; i < limit; i++) {

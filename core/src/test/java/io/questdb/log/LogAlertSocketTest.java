@@ -132,7 +132,6 @@ public class LogAlertSocketTest {
             }
 
             // connect to a server and send something
-            System.out.printf("Sending 1...%n");
             alertSkt.send(builder
                     .rewindToMark()
                     .put("Something")
@@ -149,7 +148,6 @@ public class LogAlertSocketTest {
             // by now there is only one server surviving, and we are connected to the other.
             // send a death pill and kill the surviving server.
             builder.clear();
-            System.out.printf("Sending 2...%n");
             alertSkt.send(builder.put(MockAlertTarget.DEATH_PILL).put(CRLF).$());
 
             // wait for haltness
@@ -158,10 +156,8 @@ public class LogAlertSocketTest {
             } catch (InterruptedException e) {
                 Assert.fail("timed-out");
             }
-            System.out.printf("all halted%n");
             // all servers should be done.
             for (int i = 0; i < numHosts; i++) {
-                System.out.printf("%d: [%d] running? %b%n", i, servers[i].getPortNumber(), servers[i].isRunning());
                 Assert.assertFalse(servers[i].isRunning());
             }
         }
@@ -223,10 +219,10 @@ public class LogAlertSocketTest {
         static final String ACK = "Ack";
         static final String DEATH_PILL = ".ByE.";
 
+
         private final int portNumber;
         private final Runnable onTargetEnd;
         private final AtomicBoolean isRunning;
-
 
         MockAlertTarget(int portNumber, Runnable onTargetEnd) {
             this.portNumber = portNumber;
@@ -238,10 +234,6 @@ public class LogAlertSocketTest {
             return isRunning.get();
         }
 
-        int getPortNumber() {
-            return portNumber;
-        }
-
         @Override
         public void run() {
             if (isRunning.compareAndSet(false, true)) {
@@ -250,10 +242,10 @@ public class LogAlertSocketTest {
                 BufferedReader in = null;
                 PrintWriter out = null;
                 try {
+                    // setup server socket and accept client
                     serverSkt = new ServerSocket(portNumber);
                     serverSkt.setReuseAddress(true);
                     serverSkt.setSoTimeout(5000);
-
                     clientSkt = serverSkt.accept();
                     in = new BufferedReader(new InputStreamReader(clientSkt.getInputStream()));
                     out = new PrintWriter(clientSkt.getOutputStream(), true);
@@ -263,7 +255,7 @@ public class LogAlertSocketTest {
                     clientSkt.setKeepAlive(false);
                     clientSkt.setSoLinger(false, 0);
 
-                    System.out.printf("[%d] started%n", portNumber);
+                    // read until end or until death pill is read
                     StringSink inputLine = new StringSink();
                     String line = in.readLine();
                     while (line != null) {
@@ -273,7 +265,7 @@ public class LogAlertSocketTest {
                         }
                         line = in.readLine();
                     }
-                    System.out.printf("[%d] received: %s%n", portNumber, inputLine);
+                    // send ACK, equivalent to status: ok in http
                     out.print(ACK);
                 } catch (IOException e) {
                     Assert.fail(e.getMessage());
@@ -286,7 +278,6 @@ public class LogAlertSocketTest {
                     if (onTargetEnd != null) {
                         onTargetEnd.run();
                     }
-                    System.out.printf("[%d] completed%n", portNumber);
                 }
             }
         }
