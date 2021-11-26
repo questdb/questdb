@@ -22,13 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.UpdateModel;
 import io.questdb.std.IntList;
@@ -36,11 +36,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
 
-    private final static RecordColumnMapper IDENTICAL_COLUMN_MAPPER = new IdenticalMapper();
     private final int position;
     private RecordMetadata setValuesMetadata;
     private ObjList<Function> setValuesFunctions;
@@ -68,6 +66,7 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
 
         // Check that virtualColumnFunctions match types of updateTableMetadata
         RecordMetadata valuesResultMetadata = getMetadata();
+        boolean implicitCastNeeded = false;
 
         for (int i = 0, n = valuesResultMetadata.getColumnCount(); i < n; i++) {
             int virtualColumnType = valuesResultMetadata.getColumnType(i);
@@ -75,6 +74,7 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
             int columnType = updateTableMetadata.getColumnType(updateColumnName);
 
             if (virtualColumnType != columnType) {
+                implicitCastNeeded = true;
                 Function virtualColumn = setValuesFunctions != null ? setValuesFunctions.get(i) : null;
                 if (!implicitCastAllowed(virtualColumnType, columnType, virtualColumn, bindVariableService)) {
                     // get column position
@@ -89,9 +89,13 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
         if (setValuesFunctions != null) {
             columnMapper = new FunctionsColumnMapper().of(setValuesFunctions);
         } else if (selectChooseColumnMaps != null) {
-            columnMapper = new IndexColumnMapper().of(selectChooseColumnMaps);
+            if (!implicitCastNeeded) {
+                columnMapper = new IndexColumnMapper().of(selectChooseColumnMaps);
+            } else {
+                columnMapper = createColumnCastColumnMapper(selectChooseColumnMaps, valuesResultMetadata);
+            }
         } else {
-            columnMapper = IDENTICAL_COLUMN_MAPPER;
+            throw SqlException.$(position, "unsupported column mapping for update");
         }
 
         UpdateStatement updateStatement = new UpdateStatement(
@@ -116,6 +120,45 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
         return updateStatement;
     }
 
+    private RecordColumnMapper createColumnCastColumnMapper(
+            IntList inputColumnIndexMap,
+            RecordMetadata valuesResultMetadata
+    ) {
+        int columnCount = valuesResultMetadata.getColumnCount();
+        ObjList<Function> columnFunctions = new ObjList<>(columnCount);
+        for(int i = 0; i < columnCount; i++) {
+            int virtualColumnType = valuesResultMetadata.getColumnType(i);
+            int inputUnmappedIndex = inputColumnIndexMap.get(i);
+
+            Function columnFunction = createColumnFunction(inputUnmappedIndex, virtualColumnType);
+            columnFunctions.add(columnFunction);
+        }
+        return new FunctionsColumnMapper().of(columnFunctions);
+    }
+
+    private Function createColumnFunction(int inputIndex, int inputType) {
+        switch (inputType) {
+            case ColumnType.INT:
+                return new IntColumn(inputIndex);
+            case ColumnType.SHORT:
+                return new ShortColumn(inputIndex);
+            case ColumnType.FLOAT:
+                return new FloatColumn(inputIndex);
+            case ColumnType.LONG:
+                return new LongColumn(inputIndex);
+            case ColumnType.BYTE:
+                return new ByteColumn(inputIndex);
+            case ColumnType.CHAR:
+                return new CharColumn(inputIndex);
+            case ColumnType.TIMESTAMP:
+                return new TimestampColumn(inputIndex);
+            case ColumnType.DATE:
+                return new DateColumn(inputIndex);
+            default:
+                throw new UnsupportedOperationException();
+        }
+    }
+
     @Override
     public void close() {
         Misc.freeObjList(setValuesFunctions);
@@ -138,7 +181,7 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return rowIdFactory.recordCursorSupportsRandomAccess();
+        return false;
     }
 
     public UpdateStatementBuilder withFilter(Function filter) throws SqlException {
@@ -189,8 +232,9 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
                 if (toColumnType == ColumnType.SHORT) {
                     return true;
                 }
+            case ColumnType.CHAR:
             case ColumnType.SHORT:
-                if (toColumnType == ColumnType.INT) {
+                if (toColumnType == ColumnType.INT || toColumnType == ColumnType.CHAR || toColumnType == ColumnType.SHORT) {
                     return true;
                 }
             case ColumnType.INT:
@@ -199,62 +243,12 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
                 return toColumnType == ColumnType.TIMESTAMP || toColumnType == ColumnType.DOUBLE || toColumnType == ColumnType.FLOAT;
             case ColumnType.FLOAT:
                 return toColumnType == ColumnType.DOUBLE;
+            case ColumnType.TIMESTAMP:
+                return toColumnType == ColumnType.LONG;
+            case ColumnType.DATE:
+                return toColumnType == ColumnType.TIMESTAMP;
+
         }
         return false;
-    }
-
-    static class IdenticalMapper implements RecordColumnMapper {
-        @Override
-        public void close() throws IOException {
-        }
-
-        @Override
-        public long getByte(Record record, int columnIndex) {
-            return record.getByte(columnIndex);
-        }
-
-        @Override
-        public char getChar(Record record, int columnIndex) {
-            return record.getChar(columnIndex);
-        }
-
-        @Override
-        public long getDate(Record record, int columnIndex) {
-            return record.getDate(columnIndex);
-        }
-
-        @Override
-        public double getDouble(Record record, int columnIndex) {
-            return record.getDouble(columnIndex);
-        }
-
-        @Override
-        public float getFloat(Record record, int columnIndex) {
-            return record.getFloat(columnIndex);
-        }
-
-        @Override
-        public int getInt(Record record, int columnIndex) {
-            return record.getInt(columnIndex);
-        }
-
-        @Override
-        public long getLong(Record record, int columnIndex) {
-            return record.getLong(columnIndex);
-        }
-
-        @Override
-        public short getShort(Record record, int columnIndex) {
-            return record.getShort(columnIndex);
-        }
-
-        @Override
-        public long getTimestamp(Record record, int columnIndex) {
-            return record.getTimestamp(columnIndex);
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-        }
     }
 }

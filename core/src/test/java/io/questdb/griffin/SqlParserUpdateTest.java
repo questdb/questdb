@@ -200,6 +200,21 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testUpdateWithJoinKeywordFails() throws Exception {
+        assertSyntaxError(
+                "update tblx set tt = 1 from tblx join tbly where x = y and x > 10",
+                "update tblx set tt = 1 from tblx ".length(),
+                "JOIN is not supported on UPDATE statement",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("tt", ColumnType.INT)
+                        .timestamp(),
+                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testUpdateJoinTableWithDoubleFromFails() throws Exception {
         assertSyntaxError(
                 "update tblx set tt = 1 from tblx from tbly where x = y and x > 10",

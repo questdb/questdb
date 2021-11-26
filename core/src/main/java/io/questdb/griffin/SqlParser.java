@@ -923,7 +923,11 @@ public final class SqlParser {
             if (tok != null && isFromKeyword(tok)) {
                 tok = ","; // FROM in Postgres UPDATE statement means cross join
                 int joinType;
+                int i = 0;
                 while (tok != null && (joinType = joinStartSet.get(tok)) != -1) {
+                    if (i++ == 1) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "JOIN is not supported on UPDATE statement");
+                    }
                     // expect multiple [[inner | outer | cross] join]
                     nestedModel.addJoinModel(parseJoin(lexer, tok, joinType, fromModel.getWithClauses()));
                     tok = optTok(lexer);

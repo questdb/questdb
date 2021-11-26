@@ -93,6 +93,81 @@ public class UpdateBasicTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUpdateDifferentColumnTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x as int) xint," +
+                    " cast(x as long) xlong," +
+                    " cast(x as double) xdouble," +
+                    " cast(x as short) xshort," +
+                    " cast(x as byte) xbyte," +
+                    " cast(x as char) xchar," +
+                    " cast(x as date) xdate," +
+                    " cast(x as float) xfloat," +
+                    " cast(x as timestamp) xts, " +
+                    " cast(x as boolean) xbool" +
+                    " from long_sequence(2))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            // All combinations to update xint
+            executeUpdateFails("UPDATE up SET xint = xdouble", 21, "inconvertible types: DOUBLE -> INT [from=, to=xint]");
+            executeUpdateFails("UPDATE up SET xint = xlong", 21, "inconvertible types: LONG -> INT [from=, to=xint]");
+
+            String expected = "ts\txint\txlong\txdouble\txshort\txbyte\txchar\txdate\txfloat\txts\txbool\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1\t1\t\u0001\t1970-01-01T00:00:00.001Z\t1.0000\t1970-01-01T00:00:00.000001Z\ttrue\n" +
+                    "1970-01-01T00:00:01.000000Z\t2\t2\t2.0\t2\t2\t\u0002\t1970-01-01T00:00:00.002Z\t2.0000\t1970-01-01T00:00:00.000002Z\tfalse\n";
+
+            executeUpdate("UPDATE up SET xint=xshort");
+            assertSql("up", expected);
+
+            executeUpdate("UPDATE up SET xfloat=xint");
+            assertSql("up", expected);
+
+            executeUpdate("UPDATE up SET xdouble=xfloat");
+            assertSql("up", expected);
+
+            executeUpdate("UPDATE up SET xdouble=xlong");
+            assertSql("up", expected);
+
+            executeUpdate("UPDATE up SET xshort=xbyte");
+            assertSql("up", expected);
+
+            executeUpdate("UPDATE up SET xshort=xchar");
+            assertSql("up", expected);
+
+            executeUpdate("UPDATE up SET xdouble=xlong");
+            assertSql("up", expected);
+
+            executeUpdate("UPDATE up SET xlong=xts");
+            assertSql("up", expected);
+
+            executeUpdate("UPDATE up SET xts=xdate");
+            // above call modified data from micro to milli. Revert the data back
+            executeUpdate("UPDATE up SET xts=xlong");
+            assertSql("up", expected);
+
+            // Update all at once
+            executeUpdate("UPDATE up SET xint=xshort, xfloat=xint, xdouble=xfloat, xshort=xbyte, xlong=xts, xts=xlong");
+            assertSql("up", expected);
+
+            // Update without conversion
+            executeUpdate("UPDATE up" +
+                    " SET xint=up2.xint," +
+                    " xfloat=up2.xfloat," +
+                    " xdouble=up2.xdouble," +
+                    " xshort=up2.xshort," +
+                    " xlong=up2.xlong," +
+                    " xts=up2.xts, " +
+                    " xchar=up2.xchar, " +
+                    " xbool=up2.xbool, " +
+                    " xbyte=up2.xbyte " +
+                    " FROM up up2 WHERE up.ts = up2.ts");
+            assertSql("up", expected);
+        });
+    }
+
+    @Test
     public void testUpdateWithFilterAndFunctionValueUpcast() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +

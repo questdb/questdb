@@ -22,10 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin;
 
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordColumnMapper;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;

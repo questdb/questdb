@@ -140,7 +140,6 @@ public abstract class IntFunction implements ScalarFunction {
         return Numbers.intToLong(getInt(rec));
     }
 
-
     @Override
     public byte getGeoByte(Record rec) {
         throw new UnsupportedOperationException();
