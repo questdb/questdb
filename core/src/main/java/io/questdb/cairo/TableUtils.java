@@ -347,7 +347,6 @@ public final class TableUtils {
         for (int i = 0, l = seq.length(); i < l; i++) {
             char c = seq.charAt(i);
             switch (c) {
-                case ' ':
                 case '?':
                 case '.':
                 case ',':
@@ -378,7 +377,6 @@ public final class TableUtils {
             switch (seq.charAt(i)) {
                 default:
                     break;
-                case ' ':
                 case '?':
                 case '.':
                 case ',':
