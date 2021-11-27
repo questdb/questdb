@@ -45,12 +45,11 @@ public class LogAlertSocketWriterTest {
 
     @Test
     public void test_BindProperties_AlertTemplateAndBuilder_OnLogRecord() {
-        String message = "for the love of christ riding a moped\n";
-        int len = message.length();
+        String message = "A simple message\n";
 
         // to be safe, the template takes some bytes, and each char in the
         // message can take up to 3 bytes when encoded
-        final int buffSize = len * 4;
+        final int buffSize = message.length() * 4;
         final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
         try (LogAlertSocketWriter writer = new LogAlertSocketWriter(
                 ff,
@@ -71,7 +70,7 @@ public class LogAlertSocketWriterTest {
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:    446\r\n" +
+                            "Content-Length:    425\r\n" +
                             "\r\n" +
                             "[\n" +
                             "  {\n" +
@@ -88,7 +87,7 @@ public class LogAlertSocketWriterTest {
                             "    },\n" +
                             "    \"Annotations\": {\n" +
                             "      \"description\": \"ERROR/GLOBAL/GLOBAL/GLOBAL/GLOBAL\",\n" +
-                            "      \"message\": \"for the love of christ riding a moped\"\n" +
+                            "      \"message\": \"A simple message\"\n" +
                             "    }\n" +
                             "  }\n" +
                             "]",

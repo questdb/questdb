@@ -78,13 +78,16 @@ public class HttpLogAlertBuilder extends LogRecordSink {
                 throw new LogError("Content too long");
             }
             long p = contentLengthEnd;
-            int n = bodyLen, rem = n % 10;
-            while (n > 9) {
-                Unsafe.getUnsafe().putByte(p--, (byte) ('0' + rem));
-                n /= 10;
-                rem = n % 10;
+            if (bodyLen == 0) {
+                Unsafe.getUnsafe().putByte(p--, (byte) '0');
+            } else {
+                int rem = bodyLen % 10;
+                while (bodyLen > 0) {
+                    Unsafe.getUnsafe().putByte(p--, (byte) ('0' + rem));
+                    bodyLen /= 10;
+                    rem = bodyLen % 10;
+                }
             }
-            Unsafe.getUnsafe().putByte(p--, (byte) ('0' + rem));
             int lpadLen = (int) (CL_MARKER_LEN - contentLengthEnd + p);
             for (int lpad = 0; lpad < lpadLen; lpad++) {
                 Unsafe.getUnsafe().putByte(p--, (byte) ' ');
