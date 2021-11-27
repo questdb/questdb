@@ -32,6 +32,9 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
 public class LogAlertSocketWriterTest {
 
     private static final FilesFacade ff = FilesFacadeImpl.INSTANCE;
@@ -44,13 +47,12 @@ public class LogAlertSocketWriterTest {
     }
 
     @Test
-    public void test_BindProperties_AlertTemplateAndBuilder_OnLogRecord() {
-        String message = "A simple message\n";
+    public void testOnLogRecord() {
 
-        // to be safe, the template takes some bytes, and each char in the
-        // message can take up to 3 bytes when encoded
-        final int buffSize = message.length() * 4;
-        final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+        String message = "A \"simple\" $message$\n";
+
+        final int logRecordBuffSize = 1024; // plenty, to allow for encoding/escaping
+        final long logRecordBuffPtr = Unsafe.malloc(logRecordBuffSize, MemoryTag.NATIVE_DEFAULT);
         try (LogAlertSocketWriter writer = new LogAlertSocketWriter(
                 ff,
                 MicrosecondClockImpl.INSTANCE,
@@ -58,19 +60,29 @@ public class LogAlertSocketWriterTest {
                 null,
                 LogLevel.ERROR
         )) {
+            // create mock alert target servers
+            final CountDownLatch haltLatch = new CountDownLatch(2);
+            final MockAlertTarget[] alertsTarget = new MockAlertTarget[2];
+            alertsTarget[0] = new MockAlertTarget(1234, () -> haltLatch.countDown());
+            alertsTarget[1] = new MockAlertTarget(1242, () -> haltLatch.countDown());
+            alertsTarget[0].start();
+            alertsTarget[1].start();
+
+            writer.setAlertTargets("localhost:1234,localhost:1242");
             writer.bindProperties();
 
-            LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
+            LogRecordSink recordSink = new LogRecordSink(logRecordBuffPtr, logRecordBuffSize);
             recordSink.setLevel(LogLevel.ERROR);
             recordSink.put(message);
-            writer.onLogRecord(recordSink, ack -> Assert.assertEquals(LogAlertSocket.NACK, ack));
+
+            writer.onLogRecord(recordSink, ack -> Assert.assertEquals(MockAlertTarget.ACK, ack));
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
                             "Host: " + LogAlertSocket.localHostIp + "\r\n" +
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:    425\r\n" +
+                            "Content-Length:    436\r\n" +
                             "\r\n" +
                             "[\n" +
                             "  {\n" +
@@ -87,23 +99,23 @@ public class LogAlertSocketWriterTest {
                             "    },\n" +
                             "    \"Annotations\": {\n" +
                             "      \"description\": \"ERROR/GLOBAL/GLOBAL/GLOBAL/GLOBAL\",\n" +
-                            "      \"message\": \"A simple message\"\n" +
+                            "      \"message\": \"A \\\"simple\\\" \\\\$message\\\\$\"\n" +
                             "    }\n" +
                             "  }\n" +
-                            "]",
+                            "]\n",
                     writer.getAlertBuilder().toString()
             );
 
             recordSink.clear();
             recordSink.put("A second log message");
-            writer.onLogRecord(recordSink, ack -> Assert.assertEquals(LogAlertSocket.NACK, ack));
+            writer.onLogRecord(recordSink, ack -> Assert.assertEquals(MockAlertTarget.ACK, ack));
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
                             "Host: " + LogAlertSocket.localHostIp + "\r\n" +
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:    429\r\n" +
+                            "Content-Length:    430\r\n" +
                             "\r\n" +
                             "[\n" +
                             "  {\n" +
@@ -123,11 +135,19 @@ public class LogAlertSocketWriterTest {
                             "      \"message\": \"A second log message\"\n" +
                             "    }\n" +
                             "  }\n" +
-                            "]",
+                            "]\n",
                     writer.getAlertBuilder().toString()
             );
+
+            try {
+                haltLatch.await(10, TimeUnit.SECONDS);
+                Assert.assertFalse(alertsTarget[0].isRunning());
+                Assert.assertFalse(alertsTarget[1].isRunning());
+            } catch (InterruptedException e) {
+                Assert.fail("timed-out");
+            }
         } finally {
-            Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(logRecordBuffPtr, logRecordBuffSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

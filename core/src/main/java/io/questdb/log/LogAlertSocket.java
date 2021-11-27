@@ -199,7 +199,7 @@ public class LogAlertSocket implements Closeable {
             outBufferPtr = 0;
         }
         if (inBufferPtr != 0) {
-            Unsafe.free(inBufferPtr, IN_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(inBufferPtr, inBufferSize, MemoryTag.NATIVE_DEFAULT);
             inBufferPtr = 0;
         }
     }

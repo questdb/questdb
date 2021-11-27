@@ -24,17 +24,13 @@
 
 package io.questdb.log;
 
-import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.io.*;
-import java.net.*;
 import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.log.HttpLogAlertBuilder.CRLF;
 
@@ -213,83 +209,5 @@ public class LogAlertSocketTest {
                 }
             }
         });
-    }
-
-    private static class MockAlertTarget extends Thread {
-        static final String ACK = "Ack";
-        static final String DEATH_PILL = ".ByE.";
-
-
-        private final int portNumber;
-        private final Runnable onTargetEnd;
-        private final AtomicBoolean isRunning;
-
-        MockAlertTarget(int portNumber, Runnable onTargetEnd) {
-            this.portNumber = portNumber;
-            this.onTargetEnd = onTargetEnd;
-            this.isRunning = new AtomicBoolean();
-        }
-
-        boolean isRunning() {
-            return isRunning.get();
-        }
-
-        @Override
-        public void run() {
-            if (isRunning.compareAndSet(false, true)) {
-                ServerSocket serverSkt = null;
-                Socket clientSkt = null;
-                BufferedReader in = null;
-                PrintWriter out = null;
-                try {
-                    // setup server socket and accept client
-                    serverSkt = new ServerSocket(portNumber);
-                    serverSkt.setReuseAddress(true);
-                    serverSkt.setSoTimeout(5000);
-                    clientSkt = serverSkt.accept();
-                    in = new BufferedReader(new InputStreamReader(clientSkt.getInputStream()));
-                    out = new PrintWriter(clientSkt.getOutputStream(), true);
-                    clientSkt.setSoTimeout(2000);
-                    clientSkt.setReuseAddress(true);
-                    clientSkt.setTcpNoDelay(true);
-                    clientSkt.setKeepAlive(false);
-                    clientSkt.setSoLinger(false, 0);
-
-                    // read until end or until death pill is read
-                    StringSink inputLine = new StringSink();
-                    String line = in.readLine();
-                    while (line != null) {
-                        inputLine.put(line).put(CRLF);
-                        if (line.equals(DEATH_PILL)) {
-                            break;
-                        }
-                        line = in.readLine();
-                    }
-                    // send ACK, equivalent to status: ok in http
-                    out.print(ACK);
-                } catch (IOException e) {
-                    Assert.fail(e.getMessage());
-                } finally {
-                    safeClose(out);
-                    safeClose(in);
-                    safeClose(clientSkt);
-                    safeClose(serverSkt);
-                    isRunning.set(false);
-                    if (onTargetEnd != null) {
-                        onTargetEnd.run();
-                    }
-                }
-            }
-        }
-
-        private static void safeClose(Closeable target) {
-            if (target != null) {
-                try {
-                    target.close();
-                } catch (IOException ignored) {
-                    // ignore
-                }
-            }
-        }
     }
 }
