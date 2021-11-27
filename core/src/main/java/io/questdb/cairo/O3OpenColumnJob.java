@@ -164,7 +164,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
     public static void openColumn(O3OpenColumnTask task, long cursor, Sequence subSeq, long tmpBuf) {
         final int openColumnMode = task.getOpenColumnMode();
-        final CharSequence pathToTable = task.getPathToTable();
+        final Path pathToTable = task.getPathToTable();
         final int columnType = task.getColumnType();
         final CharSequence columnName = task.getColumnName();
         final long srcOooLo = task.getSrcOooLo();
@@ -251,7 +251,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
     public static void openColumn(
             int openColumnMode,
-            CharSequence pathToTable,
+            Path pathToTable,
             CharSequence columnName,
             AtomicInteger columnCounter,
             AtomicInteger partCounter,

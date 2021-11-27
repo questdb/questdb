@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
@@ -102,10 +101,7 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
                         return false;
                     }
                 }
-                sink.clear();
-                Chars.utf8DecodeZ(ff.findName(findPtr), sink);
-                int type = ff.findType(findPtr);
-                if (type == Files.DT_DIR && sink.charAt(0) != '.') {
+                if (Files.isDir(ff.findName(findPtr), ff.findType(findPtr), sink)) {
                     return true;
                 }
             }

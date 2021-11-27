@@ -96,7 +96,6 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
         private final Path path;
         private final FilesFacade ff;
         private final AttrDefCatalogueCursor.DiskReadingRecord diskReadingRecord = new AttrDefCatalogueCursor.DiskReadingRecord();
-        private final StringSink sink = new StringSink();
         private final int plimit;
         private final long tempMem;
         private int tableId = -1;
@@ -160,13 +159,12 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
             do {
                 if (readNextFileFromDisk) {
                     foundMetadataFile = false;
-                    final long pname = ff.findName(findFileStruct);
+                    final long pUtf8NameZ = ff.findName(findFileStruct);
                     if (hasNextFile) {
-                        sink.clear();
-                        Chars.utf8DecodeZ(pname, sink);
-                        if (ff.findType(findFileStruct) == Files.DT_DIR && Chars.notDots(sink)) {
+                        final long type = ff.findType(findFileStruct);
+                        if (Files.isDir(pUtf8NameZ, type)) {
                             path.trimTo(plimit);
-                            if (ff.exists(path.concat(sink).concat(TableUtils.META_FILE_NAME).$())) {
+                            if (ff.exists(path.concat(pUtf8NameZ).concat(TableUtils.META_FILE_NAME).$())) {
                                 long fd = ff.openRO(path);
                                 if (fd > -1) {
                                     if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {

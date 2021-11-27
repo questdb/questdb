@@ -38,6 +38,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.DirectUnboundedByteSink;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;

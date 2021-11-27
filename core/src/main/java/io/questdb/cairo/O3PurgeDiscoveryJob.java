@@ -165,13 +165,11 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
             StringSink fileNameSink,
             CharSequence tableName,
             LongList txnList,
-            long name,
+            long pUtf8NameZ,
             int type
     ) {
-        if (type == Files.DT_DIR) {
-            fileNameSink.clear();
-            Chars.utf8DecodeZ(name, fileNameSink);
-            if (Chars.notDots(fileNameSink) && Chars.startsWith(fileNameSink, sink)) {
+        if (Files.isDir(pUtf8NameZ, type, fileNameSink)) {
+            if (Chars.startsWith(fileNameSink, sink)) {
                 // extract txn from name
                 int index = Chars.lastIndexOf(fileNameSink, '.');
                 if (index < 0) {

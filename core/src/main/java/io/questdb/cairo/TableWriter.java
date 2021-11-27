@@ -55,7 +55,6 @@ import java.util.function.LongConsumer;
 
 import static io.questdb.cairo.StatusCode.*;
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.std.Files.isDots;
 
 public class TableWriter implements Closeable {
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
@@ -113,7 +112,6 @@ public class TableWriter implements Closeable {
     private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
     private final PartitionBy.PartitionCeilMethod partitionCeilMethod;
     private final int defaultCommitMode;
-    private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
     private final int o3ColumnMemorySize;
     private final ObjList<Runnable> nullSetters;
     private final ObjList<Runnable> o3NullSetters;
@@ -128,13 +126,14 @@ public class TableWriter implements Closeable {
     private final AtomicInteger o3ErrorCount = new AtomicInteger();
     private final MemoryMARW todoMem = Vm.getMARWInstance();
     private final TxWriter txWriter;
-    private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final LongList o3PartitionRemoveCandidates = new LongList();
     private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<>(O3MutableAtomicInteger::new, 64);
     private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<>(O3Basket::new, 64);
     private final TxnScoreboard txnScoreboard;
     private final StringSink o3Sink = new StringSink();
     private final StringSink fileNameSink = new StringSink();
+    private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
+    private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final StringSink o3FileNameSink = new StringSink();
     private final RingQueue<O3PartitionUpdateTask> o3PartitionUpdateQueue;
     private final MPSequence o3PartitionUpdatePubSeq;
@@ -3900,12 +3899,10 @@ public class TableWriter implements Closeable {
 
     private void removeColumnFiles(CharSequence columnName, int columnType, RemoveFileLambda removeLambda) {
         try {
-            ff.iterateDir(path.$(), (file, type) -> {
-                fileNameSink.clear();
-                Chars.utf8DecodeZ(file, fileNameSink);
-                if (type == Files.DT_DIR && IGNORED_FILES.excludes(fileNameSink)) {
+            ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
+                if (Files.isDir(pUtf8NameZ, type)) {
                     path.trimTo(rootLen);
-                    path.concat(fileNameSink);
+                    path.concat(pUtf8NameZ);
                     int plen = path.length();
                     removeLambda.remove(ff, dFile(path, columnName));
                     removeLambda.remove(ff, iFile(path.trimTo(plen), columnName));
@@ -3966,12 +3963,10 @@ public class TableWriter implements Closeable {
 
     private void removeIndexFiles(CharSequence columnName) {
         try {
-            ff.iterateDir(path.$(), (file, type) -> {
-                fileNameSink.clear();
-                Chars.utf8DecodeZ(file, fileNameSink);
-                if (type == Files.DT_DIR && IGNORED_FILES.excludes(fileNameSink)) {
+            ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
+                if (Files.isDir(pUtf8NameZ, type)) {
                     path.trimTo(rootLen);
-                    path.concat(file);
+                    path.concat(pUtf8NameZ);
                     int plen = path.length();
                     removeFileAndOrLog(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName));
                     removeFileAndOrLog(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
@@ -4015,21 +4010,20 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void removePartitionDirectories0(long pName, int type) {
-        path.trimTo(rootLen);
-        path.concat(pName).$();
-        fileNameSink.clear();
-        Chars.utf8DecodeZ(pName, fileNameSink);
-        int errno;
-        if (IGNORED_FILES.excludes(fileNameSink) && type == Files.DT_DIR && (errno = ff.rmdir(path)) != 0) {
-            LOG.info().$("could not remove [path=").$(path).$(", errno=").$(errno).$(']').$();
+    private void removePartitionDirectories0(long pUtf8NameZ, int type) {
+        if (Files.isDir(pUtf8NameZ, type)) {
+            path.trimTo(rootLen);
+            path.concat(pUtf8NameZ).$();
+            int errno;
+            if ((errno = ff.rmdir(path)) != 0) {
+                LOG.info().$("could not remove [path=").$(path).$(", errno=").$(errno).$(']').$();
+            }
         }
     }
 
-    private void removePartitionDirsNotAttached(long pName, int type) {
-        fileNameSink.clear();
-        Chars.utf8DecodeZ(pName, fileNameSink);
-        if (!isDots(fileNameSink) && type == Files.DT_DIR) {
+    private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
+        if (Files.isDir(pUtf8NameZ, type, fileNameSink)) {
+
             if (Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER)) {
                 // Do not remove detached partitions
                 // They are probably about to be attached.
@@ -4054,7 +4048,7 @@ public class TableWriter implements Closeable {
                 // we rely on this behaviour to remove leftover directories created by OOO processing
             }
             path.trimTo(rootLen);
-            path.concat(pName).$();
+            path.concat(pUtf8NameZ).$();
             int errno;
             if ((errno = ff.rmdir(path)) == 0) {
                 LOG.info().$("removed partition dir: ").$(path).$();
@@ -4129,14 +4123,12 @@ public class TableWriter implements Closeable {
 
     private void renameColumnFiles(CharSequence columnName, CharSequence newName, int columnType) {
         try {
-            ff.iterateDir(path.$(), (file, type) -> {
-                fileNameSink.clear();
-                Chars.utf8DecodeZ(file, fileNameSink);
-                if (type == Files.DT_DIR && IGNORED_FILES.excludes(fileNameSink)) {
+            ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
+                if (Files.isDir(pUtf8NameZ, type)) {
                     path.trimTo(rootLen);
-                    path.concat(file);
+                    path.concat(pUtf8NameZ);
                     other.trimTo(rootLen);
-                    other.concat(file);
+                    other.concat(pUtf8NameZ);
                     int plen = path.length();
                     renameFileOrLog(ff, dFile(path.trimTo(plen), columnName), dFile(other.trimTo(plen), newName));
                     renameFileOrLog(ff, iFile(path.trimTo(plen), columnName), iFile(other.trimTo(plen), newName));

@@ -144,10 +144,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
                             return false;
                         }
                     }
-                    sink.clear();
-                    Chars.utf8DecodeZ(ff.findName(findPtr), sink);
-                    int type = ff.findType(findPtr);
-                    if (type == Files.DT_DIR && sink.charAt(0) != '.') {
+                    if (Files.isDir(ff.findName(findPtr), ff.findType(findPtr), sink)) {
                         if (record.open(sink)) {
                             return true;
                         }

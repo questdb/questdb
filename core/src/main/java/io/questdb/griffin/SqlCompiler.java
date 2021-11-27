@@ -2505,17 +2505,15 @@ public class SqlCompiler implements Closeable {
             }
         };
         private transient SqlExecutionContext currentExecutionContext;
-        private final FindVisitor sqlDatabaseBackupOnFind = (file, type) -> {
-            fileNameSink.clear();
-            Chars.utf8DecodeZ(file, fileNameSink);
-            if (type == Files.DT_DIR && !Files.isDots(fileNameSink)) {
+        private final FindVisitor sqlDatabaseBackupOnFind = (pUtf8NameZ, type) -> {
+            if (Files.isDir(pUtf8NameZ, type, fileNameSink)) {
                 try {
                     backupTable(fileNameSink, currentExecutionContext);
-                } catch (CairoException ex) {
+                } catch (CairoException e) {
                     LOG.error()
                             .$("could not backup [path=").$(fileNameSink)
-                            .$(", ex=").$(ex.getFlyweightMessage())
-                            .$(", errno=").$(ex.getErrno())
+                            .$(", e=").$(e.getFlyweightMessage())
+                            .$(", errno=").$(e.getErrno())
                             .$(']').$();
                 }
             }

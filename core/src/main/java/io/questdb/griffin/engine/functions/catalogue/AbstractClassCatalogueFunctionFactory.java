@@ -187,11 +187,11 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
 
         private boolean next0() {
             do {
-                sink.clear();
-                Chars.utf8DecodeZ(ff.findName(findFileStruct), sink);
-                if (ff.findType(findFileStruct) == Files.DT_DIR && Chars.notDots(sink)) {
+                final long pUtf8NameZ = ff.findName(findFileStruct);
+                final long type = ff.findType(findFileStruct);
+                if (Files.isDir(pUtf8NameZ, type, sink)) {
                     path.trimTo(plimit);
-                    if (ff.exists(path.concat(sink).concat(TableUtils.META_FILE_NAME).$())) {
+                    if (ff.exists(path.concat(pUtf8NameZ).concat(TableUtils.META_FILE_NAME).$())) {
                         // open metadata file and read id
                         long fd = ff.openRO(path);
                         if (fd > -1) {
@@ -250,7 +250,6 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
         }
 
         private class DiskReadingRecord implements Record {
-            private final StringSink utf8SinkA = new StringSink();
             private final StringSink utf8SinkB = new StringSink();
 
             @Override
@@ -266,7 +265,7 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
             @Override
             public CharSequence getStr(int col) {
                 if (col == 0) {
-                    return getName(utf8SinkA);
+                    return sink;
                 }
                 return null;
             }
@@ -282,17 +281,16 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
             @Override
             public int getStrLen(int col) {
                 if (col == 0) {
-                    CharSequence cs = getStr(col);
-                    return cs != null ? cs.length() : -1;
+                    return sink.length();
                 }
                 return -1;
             }
 
             @Nullable
-            private CharSequence getName(StringSink utf8SinkA) {
-                utf8SinkA.clear();
-                if (Chars.utf8DecodeZ(ff.findName(findFileStruct), utf8SinkA)) {
-                    return utf8SinkA;
+            private CharSequence getName(StringSink sink) {
+                sink.clear();
+                if (Chars.utf8DecodeZ(ff.findName(findFileStruct), sink)) {
+                    return sink;
                 } else {
                     return null;
                 }
