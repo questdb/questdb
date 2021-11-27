@@ -45,7 +45,7 @@ public class LogAlertSocketWriterTest {
 
     @Test
     public void test_BindProperties_AlertTemplateAndBuilder_OnLogRecord() {
-        String message = "2021-11-26T19:22:47.8658077Z 2021-11-26T19:22:47.860908Z E i.q.c.BitmapIndexBwdReader cursor could not consistently read index header [corrupt?] [timeout=5000000μs]\n";
+        String message = "for the love of christ riding a moped\n";
         int len = message.length();
 
         // to be safe, the template takes some bytes, and each char in the
@@ -71,7 +71,7 @@ public class LogAlertSocketWriterTest {
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:    574\r\n" +
+                            "Content-Length:    446\r\n" +
                             "\r\n" +
                             "[\n" +
                             "  {\n" +
@@ -88,7 +88,7 @@ public class LogAlertSocketWriterTest {
                             "    },\n" +
                             "    \"Annotations\": {\n" +
                             "      \"description\": \"ERROR/GLOBAL/GLOBAL/GLOBAL/GLOBAL\",\n" +
-                            "      \"message\": \"2021-11-26T19:22:47.8658077Z 2021-11-26T19:22:47.860908Z E i.q.c.BitmapIndexBwdReader cursor could not consistently read index header [corrupt?] [timeout=5000000μs]\"\n" +
+                            "      \"message\": \"for the love of christ riding a moped\"\n" +
                             "    }\n" +
                             "  }\n" +
                             "]",
