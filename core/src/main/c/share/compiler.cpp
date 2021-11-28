@@ -28,9 +28,11 @@
 
 using namespace asmjit;
 
-class JitErrorHandler : public asmjit::ErrorHandler{
-public:
-    void handleError(asmjit::Error /*err*/, const char *msg, asmjit::BaseEmitter * /*origin*/) override {
+struct JitErrorHandler : public asmjit::ErrorHandler {
+    Error _error = kErrorOk;
+
+    void handleError(asmjit::Error err, const char *msg, asmjit::BaseEmitter * /*origin*/) override {
+        _error = err;
         fprintf(stderr, "ERROR: %s\n", msg);
     }
 };
@@ -43,646 +45,869 @@ struct JitGlobalContext {
 
 static JitGlobalContext gGlobalContext;
 
-inline static void avx2_not(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &rhs) {
-    asmjit::x86::Mem c0 = c.newInt32Const(asmjit::ConstPool::kScopeLocal, -1);
-    asmjit::x86::Ymm mask = c.newYmm();
-    switch (rhs.dtype()) {
-        case i8:
-            c.vpbroadcastb(mask, c0);
-            break;
-        case i16:
-            c.vpbroadcastw(mask, c0);
-            break;
-        case i32:
-        case f32:
-            c.vpbroadcastd(mask, c0);
-            break;
-        case i64:
-        case f64:
-            c.vpbroadcastq(mask, c0);
-            break;
-    }
-    c.vpxor(dst.ymm(), rhs.ymm(), mask);
-}
+namespace questdb::x86 {
+    using namespace asmjit::x86;
 
-inline static void avx2_and(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &rhs) {
-    c.vpand(dst.ymm(), lhs.ymm(), rhs.ymm());
-}
+    jit_value_t
+    read_mem(Compiler &c, data_type_t type, const uint8_t *istream, size_t size, uint32_t &pos, const Gp &cols_ptr,
+             const Gp &input_index) {
 
-inline static void avx2_or(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &rhs) {
-    c.vpor(dst.ymm(), lhs.ymm(), rhs.ymm());
-}
+        auto column_idx = static_cast<int32_t>(read<int64_t>(istream, size, pos));
+        Gp column_address = c.newInt64();
+        c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
 
-inline static void avx2_cmp_eq(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &rhs) {
-    switch (lhs.dtype()) {
-        case i8:
-            c.vpcmpeqb(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case i16:
-            c.vpcmpeqw(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case i32:
-            c.vpcmpeqd(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case i64:
-            c.vpcmpeqq(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case f32:
-            c.vcmpps(dst.ymm(), lhs.ymm(), rhs.ymm(), asmjit::x86::Predicate::kCmpEQ);
-            break;
-        case f64:
-            c.vcmppd(dst.ymm(), lhs.ymm(), rhs.ymm(), asmjit::x86::Predicate::kCmpEQ);
-            break;
-        default:
-            break;
-    }
-}
-
-inline static void avx2_cmp_neq(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &rhs) {
-    switch (lhs.dtype()) {
-        case f32:
-            c.vcmpps(dst.ymm(), lhs.ymm(), rhs.ymm(), asmjit::x86::Predicate::kCmpNEQ);
-            break;
-        case f64:
-            c.vcmppd(dst.ymm(), lhs.ymm(), rhs.ymm(), asmjit::x86::Predicate::kCmpNEQ);
-            break;
-        default:
-            avx2_cmp_eq(c, dst, lhs, rhs);
-            avx2_not(c, dst, dst);
-            break;
-    }
-}
-
-inline static void avx2_not_null(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &rhs) {
-    asmjit::x86::Ymm lmask = c.newYmm();
-    asmjit::x86::Ymm rmask = c.newYmm();
-    if(dst.dtype() == i32 || rhs.dtype() == i32) {
-        int32_t inulls_a[8] = {int_null, int_null, int_null, int_null, int_null, int_null, int_null, int_null};
-        int32_t ineg_a[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
-        asmjit::x86::Mem inulls = c.newConst(asmjit::ConstPool::kScopeLocal, &inulls_a, 32);
-        asmjit::x86::Mem ineg = c.newConst(asmjit::ConstPool::kScopeLocal, &ineg_a, 32);
-        c.vpcmpeqd(lmask, lhs.ymm(), inulls);
-        c.vpcmpeqd(rmask, rhs.ymm(), inulls);
-        c.vpor(dst.ymm(), lmask, rmask);
-        c.vpxor(dst.ymm(), dst.ymm(), ineg);
-    } else {
-        int64_t lnulls_a[4] = {long_null, long_null, long_null, long_null};
-        int64_t lneg_a[4] = {-1ll, -1ll, -1ll, -1ll};
-        asmjit::x86::Mem lneg = c.newConst(asmjit::ConstPool::kScopeLocal, &lneg_a, 32);
-        asmjit::x86::Mem lnulls = c.newConst(asmjit::ConstPool::kScopeLocal, &lnulls_a, 32);
-        c.vpcmpeqq(lmask, lhs.ymm(), lnulls);
-        c.vpcmpeqq(rmask, rhs.ymm(), lnulls);
-        c.vpor(dst.ymm(), lmask, rmask);
-        c.vpxor(dst.ymm(), dst.ymm(), lneg);
-    }
-}
-
-inline static void avx2_not_null(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &rhs) {
-    if(rhs.dtype() == i32) {
-        asmjit::x86::Ymm rmask = c.newYmm();
-        int32_t inulls_a[8] = {int_null, int_null, int_null, int_null, int_null, int_null, int_null, int_null};
-        int32_t ineg_a[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
-        asmjit::x86::Mem inulls = c.newConst(asmjit::ConstPool::kScopeLocal, &inulls_a, 32);
-        asmjit::x86::Mem ineg = c.newConst(asmjit::ConstPool::kScopeLocal, &ineg_a, 32);
-        c.vpcmpeqd(rmask, rhs.ymm(), inulls);
-        c.vpxor(dst.ymm(), rmask, ineg);
-    } else {
-        asmjit::x86::Ymm rmask = c.newYmm();
-        int64_t lnulls_a[4] = {long_null, long_null, long_null, long_null};
-        int64_t lneg_a[4] = {-1ll, -1ll, -1ll, -1ll};
-        asmjit::x86::Mem lneg = c.newConst(asmjit::ConstPool::kScopeLocal, &lneg_a, 32);
-        asmjit::x86::Mem lnulls = c.newConst(asmjit::ConstPool::kScopeLocal, &lnulls_a, 32);
-        c.vpcmpeqq(rmask, rhs.ymm(), lnulls);
-        c.vpxor(dst.ymm(), rmask, lneg);
-    }
-}
-
-inline static void avx2_ignore_null(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &rhs) {
-    asmjit::x86::Ymm rmask = c.newYmm();
-    jit_value_t v(rmask, lhs.dtype(), lhs.dkind());
-    avx2_not_null(c, v, lhs, rhs);
-    c.vpand(dst.ymm(), dst.ymm(), rmask.ymm());
-}
-
-inline static void avx2_select_byte(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &mask) {
-    if(lhs.dtype() == i32) {
-        int32_t inulls_a[8] = {int_null, int_null, int_null, int_null, int_null, int_null, int_null, int_null};
-        asmjit::x86::Mem inulls = c.newConst(asmjit::ConstPool::kScopeLocal, &inulls_a, 32);
-        c.vpblendvb(dst.ymm(), lhs.ymm(), inulls, mask.ymm());
-    } else {
-        int64_t lnulls_a[4] = {long_null, long_null, long_null, long_null};
-        asmjit::x86::Mem lnulls = c.newConst(asmjit::ConstPool::kScopeLocal, &lnulls_a, 32);
-        c.vpblendvb(dst.ymm(), lhs.ymm(), lnulls, mask.ymm());
-    }
-}
-
-inline static void avx2_cmp_gt(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &rhs) {
-    switch (lhs.dtype()) {
-        case i8:
-            c.vpcmpgtb(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case i16:
-            c.vpcmpgtw(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case i32:
-            c.vpcmpgtd(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case i64:
-            c.vpcmpgtq(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case f32:
-            c.vcmpps(dst.ymm(), lhs.ymm(), rhs.ymm(), asmjit::x86::Predicate::kCmpNLE);
-            break;
-        case f64:
-            c.vcmppd(dst.ymm(), lhs.ymm(), rhs.ymm(), asmjit::x86::Predicate::kCmpNLE);
-            break;
-        default:
-            break;
-    }
-}
-
-inline static void avx2_cmp_lt(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &rhs) {
-    switch (lhs.dtype()) {
-        case f32:
-            c.vcmpps(dst.ymm(), lhs.ymm(), rhs.ymm(), asmjit::x86::Predicate::kCmpLT);
-            break;
-        case f64:
-            c.vcmppd(dst.ymm(), lhs.ymm(), rhs.ymm(), asmjit::x86::Predicate::kCmpLT);
-            break;
-        default:
-            avx2_cmp_gt(c, dst, rhs, lhs);
-            break;
-    }
-}
-
-inline static void avx2_cmp_ge(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &rhs) {
-    switch (lhs.dtype()) {
-        case f32:
-            c.vcmpps(dst.ymm(), lhs.ymm(), rhs.ymm(), asmjit::x86::Predicate::kCmpNLT);
-            break;
-        case f64:
-            c.vcmppd(dst.ymm(), lhs.ymm(), rhs.ymm(), asmjit::x86::Predicate::kCmpNLT);
-            break;
-        default:
-            avx2_cmp_gt(c, dst, rhs, lhs);
-            avx2_not(c, dst, dst);
-            break;
-    }
-}
-
-inline static void avx2_cmp_le(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &rhs) {
-    switch (lhs.dtype()) {
-        case f32:
-            c.vcmpps(dst.ymm(), lhs.ymm(), rhs.ymm(), asmjit::x86::Predicate::kCmpLE);
-            break;
-        case f64:
-            c.vcmppd(dst.ymm(), lhs.ymm(), rhs.ymm(), asmjit::x86::Predicate::kCmpLE);
-            break;
-        default:
-            avx2_cmp_ge(c, dst, rhs, lhs);
-            break;
-    }
-}
-
-inline static void avx2_add(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &rhs) {
-    switch (lhs.dtype()) {
-        case i8:
-            c.vpaddb(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case i16:
-            c.vpaddw(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case i32:
-            c.vpaddd(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case i64:
-            c.vpaddq(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case f32:
-            c.vaddps(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case f64:
-            c.vaddpd(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        default:
-            break;
-    }
-}
-
-inline static void avx2_sub(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &rhs) {
-    switch (lhs.dtype()) {
-        case i8:
-            c.vpsubb(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case i16:
-            c.vpsubw(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case i32:
-            c.vpsubd(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case i64:
-            c.vpsubq(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case f32:
-            c.vsubps(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case f64:
-            c.vsubpd(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        default:
-            break;
-    }
-}
-
-inline static void avx2_mul(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &rhs) {
-    switch (lhs.dtype()) {
-        case i8:
-            // There is no 8-bit multiply in AVX2. Split into two 16-bit multiplications
-            //            __m256i aodd    = _mm256_srli_epi16(a,8);              // odd numbered elements of a
-            //            __m256i bodd    = _mm256_srli_epi16(b,8);              // odd numbered elements of b
-            //            __m256i muleven = _mm256_mullo_epi16(a,b);             // product of even numbered elements
-            //            __m256i mulodd  = _mm256_mullo_epi16(aodd,bodd);       // product of odd  numbered elements
-            //            mulodd  = _mm256_slli_epi16(mulodd,8);         // put odd numbered elements back in place
-            //            __m256i mask    = _mm256_set1_epi32(0x00FF00FF);       // mask for even positions
-            //            __m256i product = _mm256_blendv_epi8(mask,muleven,mulodd);        // interleave even and odd
-            //            return product
-        {
-            asmjit::x86::Ymm aodd = c.newYmm();
-            c.vpsrlw(aodd, lhs.ymm(), 8);
-            asmjit::x86::Ymm bodd = c.newYmm();
-            c.vpsrlw(bodd, rhs.ymm(), 8);
-            c.vpmullw(lhs.ymm(), lhs.ymm(), rhs.ymm()); // muleven
-            c.vpmullw(aodd, aodd, bodd); // mulodd
-            c.vpsllw(aodd, aodd, 8); // mulodd
-            uint8_t array[] = {255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0,
-                               255, 0, 255, 0, 255, 0, 255, 0, 255, 0};
-            asmjit::x86::Mem c0 = c.newConst(asmjit::ConstPool::kScopeLocal, &array, 32);
-            asmjit::x86::Ymm mask = c.newYmm();
-            c.vmovdqa(mask, c0);
-            c.vpblendvb(dst.ymm(), aodd, lhs.ymm(), mask);
-        }
-            break;
-        case i16:
-            c.vpmullw(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case i32:
-            c.vpmulld(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case i64:
-            //            __m256i bswap   = _mm256_shuffle_epi32(b,0xB1);        // swap H<->L
-            //            __m256i prodlh  = _mm256_mullo_epi32(a,bswap);         // 32 bit L*H products
-            //            __m256i zero    = _mm256_setzero_si256();              // 0
-            //            __m256i prodlh2 = _mm256_hadd_epi32(prodlh,zero);      // a0Lb0H+a0Hb0L,a1Lb1H+a1Hb1L,0,0
-            //            __m256i prodlh3 = _mm256_shuffle_epi32(prodlh2,0x73);  // 0, a0Lb0H+a0Hb0L, 0, a1Lb1H+a1Hb1L
-            //            __m256i prodll  = _mm256_mul_epu32(a,b);               // a0Lb0L,a1Lb1L, 64 bit unsigned products
-            //            __m256i prod    = _mm256_add_epi64(prodll,prodlh3);    // a0Lb0L+(a0Lb0H+a0Hb0L)<<32, a1Lb1L+(a1Lb1H+a1Hb1L)<<32
-            //            return  prod;
-        {
-            asmjit::x86::Ymm t = c.newYmm();
-            c.vpshufd(t, rhs.ymm(), 0xB1);
-            c.vpmulld(t, t, lhs.ymm());
-            asmjit::x86::Ymm z = c.newYmm();
-            c.vpxor(z, z, z);
-            c.vphaddd(t, t, z);
-            c.vpshufd(t, t, 0x73);
-            c.vpmuludq(lhs.ymm(), lhs.ymm(), rhs.ymm());
-            c.vpaddq(dst.ymm(), t, lhs.ymm());
-        }
-            break;
-        case f32:
-            c.vmulps(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case f64:
-            c.vsubpd(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        default:
-            break;
-    }
-}
-
-inline static void avx2_div_unrolled(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &rhs) {
-    switch (lhs.dtype()) {
-        case i8:
-        case i16:
-        case i32:
-        case i64: {
-            asmjit::x86::Mem lhs_m = c.newStack(32, 32);
-            asmjit::x86::Mem rhs_m = c.newStack(32, 32);
-
-            lhs_m.setSize(32);
-            rhs_m.setSize(32);
-
-            c.vmovdqu(lhs_m, lhs.ymm());
-            c.vmovdqu(rhs_m, rhs.ymm());
-
-            asmjit::x86::Gp a = c.newGpq();
-            asmjit::x86::Gp b = c.newGpq();
-            asmjit::x86::Gp r = c.newGpq();
-            asmjit::x86::Gp ar = c.newGpq();
-
-            switch (lhs.dtype()) {
-                case i8: {
-                    auto size = 1;
-                    auto step = 32;
-
-                    lhs_m.setSize(size);
-                    rhs_m.setSize(size);
-                    for (int32_t i = 0; i < step; ++i) {
-                        lhs_m.setOffset(i * size);
-                        c.movsx(a.r32(), lhs_m);
-                        rhs_m.setOffset(i * size);
-                        c.movsx(b.r32(), rhs_m);
-
-                        c.cdq(r.r32(), a.r32());
-                        c.idiv(r.r32(), a.r32(), b.r32());
-                        c.mov(lhs_m, a.r8());
-                    }
-
-                }
-                    break;
-                case i16: {
-                    auto size = 2;
-                    auto step = 16;
-
-                    lhs_m.setSize(size);
-                    rhs_m.setSize(size);
-
-                    for (int32_t i = 0; i < step; ++i) {
-                        lhs_m.setOffset(i * size);
-                        c.movsx(a.r32(), lhs_m);
-                        rhs_m.setOffset(i * size);
-                        c.movsx(b.r32(), rhs_m);
-                        c.cdq(r.r32(), a.r32());
-                        c.idiv(r.r32(), a.r32(), b.r32());
-                        c.mov(lhs_m, a.r16());
-                    }
-                }
-                    break;
-                case i32: {
-                    auto size = 4;
-                    auto step = 8;
-
-                    lhs_m.setSize(size);
-                    rhs_m.setSize(size);
-
-                    for (int32_t i = 0; i < step; ++i) {
-                        asmjit::Label l_zero = c.newLabel();
-                        lhs_m.setOffset(i * size);
-                        c.mov(a.r32(), lhs_m);
-                        rhs_m.setOffset(i * size);
-                        c.mov(b.r32(), rhs_m);
-                        c.mov(r.r32(), int_null);
-
-                        c.cmp(r.r32(), a.r32());
-                        c.je(l_zero);
-                        c.cmp(r.r32(), b.r32());
-                        c.je(l_zero);
-                        c.test(b.r32(), b.r32());
-                        c.je(l_zero);
-
-                        c.cdq(r.r32(), a.r32());
-                        c.idiv(r.r32(), a.r32(), b.r32());
-                        c.mov(r.r32(), a.r32());
-                        c.bind(l_zero);
-                        c.mov(lhs_m, r.r32());
-                    }
-                }
-                    break;
-                default: {
-                    auto size = 8;
-                    auto step = 4;
-
-                    lhs_m.setSize(size);
-                    rhs_m.setSize(size);
-
-                    for (int32_t i = 0; i < step; ++i) {
-                        asmjit::Label l_zero = c.newLabel();
-                        lhs_m.setOffset(i * size);
-                        rhs_m.setOffset(i * size);
-                        c.mov(a, lhs_m);
-                        c.mov(b, rhs_m);
-                        c.movabs(r, long_null);
-                        c.cmp(r, a);
-                        c.je(l_zero);
-                        c.cmp(r, b);
-                        c.je(l_zero);
-                        c.test(b, b);
-                        c.je(l_zero);
-
-                        c.cqo(r, a);
-                        c.idiv(r, a, b);
-                        c.mov(r, a);
-                        c.bind(l_zero);
-                        c.mov(lhs_m, r);
-                    }
-                }
-                    break;
+        switch (type) {
+            case i8: {
+                Gp row_data = c.newGpd();
+                c.movsx(row_data, Mem(column_address, input_index, 0, 0, 1));
+                return {row_data, type, kMemory};
             }
-
-            lhs_m.resetOffset();
-            lhs_m.setSize(32);
-            c.vmovdqu(dst.ymm(), lhs_m);
+            case i16: {
+                Gp row_data = c.newGpd();
+                c.movsx(row_data, Mem(column_address, input_index, 1, 0, 2));
+                return {row_data, type, kMemory};
+            }
+            case i32: {
+                Gp row_data = c.newGpd();
+                c.mov(row_data, Mem(column_address, input_index, 2, 0, 4));
+                return {row_data, type, kMemory};
+            }
+            case i64: {
+                Gp row_data = c.newGpq();
+                c.mov(row_data, Mem(column_address, input_index, 3, 0, 8));
+                return {row_data, type, kMemory};
+            }
+            case f32: {
+                Xmm row_data = c.newXmmSs();
+                c.vmovss(row_data, Mem(column_address, input_index, 2, 0, 4));
+                return {row_data, type, kMemory};
+            }
+            case f64: {
+                Xmm row_data = c.newXmmSd();
+                c.vmovsd(row_data, Mem(column_address, input_index, 3, 0, 8));
+                return {row_data, type, kMemory};
+            }
         }
-            break;
-        case f32:
-            c.vdivps(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case f64:
-            c.vdivpd(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        default:
-            break;
     }
-}
 
-inline static void avx2_div(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &lhs, jit_value_t &rhs) {
-    switch (lhs.dtype()) {
-        case i8:
-        case i16:
-        case i32:
-        case i64: {
-            uint32_t size = 0;
-            uint32_t shift = 0;
-            uint32_t step = 0;
-            switch (lhs.dtype()) {
-                case i8:
-                    size = 1;
-                    shift = 0;
-                    step = 32;
+    jit_value_t read_imm(Compiler &c, data_type_t type, const uint8_t *istream, size_t size, uint32_t &pos) {
+        switch (type) {
+            case i8:
+            case i16:
+            case i32: {
+                auto value = read<int64_t>(istream, size, pos);
+                Gp reg = c.newGpd();
+                c.mov(reg, value); //todo: check & cast value ?
+                return {reg, type, kConst};
+            }
+            case i64: {
+                auto value = read<int64_t>(istream, size, pos);
+                Gp reg = c.newGpq();
+                c.movabs(reg, value); //todo: check & cast value ?
+                return {reg, type, kConst};
+            }
+            case f32: {
+                auto value = read<double>(istream, size, pos);
+                Xmm reg = c.newXmmSs();
+                Mem mem = c.newFloatConst(ConstPool::kScopeLocal, (float) value);
+                c.movss(reg, mem);
+                return {reg, type, kConst};
+            }
+            case f64: {
+                auto value = read<double>(istream, size, pos);
+                Xmm reg = c.newXmmSd();
+                Mem mem = c.newDoubleConst(ConstPool::kScopeLocal, value);
+                c.movsd(reg, mem);
+                return {reg, type, kConst};
+            }
+        }
+    }
+
+    jit_value_t neg(Compiler &c, const jit_value_t &lhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = lhs.dkind();
+        switch (dt) {
+            case i8:
+            case i16:
+            case i32:
+                return {int32_neg(c, lhs.gp().r32(), null_check), dt, dk};
+            case i64:
+                return {int64_neg(c, lhs.gp(), null_check), dt, dk};
+            case f32:
+                return {float_neg(c, lhs.xmm()), dt, dk};
+            case f64:
+                return {double_neg(c, lhs.xmm()), dt, dk};
+        }
+    }
+
+    jit_value_t bin_not(Compiler &c, const jit_value_t &lhs) {
+        auto dt = lhs.dtype();
+        auto dk = lhs.dkind();
+        return {int32_not(c, lhs.gp().r32()), dt, dk};
+    }
+
+    jit_value_t bin_and(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        return {int32_and(c, lhs.gp().r32(), rhs.gp().r32()), dt, dk};
+    }
+
+    jit_value_t bin_or(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        return {int32_or(c, lhs.gp().r32(), rhs.gp().r32()), dt, dk};
+    }
+
+    jit_value_t cmp_eq(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        switch (dt) {
+            case i8:
+            case i16:
+            case i32:
+                return {int32_eq(c, lhs.gp().r32(), rhs.gp().r32()), i32, dk};
+            case i64:
+                return {int64_eq(c, lhs.gp(), rhs.gp()), i32, dk};
+            case f32:
+                return {float_eq_delta(c, lhs.xmm(), rhs.xmm(), FLOAT_DELTA), i32, dk};
+            case f64:
+                return {double_eq_delta(c, lhs.xmm(), rhs.xmm(), DOUBLE_DELTA), i32, dk};
+        }
+    }
+
+    jit_value_t cmp_ne(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        switch (dt) {
+            case i8:
+            case i16:
+            case i32:
+                return {int32_ne(c, lhs.gp().r32(), rhs.gp().r32()), i32, dk};
+            case i64:
+                return {int64_ne(c, lhs.gp(), rhs.gp()), i32, dk};
+            case f32:
+                return {float_ne_delta(c, lhs.xmm(), rhs.xmm(), FLOAT_DELTA), i32, dk};
+            case f64:
+                return {double_ne_delta(c, lhs.xmm(), rhs.xmm(), DOUBLE_DELTA), i32, dk};
+        }
+    }
+
+    jit_value_t cmp_gt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        switch (dt) {
+            case i8:
+            case i16:
+            case i32:
+                return {int32_gt(c, lhs.gp().r32(), rhs.gp().r32(), null_check), i32, dk};
+            case i64:
+                return {int64_gt(c, lhs.gp(), rhs.gp(), null_check), i32, dk};
+            case f32:
+                return {float_gt(c, lhs.xmm(), rhs.xmm()), i32, dk};
+            case f64:
+                return {double_gt(c, lhs.xmm(), rhs.xmm()), i32, dk};
+        }
+    }
+
+    jit_value_t cmp_ge(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        switch (dt) {
+            case i8:
+            case i16:
+            case i32:
+                return {int32_ge(c, lhs.gp().r32(), rhs.gp().r32(), null_check), i32, dk};
+            case i64:
+                return {int64_ge(c, lhs.gp(), rhs.gp(), null_check), i32, dk};
+            case f32:
+                return {float_ge(c, lhs.xmm(), rhs.xmm()), i32, dk};
+            case f64:
+                return {double_ge(c, lhs.xmm(), rhs.xmm()), i32, dk};
+        }
+    }
+
+    jit_value_t cmp_lt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        switch (dt) {
+            case i8:
+            case i16:
+            case i32:
+                return {int32_lt(c, lhs.gp().r32(), rhs.gp().r32(), null_check), i32, dk};
+            case i64:
+                return {int64_lt(c, lhs.gp(), rhs.gp(), null_check), i32, dk};
+            case f32:
+                return {float_lt(c, lhs.xmm(), rhs.xmm()), i32, dk};
+            case f64:
+                return {double_lt(c, lhs.xmm(), rhs.xmm()), i32, dk};
+        }
+    }
+
+    jit_value_t cmp_le(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        switch (dt) {
+            case i8:
+            case i16:
+            case i32:
+                return {int32_le(c, lhs.gp().r32(), rhs.gp().r32(), null_check), i32, dk};
+            case i64:
+                return {int64_le(c, lhs.gp(), rhs.gp(), null_check), i32, dk};
+            case f32:
+                return {float_le(c, lhs.xmm(), rhs.xmm()), i32, dk};
+            case f64:
+                return {double_le(c, lhs.xmm(), rhs.xmm()), i32, dk};
+        }
+    }
+
+    jit_value_t add(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        switch (dt) {
+            case i8:
+            case i16:
+            case i32:
+                return {int32_add(c, lhs.gp().r32(), rhs.gp().r32(), null_check), dt, dk};
+            case i64:
+                return {int64_add(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
+            case f32:
+                return {float_add(c, lhs.xmm(), rhs.xmm()), dt, dk};
+            case f64:
+                return {double_add(c, lhs.xmm(), rhs.xmm()), dt, dk};
+        }
+    }
+
+    jit_value_t sub(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        switch (dt) {
+            case i8:
+            case i16:
+            case i32:
+                return {int32_sub(c, lhs.gp().r32(), rhs.gp().r32(), null_check), dt, dk};
+            case i64:
+                return {int64_sub(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
+            case f32:
+                return {float_sub(c, lhs.xmm(), rhs.xmm()), dt, dk};
+            case f64:
+                return {double_sub(c, lhs.xmm(), rhs.xmm()), dt, dk};
+        }
+    }
+
+    jit_value_t mul(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        switch (dt) {
+            case i8:
+            case i16:
+            case i32:
+                return {int32_mul(c, lhs.gp().r32(), rhs.gp().r32(), null_check), dt, dk};
+            case i64:
+                return {int64_mul(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
+            case f32:
+                return {float_mul(c, lhs.xmm(), rhs.xmm()), dt, dk};
+            case f64:
+                return {double_mul(c, lhs.xmm(), rhs.xmm()), dt, dk};
+        }
+    }
+
+    jit_value_t div(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        switch (dt) {
+            case i8:
+            case i16:
+            case i32:
+                return {int32_div(c, lhs.gp().r32(), rhs.gp().r32(), null_check), dt, dk};
+            case i64:
+                return {int64_div(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
+            case f32:
+                return {float_div(c, lhs.xmm(), rhs.xmm()), dt, dk};
+            case f64:
+                return {double_div(c, lhs.xmm(), rhs.xmm()), dt, dk};
+        }
+    }
+
+    inline bool cvt_null_check(data_type_t type) {
+        return !(type == i8 || type == i16);
+    }
+
+    inline std::pair<jit_value_t, jit_value_t>
+    convert(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        switch (lhs.dtype()) {
+            case i8:
+            case i16:
+            case i32:
+                switch (rhs.dtype()) {
+                    case i8:
+                    case i16:
+                    case i32:
+                        return std::make_pair(lhs, rhs);
+                    case i64:
+                        return std::make_pair(
+                                jit_value_t(int32_to_int64(c, lhs.gp().r32(), cvt_null_check(lhs.dtype())), i64,
+                                            lhs.dkind()), rhs);
+                    case f32:
+                        return std::make_pair(
+                                jit_value_t(int32_to_float(c, lhs.gp().r32(), cvt_null_check(lhs.dtype())), f32,
+                                            lhs.dkind()), rhs);
+                    case f64:
+                        return std::make_pair(
+                                jit_value_t(int32_to_double(c, lhs.gp().r32(), cvt_null_check(lhs.dtype())), f64,
+                                            lhs.dkind()), rhs);
+                }
+                break;
+            case i64:
+                switch (rhs.dtype()) {
+                    case i8:
+                    case i16:
+                    case i32:
+                        return std::make_pair(lhs,
+                                              jit_value_t(
+                                                      int32_to_int64(c, rhs.gp().r32(), cvt_null_check(rhs.dtype())),
+                                                      i64, rhs.dkind()));
+                    case i64:
+                        return std::make_pair(lhs, rhs);
+                    case f32:
+                        return std::make_pair(
+                                jit_value_t(int64_to_float(c, lhs.gp().r64(), null_check), f32, lhs.dkind()),
+                                rhs);
+                    case f64:
+                        return std::make_pair(
+                                jit_value_t(int64_to_double(c, lhs.gp().r64(), null_check), f64, lhs.dkind()),
+                                rhs);
+                }
+                break;
+            case f32:
+                switch (rhs.dtype()) {
+                    case i8:
+                    case i16:
+                    case i32:
+                        return std::make_pair(lhs,
+                                              jit_value_t(
+                                                      int32_to_float(c, rhs.gp().r32(), cvt_null_check(rhs.dtype())),
+                                                      f32, rhs.dkind()));
+                    case i64:
+                        return std::make_pair(lhs,
+                                              jit_value_t(int64_to_float(c, rhs.gp().r64(), null_check), f32,
+                                                          rhs.dkind()));
+                    case f32:
+                        return std::make_pair(lhs, rhs);
+                    case f64:
+                        return std::make_pair(jit_value_t(float_to_double(c, lhs.xmm()), f64, lhs.dkind()), rhs);
+                }
+                break;
+            case f64:
+                switch (rhs.dtype()) {
+                    case i8:
+                    case i16:
+                    case i32:
+                        return std::make_pair(lhs,
+                                              jit_value_t(
+                                                      int32_to_double(c, rhs.gp().r32(), cvt_null_check(rhs.dtype())),
+                                                      f64, rhs.dkind()));
+                    case i64:
+                        return std::make_pair(lhs, jit_value_t(int64_to_double(c, rhs.gp().r64(), null_check), f64,
+                                                               rhs.dkind()));
+                    case f32:
+                        return std::make_pair(lhs,
+                                              jit_value_t(float_to_double(c, rhs.xmm()),
+                                                          f64,
+                                                          rhs.dkind()));
+                    case f64:
+                        return std::make_pair(lhs, rhs);
+                }
+                break;
+        }
+    }
+
+    inline jit_value_t get_argument(std::stack<jit_value_t> &values) {
+        auto arg = values.top();
+        values.pop();
+        return arg;
+    }
+
+    inline std::pair<jit_value_t, jit_value_t>
+    get_arguments(Compiler &c, std::stack<jit_value_t> &values, bool null_check) {
+        auto lhs = values.top();
+        values.pop();
+        auto rhs = values.top();
+        values.pop();
+        return convert(c, lhs, rhs, null_check);
+    }
+
+    void emit_bin_op(Compiler &c, instruction_t ic, std::stack<jit_value_t> &values, bool null_check) {
+        auto args = get_arguments(c, values, null_check);
+        switch (ic) {
+            case AND:
+                values.push(bin_and(c, args.first, args.second));
+                break;
+            case OR:
+                values.push(bin_or(c, args.first, args.second));
+                break;
+            case EQ:
+                values.push(cmp_eq(c, args.first, args.second));
+                break;
+            case NE:
+                values.push(cmp_ne(c, args.first, args.second));
+                break;
+            case GT:
+                values.push(cmp_gt(c, args.first, args.second, null_check));
+                break;
+            case GE:
+                values.push(cmp_ge(c, args.first, args.second, null_check));
+                break;
+            case LT:
+                values.push(cmp_lt(c, args.first, args.second, null_check));
+                break;
+            case LE:
+                values.push(cmp_le(c, args.first, args.second, null_check));
+                break;
+            case ADD:
+                values.push(add(c, args.first, args.second, null_check));
+                break;
+            case SUB:
+                values.push(sub(c, args.first, args.second, null_check));
+                break;
+            case MUL:
+                values.push(mul(c, args.first, args.second, null_check));
+                break;
+            case DIV:
+                values.push(div(c, args.first, args.second, null_check));
+                break;
+            default:
+                assert(false);
+                break;
+        }
+    }
+
+    void
+    emit_code(Compiler &c, const uint8_t *filter_expr, size_t filter_size, std::stack<jit_value_t> &values,
+              bool null_check,
+              const Gp &cols_ptr, const Gp &input_index) {
+        uint32_t read_pos = 0;
+        while (read_pos < filter_size) {
+            auto ic = static_cast<instruction_t>(read<uint8_t>(filter_expr, filter_size, read_pos));
+            switch (ic) {
+                case RET:
                     break;
-                case i16:
-                    size = 2;
-                    shift = 1;
-                    step = 16;
+                case MEM_I1:
+                    values.push(read_mem(c, i8, filter_expr, filter_size, read_pos, cols_ptr, input_index));
                     break;
-                case i32:
-                    size = 4;
-                    shift = 2;
-                    step = 8;
+                case MEM_I2:
+                    values.push(read_mem(c, i16, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                    break;
+                case MEM_I4:
+                    values.push(read_mem(c, i32, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                    break;
+                case MEM_I8:
+                    values.push(read_mem(c, i64, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                    break;
+                case MEM_F4:
+                    values.push(read_mem(c, f32, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                    break;
+                case MEM_F8:
+                    values.push(read_mem(c, f64, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                    break;
+                case IMM_I1:
+                    values.push(read_imm(c, i8, filter_expr, filter_size, read_pos));
+                    break;
+                case IMM_I2:
+                    values.push(read_imm(c, i16, filter_expr, filter_size, read_pos));
+                    break;
+                case IMM_I4:
+                    values.push(read_imm(c, i32, filter_expr, filter_size, read_pos));
+                    break;
+                case IMM_I8:
+                    values.push(read_imm(c, i64, filter_expr, filter_size, read_pos));
+                    break;
+                case IMM_F4:
+                    values.push(read_imm(c, f32, filter_expr, filter_size, read_pos));
+                    break;
+                case IMM_F8:
+                    values.push(read_imm(c, f64, filter_expr, filter_size, read_pos));
+                    break;
+                case NEG:
+                    values.push(neg(c, get_argument(values), null_check));
+                    break;
+                case NOT:
+                    values.push(bin_not(c, get_argument(values)));
                     break;
                 default:
-                    size = 8;
-                    shift = 3;
-                    step = 4;
+                    emit_bin_op(c, ic, values, null_check);
                     break;
             }
-            asmjit::x86::Mem lhs_m = c.newStack(32, 32);
-            asmjit::x86::Mem rhs_m = c.newStack(32, 32);
-
-            lhs_m.setSize(size);
-            rhs_m.setSize(size);
-
-            c.vmovdqu(lhs_m, lhs.ymm());
-            c.vmovdqu(rhs_m, rhs.ymm());
-
-            asmjit::x86::Gp i = c.newGpq();
-            c.xor_(i, i);
-
-            asmjit::x86::Mem lhs_c = lhs_m.clone();
-            lhs_c.setIndex(i, shift);
-            asmjit::x86::Mem rhs_c = rhs_m.clone();
-            rhs_c.setIndex(i, shift);
-
-            asmjit::Label l_loop = c.newLabel();
-            asmjit::Label l_zero = c.newLabel();
-            asmjit::x86::Gp b = c.newGpq();
-            asmjit::x86::Gp a = c.newGpq();
-            asmjit::x86::Gp r = c.newGpq();
-
-            c.bind(l_loop);
-            c.mov(b, rhs_c);
-            c.test(b, b);
-
-            c.je(l_zero);
-            c.mov(a, lhs_c);
-
-            c.cqo(r, a);
-            c.idiv(r, a, b);
-
-            c.bind(l_zero);
-            c.mov(lhs_c, a);
-            c.inc(i);
-            c.cmp(i, step);
-            c.jne(l_loop);
-            c.vmovdqu(dst.ymm(), lhs_m);
         }
-            //todo:
-            //there is no vectorized integer division
-            break;
-        case f32:
-            c.vdivps(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        case f64:
-            c.vdivpd(dst.ymm(), lhs.ymm(), rhs.ymm());
-            break;
-        default:
-            break;
     }
 }
 
-inline static void avx2_neg(asmjit::x86::Compiler &c, jit_value_t &dst, jit_value_t &rhs) {
-    asmjit::x86::Ymm zero = c.newYmm();
-    c.vxorps(zero, zero, zero);
-    jit_value_t v(zero, rhs.dtype());
-    avx2_sub(c, dst, v, rhs);
-}
+namespace questdb::avx2 {
+    using namespace asmjit::x86;
 
-static inline asmjit::x86::Xmm get_low(asmjit::x86::Compiler &c, const asmjit::x86::Ymm &x) {
-    return x.half();
-}
-
-static inline asmjit::x86::Xmm get_high(asmjit::x86::Compiler &c, const asmjit::x86::Ymm &x) {
-    asmjit::x86::Xmm y = c.newXmm();
-    c.vextracti128(y, x, 1);
-    return y;
-}
-
-inline static void to_bits32(asmjit::x86::Compiler &c, asmjit::x86::Gp &dst, const asmjit::x86::Ymm &x) {
-    //    return (uint32_t)_mm256_movemask_epi8(x);
-    c.vpmovmskb(dst, x);
-}
-
-inline static void to_bits16(asmjit::x86::Compiler &c, asmjit::x86::Gp &dst, const asmjit::x86::Ymm &x) {
-    //    __m128i a = _mm_packs_epi16(x.get_low(), x.get_high());  // 16-bit words to bytes
-    //    return (uint16_t)_mm_movemask_epi8(a);
-    asmjit::x86::Xmm l = get_low(c, x);
-    asmjit::x86::Xmm h = get_high(c, x);
-    c.packsswb(l, h); // 16-bit words to bytes
-    c.pmovmskb(dst, l);
-    c.and_(dst, 0xffff);
-}
-
-inline static void to_bits8(asmjit::x86::Compiler &c, asmjit::x86::Gp &dst, const asmjit::x86::Ymm &x) {
-    //    __m128i a = _mm_packs_epi32(x.get_low(), x.get_high());  // 32-bit dwords to 16-bit words
-    //    __m128i b = _mm_packs_epi16(a, a);  // 16-bit words to bytes
-    //    return (uint8_t)_mm_movemask_epi8(b);
-    asmjit::x86::Xmm l = get_low(c, x);
-    asmjit::x86::Xmm h = get_high(c, x);
-    c.packssdw(l, h); // 32-bit dwords to 16-bit words
-    c.packsswb(l, l); // 16-bit words to bytes
-    c.pmovmskb(dst, l);
-    c.and_(dst, 0xff);
-}
-
-inline static void to_bits4(asmjit::x86::Compiler &c, asmjit::x86::Gp &dst, const asmjit::x86::Ymm &mask) {
-    //    uint32_t a = (uint32_t)_mm256_movemask_epi8(mask);
-    //    return ((a & 1) | ((a >> 7) & 2)) | (((a >> 14) & 4) | ((a >> 21) & 8));
-    c.vpmovmskb(dst, mask);
-    asmjit::x86::Gp y = c.newGpq();
-    c.mov(y, dst);
-    c.and_(y, 1);
-    asmjit::x86::Gp z = c.newGpq();
-    c.mov(z, dst);
-    c.shr(z, 7);
-    c.and_(z, 2);
-    c.or_(z, y);
-    c.mov(y, dst);
-    c.shr(y, 14);
-    c.and_(y, 4);
-    c.shr(dst, 21);
-    c.and_(dst, 8);
-    c.or_(dst, z);
-    c.or_(dst, y);
-    c.and_(dst, 0xf); // 4 bits
-}
-
-inline static void to_bits(asmjit::x86::Compiler &c, asmjit::x86::Gp &dst, const asmjit::x86::Ymm &mask, int64_t step) {
-    switch (step) {
-        case 32:
-            to_bits32(c, dst, mask);
-            break;
-        case 16:
-            to_bits16(c, dst, mask);
-            break;
-        case 8:
-            to_bits8(c, dst, mask);
-            break;
-        case 4:
-            to_bits4(c, dst, mask);
-            break;
-        default:
-            break;
+    uint32_t type_shift(data_type_t type) {
+        switch (type) {
+            case i8:
+                return 0;
+            case i16:
+                return 1;
+            case i32:
+            case f32:
+                return 2;
+            case i64:
+            case f64:
+                return 3;
+        }
     }
-}
 
-inline static void unrolled_loop2(asmjit::x86::Compiler &c,
-                                  const asmjit::x86::Gp &bits,
-                                  const asmjit::x86::Gp &rows_ptr,
-                                  const asmjit::x86::Gp &input,
-                                  asmjit::x86::Gp &output, int32_t step) {
-    asmjit::x86::Gp offset = c.newInt64();
-    for (int32_t i = 0; i < step; ++i) {
-        c.lea(offset, asmjit::x86::ptr(input, i));
-        c.mov(qword_ptr(rows_ptr, output, 3), offset);
-        c.mov(offset, bits);
-        c.shr(offset, i);
-        c.and_(offset, 1);
-        c.add(output, offset);
+    data_type_t mask_type(data_type_t type) {
+        switch (type) {
+            case f32:
+                return i32;
+            case f64:
+                return i64;
+            default:
+                return type;
+        }
     }
-}
 
-bool is_float(jit_value_t &v) {
-    return v.dtype() == f32 || v.dtype() == f64;
+    inline static void unrolled_loop2(Compiler &c,
+                                      const Gp &bits,
+                                      const Gp &rows_ptr,
+                                      const Gp &input,
+                                      const Gp &output, int32_t step) {
+        Gp offset = c.newInt64();
+        for (int32_t i = 0; i < step; ++i) {
+            c.lea(offset, asmjit::x86::ptr(input, i));
+            c.mov(qword_ptr(rows_ptr, output, 3), offset);
+            c.mov(offset, bits);
+            c.shr(offset, i);
+            c.and_(offset, 1);
+            c.add(output, offset);
+        }
+    }
+
+    jit_value_t
+    read_mem(Compiler &c, data_type_t type, const uint8_t *istream, size_t size, uint32_t &pos, const Gp &cols_ptr,
+             const Gp &input_index) {
+
+        auto column_idx = static_cast<int32_t>(read<int64_t>(istream, size, pos));
+        Gp column_address = c.newInt64();
+        c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
+
+        uint32_t shift = type_shift(type);
+
+        Mem m = ymmword_ptr(column_address, input_index, shift);
+        Ymm row_data = c.newYmm();
+        switch (type) {
+            case i8:
+            case i16:
+            case i32:
+            case i64:
+                c.vmovdqu(row_data, m);
+                break;
+            case f32:
+                c.vmovups(row_data, m);
+                break;
+            case f64:
+                c.vmovupd(row_data, m);
+                break;
+        }
+        return {row_data, type, kMemory};
+    }
+
+    jit_value_t read_imm(Compiler &c, data_type_t type, const uint8_t *istream, size_t size, uint32_t &pos) {
+        const auto scope = ConstPool::kScopeLocal;
+        Ymm val = c.newYmm("imm_value");
+        switch (type) {
+            case i8: {
+                auto value = static_cast<int8_t>(read<int64_t>(istream, size, pos));
+                Mem mem = c.newConst(scope, &value, 1);
+                c.vpbroadcastb(val, mem);
+            }
+                break;
+            case i16: {
+                auto value = static_cast<int16_t>(read<int64_t>(istream, size, pos));
+                Mem mem = c.newConst(scope, &value, 2);
+                c.vpbroadcastw(val, mem);
+            }
+                break;
+            case i32: {
+                auto value = static_cast<int32_t>(read<int64_t>(istream, size, pos));
+                Mem mem = c.newConst(scope, &value, 4);
+                c.vpbroadcastd(val, mem);
+            }
+                break;
+            case i64: {
+                auto value = read<int64_t>(istream, size, pos);
+                Mem mem = c.newConst(scope, &value, 8);
+                c.vpbroadcastq(val, mem);
+            }
+                break;
+            case f32: {
+                auto value = read<double>(istream, size, pos);
+                Mem mem = c.newFloatConst(scope, static_cast<float>(value));
+                c.vbroadcastss(val, mem);
+            }
+                break;
+            case f64: {
+                auto value = read<double>(istream, size, pos);
+                Mem mem = c.newDoubleConst(scope, value);
+                c.vbroadcastsd(val, mem);
+            }
+                break;
+        }
+        return {val, type, kConst};
+    }
+
+    jit_value_t neg(Compiler &c, const jit_value_t &lhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = lhs.dkind();
+        return {neg(c, dt, lhs.ymm(), null_check), dt, dk};
+    }
+
+    jit_value_t bin_not(Compiler &c, const jit_value_t &lhs) {
+        auto dt = lhs.dtype();
+        auto dk = lhs.dkind();
+        return {mask_not(c, lhs.ymm()), dt, dk};
+    }
+
+    jit_value_t bin_and(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        return {mask_and(c, lhs.ymm(), rhs.ymm()), dt, dk};
+    }
+
+    jit_value_t bin_or(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        return {mask_or(c, lhs.ymm(), rhs.ymm()), dt, dk};
+    }
+
+    jit_value_t cmp_eq(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        return {cmp_eq(c, dt, lhs.ymm(), rhs.ymm()), i32, dk};
+    }
+
+    jit_value_t cmp_ne(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto mt = mask_type(dt);
+        return {cmp_ne(c, dt, lhs.ymm(), rhs.ymm()), mt, dk};
+    }
+
+    jit_value_t cmp_gt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto mt = mask_type(dt);
+        return {cmp_gt(c, dt, lhs.ymm(), rhs.ymm(), null_check), mt, dk};
+    }
+
+    jit_value_t cmp_ge(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto mt = mask_type(dt);
+        return {cmp_ge(c, dt, lhs.ymm(), rhs.ymm(), null_check), mt, dk};
+    }
+
+    jit_value_t cmp_lt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto mt = mask_type(dt);
+        return {cmp_lt(c, dt, lhs.ymm(), rhs.ymm(), null_check), mt, dk};
+    }
+
+    jit_value_t cmp_le(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto mt = mask_type(dt);
+        return {cmp_le(c, dt, lhs.ymm(), rhs.ymm(), null_check), mt, dk};
+    }
+
+    jit_value_t add(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        return {add(c, dt, lhs.ymm(), rhs.ymm(), null_check), dt, dk};
+    }
+
+    jit_value_t sub(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        return {sub(c, dt, lhs.ymm(), rhs.ymm(), null_check), dt, dk};
+    }
+
+    jit_value_t mul(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        return {mul(c, dt, lhs.ymm(), rhs.ymm(), null_check), dt, dk};
+    }
+
+    jit_value_t div(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        return {div(c, dt, lhs.ymm(), rhs.ymm(), null_check), dt, dk};
+    }
+
+    inline std::pair<jit_value_t, jit_value_t>
+    convert(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        // i32 -> f32
+        // i64 -> f64
+        switch (lhs.dtype()) {
+            case i32:
+                switch (rhs.dtype()) {
+                    case f32:
+                        return std::make_pair(jit_value_t(cvt_itof(c, lhs.ymm(), null_check), f32, lhs.dkind()), rhs);
+                    default:
+                        assert(false);
+                }
+                break;
+            case i64:
+                switch (rhs.dtype()) {
+                    case f64:
+                        return std::make_pair(jit_value_t(cvt_ltod(c, lhs.ymm(), null_check), f64, lhs.dkind()), rhs);
+                    default:
+                        assert(false);
+                }
+                break;
+            case f32:
+                switch (rhs.dtype()) {
+                    case i32:
+                        return std::make_pair(lhs, jit_value_t(cvt_itof(c, rhs.ymm(), null_check), f32, rhs.dkind()));
+                    default:
+                        assert(false);
+                }
+                break;
+            case f64:
+                switch (rhs.dtype()) {
+                    case i64:
+                        return std::make_pair(lhs, jit_value_t(cvt_ltod(c, rhs.ymm(), null_check), f64, rhs.dkind()));
+                    default:
+                        assert(false);
+                }
+                break;
+            default:
+                assert(false);
+        }
+        return std::make_pair(lhs, rhs);
+    }
+
+    inline jit_value_t get_argument(std::stack<jit_value_t> &values) {
+        auto arg = values.top();
+        values.pop();
+        return arg;
+    }
+
+    inline std::pair<jit_value_t, jit_value_t>
+    get_arguments(Compiler &c, std::stack<jit_value_t> &values, bool ncheck) {
+        auto lhs = values.top();
+        values.pop();
+        auto rhs = values.top();
+        values.pop();
+        return convert(c, lhs, rhs, ncheck);
+    }
+
+    void emit_bin_op(Compiler &c, instruction_t ic, std::stack<jit_value_t> &values, bool ncheck) {
+        auto args = get_arguments(c, values, ncheck);
+        switch (ic) {
+            case AND:
+                values.push(bin_and(c, args.first, args.second));
+                break;
+            case OR:
+                values.push(bin_or(c, args.first, args.second));
+                break;
+            case EQ:
+                values.push(cmp_eq(c, args.first, args.second));
+                break;
+            case NE:
+                values.push(cmp_ne(c, args.first, args.second));
+                break;
+            case GT:
+                values.push(cmp_gt(c, args.first, args.second, ncheck));
+                break;
+            case GE:
+                values.push(cmp_ge(c, args.first, args.second, ncheck));
+                break;
+            case LT:
+                values.push(cmp_lt(c, args.first, args.second, ncheck));
+                break;
+            case LE:
+                values.push(cmp_le(c, args.first, args.second, ncheck));
+                break;
+            case ADD:
+                values.push(add(c, args.first, args.second, ncheck));
+                break;
+            case SUB:
+                values.push(sub(c, args.first, args.second, ncheck));
+                break;
+            case MUL:
+                values.push(mul(c, args.first, args.second, ncheck));
+                break;
+            case DIV:
+                values.push(div(c, args.first, args.second, ncheck));
+                break;
+            default:
+                assert(false);
+                break;
+        }
+    }
+
+    void
+    emit_code(Compiler &c, const uint8_t *filter_expr, size_t filter_size, std::stack<jit_value_t> &values, bool ncheck,
+              const Gp &cols_ptr, const Gp &input_index) {
+        uint32_t read_pos = 0;
+        while (read_pos < filter_size) {
+            auto ic = static_cast<instruction_t>(read<uint8_t>(filter_expr, filter_size, read_pos));
+            switch (ic) {
+                case RET:
+                    break;
+                case MEM_I1:
+                    values.push(read_mem(c, i8, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                    break;
+                case MEM_I2:
+                    values.push(read_mem(c, i16, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                    break;
+                case MEM_I4:
+                    values.push(read_mem(c, i32, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                    break;
+                case MEM_I8:
+                    values.push(read_mem(c, i64, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                    break;
+                case MEM_F4:
+                    values.push(read_mem(c, f32, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                    break;
+                case MEM_F8:
+                    values.push(read_mem(c, f64, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                    break;
+                case IMM_I1:
+                    values.push(read_imm(c, i8, filter_expr, filter_size, read_pos));
+                    break;
+                case IMM_I2:
+                    values.push(read_imm(c, i16, filter_expr, filter_size, read_pos));
+                    break;
+                case IMM_I4:
+                    values.push(read_imm(c, i32, filter_expr, filter_size, read_pos));
+                    break;
+                case IMM_I8:
+                    values.push(read_imm(c, i64, filter_expr, filter_size, read_pos));
+                    break;
+                case IMM_F4:
+                    values.push(read_imm(c, f32, filter_expr, filter_size, read_pos));
+                    break;
+                case IMM_F8:
+                    values.push(read_imm(c, f64, filter_expr, filter_size, read_pos));
+                    break;
+                case NEG:
+                    values.push(neg(c, get_argument(values), ncheck));
+                    break;
+                case NOT:
+                    values.push(bin_not(c, get_argument(values)));
+                    break;
+                default:
+                    emit_bin_op(c, ic, values, ncheck);
+                    break;
+            }
+        }
+    }
 }
 
 
@@ -701,19 +926,19 @@ struct JitCompiler {
             mixed_size = 3,
         };
 
-        uint32_t type_size = (options >> 1) & 3 ; // 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B
-        uint32_t exec_hint = (options >> 3) & 3 ; // 0 - scalar, 1 - single size type, 2 - mixed size types, ...
+        uint32_t type_size = (options >> 1) & 3; // 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B
+        uint32_t exec_hint = (options >> 3) & 3; // 0 - scalar, 1 - single size type, 2 - mixed size types, ...
 
         bool null_check = true;
-        if(exec_hint == single_size && features.hasAVX2()) {
+        if (exec_hint == single_size && features.hasAVX2()) {
             auto step = 256 / ((1 << type_size) * 8);
-            avx2_loop(filter_expr, filter_size, step, null_check);
+            avx2_loop2(filter_expr, filter_size, step, null_check);
         } else {
             scalar_loop(filter_expr, filter_size, null_check);
         }
     };
 
-    void scalar_tail(const uint8_t *filter_expr, size_t filter_size, bool null_check, const x86::Gp &stop) {
+    void scalar_tail2(const uint8_t *filter_expr, size_t filter_size, bool null_check, const x86::Gp &stop) {
 
         Label l_loop = c.newLabel();
         Label l_exit = c.newLabel();
@@ -723,444 +948,15 @@ struct JitCompiler {
 
         c.bind(l_loop);
 
-        uint32_t rpos = 0;
-        while (rpos < filter_size) {
-            auto ic = static_cast<instruction_t>(read<uint8_t>(filter_expr, filter_size, rpos));
-            switch (ic) {
-                case RET:
-                    break;
-                case MEM_I1: {
-                    auto column_input_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
-                    asmjit::x86::Gp col = c.newInt64("byte column[%d]", column_input_index);
-                    c.mov(col, ptr(cols_ptr, 8 * column_input_index, 8));
-                    c.movsx(col, x86::Mem(col, input_index, 0, 0, 1));
-                    registers.push(jit_value_t(col, i8, kMemory));
-                }
-                    break;
-                case MEM_I2: {
-                    asmjit::x86::Gp col = c.newGpq();
-                    auto column_input_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
-                    c.mov(col, ptr(cols_ptr, 8 * column_input_index, 8));
-                    c.movsx(col, asmjit::x86::Mem(col, input_index, 1, 0, 2));
-                    registers.push(jit_value_t(col, i16, kMemory));
-                }
-                    break;
-                case MEM_I4: {
-                    asmjit::x86::Gp col = c.newGpq();
-                    auto column_input_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
-                    c.mov(col, ptr(cols_ptr, 8 * column_input_index, 8));
+        questdb::x86::emit_code(c, filter_expr, filter_size, registers, null_check, cols_ptr, input_index);
 
-                    asmjit::x86::Gp addr = c.newGpq();
-                    c.movsxd(addr, asmjit::x86::Mem(col, input_index, 2, 0, 4));
-                    registers.push(jit_value_t(addr, i32, kMemory));
-                }
-                    break;
-                case MEM_I8: {
-                    asmjit::x86::Gp col = c.newGpq();
-                    auto column_input_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
-                    c.mov(col, ptr(cols_ptr, 8 * column_input_index, 8));
-                    c.mov(col, asmjit::x86::Mem(col, input_index, 3, 0, 8));
-                    registers.push(jit_value_t(col, i64, kMemory));
-                }
-                    break;
-                case MEM_F4: {
-                    asmjit::x86::Gp col = c.newGpq();
-                    auto column_input_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
-                    c.mov(col, ptr(cols_ptr, 8 * column_input_index, 8));
-                    asmjit::x86::Xmm data = c.newXmm();
-                    //                c.vmovss(data, Mem(col, input_index, 2, 0, 4));
-                    c.cvtss2sd(data, asmjit::x86::Mem(col, input_index, 2, 0, 4)); // float to double
-                    registers.push(jit_value_t(data, f32, kMemory));
-                }
-                    break;
-                case MEM_F8: {
-                    asmjit::x86::Gp col = c.newGpq();
-                    auto column_input_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
-                    c.mov(col, ptr(cols_ptr, 8 * column_input_index, 8));
-                    asmjit::x86::Xmm data = c.newXmm();
-                    c.vmovsd(data, asmjit::x86::Mem(col, input_index, 3, 0, 8));
-                    registers.push(jit_value_t(data, f64, kMemory));
-                }
-                    break;
-                case IMM_I1: {
-                    asmjit::x86::Gp val = c.newGpq();
-                    auto value = read<int64_t>(filter_expr, filter_size, rpos);
-                    c.mov(val, value);
-                    registers.push(jit_value_t(val, i8, kConst));
-                }
-                    break;
-                case IMM_I2: {
-                    asmjit::x86::Gp val = c.newGpq();
-                    auto value = read<int64_t>(filter_expr, filter_size, rpos);
-                    c.mov(val, value);
-                    registers.push(jit_value_t(val, i16, kConst));
-                }
-                    break;
-                case IMM_I4: {
-                    asmjit::x86::Gp val = c.newGpq();
-                    auto value = read<int64_t>(filter_expr, filter_size, rpos);
-                    c.mov(val, value);
-                    registers.push(jit_value_t(val, i32, kConst));
-                }
-                    break;
-                case IMM_I8: {
-                    asmjit::x86::Gp val = c.newGpq();
-                    auto value = read<int64_t>(filter_expr, filter_size, rpos);
-                    c.mov(val, value);
-                    registers.push(jit_value_t(val, i64, kConst));
-                }
-                    break;
-                case IMM_F4: {
-                    auto value = read<double>(filter_expr, filter_size, rpos);
-                    asmjit::x86::Mem c0 = c.newDoubleConst(asmjit::ConstPool::kScopeLocal, value);
-                    asmjit::x86::Xmm val = c.newXmm();
-                    c.movsd(val, c0);
-                    registers.push(jit_value_t(val, f32, kConst));
-                }
-                    break;
-                case IMM_F8: {
-                    auto value = read<double>(filter_expr, filter_size, rpos);
-                    asmjit::x86::Mem c0 = c.newDoubleConst(asmjit::ConstPool::kScopeLocal, value);
-                    asmjit::x86::Xmm val = c.newXmm();
-                    c.movsd(val, c0);
-                    registers.push(jit_value_t(val, f64, kConst));
-                }
-                    break;
-                case NEG: {
-                    auto arg = registers.top();
-                    registers.pop();
-                    if (arg.isXmm()) {
-                        asmjit::x86::Xmm r = c.newXmmSd();
-                        c.xorpd(r, r);
-                        c.subpd(r, arg.xmm());
-                        arg = r;
-                    } else {
-                        if(arg.dtype() == i32) {
-                            asmjit::x86::Gp t = c.newGpd();
-                            c.mov(t, arg.gp().r32());
-                            c.neg(t); // downcast register to turn-on overflow logic for int32_t null value
-                            c.movsxd(arg.gp(), t);
-                        } else {
-                            c.neg(arg.gp());
-                        }
-                    }
-                    registers.push(arg);
-                }
-                    break;
-                case NOT: {
-                    auto arg = registers.top();
-                    registers.pop();
-                    if (arg.isXmm()) {
-                        // error?
-                    } else {
-                        c.not_(arg.gp());
-                        c.and_(arg.gp(), 1);
-                    }
-                    registers.push(arg);
-                }
-                    break;
-                default:
-                    auto lhs = registers.top();
-                    registers.pop();
-                    auto rhs = registers.top();
-                    registers.pop();
-                    if (rhs.isXmm() && !lhs.isXmm()) {
-                        // lhs long to double
-                        asmjit::x86::Gp i = lhs.gp();
-                        lhs = c.newXmm();
-                        c.vcvtsi2sd(lhs.xmm(), rhs.xmm(), i);
-                    }
-                    if (lhs.isXmm() && !rhs.isXmm()) {
-                        // rhs long to double
-                        asmjit::x86::Gp i = rhs.gp();
-                        rhs = c.newXmm();
-                        c.vcvtsi2sd(rhs.xmm(), lhs.xmm(), i);
-                    }
-                    switch (ic) {
-                        case AND:
-                            c.and_(lhs.gp(), rhs.gp());
-                            registers.push(lhs);
-                            break;
-                        case OR:
-                            c.or_(lhs.gp(), rhs.gp());
-                            registers.push(lhs);
-                            break;
-                        case EQ:
-                            if (lhs.isXmm()) {
-                                c.emit(asmjit::x86::Inst::kIdCmpsd, lhs.xmm(), rhs.xmm(),
-                                       (uint32_t) asmjit::x86::Predicate::kCmpEQ);
-                                asmjit::x86::Gp r = c.newGpq();
-                                c.vmovq(r, lhs.xmm());
-                                c.and_(r, 1);
-                                registers.push(r);
-                            } else {
-                                asmjit::x86::Gp t = c.newGpq();
-                                c.xor_(t, t);
-                                c.cmp(lhs.gp(), rhs.gp());
-                                c.sete(t.r8Lo());
-                                registers.push(t);
-                            }
-                            break;
-                        case NE:
-                            if (lhs.isXmm()) {
-                                c.emit(asmjit::x86::Inst::kIdCmpsd, lhs.xmm(), rhs.xmm(),
-                                       (uint32_t) asmjit::x86::Predicate::kCmpNEQ);
-                                asmjit::x86::Gp r = c.newGpq();
-                                c.vmovq(r, lhs.xmm());
-                                c.and_(r, 1);
-                                registers.push(r);
-                            } else {
-                                asmjit::x86::Gp t = c.newGpq();
-                                c.xor_(t, t);
-                                c.cmp(lhs.gp(), rhs.gp());
-                                c.setne(t.r8Lo());
-                                registers.push(t);
-                            }
-                            break;
-                        case GT:
-                            if (lhs.isXmm()) {
-                                c.emit(asmjit::x86::Inst::kIdCmpsd, lhs.xmm(), rhs.xmm(),
-                                       (uint32_t) asmjit::x86::Predicate::kCmpNLE);
-                                asmjit::x86::Gp r = c.newGpq();
-                                c.vmovq(r, lhs.xmm());
-                                c.and_(r, 1);
-                                registers.push(r);
-                            } else {
-                                if (!null_check) {
-                                    asmjit::x86::Gp t = c.newGpq();
-                                    c.xor_(t, t);
-                                    c.cmp(lhs.gp(), rhs.gp());
-                                    c.setg(t.r8Lo());
-                                    registers.push(t);
-                                } else {
-                                    auto nc = (lhs.dtype() == i32 || rhs.dtype() == i32) ? int_null : long_null;
-                                    asmjit::x86::Gp n = c.newGpq();
-                                    c.movabs(n, nc);
-                                    c.cmp(rhs.gp(), n);
-                                    c.setne(n.r8Lo());
-                                    c.cmp(lhs.gp(), rhs.gp());
-                                    asmjit::x86::Gp l = c.newGpq();
-                                    c.setg(l.r8Lo());
-                                    c.and_(l.r8Lo(), n.r8Lo());
-                                    c.movzx(lhs.gp(), l.r8Lo());
-                                    registers.push(lhs.gp());
-                                }
-                            }
-                            break;
-                        case GE:
-                            if (lhs.isXmm()) {
-                                c.emit(asmjit::x86::Inst::kIdCmpsd, lhs.xmm(), rhs.xmm(),
-                                       (uint32_t) asmjit::x86::Predicate::kCmpNLT);
-                                asmjit::x86::Gp r = c.newGpq();
-                                c.vmovq(r, lhs.xmm());
-                                c.and_(r, 1);
-                                registers.push(r);
-                            } else {
-                                if (!null_check) {
-                                    asmjit::x86::Gp t = c.newGpq();
-                                    c.xor_(t, t);
-                                    c.cmp(lhs.gp(), rhs.gp());
-                                    c.setge(t.r8Lo());
-                                    registers.push(t);
-                                } else {
-                                    auto nc = (lhs.dtype() == i32 || rhs.dtype() == i32) ? int_null : long_null;
-                                    asmjit::x86::Gp n = c.newGpq();
-                                    c.movabs(n, nc);
-                                    c.cmp(lhs.gp(), n);
-                                    asmjit::x86::Gp l = c.newGpq();
-                                    c.setne(l.r8Lo());
-                                    c.cmp(rhs.gp(), n);
-                                    c.setne(n.r8Lo());
-                                    c.and_(l.r8Lo(), n.r8Lo());
-                                    c.cmp(lhs.gp(), rhs.gp());
-                                    c.setge(n.r8Lo());
-                                    c.and_(l.r8Lo(), n.r8Lo());
-                                    c.movzx(lhs.gp(), l.r8Lo());
-                                    registers.push(lhs.gp());
-                                }
-                            }
-                            break;
-                        case LT:
-                            if (lhs.isXmm()) {
-                                c.emit(asmjit::x86::Inst::kIdCmpsd, lhs.xmm(), rhs.xmm(),
-                                       (uint32_t) asmjit::x86::Predicate::kCmpLT);
-                                asmjit::x86::Gp r = c.newGpq();
-                                c.vmovq(r, lhs.xmm());
-                                c.and_(r, 1);
-                                registers.push(r);
-                            } else {
-                                if (!null_check) {
-                                    asmjit::x86::Gp t = c.newGpq();
-                                    c.xor_(t, t);
-                                    c.cmp(lhs.gp(), rhs.gp());
-                                    c.setl(t.r8Lo());
-                                    registers.push(t);
-                                } else {
-                                    auto nc = (lhs.dtype() == i32 || rhs.dtype() == i32) ? int_null : long_null;
-                                    asmjit::x86::Gp n = c.newGpq();
-                                    c.movabs(n, nc);
-                                    c.cmp(lhs.gp(), n);
-                                    c.setne(n.r8Lo());
-                                    c.cmp(lhs.gp(), rhs.gp());
-                                    asmjit::x86::Gp l = c.newGpq();
-                                    c.setl(l.r8Lo());
-                                    c.and_(l.r8Lo(), n.r8Lo());
-                                    c.movzx(lhs.gp(), l.r8Lo());
-                                    registers.push(lhs.gp());
-                                }
-                            }
-                            break;
-                        case LE:
-                            if (lhs.isXmm()) {
-                                c.emit(asmjit::x86::Inst::kIdCmpsd, lhs.xmm(), rhs.xmm(),
-                                       (uint32_t) asmjit::x86::Predicate::kCmpLE);
-                                asmjit::x86::Gp r = c.newGpq();
-                                c.vmovq(r, lhs.xmm());
-                                c.and_(r, 1);
-                                registers.push(r);
-                            } else {
-                                if (!null_check) {
-                                    asmjit::x86::Gp t = c.newGpq();
-                                    c.xor_(t, t);
-                                    c.cmp(lhs.gp(), rhs.gp());
-                                    c.setle(t.r8Lo());
-                                    registers.push(t);
-                                } else {
-                                    auto nc = (lhs.dtype() == i32 || rhs.dtype() == i32) ? int_null : long_null;
-                                    asmjit::x86::Gp n = c.newGpq();
-                                    c.movabs(n, nc);
-                                    c.cmp(lhs.gp(), n);
-                                    asmjit::x86::Gp l = c.newGpq();
-                                    c.setne(l.r8Lo());
-                                    c.cmp(rhs.gp(), n);
-                                    c.setne(n.r8Lo());
-                                    c.and_(l.r8Lo(), n.r8Lo());
-                                    c.cmp(lhs.gp(), rhs.gp());
-                                    c.setle(n.r8Lo());
-                                    c.and_(l.r8Lo(), n.r8Lo());
-                                    c.movzx(lhs.gp(), l.r8Lo());
-                                    registers.push(lhs.gp());
-                                }
-                            }
-                            break;
-                        case ADD:
-                            if (lhs.isXmm()) {
-                                c.vaddsd(lhs.xmm(), rhs.xmm(), lhs.xmm());
-                            } else {
-                                if (!null_check) {
-                                    c.add(lhs.gp(), rhs.gp());
-                                } else {
-                                    auto nc = (lhs.dtype() == i32 || rhs.dtype() == i32) ? int_null : long_null;
-                                    asmjit::x86::Gp t = c.newGpq();
-                                    c.mov(t, lhs.gp());
-                                    asmjit::x86::Mem m = asmjit::x86::Mem(lhs.gp(), rhs.gp(), 0, 0);
-                                    c.lea(lhs.gp(), m);
-                                    if(nc == int_null) {
-                                        c.cmp(t, nc);
-                                        c.cmove(lhs.gp(), t);
-                                        c.cmp(rhs.gp(), nc);
-                                        c.cmove(lhs.gp(), rhs.gp());
-                                    } else {
-                                        asmjit::x86::Gp n = c.newGpq();
-                                        c.mov(n, nc);
-                                        c.cmp(t, n);
-                                        c.cmove(lhs.gp(), t);
-                                        c.cmp(rhs.gp(), n);
-                                        c.cmove(lhs.gp(), rhs.gp());
-                                    }
-                                }
-                            }
-                            registers.push(lhs);
-                            break;
-                        case SUB:
-                            if (lhs.isXmm()) {
-                                c.vsubsd(lhs.xmm(), lhs.xmm(), rhs.xmm());
-                            } else {
-                                if (!null_check) {
-                                    c.sub(lhs.gp(), rhs.gp());
-                                } else {
-                                    auto nc = (lhs.dtype() == i32 || rhs.dtype() == i32) ? int_null : long_null;
-                                    asmjit::x86::Gp t = c.newGpq();
-                                    c.mov(t, lhs.gp());
-                                    c.sub(lhs.gp(), rhs.gp());
-                                    asmjit::x86::Gp n = c.newGpq();
-                                    c.movabs(n, nc);
-                                    c.cmp(t, n);
-                                    c.cmove(lhs.gp(), t);
-                                    c.cmp(rhs.gp(), n);
-                                    c.cmove(lhs.gp(), rhs.gp());
-                                }
-                            }
-                            registers.push(lhs);
-                            break;
-                        case MUL:
-                            if (lhs.isXmm()) {
-                                c.vmulsd(lhs.xmm(), rhs.xmm(), lhs.xmm());
-                            } else {
-                                if (!null_check) {
-                                    c.imul(lhs.gp(), rhs.gp());
-                                } else {
-                                    auto nc = (lhs.dtype() == i32 || rhs.dtype() == i32) ? int_null : long_null;
-                                    asmjit::x86::Gp t = c.newGpq();
-                                    c.mov(t, lhs.gp());
-                                    c.imul(lhs.gp(), rhs.gp());
-                                    asmjit::x86::Gp n = c.newGpq();
-                                    c.movabs(n, nc);
-                                    c.cmp(t, n);
-                                    c.cmove(lhs.gp(), t);
-                                    c.cmp(rhs.gp(), n);
-                                    c.cmove(lhs.gp(), rhs.gp());
-                                }
-                            }
-                            registers.push(lhs);
-                            break;
-                        case DIV:
-                            if (lhs.isXmm()) {
-                                c.vdivsd(lhs.xmm(), lhs.xmm(), rhs.xmm());
-                            } else {
-                                if (!null_check) {
-                                    asmjit::Label l_zero = c.newLabel();
-                                    asmjit::x86::Gp r = c.newGpq();
-                                    c.mov(r, rhs.gp());
-                                    c.test(r, r);
-                                    c.je(l_zero);
-                                    c.cqo(r, lhs.gp());
-                                    c.idiv(r, lhs.gp(), rhs.gp());
-                                    c.mov(r, lhs.gp());
-                                    c.bind(l_zero);
-                                    c.mov(lhs.gp(), r);
-                                } else {
-                                    auto nc = (lhs.dtype() == i32 || rhs.dtype() == i32) ? int_null : long_null;
-                                    asmjit::Label l_zero = c.newLabel();
-                                    asmjit::x86::Gp r = c.newGpq();
-                                    c.movabs(r, nc);
-                                    c.cmp(r, lhs.gp());
-                                    c.je(l_zero);
-                                    c.cmp(r, rhs.gp());
-                                    c.je(l_zero);
-                                    c.test(rhs.gp(), rhs.gp());
-                                    c.je(l_zero);
-
-                                    c.xor_(r, r);
-                                    c.idiv(r, lhs.gp(), rhs.gp());
-                                    c.mov(r, lhs.gp());
-
-                                    c.bind(l_zero);
-                                    c.mov(lhs.gp(), r);
-                                }
-                            }
-                            registers.push(lhs);
-                            break;
-                        default:
-                            break; // dead case
-                    }
-            }
-        }
         auto mask = registers.top();
         registers.pop();
 
         c.mov(qword_ptr(rows_ptr, output_index, 3), input_index);
-        c.add(output_index, mask.gp());
+
+        c.and_(mask.gp(), 1);
+        c.add(output_index, mask.gp().r64());
 
         c.add(input_index, 1);
         c.cmp(input_index, stop);
@@ -1173,11 +969,11 @@ struct JitCompiler {
             return; //todo: report error
         }
 
-        scalar_tail(filter_expr, filter_size, null_check, rows_size);
+        scalar_tail2(filter_expr, filter_size, null_check, rows_size);
         c.ret(output_index);
     }
 
-    void avx2_loop(const uint8_t *filter_expr, size_t filter_size, uint32_t step, bool null_check) {
+    void avx2_loop2(const uint8_t *filter_expr, size_t filter_size, uint32_t step, bool null_check) {
         using namespace asmjit::x86;
 
         //todo: move to compile fn
@@ -1199,307 +995,41 @@ struct JitCompiler {
 
         c.bind(l_loop);
 
-        uint32_t rpos = 0;
-        while (rpos < filter_size) {
-            auto ic = static_cast<instruction_t>(read<uint8_t>(filter_expr, filter_size, rpos));
-            switch (ic) {
-                case RET:
-                    break;
-                case MEM_I1: {
-                    Gp col = c.newGpq();
-                    auto column_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
-                    c.mov(col, ptr(cols_ptr, 8 * column_index, 8));
-                    Ymm data = c.newYmm();
-                    c.vmovdqu(data, ymmword_ptr(col, input_index, 0));
-                    registers.push(jit_value_t(data, i8));
-                }
-                    break;
-                case MEM_I2: {
-                    Gp col = c.newGpq();
-                    auto column_input_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
-                    c.mov(col, ptr(cols_ptr, 8 * column_input_index, 8));
-                    Ymm data = c.newYmm();
-                    c.vmovdqu(data, ymmword_ptr(col, input_index, 1));
-                    registers.push(jit_value_t(data, i16));
-                }
-                    break;
-                case MEM_I4: {
-                    Gp col = c.newGpq();
-                    auto column_input_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
-                    c.mov(col, ptr(cols_ptr, 8 * column_input_index, 8));
-                    Ymm data = c.newYmm();
-                    c.vmovdqu(data, ymmword_ptr(col, input_index, 2));
-                    registers.push(jit_value_t(data, i32));
-                }
-                    break;
-                case MEM_I8: {
-                    Gp col = c.newGpq();
-                    auto column_input_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
-                    c.mov(col, ptr(cols_ptr, 8 * column_input_index, 8));
-                    Ymm data = c.newYmm();
-                    c.vmovdqu(data, ymmword_ptr(col, input_index, 3));
-                    registers.push(jit_value_t(data, i64));
-                }
-                    break;
-                case MEM_F4: {
-                    Gp col = c.newGpq();
-                    auto column_input_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
-                    c.mov(col, ptr(cols_ptr, 8 * column_input_index, 8));
-                    Ymm data = c.newYmm();
-                    c.vmovups(data, ymmword_ptr(col, input_index, 2));
-                    registers.push(jit_value_t(data, f32));
-                }
-                    break;
-                case MEM_F8: {
-                    Gp col = c.newGpq();
-                    auto column_input_index = static_cast<int32_t>(read<int64_t>(filter_expr, filter_size, rpos));
-                    c.mov(col, ptr(cols_ptr, 8 * column_input_index, 8));
-                    Ymm data = c.newYmm();
-                    c.vmovupd(data, ymmword_ptr(col, input_index, 3));
-                    registers.push(jit_value_t(data, f64));
-                }
-                    break;
-                case IMM_I1: {
-                    auto value = (int8_t)read<int64_t>(filter_expr, filter_size, rpos);
-                    Mem c0 = c.newConst(ConstPool::kScopeLocal, &value, 1);
-                    Ymm val = c.newYmm();
-                    c.vpbroadcastb(val, c0);
-                    registers.push(jit_value_t(val, i8));
-                }
-                    break;
-                case IMM_I2: {
-                    auto value = read<int64_t>(filter_expr, filter_size, rpos);
-                    Mem c0 = c.newInt16Const(ConstPool::kScopeLocal, (int16_t) value);
-                    Ymm val = c.newYmm();
-                    c.vpbroadcastw(val, c0);
-                    registers.push(jit_value_t(val, i16));
-                }
-                    break;
-                case IMM_I4: {
-                    auto value = read<int64_t>(filter_expr, filter_size, rpos);
-                    Mem c0 = c.newInt32Const(ConstPool::kScopeLocal, (int32_t) value);
-                    Ymm val = c.newYmm();
-                    c.vpbroadcastd(val, c0);
-                    registers.push(jit_value_t(val, i32));
-                }
-                    break;
-                case IMM_I8: {
-                    auto value = read<int64_t>(filter_expr, filter_size, rpos);
-                    Mem c0 = c.newInt64Const(ConstPool::kScopeLocal, value);
-                    Ymm val = c.newYmm();
-                    c.vpbroadcastq(val, c0);
-                    registers.push(jit_value_t(val, i64));
-                }
-                    break;
-                case IMM_F4: {
-                    auto value = read<double>(filter_expr, filter_size, rpos); //todo: change serialization format
-                    Mem c0 = c.newFloatConst(ConstPool::kScopeLocal, (float) value);
-                    Ymm val = c.newYmm();
-                    c.vbroadcastss(val, c0);
-                    registers.push(jit_value_t(val, f32));
-                }
-                    break;
-                case IMM_F8: {
-                    auto value = read<double>(filter_expr, filter_size, rpos); //todo: change serialization format
-                    Mem c0 = c.newDoubleConst(ConstPool::kScopeLocal, value);
-                    Ymm val = c.newYmm();
-                    c.vbroadcastsd(val, c0);
-                    registers.push(jit_value_t(val, f64));
-                }
-                    break;
-                case NEG: {
-                    auto arg = registers.top();
-                    registers.pop();
-                    avx2_neg(c, arg, arg);
-                    registers.push(arg);
-                }
-                    break;
-                case NOT: {
-                    auto arg = registers.top();
-                    registers.pop();
-                    avx2_not(c, arg, arg);
-                    registers.push(arg);
-                }
-                    break;
-                default:
-                    auto lhs = registers.top();
-                    registers.pop();
-                    auto rhs = registers.top();
-                    registers.pop();
-                    if(lhs.dtype() != rhs.dtype()) {
-                        if (rhs.dtype() == i32 && lhs.dtype() == f32) {
-                            // rhs int to float
-                            c.vcvtdq2ps(rhs.ymm(), rhs.ymm());
-                            rhs = jit_value_t(rhs.ymm(), f32, rhs.dkind());
-                        }
-                        if (lhs.dtype() == i32 && rhs.dtype() == f32) {
-                            // lhs int to float
-                            c.vcvtdq2ps(lhs.ymm(), lhs.ymm());
-                            lhs = jit_value_t(lhs.ymm(), f32, lhs.dkind());
-                        }
-                        if (rhs.dtype() == i64 && lhs.dtype() == f64) {
-                            // rhs long to double. inefficient!
-                        }
-                        if (lhs.dtype() == i64 && rhs.dtype() == f64) {
-                            // rhs long to double. inefficient!
-                        }
-                    }
-                    switch (ic) {
-                        case AND:
-                            avx2_and(c, lhs, lhs, rhs);
-                            registers.push(lhs);
-                            break;
-                        case OR:
-                            avx2_or(c, lhs, lhs, rhs);
-                            registers.push(lhs);
-                            break;
-                        case EQ:
-                            avx2_cmp_eq(c, lhs, lhs, rhs);
-                            registers.push(lhs);
-                            break;
-                        case NE:
-                            avx2_cmp_neq(c, lhs, lhs, rhs);
-                            registers.push(lhs);
-                            break;
-                        case GT:
-                            if (!null_check || is_float(lhs) || is_float(rhs)) {
-                                avx2_cmp_gt(c, lhs, lhs, rhs);
-                                registers.push(lhs);
-                            } else {
-                                Ymm r = c.newYmm();
-                                jit_value_t v(r, lhs.dtype(), lhs.dkind());
-                                avx2_cmp_gt(c, v, lhs, rhs);
-                                avx2_ignore_null(c, v, lhs, rhs);
-                                registers.push(v);
-                            }
-                            break;
-                        case GE:
-                            if (!null_check || is_float(lhs) || is_float(rhs)) {
-                                avx2_cmp_ge(c, lhs, lhs, rhs);
-                                registers.push(lhs);
-                            } else {
-                                Ymm r = c.newYmm();
-                                jit_value_t v(r, lhs.dtype(), lhs.dkind());
-                                avx2_cmp_ge(c, v, lhs, rhs);
-                                avx2_ignore_null(c, v, lhs, rhs);
-                                registers.push(v);
-                            }
-                            break;
-                        case LT:
-                            if (!null_check || is_float(lhs) || is_float(rhs)) {
-                                avx2_cmp_lt(c, lhs, lhs, rhs);
-                                registers.push(lhs);
-                            } else {
-                                Ymm r = c.newYmm();
-                                jit_value_t v(r, lhs.dtype(), lhs.dkind());
-                                avx2_cmp_lt(c, v, lhs, rhs);
-                                avx2_ignore_null(c, v, lhs, rhs);
-                                registers.push(v);
-                            }
-                            break;
-                        case LE:
-                            if (!null_check || is_float(lhs) || is_float(rhs)) {
-                                avx2_cmp_le(c, lhs, lhs, rhs);
-                                registers.push(lhs);
-                            } else {
-                                Ymm r = c.newYmm();
-                                jit_value_t v(r, lhs.dtype(), lhs.dkind());
-                                avx2_cmp_le(c, v, lhs, rhs);
-                                avx2_ignore_null(c, v, lhs, rhs);
-                                registers.push(v);
-                            }
-                            break;
-                        case ADD:
-                            if (!null_check || is_float(lhs) || is_float(rhs)) {
-                                avx2_add(c, lhs, lhs, rhs);
-                            } else {
-                                Ymm r = c.newYmm();
-                                jit_value_t v(r, lhs.dtype(), lhs.dkind());
-                                avx2_not_null(c, v, lhs, rhs);
-                                avx2_add(c, lhs, lhs, rhs);
-                                avx2_not(c, v, v);
-                                avx2_select_byte(c, lhs, lhs, v);
-                            }
-                            registers.push(lhs);
-                            break;
-                        case SUB:
-                            if (!null_check || is_float(lhs) || is_float(rhs)) {
-                                avx2_sub(c, lhs, lhs, rhs);
-                            } else {
-                                Ymm r = c.newYmm();
-                                jit_value_t v(r, lhs.dtype(), lhs.dkind());
-                                avx2_not_null(c, v, lhs, rhs);
-                                avx2_sub(c, lhs, lhs, rhs);
-                                avx2_not(c, v, v);
-                                avx2_select_byte(c, lhs, lhs, v);
-                            }
-                            registers.push(lhs);
-                            break;
-                        case MUL:
-                            if (!null_check || is_float(lhs) || is_float(rhs)) {
-                                avx2_mul(c, lhs, lhs, rhs);
-                            } else {
-                                Ymm r = c.newYmm();
-                                jit_value_t v(r, lhs.dtype(), lhs.dkind());
-                                avx2_not_null(c, v, lhs, rhs);
-                                avx2_mul(c, lhs, lhs, rhs);
-                                avx2_not(c, v, v);
-                                avx2_select_byte(c, lhs, lhs, v);
-                            }
-                            registers.push(lhs);
-                            break;
-                        case DIV:
-                            if (!null_check || is_float(lhs) || is_float(rhs)) {
-                                avx2_div_unrolled(c, lhs, lhs, rhs);
-                            } else {
-                                Ymm r = c.newYmm();
-                                jit_value_t v(r, lhs.dtype(), lhs.dkind());
-                                avx2_not_null(c, v, lhs, rhs);
-                                avx2_div_unrolled(c, lhs, lhs, rhs);
-                                avx2_not(c, v, v);
-                                avx2_select_byte(c, lhs, lhs, v);
-                            }
-                            registers.push(lhs);
-                            break;
-                        default:
-                            break; // dead case
-                    }
-            }
-        }
+        questdb::avx2::emit_code(c, filter_expr, filter_size, registers, null_check, cols_ptr, input_index);
+
         auto mask = registers.top();
         registers.pop();
 
-        Gp bits = x86::r10;
-        to_bits(c, bits, mask.ymm(), step);
-        unrolled_loop2(c, bits, rows_ptr, input_index, output_index, step);
+        Gp bits = questdb::avx2::to_bits(c, mask.ymm(), step);
+        questdb::avx2::unrolled_loop2(c, bits.r64(), rows_ptr, input_index, output_index, step);
 
         c.add(input_index, step); // index += step
         c.cmp(input_index, stop);
         c.jl(l_loop); // index < stop
         c.bind(l_exit);
 
-        scalar_tail(filter_expr, filter_size, null_check, rows_size);
+        scalar_tail2(filter_expr, filter_size, null_check, rows_size);
         c.ret(output_index);
     }
 
     void begin_fn() {
         c.addFunc(FuncSignatureT<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(CallConv::kIdHost));
-        cols_ptr = c.newIntPtr("cols");
+        cols_ptr = c.newIntPtr("cols_ptr");
         cols_size = c.newInt64("cols_size");
 
         c.setArg(0, cols_ptr);
         c.setArg(1, cols_size);
 
-        rows_ptr = c.newIntPtr("rows");
+        rows_ptr = c.newIntPtr("rows_ptr");
         rows_size = c.newInt64("rows_size");
 
         c.setArg(2, rows_ptr);
         c.setArg(3, rows_size);
 
-        input_index = c.newGpq();
+        input_index = c.newInt64("input_index");
         c.mov(input_index, 0);
 
-        output_index = c.newInt64("row_id_hi");
+        output_index = c.newInt64("output_index");
         c.setArg(4, output_index);
     }
 
@@ -1518,16 +1048,6 @@ struct JitCompiler {
     x86::Gp input_index;
     x86::Gp output_index;
 
-    int64_t long_nulls_array[4] = {long_null, long_null, long_null, long_null};
-    int64_t long_true_mask_array[4] = {-1ll, -1ll, -1ll, -1ll};
-
-    int32_t int_nulls_array[8] = {int_null, int_null, int_null, int_null, int_null, int_null, int_null, int_null};
-    int32_t int_true_mask_array[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
-
-//    x86::Mem long_nulls = c.newConst(ConstPool::kScopeLocal, &long_nulls_array, 32);
-//    x86::Mem long_true_mask = c.newConst(ConstPool::kScopeLocal, &long_true_mask_array, 32);
-//    x86::Mem int_nulls = c.newConst(ConstPool::kScopeLocal, &int_nulls_array, 32);
-//    x86::Mem int_true_mask = c.newConst(ConstPool::kScopeLocal, &int_true_mask_array, 32);
 };
 
 JNIEXPORT jlong JNICALL
@@ -1540,10 +1060,10 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
     code.init(gGlobalContext.rt.environment());
     FileLogger logger(stdout);
     bool debug = options & 1;
-    if(debug) {
+    if (debug) {
         logger.addFlags(FormatOptions::kFlagRegCasts |
-        FormatOptions::kFlagExplainImms |
-        FormatOptions::kFlagAnnotations);
+                        FormatOptions::kFlagExplainImms |
+                        FormatOptions::kFlagAnnotations);
         code.setLogger(&logger);
     }
     code.setErrorHandler(&gGlobalContext.errorHandler);
@@ -1573,13 +1093,13 @@ Java_io_questdb_jit_FiltersCompiler_freeFunction(JNIEnv *e, jclass cl, jlong fnA
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv *e,
-                                                                        jclass cl,
-                                                                        jlong fnAddress,
-                                                                        jlong colsAddress,
-                                                                        jlong colsSize,
-                                                                        jlong rowsAddress,
-                                                                        jlong rowsSize,
-                                                                        jlong rowsStartOffset) {
+                                                                         jclass cl,
+                                                                         jlong fnAddress,
+                                                                         jlong colsAddress,
+                                                                         jlong colsSize,
+                                                                         jlong rowsAddress,
+                                                                         jlong rowsSize,
+                                                                         jlong rowsStartOffset) {
     auto fn = reinterpret_cast<CompiledFn>(fnAddress);
     return fn(reinterpret_cast<int64_t *>(colsAddress),
               colsSize,
