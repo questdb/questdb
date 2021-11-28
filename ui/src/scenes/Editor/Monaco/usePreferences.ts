@@ -51,7 +51,7 @@ export const usePreferences = () => {
       const lineNumber = editor?.getPosition()?.lineNumber
       const columnNumber = editor?.getPosition()?.column
       if (lineNumber) {
-        updateSettings(StoreKey.EDITOR_LINE, lineNumber + 1)
+        updateSettings(StoreKey.EDITOR_LINE, lineNumber)
       }
       if (columnNumber) {
         updateSettings(StoreKey.EDITOR_COL, columnNumber)
