@@ -159,7 +159,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x add \"spa ce\" string", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, compile("alter table x add \"spa ce\" string", sqlExecutionContext).getType());
 
                     assertQueryPlain(
                             "c\tspa ce\n" +
