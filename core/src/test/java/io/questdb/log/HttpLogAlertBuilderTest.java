@@ -148,13 +148,13 @@ public class HttpLogAlertBuilderTest {
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:     19\r\n" +
+                            "Content-Length:     18\r\n" +
                             "\r\n" +
-                            " \\\\$\\\"\\" +
+                            " \\$\\\"\\" +
                             "\nF.O.O.T.E.R",
                     alertBuilder.toString()
             );
-            Assert.assertEquals(167, alertBuilder.length());
+            Assert.assertEquals(166, alertBuilder.length());
         } finally {
             if (msgPtr != 0) {
                 Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);

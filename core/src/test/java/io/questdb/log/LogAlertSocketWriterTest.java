@@ -82,7 +82,7 @@ public class LogAlertSocketWriterTest {
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:    436\r\n" +
+                            "Content-Length:    434\r\n" +
                             "\r\n" +
                             "[\n" +
                             "  {\n" +
@@ -99,7 +99,8 @@ public class LogAlertSocketWriterTest {
                             "    },\n" +
                             "    \"Annotations\": {\n" +
                             "      \"description\": \"ERROR/GLOBAL/GLOBAL/GLOBAL/GLOBAL\",\n" +
-                            "      \"message\": \"A \\\"simple\\\" \\\\$message\\\\$\"\n" +
+                            "      \"message\": \"A \\\"simple\\\" \\$message\\$\"" +
+                            "\n" +
                             "    }\n" +
                             "  }\n" +
                             "]\n",
@@ -132,7 +133,8 @@ public class LogAlertSocketWriterTest {
                             "    },\n" +
                             "    \"Annotations\": {\n" +
                             "      \"description\": \"ERROR/GLOBAL/GLOBAL/GLOBAL/GLOBAL\",\n" +
-                            "      \"message\": \"A second log message\"\n" +
+                            "      \"message\": \"A second log message\"" +
+                            "\n" +
                             "    }\n" +
                             "  }\n" +
                             "]\n",

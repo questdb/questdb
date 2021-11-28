@@ -71,19 +71,20 @@ public class HttpLogAlertBuilder extends LogRecordSink {
             footer.toSink(this);
         }
 
-        // take the body length and format it into the ###### contentLength marker
         if (hasContentLengthMarker) {
+            // take the body length and format it into the ###### contentLength marker
             int bodyLen = (int) (_wptr - bodyStart);
             if (bodyLen > CL_MARKER_MAX_LEN) {
                 throw new LogError("Content too long");
             }
+
             long p = contentLengthEnd;
             if (bodyLen == 0) {
                 Unsafe.getUnsafe().putByte(p--, (byte) '0');
             } else {
                 int rem = bodyLen % 10;
                 while (bodyLen > 0) {
-                    Unsafe.getUnsafe().putByte(p--, (byte) ('0' + rem));
+                    Unsafe.getUnsafe().putByte(p--, (byte) (('0' + rem) & 0x000000FF));
                     bodyLen /= 10;
                     rem = bodyLen % 10;
                 }
@@ -143,7 +144,7 @@ public class HttpLogAlertBuilder extends LogRecordSink {
                     break;
 
                 case '$': // escape
-                    put("\\\\$");
+                    put("\\$");
                     break;
 
                 case '"': // escape
