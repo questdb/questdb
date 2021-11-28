@@ -285,6 +285,7 @@ const MonacoEditor = () => {
         defaultLanguage={QuestDBLanguageName}
         onMount={handleEditorDidMount}
         options={{
+          fixedOverflowWidgets: true,
           fontSize: 14,
           fontFamily: theme.fontMonospace,
           renderLineHighlight: "gutter",
