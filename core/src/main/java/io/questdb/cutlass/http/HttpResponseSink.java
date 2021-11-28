@@ -432,7 +432,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public CharSink put(float value, int scale) {
-            if (Float.isNaN(value)) {
+            if (Float.isNaN(value) || Float.isInfinite(value)) {
                 put("null");
                 return this;
             }
