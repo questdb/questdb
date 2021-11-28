@@ -2784,7 +2784,7 @@ public class IODispatcherTest {
     public void testJsonQueryInfinity() throws Exception {
         testJsonQuery(
                 20,
-                "GET /query?query=select+1.0%2F0.0+from+long_sequence(1)&limit=0%2C1000&count=true&src=con HTTP/1.1\r\n" +
+                "GET /exec?limit=0%2C1000&count=true&src=con&query=select%20cast(1.0%2F0.0%20as%20float)%2C%20cast(1.0%2F0.0%20as%20double) HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Accept: */*\r\n" +
@@ -2804,8 +2804,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "7c\r\n" +
-                        "{\"query\":\"select 1.0\\/0.0 from long_sequence(1)\",\"columns\":[{\"name\":\"column\",\"type\":\"DOUBLE\"}],\"dataset\":[[null]],\"count\":1}\r\n" +
+                        "b2\r\n" +
+                        "{\"query\":\"select cast(1.0\\/0.0 as float), cast(1.0\\/0.0 as double)\",\"columns\":[{\"name\":\"cast\",\"type\":\"FLOAT\"},{\"name\":\"cast1\",\"type\":\"DOUBLE\"}],\"dataset\":[[null,null]],\"count\":1}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
