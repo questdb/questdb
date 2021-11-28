@@ -250,6 +250,134 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     }
 
     @Test
+    public void testInvalidMeasurementNamePrefix1() {
+        assertThat(
+                "--ERROR=INVALID_TABLE_NAME--",
+                "../measurement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testValidMeasurementNameMid1() {
+        assertThat(
+                "mea..surement,tag=value,tag2=value field=10000i\n",
+                "mea..surement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNameMid2() {
+        assertThat(
+                "--ERROR=INVALID_TABLE_NAME--",
+                "mea/surement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNameMid3() {
+        assertThat(
+                "--ERROR=INVALID_TABLE_NAME--",
+                "mea\0surement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNameMid4() {
+        assertThat(
+                "--ERROR=INVALID_TABLE_NAME--",
+                "mea\\\\surement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNameEnd1() {
+        assertThat(
+                "--ERROR=INVALID_TABLE_NAME--",
+                "measurement\\\\,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testValidMeasurementNameEnd2() {
+        assertThat(
+                "measurement..,tag=value,tag2=value field=10000i\n",
+                "measurement..,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNameEnd3() {
+        assertThat(
+                "--ERROR=INVALID_TABLE_NAME--",
+                "measurement/,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNameEnd4() {
+        assertThat(
+                "--ERROR=INVALID_TABLE_NAME--",
+                "measurement\0,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testValidMeasurementNamePrefix4() {
+        assertThat(
+                "..measurement,tag=value,tag2=value field=10000i\n",
+                "..measurement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNameDot1() {
+        assertThat(
+                ".measurement,tag=value,tag2=value field=10000i\n",
+                ".measurement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testValidMeasurementNameDot2() {
+        assertThat(
+                "meas.urement,tag=value,tag2=value field=10000i\n",
+                "meas.urement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testValidMeasurementNameDot3() {
+        assertThat(
+                "measurement.,tag=value,tag2=value field=10000i\n",
+                "measurement.,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNamePrefix2() {
+        assertThat(
+                "--ERROR=INVALID_TABLE_NAME--",
+                "\0measurement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testInvalidMeasurementNamePrefix3() {
+        assertThat(
+                "--ERROR=INVALID_TABLE_NAME--",
+                "\\\\measurement,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
+    public void testMangledMeasurementNameFromBothEnds() {
+        assertThat(
+                "--ERROR=INVALID_TABLE_NAME--",
+                "\0\0\0,tag=value,tag2=value field=10000i\n"
+        );
+    }
+
+    @Test
     public void testWithQuotedStringsWithSpaces() {
         assertThat(
                 "measurement,tag=value,tag2=value field=10000i,field2=\"longstring\",fld3=\"short string\" 100000\n",
@@ -281,7 +409,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     }
 
     @Test
-    public void testSpaceInMesurmentName() {
+    public void testSpaceInMeasurementName() {
         assertThat(
                 "tab ble,tag= 1 field=2 123\n",
                 "tab\\ ble,tag=\\ 1 field=2 123\n"

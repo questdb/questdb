@@ -31,6 +31,7 @@
 }
 
 .qg-header-row {
+  display: flex;
   overflow: hidden;
   height: 33px;
 
@@ -70,14 +71,15 @@
 }
 
 .qg-header {
-  display: inline-block;
+  display: flex;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  flex-direction: row;
   padding: 5px 3px 7px;
-  font-weight: 700;
-  border-bottom: 1px solid #191a21;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-align: right;
   cursor: pointer;
+  border-bottom: 1px solid #191a21;
   -webkit-touch-callout: none; /* iOS Safari */
   -webkit-user-select: none; /* Safari */
   -moz-user-select: none; /* Old versions of Firefox */
@@ -86,11 +88,26 @@
   /* Non-prefixed version, currently
                                    supported by Chrome, Opera and Firefox */
   background: #21222c;
+
+}
+
+.qg-header-name {
+  font-weight: 700;
   color: #f1fa8c !important;
+}
+
+.qg-header-type {
+  font-weight: 700;
+  font-style: italic;
+  margin: 0 7px;
+  color: #6272a4;
+  white-space: nowrap;
 }
 
 .qg-header-l {
   text-align: left;
+  flex-direction: row-reverse;
+  white-space: nowrap;
 }
 
 .qg-viewport {

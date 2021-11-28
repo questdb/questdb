@@ -467,10 +467,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testFieldWithUnquotedString() throws Exception {
         runInContext((receiver) -> {
-            sendLinger(receiver,  "tab raw_msg=____ 1619509249714000000\n", "tab");
-            sendLinger(receiver,  "tab raw_msg=__\"_ 1619509249714000000\n", "tab");
+            sendLinger(receiver,  "tab raw\\ msg=____ 1619509249714000000\n", "tab");
+            sendLinger(receiver,  "tab raw\\ msg=__\"_ 1619509249714000000\n", "tab");
 
-            String expected = "raw_msg\ttimestamp\n" +
+            String expected = "raw msg\ttimestamp\n" +
                     "____\t2021-04-27T07:40:49.714000Z\n" +
                     "__\"_\t2021-04-27T07:40:49.714000Z\n";
             assertTable(expected, "tab");
@@ -701,7 +701,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             .$(0);
                     lineTcpSender
                             .metric("table")
-                            .tag("tag 2", "value=\2") // Invalid column name, last line is not saved
+                            .tag("tag/2", "value=\2") // Invalid column name, last line is not saved
                             .$(Timestamps.DAY_MICROS * 1000L);
                     lineTcpSender.flush();
                 }
@@ -853,12 +853,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             .$(0);
                     lineTcpSender
                             .metric("table")
-                            .tag("tag 2", "value=\2") // Invalid column name, last line is not saved
+                            .tag("tag/2", "value=\2") // Invalid column name, last line is not saved
                             .$(Timestamps.DAY_MICROS * 1000L);
                     // Repeat
                     lineTcpSender
                             .metric("table")
-                            .tag("tag 2", "value=\2") // Invalid column name, last line is not saved
+                            .tag("tag/2", "value=\2") // Invalid column name, last line is not saved
                             .$(Timestamps.DAY_MICROS * 1000L);
                     lineTcpSender.flush();
                 }
@@ -897,7 +897,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
                     lineTcpSender
                             .metric("table")
-                            .tag("tag 2", "value=\2") // Invalid column name, line is not saved
+                            .tag("tag/2", "value=\2") // Invalid column name, line is not saved
                             .$(0);
                     lineTcpSender
                             .metric("table")
