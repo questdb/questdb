@@ -49,7 +49,23 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private static final String INSTANCE_ENV = "INSTANCE_NAME";
     private static final String MESSAGE_ENV = "ALERT_MESSAGE";
     private static final String MESSAGE_ENV_VALUE = "${" + MESSAGE_ENV + "}";
+    private static final CharSequenceObjHashMap<CharSequence> ALERT_PROPS = TemplateParser.adaptMap(System.getenv());
 
+    {
+        if (!ALERT_PROPS.contains(ORG_ID_ENV)) {
+            ALERT_PROPS.put(ORG_ID_ENV, DEFAULT_ENV_VALUE);
+        }
+        if (!ALERT_PROPS.contains(NAMESPACE_ENV)) {
+            ALERT_PROPS.put(NAMESPACE_ENV, DEFAULT_ENV_VALUE);
+        }
+        if (!ALERT_PROPS.contains(CLUSTER_ENV)) {
+            ALERT_PROPS.put(CLUSTER_ENV, DEFAULT_ENV_VALUE);
+        }
+        if (!ALERT_PROPS.contains(INSTANCE_ENV)) {
+            ALERT_PROPS.put(INSTANCE_ENV, DEFAULT_ENV_VALUE);
+        }
+        ALERT_PROPS.put(MESSAGE_ENV, MESSAGE_ENV_VALUE);
+    }
 
     private final int level;
     private final MicrosecondClock clock;
@@ -58,26 +74,9 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private final RingQueue<LogRecordSink> alertsSourceQueue;
     private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
     private final TemplateParser alertTemplate = new TemplateParser();
-    private final CharSequenceObjHashMap<CharSequence> alertProps = TemplateParser.adaptMap(System.getenv());
+
     private HttpLogRecordSink alertBuilder;
     private LogAlertSocket socket;
-
-    {
-        if (!alertProps.contains(ORG_ID_ENV)) {
-            alertProps.put(ORG_ID_ENV, DEFAULT_ENV_VALUE);
-        }
-        if (!alertProps.contains(NAMESPACE_ENV)) {
-            alertProps.put(NAMESPACE_ENV, DEFAULT_ENV_VALUE);
-        }
-        if (!alertProps.contains(CLUSTER_ENV)) {
-            alertProps.put(CLUSTER_ENV, DEFAULT_ENV_VALUE);
-        }
-        if (!alertProps.contains(INSTANCE_ENV)) {
-            alertProps.put(INSTANCE_ENV, DEFAULT_ENV_VALUE);
-        }
-        alertProps.put(MESSAGE_ENV, MESSAGE_ENV_VALUE);
-    }
-
     // changed by introspection
     private String location;
     private String bufferSize;
@@ -198,7 +197,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         boolean wasRead = false;
         try (InputStream is = LogAlertSocketWriter.class.getResourceAsStream(location)) {
             if (is != null) {
-                alertTemplate.parse(CharSequenceView.of(is), now, alertProps);
+                alertTemplate.parse(CharSequenceView.of(is), now, ALERT_PROPS);
                 wasRead = true;
             }
         } catch (IOException e) {
@@ -213,11 +212,11 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                             ff
                     ),
                     now,
-                    alertProps
+                    ALERT_PROPS
             );
         }
         // consolidate/check/load template to the outbound socket buffer
-        alertTemplate.parse(alertTemplate.toString(), now, alertProps);
+        alertTemplate.parse(alertTemplate.toString(), now, ALERT_PROPS);
         ObjList<Sinkable> components = alertTemplate.getLocationComponents();
         if (alertTemplate.getKeyOffset(MESSAGE_ENV) < 0 || components.size() < 3) {
             throw new LogError(String.format(
