@@ -84,6 +84,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final LineTcpReceiverConfiguration configuration;
     private final BitSet processedCols = new BitSet();
+    private final ObjHashSet<CharSequence> addedCols = new ObjHashSet<>();
     private Sequence pubSeq;
     private int loadCheckCycles = 0;
     private int reshuffleCount = 0;
@@ -484,6 +485,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 FloatingDirectCharSink floatingCharSink
         ) {
             processedCols.clear();
+            addedCols.clear();
             threadId = INCOMPLETE_EVENT_ID;
             this.tableUpdateDetails = tableUpdateDetails;
             TableWriter writer = tableUpdateDetails.getWriter();
@@ -506,7 +508,12 @@ class LineTcpMeasurementScheduler implements Closeable {
                     ProtoEntity entity = protoParser.getEntity(nEntity);
                     int colIndex = localDetails.getColumnIndex(entity.getName());
                     if (colIndex < 0) {
-                        int colNameLen = entity.getName().length();
+                        final DirectByteCharSequence colName = entity.getName();
+                        if (addedCols.contains(colName)) {
+                            continue;
+                        }
+                        addedCols.add(colName);
+                        int colNameLen = colName.length();
                         Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
                         bufPos += Integer.BYTES;
                         if (bufPos + colNameLen < bufMax) {
@@ -514,7 +521,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             // so that writing thread will create the column
                             // Note that writing thread will be responsible to convert it from utf8
                             // to utf16. This should happen rarely
-                            Vect.memcpy(bufPos, entity.getName().getLo(), colNameLen);
+                            Vect.memcpy(bufPos, colName.getLo(), colNameLen);
                         } else {
                             throw CairoException.instance(0).put("queue buffer overflow");
                         }
