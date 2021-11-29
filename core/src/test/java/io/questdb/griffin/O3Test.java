@@ -292,6 +292,16 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    public void testColumnTopMidOOODataUtf8Contended() throws Exception {
+        executeWithPool(0, O3Test::testColumnTopMidOOODataUtf80);
+    }
+
+    @Test
+    public void testColumnTopMidOOODataUtf8Parallel() throws Exception {
+        executeWithPool(4, O3Test::testColumnTopMidOOODataUtf80);
+    }
+
+    @Test
     public void testColumnTopMidOOODataParallel() throws Exception {
         executeWithPool(4, O3Test::testColumnTopMidOOOData0);
     }
@@ -4933,6 +4943,157 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 expectedMaxTimestamp
         );
+    }
+
+    private static void testColumnTopMidOOODataUtf80(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException, URISyntaxException {
+        compiler.compile(
+                "create table 'привет от штиблет' as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(500)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile("alter table 'привет от штиблет' add column v double", sqlExecutionContext);
+        compiler.compile("alter table 'привет от штиблет' add column v1 float", sqlExecutionContext);
+        compiler.compile("alter table 'привет от штиблет' add column v2 int", sqlExecutionContext);
+        compiler.compile("alter table 'привет от штиблет' add column v3 byte", sqlExecutionContext);
+        compiler.compile("alter table 'привет от штиблет' add column v4 short", sqlExecutionContext);
+        compiler.compile("alter table 'привет от штиблет' add column v5 boolean", sqlExecutionContext);
+        compiler.compile("alter table 'привет от штиблет' add column v6 date", sqlExecutionContext);
+        compiler.compile("alter table 'привет от штиблет' add column v7 timestamp", sqlExecutionContext);
+        compiler.compile("alter table 'привет от штиблет' add column v8 symbol", sqlExecutionContext);
+        compiler.compile("alter table 'привет от штиблет' add column v10 char", sqlExecutionContext);
+        compiler.compile("alter table 'привет от штиблет' add column v11 string", sqlExecutionContext);
+        compiler.compile("alter table 'привет от штиблет' add column v12 binary", sqlExecutionContext);
+        compiler.compile("alter table 'привет от штиблет' add column v9 long", sqlExecutionContext);
+
+        compiler.compile(
+                "insert into 'привет от штиблет' " +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(549920000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+//        --------     new columns here ---------------
+                        " rnd_double() v," +
+                        " rnd_float() v1," +
+                        " rnd_int() v2," +
+                        " rnd_byte() v3," +
+                        " rnd_short() v4," +
+                        " rnd_boolean() v5," +
+                        " rnd_date() v6," +
+                        " rnd_timestamp(10,100000,356) v7," +
+                        " rnd_symbol('AAA','BBB', null) v8," +
+                        " rnd_char() v10," +
+                        " rnd_str() v11," +
+                        " rnd_bin() v12," +
+                        " rnd_long() v9" +
+                        " from long_sequence(1000)",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(546600000000L,100000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+//        --------     new columns here ---------------
+                        " rnd_double() v," +
+                        " rnd_float() v1," +
+                        " rnd_int() v2," +
+                        " rnd_byte() v3," +
+                        " rnd_short() v4," +
+                        " rnd_boolean() v5," +
+                        " rnd_date() v6," +
+                        " rnd_timestamp(10,100000,356) v7," +
+                        " rnd_symbol('AAA','BBB', null) v8," +
+                        " rnd_char() v10," +
+                        " rnd_str() v11," +
+                        " rnd_bin() v12," +
+                        " rnd_long() v9" +
+                        " from long_sequence(100)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from ('привет от штиблет' union all append)", sink2);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select max(ts) from ('привет от штиблет' union all append)", sink);
+        final String expectedMaxTimestamp = Chars.toString(sink);
+        compiler.compile("insert into 'привет от штиблет' select * from append", sqlExecutionContext);
+
+        assertSqlResultAgainstFile(
+                compiler,
+                sqlExecutionContext,
+                "'привет от штиблет'",
+                "/o3/testColumnTopMidOOOData.txt"
+        );
+        printSqlResult(compiler, sqlExecutionContext, "select count() from 'привет от штиблет'");
+        TestUtils.assertEquals(sink2, sink);
+
+        try (
+                final TableWriter w = engine.getWriter(
+                        sqlExecutionContext.getCairoSecurityContext(),
+                        "привет от штиблет",
+                        "test"
+                )
+        ) {
+            sink.clear();
+            sink.put("max\n");
+            TimestampFormatUtils.appendDateTimeUSec(sink, w.getMaxTimestamp());
+            sink.put('\n');
+            TestUtils.assertEquals(expectedMaxTimestamp, sink);
+            Assert.assertEquals(0, w.getO3RowCount());
+        }
     }
 
     private static void testPartitionedDataAppendOOData0(

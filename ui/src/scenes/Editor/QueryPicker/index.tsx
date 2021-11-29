@@ -28,11 +28,11 @@ import { DownArrowSquare } from "@styled-icons/boxicons-solid/DownArrowSquare"
 import { UpArrowSquare } from "@styled-icons/boxicons-solid/UpArrowSquare"
 
 import { Text, useKeyPress } from "components"
-import { BusEvent } from "consts"
 import { QueryShape } from "types"
 import { color } from "utils"
 
 import Row from "./Row"
+import { useEditor } from "../../../providers"
 
 type Props = {
   hidePicker: () => void
@@ -71,11 +71,12 @@ const QueryPicker = ({ hidePicker, queries, ref }: Props) => {
   const enterPress = useKeyPress("Enter", { preventDefault: true })
   const [cursor, setCursor] = useState(0)
   const [hovered, setHovered] = useState<QueryShape | undefined>()
+  const { appendQuery } = useEditor()
 
   const addQuery = useCallback(
     (query: QueryShape) => {
       hidePicker()
-      window.bus.trigger(BusEvent.MSG_EDITOR_INSERT_QUERY, query.value)
+      appendQuery(query.value)
     },
     [hidePicker],
   )
