@@ -41,9 +41,7 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -2974,7 +2972,7 @@ public class TableWriterTest extends AbstractCairoTest {
     private int getDirCount() {
         AtomicInteger count = new AtomicInteger();
         try (Path path = new Path()) {
-            FF.iterateDir(path.of(root).concat(PRODUCT).$(), (name, type) -> {
+            FF.iterateDir(path.of(root).concat(PRODUCT).$(), (pUtf8NameZ, type) -> {
                 if (type == Files.DT_DIR) {
                     count.incrementAndGet();
                 }
@@ -3475,17 +3473,14 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 writer.removeColumn("supplier");
 
-                final NativeLPSZ lpsz = new NativeLPSZ();
                 try (Path path = new Path()) {
                     path.of(root).concat(model.getName());
                     final int plen = path.length();
-                    FF.iterateDir(path.$(), (file, type) -> {
-                        lpsz.of(file);
-
-                        if (type == Files.DT_DIR && !Files.isDots(lpsz)) {
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.i").$()));
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.d").$()));
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.top").$()));
+                    FF.iterateDir(path.$(), (pUtf8NameZ, type) -> {
+                        if (Files.isDir(pUtf8NameZ, type)) {
+                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("supplier.i").$()));
+                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("supplier.d").$()));
+                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("supplier.top").$()));
                         }
                     });
                 }
@@ -3556,30 +3551,28 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 writer.renameColumn("supplier", "sup");
 
-                final NativeLPSZ lpsz = new NativeLPSZ();
                 try (Path path = new Path()) {
                     path.of(root).concat(model.getName());
                     final int plen = path.length();
                     if (columnTypeTag == ColumnType.SYMBOL) {
-                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.v").$()));
-                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.o").$()));
-                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.c").$()));
-                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.k").$()));
-                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat(lpsz).concat("sup.v").$()));
-                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat(lpsz).concat("sup.o").$()));
-                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat(lpsz).concat("sup.c").$()));
-                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat(lpsz).concat("sup.k").$()));
+                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat("supplier.v").$()));
+                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat("supplier.o").$()));
+                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat("supplier.c").$()));
+                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat("supplier.k").$()));
+                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat("sup.v").$()));
+                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat("sup.o").$()));
+                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat("sup.c").$()));
+                        Assert.assertTrue(FF.exists(path.trimTo(plen).concat("sup.k").$()));
                     }
                     path.trimTo(plen);
-                    FF.iterateDir(path.$(), (file, type) -> {
-                        lpsz.of(file);
-                        if (type == Files.DT_DIR && !Files.isDots(lpsz)) {
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.i").$()));
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.d").$()));
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.top").$()));
-                            Assert.assertTrue(FF.exists(path.trimTo(plen).concat(lpsz).concat("sup.d").$()));
+                    FF.iterateDir(path.$(), (pUtf8NameZ, type) -> {
+                        if (Files.isDir(pUtf8NameZ, type)) {
+                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("supplier.i").$()));
+                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("supplier.d").$()));
+                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("supplier.top").$()));
+                            Assert.assertTrue(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("sup.d").$()));
                             if (columnTypeTag == ColumnType.BINARY || columnTypeTag == ColumnType.STRING) {
-                                Assert.assertTrue(FF.exists(path.trimTo(plen).concat(lpsz).concat("sup.i").$()));
+                                Assert.assertTrue(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("sup.i").$()));
                             }
                         }
                     });
