@@ -488,6 +488,15 @@ public class NumbersTest {
     }
 
     @Test
+    public void testParseDoubleWithManyLeadingZeros() throws Exception {
+        String s1 = "000000.000000000033458980809808359835083490580348503845";
+        Assert.assertEquals(Double.parseDouble(s1), Numbers.parseDouble(s1), 0.000000001);
+
+        String s2 = "000000.00000000003345898080E25";
+        Assert.assertEquals(Double.parseDouble(s2), Numbers.parseDouble(s2), 0.000000001);
+    }
+    
+    @Test
     public void testParseDouble() throws Exception {
 
         String s9 = "0.33458980809808359835083490580348503845E203";
@@ -522,6 +531,45 @@ public class NumbersTest {
         String s8 = "-Infinity";
         Assert.assertEquals(Double.parseDouble(s8), Numbers.parseDouble(s8), 0.000000001);
 
+    }
+
+    @Test
+    public void testParseDoubleCloseToZero() throws Exception {
+        String s1 = "0.123456789";
+        Assert.assertEquals(Double.parseDouble(s1), Numbers.parseDouble(s1), 0.000000001);
+
+        String s2 = "0.12345678901234567890123456789E12";
+        Assert.assertEquals(Double.parseDouble(s2), Numbers.parseDouble(s2), 0.000000001);
+    }
+    
+    @Test
+    public void testParseDoubleIntegerLargerThanLongMaxValue() throws Exception {
+        String s1 = "9223372036854775808";
+        Assert.assertEquals(Double.parseDouble(s1), Numbers.parseDouble(s1), 0.000000001);
+
+        String s2 = "9223372036854775808123";
+        Assert.assertEquals(Double.parseDouble(s2), Numbers.parseDouble(s2), 0.000000001);
+
+        String s3 = "92233720368547758081239223372036854775808123";
+        Assert.assertEquals(Double.parseDouble(s3), Numbers.parseDouble(s3), 0.000000001);
+
+        String s4 = "9223372036854775808123922337203685477580812392233720368547758081239223372036854775808123";
+        Assert.assertEquals(Double.parseDouble(s4), Numbers.parseDouble(s4), 0.000000001);
+    }
+
+    @Test
+    public void testParseDoubleLargerThanLongMaxValue() throws NumericException {
+        String s1 = "9223372036854775808.0123456789";
+        Assert.assertEquals(Double.parseDouble(s1), Numbers.parseDouble(s1), 0.000000001);
+
+        String s2 = "9223372036854775808.0123456789";
+        Assert.assertEquals(Double.parseDouble(s2), Numbers.parseDouble(s2), 0.000000001);
+
+        String s3 = "9223372036854775808123.0123456789";
+        Assert.assertEquals(Double.parseDouble(s3), Numbers.parseDouble(s3), 0.000000001);
+
+        String s4 = "92233720368547758081239223372036854775808123.01239223372036854775808123";
+        Assert.assertEquals(Double.parseDouble(s4), Numbers.parseDouble(s4), 0.000000001);
     }
 
     @Test
@@ -566,6 +614,45 @@ public class NumbersTest {
         Assert.assertEquals(Float.parseFloat(s8), Numbers.parseFloat(s8), 0.000000001);
     }
 
+    @Test
+    public void testParseFloatCloseToZero() throws Exception {
+        String s1 = "0.123456789";
+        Assert.assertEquals(Float.parseFloat(s1), Numbers.parseFloat(s1), 0.000000001);
+
+        String s2 = "0.12345678901234567890123456789E12";
+        Assert.assertEquals(Float.parseFloat(s2), Numbers.parseFloat(s2), 0.000000001);
+    }
+
+    @Test
+    public void testParseFloatIntegerLargerThanLongMaxValue() throws Exception {
+        String s1 = "9223372036854775808";
+        Assert.assertEquals(Float.parseFloat(s1), Numbers.parseFloat(s1), 0.000000001);
+
+        String s2 = "9223372036854775808123";
+        Assert.assertEquals(Float.parseFloat(s2), Numbers.parseFloat(s2), 0.000000001);
+
+        String s3 = "9223372036854775808123922337203685477";
+        Assert.assertEquals(Float.parseFloat(s3), Numbers.parseFloat(s3), 0.000000001);
+
+        String s4 = "92233720368547758081239223372036854771";
+        Assert.assertEquals(Float.parseFloat(s4), Numbers.parseFloat(s4), 0.000000001);
+    }
+
+    @Test
+    public void testParseFloatLargerThanLongMaxValue() throws NumericException {
+        String s1 = "9223372036854775808.0123456789";
+        Assert.assertEquals(Float.parseFloat(s1), Numbers.parseFloat(s1), 0.000000001);
+
+        String s2 = "9223372036854775808.0123456789";
+        Assert.assertEquals(Float.parseFloat(s2), Numbers.parseFloat(s2), 0.000000001);
+
+        String s3 = "9223372036854775808123.0123456789";
+        Assert.assertEquals(Float.parseFloat(s3), Numbers.parseFloat(s3), 0.000000001);
+
+        String s4 = "922337203685477580812392233720368547758081.01239223372036854775808123";//Infinity
+        Assert.assertEquals(Float.parseFloat(s4), Numbers.parseFloat(s4), 0.000000001);
+    }
+    
     @Test
     public void testParseInt() throws Exception {
         Assert.assertEquals(567963, Numbers.parseInt("567963"));
