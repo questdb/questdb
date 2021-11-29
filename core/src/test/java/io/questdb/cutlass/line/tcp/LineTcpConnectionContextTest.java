@@ -1152,6 +1152,35 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testDuplicateFieldInFirstRow() throws Exception {
+        String table = "addField";
+        runInContext(() -> {
+            recvBuffer =
+                    table + ",location=us-midwest temperature=82,temperature=77 1465839830100400200\n" +
+                            table + ",location=us-midwest temperature=83 1465839830100500200\n" +
+                            table + ",location=us-eastcoast temperature=81 1465839830101400200\n" +
+                            table + ",location=us-midwest temperature=85 1465839830102300200\n" +
+                            table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
+                            table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
+                            table + ",location=us-westcost temperature=82 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
     public void testDuplicateNewField() throws Exception {
         String table = "addField";
         runInContext(() -> {
@@ -1239,6 +1268,35 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testDuplicateTimestampInFirstRow() throws Exception {
+        String table = "duplicateTimestamp";
+        runInContext(() -> {
+            recvBuffer =
+                    table + ",location=us-midwest temperature=82,timestamp=1465839830100400200t 1465839830100700200\n" +
+                            table + ",location=us-midwest temperature=83 1465839830100500200\n" +
+                            table + ",location=us-eastcoast temperature=81 1465839830101600200\n" +
+                            table + ",location=us-midwest temperature=85 1465839830102300200\n" +
+                            table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
+                            table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
+                            table + ",location=us-westcost temperature=82 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
     public void testDesignatedTimestampAsField() throws Exception {
         String table = "duplicateTimestamp";
         runInContext(() -> {
@@ -1263,6 +1321,64 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
                     "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
                     "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
+    public void testDesignatedTimestampAsFieldInFirstRow() throws Exception {
+        String table = "duplicateTimestamp";
+        runInContext(() -> {
+            recvBuffer =
+                    table + ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n" +
+                            table + ",location=us-midwest temperature=83 1465839830100500200\n" +
+                            table + ",location=us-eastcoast temperature=81 1465839830101600200\n" +
+                            table + ",location=us-midwest temperature=85 1465839830102300200\n" +
+                            table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
+                            table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
+                            table + ",location=us-westcost temperature=82 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100200Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
+    public void testDesignatedTimestampAsFieldInAllRows() throws Exception {
+        String table = "duplicateTimestamp";
+        runInContext(() -> {
+            recvBuffer =
+                    table + ",location=us-midwest timestamp=1465839830100400200t,temperature=82\n" +
+                            table + ",location=us-midwest timestamp=1465839830100500200t,temperature=83\n" +
+                            table + ",location=us-eastcoast timestamp=1465839830101600200t,temperature=81\n" +
+                            table + ",location=us-midwest timestamp=1465839830102300200t,temperature=85\n" +
+                            table + ",location=us-eastcoast timestamp=1465839830102400200t,temperature=89\n" +
+                            table + ",location=us-eastcoast timestamp=1465839830102400200t,temperature=80\n" +
+                            table + ",location=us-westcost timestamp=1465839830102500200t,temperature=82\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            String expected = "location\ttimestamp\ttemperature\n" +
+                    "us-midwest\t2016-06-13T17:43:50.100400Z\t82.0\n" +
+                    "us-midwest\t2016-06-13T17:43:50.100500Z\t83.0\n" +
+                    "us-eastcoast\t2016-06-13T17:43:50.101600Z\t81.0\n" +
+                    "us-midwest\t2016-06-13T17:43:50.102300Z\t85.0\n" +
+                    "us-eastcoast\t2016-06-13T17:43:50.102400Z\t89.0\n" +
+                    "us-eastcoast\t2016-06-13T17:43:50.102400Z\t80.0\n" +
+                    "us-westcost\t2016-06-13T17:43:50.102500Z\t82.0\n";
             assertTable(expected, table);
         });
     }

@@ -54,6 +54,8 @@ import static io.questdb.network.IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATIO
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
+    private static final String TIMESTAMP_FIELD = "timestamp";
+
     // A reshuffle event is used to redistribute load across threads
     private static final int RESHUFFLE_EVENT_ID = -1;
 
@@ -1592,20 +1594,23 @@ class LineTcpMeasurementScheduler implements Closeable {
 
     private class TableStructureAdapter implements TableStructure {
         private CharSequence tableName;
-        private LineTcpParser protoParser;
+        private int timestampIndex = -1;
+        private final ObjHashSet<CharSequence> entityNames = new ObjHashSet<>();
+        private final ObjList<ProtoEntity> entities = new ObjList<>();
 
         @Override
         public int getColumnCount() {
-            return protoParser.getnEntities() + 1;
+            final int size = entities.size();
+            return timestampIndex == -1 ? size + 1 : size;
         }
 
         @Override
         public CharSequence getColumnName(int columnIndex) {
-            assert columnIndex <= getColumnCount();
+            assert columnIndex < getColumnCount();
             if (columnIndex == getTimestampIndex()) {
-                return "timestamp";
+                return TIMESTAMP_FIELD;
             }
-            CharSequence colName = protoParser.getEntity(columnIndex).getName().toString();
+            CharSequence colName = entities.get(columnIndex).getName().toString();
             if (TableUtils.isValidColumnName(colName)) {
                 return colName;
             }
@@ -1617,7 +1622,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (columnIndex == getTimestampIndex()) {
                 return ColumnType.TIMESTAMP;
             }
-            return DEFAULT_COLUMN_TYPES[protoParser.getEntity(columnIndex).getType()];
+            return DEFAULT_COLUMN_TYPES[entities.get(columnIndex).getType()];
         }
 
         @Override
@@ -1662,7 +1667,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         @Override
         public int getTimestampIndex() {
-            return protoParser.getnEntities();
+            return timestampIndex == -1 ? entities.size() : timestampIndex;
         }
 
         @Override
@@ -1677,7 +1682,19 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         TableStructureAdapter of(CharSequence tableName, LineTcpParser protoParser) {
             this.tableName = tableName;
-            this.protoParser = protoParser;
+
+            entityNames.clear();
+            entities.clear();
+            for (int i = 0; i < protoParser.getnEntities(); i++) {
+                final ProtoEntity entity = protoParser.getEntity(i);
+                final CharSequence name = entity.getName();
+                if (entityNames.add(name)) {
+                    if (name.equals(TIMESTAMP_FIELD)) {
+                        timestampIndex = entities.size();
+                    }
+                    entities.add(entity);
+                }
+            }
             return this;
         }
     }
