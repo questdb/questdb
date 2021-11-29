@@ -134,9 +134,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
 
     @Override
     public void close() {
-        if (socket != null) {
-            socket.close();
-        }
+        Misc.free(socket);
     }
 
     @Override
