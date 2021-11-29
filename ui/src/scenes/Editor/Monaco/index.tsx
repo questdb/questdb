@@ -28,12 +28,13 @@ import styled from "styled-components"
 import {
   conf as QuestDBLanguageConf,
   language as QuestDBLanguage,
+  completionProvider as QuestDBCompletionProvider,
 } from "./questdb-sql"
 import { color } from "../../../utils"
 
 loader.config({
   paths: {
-    vs: "/vs",
+    vs: "assets/vs",
   },
 })
 
@@ -72,6 +73,7 @@ const MonacoEditor = () => {
     monaco: Monaco,
   ) => {
     monaco.languages.register({ id: QuestDBLanguageName })
+
     monaco.languages.setMonarchTokensProvider(
       QuestDBLanguageName,
       QuestDBLanguage,
@@ -79,6 +81,11 @@ const MonacoEditor = () => {
     monaco.languages.setLanguageConfiguration(
       QuestDBLanguageName,
       QuestDBLanguageConf,
+    )
+
+    monaco.languages.registerCompletionItemProvider(
+      QuestDBLanguageName,
+      QuestDBCompletionProvider,
     )
 
     if (monacoRef) {

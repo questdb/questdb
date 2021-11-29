@@ -1,6 +1,49 @@
 import * as monaco from "monaco-editor"
 import { dataTypes, keywords, functions } from "@questdb/sql-grammar"
 
+enum CompletionItemKind {
+  Function = 1,
+  Operator = 11,
+  Keyword = 17,
+}
+
+const operators = [
+  // Logical
+  "ALL",
+  "AND",
+  "ANY",
+  "BETWEEN",
+  "EXISTS",
+  "IN",
+  "LIKE",
+  "NOT",
+  "OR",
+  "SOME",
+  // Set
+  "EXCEPT",
+  "INTERSECT",
+  "UNION",
+  // Join
+  "APPLY",
+  "CROSS",
+  "FULL",
+  "INNER",
+  "JOIN",
+  "LEFT",
+  "OUTER",
+  "RIGHT",
+  // Predicates
+  "CONTAINS",
+  "FREETEXT",
+  "IS",
+  "NULL",
+  // Pivoting
+  "PIVOT",
+  "UNPIVOT",
+  // Merging
+  "MATCHED",
+]
+
 export const conf: monaco.languages.LanguageConfiguration = {
   comments: {
     lineComment: "--",
@@ -39,42 +82,7 @@ export const language: monaco.languages.IMonarchLanguage = {
   ],
   dataTypes,
   keywords,
-  operators: [
-    // Logical
-    "ALL",
-    "AND",
-    "ANY",
-    "BETWEEN",
-    "EXISTS",
-    "IN",
-    "LIKE",
-    "NOT",
-    "OR",
-    "SOME",
-    // Set
-    "EXCEPT",
-    "INTERSECT",
-    "UNION",
-    // Join
-    "APPLY",
-    "CROSS",
-    "FULL",
-    "INNER",
-    "JOIN",
-    "LEFT",
-    "OUTER",
-    "RIGHT",
-    // Predicates
-    "CONTAINS",
-    "FREETEXT",
-    "IS",
-    "NULL",
-    // Pivoting
-    "PIVOT",
-    "UNPIVOT",
-    // Merging
-    "MATCHED",
-  ],
+  operators,
   builtinFunctions: functions,
   builtinVariables: [
     // Configuration
@@ -208,5 +216,55 @@ export const language: monaco.languages.IMonarchLanguage = {
       [/WHEN\b/i, { token: "keyword.choice" }],
       [/THEN\b/i, { token: "keyword.choice" }],
     ],
+  },
+}
+
+export const completionProvider: monaco.languages.CompletionItemProvider = {
+  provideCompletionItems(model, position) {
+    const word = model.getWordUntilPosition(position)
+    const range = {
+      startLineNumber: position.lineNumber,
+      endLineNumber: position.lineNumber,
+      startColumn: word.startColumn,
+      endColumn: word.endColumn,
+    }
+    return {
+      suggestions: [
+        ...functions.map((qdbFunction) => {
+          return {
+            label: qdbFunction,
+            kind: CompletionItemKind.Function,
+            insertText: qdbFunction,
+            range,
+          }
+        }),
+        ...dataTypes.map((item) => {
+          return {
+            label: item,
+            kind: CompletionItemKind.Keyword,
+            insertText: item,
+            range,
+          }
+        }),
+        ...keywords.map((item) => {
+          const keyword = item.toUpperCase()
+          return {
+            label: keyword,
+            kind: CompletionItemKind.Keyword,
+            insertText: keyword,
+            range,
+          }
+        }),
+        ...operators.map((item) => {
+          const operator = item.toUpperCase()
+          return {
+            label: operator,
+            kind: CompletionItemKind.Operator,
+            insertText: operator.toUpperCase(),
+            range,
+          }
+        }),
+      ],
+    }
   },
 }
