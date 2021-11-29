@@ -564,7 +564,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         case LineTcpParser.ENTITY_TYPE_INTEGER:
                             Unsafe.getUnsafe().putByte(bufPos, entity.getType());
                             bufPos += Byte.BYTES;
-                            Unsafe.getUnsafe().putLong(bufPos, entity.getIntegerValue());
+                            Unsafe.getUnsafe().putLong(bufPos, entity.getLongValue());
                             bufPos += Long.BYTES;
                             break;
                         case LineTcpParser.ENTITY_TYPE_FLOAT:
@@ -646,7 +646,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         case LineTcpParser.ENTITY_TYPE_TIMESTAMP: {
                             Unsafe.getUnsafe().putByte(bufPos, entity.getType());
                             bufPos += Byte.BYTES;
-                            Unsafe.getUnsafe().putLong(bufPos, entity.getTimestampValue());
+                            Unsafe.getUnsafe().putLong(bufPos, entity.getLongValue());
                             bufPos += Long.BYTES;
                             break;
                         }

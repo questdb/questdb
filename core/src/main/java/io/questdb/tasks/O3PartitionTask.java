@@ -29,11 +29,12 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3PartitionTask {
-    private CharSequence pathToTable;
+    private Path pathToTable;
     private int partitionBy;
     private ObjList<MemoryMAR> columns;
     private ObjList<MemoryCARW> o3Columns;
@@ -81,7 +82,7 @@ public class O3PartitionTask {
         return partitionTimestamp;
     }
 
-    public CharSequence getPathToTable() {
+    public Path getPathToTable() {
         return pathToTable;
     }
 
@@ -130,7 +131,7 @@ public class O3PartitionTask {
     }
 
     public void of(
-            CharSequence path,
+            Path path,
             int partitionBy,
             ObjList<MemoryMAR> columns,
             ObjList<MemoryCARW> o3Columns,
