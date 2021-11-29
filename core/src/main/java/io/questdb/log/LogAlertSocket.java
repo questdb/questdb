@@ -104,7 +104,7 @@ public class LogAlertSocket implements Closeable {
                         LogLevel.ERROR_HEADER,
                         nf.errno()
                 );
-                freeSocket();
+                freeSocketAndAddress();
             }
         } else {
             System.out.printf(
@@ -112,7 +112,7 @@ public class LogAlertSocket implements Closeable {
                     LogLevel.ERROR_HEADER,
                     nf.errno()
             );
-            freeSocket();
+            freeSocketAndAddress();
         }
     }
 
@@ -165,7 +165,7 @@ public class LogAlertSocket implements Closeable {
             }
 
             // fail to the next host and attempt to send again
-            freeSocket();
+            freeSocketAndAddress();
             int alertHostIdx = this.alertHostIdx;
             this.alertHostIdx = (this.alertHostIdx + 1) % alertHostsCount;
             if (alertHostIdx == this.alertHostIdx) {
@@ -191,9 +191,7 @@ public class LogAlertSocket implements Closeable {
 
     @Override
     public void close() {
-        if (fdSocket != -1) {
-            freeSocket();
-        }
+        freeSocketAndAddress();
         if (outBufferPtr != 0) {
             Unsafe.free(outBufferPtr, outBufferSize, MemoryTag.NATIVE_DEFAULT);
             outBufferPtr = 0;
@@ -240,7 +238,7 @@ public class LogAlertSocket implements Closeable {
         return alertHostsCount;
     }
 
-    private void freeSocket() {
+    private void freeSocketAndAddress() {
         if (fdSocketAddress != -1) {
             Net.freeSockAddr(fdSocketAddress);
             fdSocketAddress = -1;
