@@ -211,6 +211,9 @@ public class CompiledQueryImpl implements CompiledQuery {
         @Override
         public void await() throws SqlException {
             status = await(engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout());
+            if (status == QUERY_STARTED) {
+                status = await(engine.getConfiguration().getWriterAsyncCommandMaxTimeout() - engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout());
+            }
             if (status != QUERY_COMPLETE) {
                 throw SqlException.$(alterStatement.getTableNamePosition(), "Timeout expired on waiting for the ALTER TABLE execution result");
             }
@@ -272,7 +275,7 @@ public class CompiledQueryImpl implements CompiledQuery {
             final long start = clock.getTicks();
             final RingQueue<TableWriterTask> tableWriterEventQueue = engine.getMessageBus().getTableWriterEventQueue();
 
-            int status = QUERY_NO_RESPONSE;
+            int status = this.status;
             while (true) {
                 long seq = eventSubSeq.next();
                 if (seq < 0) {

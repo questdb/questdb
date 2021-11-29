@@ -41,14 +41,20 @@ public interface QueryFuture extends Closeable {
     /***
      * Waits for completion within specified timeout. Can be called multiple times on the same QueryFuture instance.
      * @param timeout - microseconds timeout
-     * @return true if complete, false otherwise
+     * @return
+     *  - QUERY_NO_RESPONSE if no writer response received
+     *  - QUERY_STARTED if writer command ACK received
+     *  - QUERY_COMPLETE if writer completed response received
      * @throws SqlException when query execution fails
      */
     int await(long timeout) throws SqlException;
 
     /***
      * True if operation completed, false otherwise
-     * @return true when done, false if needs awaiting
+     * @return
+     *  - QUERY_NO_RESPONSE if no writer response received
+     *  - QUERY_STARTED if writer command ACK received
+     *  - QUERY_COMPLETE if writer completed response received
      */
     int getStatus();
 

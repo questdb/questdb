@@ -256,6 +256,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(0, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
         Assert.assertEquals(500_000, configuration.getCairoConfiguration().getWriterAsyncCommandBusyWaitTimeout());
+        Assert.assertEquals(30_000_000, configuration.getCairoConfiguration().getWriterAsyncCommandMaxTimeout());
         Assert.assertEquals(1023, configuration.getCairoConfiguration().getWriterTickRowsCountMod());
 
         Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
@@ -545,6 +546,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(2001, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
             Assert.assertEquals(16, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
             Assert.assertEquals(333000, configuration.getCairoConfiguration().getWriterAsyncCommandBusyWaitTimeout());
+            Assert.assertEquals(7770001, configuration.getCairoConfiguration().getWriterAsyncCommandMaxTimeout());
             Assert.assertEquals(15, configuration.getCairoConfiguration().getWriterTickRowsCountMod());
 
             Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getCommitLag());

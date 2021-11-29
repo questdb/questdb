@@ -32,19 +32,18 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Numbers;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -65,10 +64,12 @@ import java.sql.Date;
 import java.sql.*;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
@@ -3047,51 +3048,109 @@ nodejs code:
 
     @Test
     public void testRunAlterWhenTableLockedWithInserts() throws Exception {
+        assertMemoryLeak(() -> testAddColumnBusyWriter(true));
+    }
+
+    @Test
+    public void testRunAlterWhenTableLockedAndAlterTakesTooLong() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table xyz (a int)", sqlExecutionContext);
-            try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection1 = getConnection(false, true);
-                    final Connection connection2 = getConnection(false, true);
-                    final PreparedStatement insert = connection1.prepareStatement(
-                            "insert into xyz values (?)"
-                    );
-                    final PreparedStatement alter = connection2.prepareStatement(
-                            "alter table xyz add column b long"
-                    )
-            ) {
-                connection1.setAutoCommit(false);
-                int totalCount = 10;
-                for (int i = 0; i < totalCount; i++) {
-                    insert.setInt(1, i);
-                    insert.execute();
-                }
-                CyclicBarrier start = new CyclicBarrier(2);
-                CountDownLatch finished = new CountDownLatch(1);
-
-                new Thread(() -> {
-                    try {
-                        start.await();
-                        alter.execute();
-                    } catch (Throwable e) {
-                        e.printStackTrace();
-                    } finally {
-                        finished.countDown();
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRW(LPSZ name) {
+                    if (Chars.endsWith(name, "_meta.swp")) {
+                        try {
+                            Thread.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000 + 100);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
                     }
-                }).start();
+                    return super.openRW(name);
+                }
+            };
+            testAddColumnBusyWriter(true);
+        });
+    }
 
-                start.await();
-                Thread.sleep(5);
-                connection1.commit();
-                finished.await();
+    @Test
+    public void testRunAlterWhenTableLockedAndAlterTakesTooLongFailsToWait() throws Exception {
+        assertMemoryLeak(() -> {
+            writerAsyncCommandMaxTimeout = configuration.getWriterAsyncCommandBusyWaitTimeout();
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRW(LPSZ name) {
+                    if (Chars.endsWith(name, "_meta.swp")) {
+                        try {
+                            Thread.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000 + 500);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                    return super.openRW(name);
+                }
+            };
+            testAddColumnBusyWriter(false);
+        });
+    }
 
+    @Test
+    public void testRunAlterWhenTableLockedAndAlterTimeoutsToStart() throws Exception {
+        assertMemoryLeak(() -> {
+            writerAsyncCommandBusyWaitTimeout = 0;
+            testAddColumnBusyWriter(false);
+        });
+    }
+
+    private void testAddColumnBusyWriter(boolean alterRequestReturnSuccess) throws SQLException, InterruptedException, BrokenBarrierException, SqlException {
+        compiler.compile("create table xyz (a int)", sqlExecutionContext);
+        try (
+                final PGWireServer ignored = createPGServer(2);
+                final Connection connection1 = getConnection(false, true);
+                final Connection connection2 = getConnection(false, true);
+                final PreparedStatement insert = connection1.prepareStatement(
+                        "insert into xyz values (?)"
+                );
+                final PreparedStatement alter = connection2.prepareStatement(
+                        "alter table xyz add column b long"
+                )
+        ) {
+            connection1.setAutoCommit(false);
+            int totalCount = 10;
+            for (int i = 0; i < totalCount; i++) {
+                insert.setInt(1, i);
+                insert.execute();
+            }
+            CyclicBarrier start = new CyclicBarrier(2);
+            CountDownLatch finished = new CountDownLatch(1);
+            AtomicLong errors = new AtomicLong();
+
+            new Thread(() -> {
+                try {
+                    start.await();
+                    alter.execute();
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    errors.incrementAndGet();
+                } finally {
+                    finished.countDown();
+                }
+            }).start();
+
+            start.await();
+            Thread.sleep(5);
+            connection1.commit();
+            finished.await();
+
+            if (alterRequestReturnSuccess) {
+                Assert.assertEquals(0, errors.get());
                 try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "xyz")) {
                     int bIndex = rdr.getMetadata().getColumnIndex("b");
                     Assert.assertEquals(1, bIndex);
                     Assert.assertEquals(totalCount, rdr.size());
                 }
+            } else {
+                Assert.assertEquals(1, errors.get());
             }
-        });
+        }
     }
 
     @Test
