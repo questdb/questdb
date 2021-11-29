@@ -134,7 +134,7 @@ public class LogAlertSocketTest {
                     .put(MockAlertTarget.DEATH_PILL)
                     .put(CRLF)
                     .$());
-            Assert.assertTrue(firstServerCompleted.await(5_000_000_000L));
+            Assert.assertTrue(firstServerCompleted.await(20_000_000_000L));
 
             // by now there is only one server surviving, and we are connected to the other.
             // send a death pill and kill the surviving server.
@@ -142,7 +142,7 @@ public class LogAlertSocketTest {
             alertSkt.send(builder.put(MockAlertTarget.DEATH_PILL).put(CRLF).$());
 
             // wait for haltness, and then all servers should be done.
-            Assert.assertTrue(haltLatch.await(10_000_000_000L));
+            Assert.assertTrue(haltLatch.await(20_000_000_000L));
             for (int i = 0; i < numHosts; i++) {
                 Assert.assertFalse(servers[i].isRunning());
             }
