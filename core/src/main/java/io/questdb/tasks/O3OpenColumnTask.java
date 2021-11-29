@@ -26,11 +26,12 @@ package io.questdb.tasks;
 
 import io.questdb.cairo.BitmapIndexWriter;
 import io.questdb.cairo.TableWriter;
+import io.questdb.std.str.Path;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3OpenColumnTask {
-    private CharSequence pathToTable;
+    private Path pathToTable;
     private AtomicInteger columnCounter;
     private AtomicInteger partCounter;
     private long txn;
@@ -130,7 +131,7 @@ public class O3OpenColumnTask {
         return partitionTimestamp;
     }
 
-    public CharSequence getPathToTable() {
+    public Path getPathToTable() {
         return pathToTable;
     }
 
@@ -228,7 +229,7 @@ public class O3OpenColumnTask {
 
     public void of(
             int openColumnMode,
-            CharSequence pathToTable,
+            Path pathToTable,
             CharSequence columnName,
             AtomicInteger columnCounter,
             AtomicInteger partCounter,

@@ -55,7 +55,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     public static void processPartition(
-            CharSequence pathToTable,
+            Path pathToTable,
             int partitionBy,
             ObjList<MemoryMAR> columns,
             ObjList<MemoryCARW> oooColumns,
@@ -543,7 +543,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // find "current" partition boundary in the out of order data
         // once we know the boundary we can move on to calculating another one
         // srcOooHi is index inclusive of value
-        final CharSequence pathToTable = task.getPathToTable();
+        final Path pathToTable = task.getPathToTable();
         final int partitionBy = task.getPartitionBy();
         final ObjList<MemoryMAR> columns = task.getColumns();
         final ObjList<MemoryCARW> oooColumns = task.getO3Columns();
@@ -616,7 +616,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private static void publishOpenColumnTaskHarmonized(
             long cursor,
             int openColumnMode,
-            CharSequence pathToTable,
+            Path pathToTable,
             CharSequence columnName,
             AtomicInteger columnCounter,
             AtomicInteger partCounter,
@@ -704,7 +704,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long txn,
             ObjList<MemoryMAR> columns,
             ObjList<MemoryCARW> oooColumns,
-            CharSequence pathToTable,
+            Path pathToTable,
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
@@ -916,7 +916,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long tmpBuf,
             long cursor,
             int openColumnMode,
-            CharSequence pathToTable,
+            Path pathToTable,
             CharSequence columnName,
             AtomicInteger columnCounter,
             AtomicInteger partCounter,

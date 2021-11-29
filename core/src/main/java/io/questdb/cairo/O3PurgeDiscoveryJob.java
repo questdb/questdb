@@ -32,7 +32,6 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.str.MutableCharSink;
-import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.O3PurgeDiscoveryTask;
@@ -44,7 +43,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
     private final static Log LOG = LogFactory.getLog(O3PurgeDiscoveryJob.class);
     private final CairoConfiguration configuration;
     private final MutableCharSink[] sink;
-    private final NativeLPSZ[] nativeLPSZ;
+    private final StringSink[] fileNameSinks;
     private final LongList[] txnList;
     private final RingQueue<O3PurgeTask> purgeQueue;
     private final Sequence purgePubSeq;
@@ -55,11 +54,11 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
         this.purgeQueue = messageBus.getO3PurgeQueue();
         this.purgePubSeq = messageBus.getO3PurgePubSeq();
         this.sink = new MutableCharSink[workerCount];
-        this.nativeLPSZ = new NativeLPSZ[workerCount];
+        this.fileNameSinks = new StringSink[workerCount];
         this.txnList = new LongList[workerCount];
         for (int i = 0; i < workerCount; i++) {
             sink[i] = new StringSink();
-            nativeLPSZ[i] = new NativeLPSZ();
+            fileNameSinks[i] = new StringSink();
             txnList[i] = new LongList();
         }
     }
@@ -67,7 +66,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
     public static boolean discoverPartitions(
             FilesFacade ff,
             MutableCharSink sink,
-            NativeLPSZ nativeLPSZ,
+            StringSink fileNameSink,
             LongList txnList,
             RingQueue<O3PurgeTask> purgeQueue,
             @Nullable Sequence purgePubSeq,
@@ -93,7 +92,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
         if (p > 0) {
             try {
                 do {
-                    processDir(sink, nativeLPSZ, tableName, txnList, ff.findName(p), ff.findType(p));
+                    processDir(sink, fileNameSink, tableName, txnList, ff.findName(p), ff.findType(p));
                 } while (ff.findNext(p) > 0);
             } finally {
                 ff.findClose(p);
@@ -163,24 +162,23 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
 
     private static void processDir(
             MutableCharSink sink,
-            NativeLPSZ nativeLPSZ,
+            StringSink fileNameSink,
             CharSequence tableName,
             LongList txnList,
-            long name,
+            long pUtf8NameZ,
             int type
     ) {
-        if (type == Files.DT_DIR) {
-            nativeLPSZ.of(name);
-            if (Chars.notDots(nativeLPSZ) && Chars.startsWith(nativeLPSZ, sink)) {
+        if (Files.isDir(pUtf8NameZ, type, fileNameSink)) {
+            if (Chars.startsWith(fileNameSink, sink)) {
                 // extract txn from name
-                int index = Chars.lastIndexOf(nativeLPSZ, '.');
+                int index = Chars.lastIndexOf(fileNameSink, '.');
                 if (index < 0) {
                     txnList.add(-1);
                 } else {
                     try {
-                        txnList.add(Numbers.parseLong(nativeLPSZ, index + 1, nativeLPSZ.length()));
+                        txnList.add(Numbers.parseLong(fileNameSink, index + 1, fileNameSink.length()));
                     } catch (NumericException e) {
-                        LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(nativeLPSZ).$(']').$();
+                        LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).$(']').$();
                     }
                 }
             }
@@ -193,7 +191,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
         final boolean useful = discoverPartitions(
                 configuration.getFilesFacade(),
                 sink[workerId],
-                nativeLPSZ[workerId],
+                fileNameSinks[workerId],
                 txnList[workerId],
                 purgeQueue,
                 purgePubSeq,

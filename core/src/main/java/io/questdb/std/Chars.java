@@ -485,17 +485,6 @@ public final class Chars {
         return value != null && value.length() > 0;
     }
 
-    public static boolean notDots(CharSequence value) {
-        final int len = value.length();
-        if (len > 2) {
-            return true;
-        }
-        if (value.charAt(0) != '.') {
-            return true;
-        }
-        return len == 2 && value.charAt(1) != '.';
-    }
-
     public static CharSequence repeat(String s, int times) {
         return new CharSequence() {
             @Override
