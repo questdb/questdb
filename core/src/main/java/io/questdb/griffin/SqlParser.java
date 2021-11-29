@@ -1098,17 +1098,24 @@ public final class SqlParser {
         }
 
         if (isValuesKeyword(tok)) {
-            expectTok(lexer, '(');
-
             do {
-                model.addColumnValue(expectExpr(lexer));
-            } while (Chars.equals((tok = tok(lexer, "','")), ','));
-
-            expectTok(tok, lexer.lastTokenPosition(), ')');
-            model.setEndOfValuesPosition(lexer.lastTokenPosition());
-
-            return model;
+                expectTok(lexer, '(');
+                ObjList<ExpressionNode> rowValues = new ObjList<>();
+                do {
+                    rowValues.add(expectExpr(lexer));
+                } while (Chars.equals((tok = tok(lexer, "','")), ','));
+                expectTok(tok, lexer.lastTokenPosition(), ')');
+                model.addRowTupleValues(rowValues);
+                model.addEndOfRowTupleValuesPosition(lexer.lastTokenPosition());
+                tok = optTok(lexer);
+                // no more tokens or ';' should indicate end of statement
+                if (tok == null || Chars.equals(tok, ';')) {
+                    return model;
+                }
+                expectTok(tok, lexer.lastTokenPosition(), ',');
+            } while (true);
         }
+
         throw err(lexer, "'select' or 'values' expected");
     }
 

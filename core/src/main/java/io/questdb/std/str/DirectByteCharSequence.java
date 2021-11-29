@@ -35,7 +35,6 @@ public class DirectByteCharSequence extends AbstractCharSequence implements Muta
     private long lo;
     private long hi;
 
-
     @Override
     public byte byteAt(int index) {
         return Unsafe.getUnsafe().getByte(lo + index);
