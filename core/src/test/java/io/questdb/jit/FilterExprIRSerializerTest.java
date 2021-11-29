@@ -146,8 +146,8 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testMixedConstantColumn() throws Exception {
-        serialize("-3.5 + abyte + 42.5 + afloat = 0");
-        assertIR("(f32 0.0D)(f32 afloat)(f32 42.5D)(i8 abyte)(f32 -3.5D)(+)(+)(+)(=)(ret)");
+        serialize("-3 + abyte + 42.5 + afloat = 0");
+        assertIR("(i32 0L)(f32 afloat)(f32 42.5D)(i8 abyte)(i32 -3L)(+)(+)(+)(=)(ret)");
     }
 
     @Test
@@ -204,44 +204,33 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testPositiveConstantTypes() throws Exception {
-        String[][] columns = new String[][]{
-                {"abyte", "i8", "1L"},
-                {"ashort", "i16", "1L"},
-                {"anint", "i32", "1L"},
-                {"along", "i64", "1L"},
-                {"afloat", "f32", "1.0D"},
-                {"adouble", "f64", "1.0D"},
+    public void testConstantTypes() throws Exception {
+        final String[][] columns = new String[][]{
+                {"abyte", "i8", "1", "1L", "i8"},
+                {"abyte", "i8", "-1", "-1L", "i8"},
+                {"ashort", "i16", "1", "1L", "i16"},
+                {"ashort", "i16", "-1", "-1L", "i16"},
+                {"anint", "i32", "1", "1L", "i32"},
+                {"anint", "i32", "-1", "-1L", "i32"},
+                {"along", "i64", "1", "1L", "i64"},
+                {"along", "i64", "-1", "-1L", "i64"},
+                {"afloat", "f32", "1", "1L", "i32"},
+                {"afloat", "f32", "-1", "-1L", "i32"},
+                {"adouble", "f64", "1", "1L", "i64"},
+                {"adouble", "f64", "-1", "-1L", "i64"},
+                {"afloat", "f32", "1.5", "1.5D", "f32"},
+                {"adouble", "f64", "1.5", "1.5D", "f64"},
         };
 
         for (String[] col : columns) {
             setUp1();
-            String name = col[0];
-            String type = col[1];
-            String value = col[2];
-            serialize(name + " > 1");
-            assertIR("(" + type + " " + value + ")(" + type + " " + name + ")(>)(ret)");
-        }
-    }
-
-    @Test
-    public void testNegativeConstantTypes() throws Exception {
-        String[][] columns = new String[][]{
-                {"abyte", "i8", "-1L"},
-                {"ashort", "i16", "-1L"},
-                {"anint", "i32", "-1L"},
-                {"along", "i64", "-1L"},
-                {"afloat", "f32", "-1.0D"},
-                {"adouble", "f64", "-1.0D"},
-        };
-
-        for (String[] col : columns) {
-            setUp1();
-            String name = col[0];
-            String type = col[1];
-            String value = col[2];
-            serialize(name + " < -1");
-            assertIR("(" + type + " " + value + ")(" + type + " " + name + ")(<)(ret)");
+            final String colName = col[0];
+            final String colType = col[1];
+            final String constStr = col[2];
+            final String constValue = col[3];
+            final String constType = col[4];
+            serialize(colName + " > " + constStr);
+            assertIR("(" + constType + " " + constValue + ")(" + colType + " " + colName + ")(>)(ret)");
         }
     }
 
@@ -274,7 +263,7 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
         try {
             serialize("abyte + afloat = -1 or along - anint  = 1");
             assertIR("(i64 1L)(i32 anint)(i64 not_null along)(-)(=)" +
-                    "(f32 -1.0D)(f32 not_null afloat)(i8 abyte)(+)(=)" +
+                    "(i32 -1L)(f32 not_null afloat)(i8 abyte)(+)(=)" +
                     "(||)(ret)");
         } finally {
             metadata = originalMetadata;

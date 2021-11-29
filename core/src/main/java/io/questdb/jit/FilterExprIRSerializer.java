@@ -339,33 +339,50 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
     }
 
     private void serializeNumber(int position, final CharSequence token, byte typeCode, boolean negated) throws SqlException {
-        memory.putByte(typeCode);
         long sign = negated ? -1 : 1;
         try {
             switch (typeCode) {
                 case IMM_I1:
                     final byte b = (byte) Numbers.parseInt(token);
+                    memory.putByte(IMM_I1);
                     memory.putLong(sign * b);
                     break;
                 case IMM_I2:
                     final short s = (short) Numbers.parseInt(token);
+                    memory.putByte(IMM_I2);
                     memory.putLong(sign * s);
                     break;
                 case IMM_I4:
                     final int i = Numbers.parseInt(token);
+                    memory.putByte(IMM_I4);
                     memory.putLong(sign * i);
                     break;
                 case IMM_I8:
                     final long l = Numbers.parseLong(token);
+                    memory.putByte(IMM_I8);
                     memory.putLong(sign * l);
                     break;
                 case IMM_F4:
-                    final float f = Numbers.parseFloat(token);
-                    memory.putDouble(sign * f);
+                    try {
+                        final int fi = Numbers.parseInt(token);
+                        memory.putByte(IMM_I4);
+                        memory.putLong(sign * fi);
+                    } catch (NumericException e) {
+                        final float f = Numbers.parseFloat(token);
+                        memory.putByte(IMM_F4);
+                        memory.putDouble(sign * f);
+                    }
                     break;
                 case IMM_F8:
-                    final double d = Numbers.parseDouble(token);
-                    memory.putDouble(sign * d);
+                    try {
+                        final long dl = Numbers.parseLong(token);
+                        memory.putByte(IMM_I8);
+                        memory.putLong(sign * dl);
+                    } catch (NumericException e) {
+                        final double d = Numbers.parseDouble(token);
+                        memory.putByte(IMM_F8);
+                        memory.putDouble(sign * d);
+                    }
                     break;
                 default:
                     throw SqlException.position(position)
