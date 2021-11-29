@@ -29,8 +29,8 @@ import org.junit.Test;
 public class CompiledFiltersTest extends AbstractGriffinTest {
 
     // TODO: keep this test for advanced features such as:
-    //  * random access cursor
     //  * col tops
+    //  * random access cursor
 
     @Test
     public void testSelectAllTypesFromRecord() throws Exception {
@@ -67,10 +67,43 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
                 " rnd_geohash(40) hash8c" +
                 " from long_sequence(100)) timestamp(k) partition by DAY";
 
-        assertQuery(expected,
+        assertQueryRunWithJit(expected,
                 query,
                 ddl,
-                "k",
-                false);
+                "k");
+    }
+
+    @Test
+    public void testFilterWithColTops() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t1 as (select " +
+                    " x," +
+                    " timestamp_sequence(0, 1000000) ts " +
+                    "from long_sequence(20)) timestamp(ts)", sqlExecutionContext);
+
+            compiler.compile("alter table t1 add j long", sqlExecutionContext);
+
+            compiler.compile("insert into t1 select x," +
+                            "timestamp_sequence(100000000, 1000000) ts," +
+                            " rnd_long() j " +
+                            "from long_sequence(20)",
+                    sqlExecutionContext);
+
+            final String query = "select * from t1 where j < 0";
+            final String expected = "x\tts\tj\n" +
+                    "4\t1970-01-01T00:01:43.000000Z\t-6945921502384501475\n" +
+                    "7\t1970-01-01T00:01:46.000000Z\t-7611843578141082998\n" +
+                    "8\t1970-01-01T00:01:47.000000Z\t-5354193255228091881\n" +
+                    "9\t1970-01-01T00:01:48.000000Z\t-2653407051020864006\n" +
+                    "10\t1970-01-01T00:01:49.000000Z\t-1675638984090602536\n" +
+                    "14\t1970-01-01T00:01:53.000000Z\t-7489826605295361807\n" +
+                    "15\t1970-01-01T00:01:54.000000Z\t-4094902006239100839\n" +
+                    "16\t1970-01-01T00:01:55.000000Z\t-4474835130332302712\n" +
+                    "17\t1970-01-01T00:01:56.000000Z\t-6943924477733600060\n";
+            assertQueryRunWithJit(expected,
+                    query,
+                    null,
+                    "ts");
+        });
     }
 }
