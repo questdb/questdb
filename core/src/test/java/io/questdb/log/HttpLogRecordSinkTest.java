@@ -59,11 +59,11 @@ public class HttpLogRecordSinkTest {
                         "User-Agent: QuestDB/LogAlert\r\n" +
                         "Accept: */*\r\n" +
                         "Content-Type: application/json\r\n" +
-                        "Content-Length:#######\r\n" +
+                        "Content-Length:#########\r\n" +
                         "\r\n",
                 Chars.stringFromUtf8Bytes(bufferPtr, alertBuilder.getMark())
         );
-        Assert.assertEquals(148, alertBuilder.length());
+        Assert.assertEquals(150, alertBuilder.length());
     }
 
     @Test
@@ -76,17 +76,17 @@ public class HttpLogRecordSinkTest {
                         "User-Agent: QuestDB/LogAlert\r\n" +
                         "Accept: */*\r\n" +
                         "Content-Type: application/json\r\n" +
-                        "Content-Length:      0\r\n" +
+                        "Content-Length:        0\r\n" +
                         "\r\n",
                 Chars.stringFromUtf8Bytes(bufferPtr, alertBuilder.getMark())
         );
-        Assert.assertEquals(148, alertBuilder.length());
+        Assert.assertEquals(150, alertBuilder.length());
         Assert.assertEquals("POST /api/v1/alerts HTTP/1.1\r\n" +
                 "Host: localhost\r\n" +
                 "User-Agent: QuestDB/LogAlert\r\n" +
                 "Accept: */*\r\n" +
                 "Content-Type: application/json\r\n" +
-                "Content-Length:      0\r\n" +
+                "Content-Length:        0\r\n" +
                 "\r\n", alertBuilder.toString());
     }
 
@@ -107,22 +107,22 @@ public class HttpLogRecordSinkTest {
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:     89\r\n" +
+                            "Content-Length:       89\r\n" +
                             "\r\n" +
                             "Hello, my name is Íñigo Montoya, you killed my father, prepare to ∑π¬µ∫√ç©!!",
                     alertBuilder.toString()
             );
-            Assert.assertEquals(237, alertBuilder.length());
+            Assert.assertEquals(239, alertBuilder.length());
 
             String randomMsg = "Yup, this is a random message.";
             alertBuilder.rewindToMark().put(randomMsg, 5, randomMsg.length()).$();
-            Assert.assertEquals(173, alertBuilder.length());
+            Assert.assertEquals(175, alertBuilder.length());
             Assert.assertEquals("POST /api/v1/alerts HTTP/1.1\r\n" +
                     "Host: localhost\r\n" +
                     "User-Agent: QuestDB/LogAlert\r\n" +
                     "Accept: */*\r\n" +
                     "Content-Type: application/json\r\n" +
-                    "Content-Length:     25\r\n" +
+                    "Content-Length:       25\r\n" +
                     "\r\n" +
                     "this is a random message.", alertBuilder.toString());
         } finally {
@@ -148,13 +148,13 @@ public class HttpLogRecordSinkTest {
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:     18\r\n" +
+                            "Content-Length:       18\r\n" +
                             "\r\n" +
                             " \\$\\\"\\" +
                             "\nF.O.O.T.E.R",
                     alertBuilder.toString()
             );
-            Assert.assertEquals(166, alertBuilder.length());
+            Assert.assertEquals(168, alertBuilder.length());
         } finally {
             if (msgPtr != 0) {
                 Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
@@ -178,13 +178,13 @@ public class HttpLogRecordSinkTest {
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:     40\r\n" +
+                            "Content-Length:       40\r\n" +
                             "\r\n" +
                             "test: Tres, Dos, Uno, Zero!!" +
                             "\nF.O.O.T.E.R",
                     alertBuilder.toString()
             );
-            Assert.assertEquals(188, alertBuilder.length());
+            Assert.assertEquals(190, alertBuilder.length());
         } finally {
             if (msgPtr != 0) {
                 Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
@@ -207,29 +207,29 @@ public class HttpLogRecordSinkTest {
     public void testContentLengthMarker() {
         alertBuilder.clear();
         alertBuilder.putContentLengthMarker();
-        Assert.assertEquals(24, alertBuilder.$());
-        Assert.assertEquals("Content-Length:     24\r\n", alertBuilder.toString());
+        Assert.assertEquals(26, alertBuilder.$());
+        Assert.assertEquals("Content-Length:       26\r\n", alertBuilder.toString());
 
         alertBuilder.clear();
         alertBuilder.putContentLengthMarker();
-        Assert.assertEquals(36, alertBuilder.put("clairvoyance").$());
-        Assert.assertEquals("Content-Length:     36\r\nclairvoyance", alertBuilder.toString());
+        Assert.assertEquals(38, alertBuilder.put("clairvoyance").$());
+        Assert.assertEquals("Content-Length:       38\r\nclairvoyance", alertBuilder.toString());
 
         alertBuilder.clear();
         alertBuilder.putContentLengthMarker();
         String message = "$Sîne klâwen durh die wolken sint geslagen,sîn vil manegiu tugent michz leisten hiez.$\r\n\";";
-        Assert.assertEquals(117, alertBuilder.put(message).$());
-        Assert.assertEquals("Content-Length:    117\r\n" + message, alertBuilder.toString());
+        Assert.assertEquals(119, alertBuilder.put(message).$());
+        Assert.assertEquals("Content-Length:      119\r\n" + message, alertBuilder.toString());
 
         alertBuilder.clear();
         alertBuilder.putContentLengthMarker();
         message = "2021-11-26T19:22:47.8658077Z 2021-11-26T19:22:47.860908Z E i.q.c.BitmapIndexBwdReader cursor could not consistently read index header [corrupt?] [timeout=5000000μs]\n";
-        Assert.assertEquals(190, alertBuilder.put(message).$());
-        Assert.assertEquals("Content-Length:    190\r\n" + message, alertBuilder.toString());
+        Assert.assertEquals(192, alertBuilder.put(message).$());
+        Assert.assertEquals("Content-Length:      192\r\n" + message, alertBuilder.toString());
 
         alertBuilder.clear();
         alertBuilder.putContentLengthMarker();
-        Assert.assertEquals("Content-Length:#######\r\n", alertBuilder.toString());
+        Assert.assertEquals("Content-Length:#########\r\n", alertBuilder.toString());
         int limit = bufferSize - alertBuilder.length();
         for (int i = 0; i < limit; i++) {
             alertBuilder.put('Q');
@@ -238,7 +238,7 @@ public class HttpLogRecordSinkTest {
         Assert.assertEquals(bufferSize, alertBuilder.length());
         Assert.assertTrue(alertBuilder
                 .toString()
-                .startsWith("Content-Length:   1024\r\nQQQQQQQQQQQQQQQQQQQQQQ"));
+                .startsWith("Content-Length:     1024\r\nQQQQQQQQQQQQQQQQQQQQQQ"));
         Assert.assertTrue(alertBuilder
                 .toString()
                 .endsWith("QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ" +

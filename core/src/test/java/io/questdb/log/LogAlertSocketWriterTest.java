@@ -80,7 +80,7 @@ public class LogAlertSocketWriterTest {
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:    434\r\n" +
+                            "Content-Length:      434\r\n" +
                             "\r\n" +
                             "[\n" +
                             "  {\n" +
@@ -114,7 +114,7 @@ public class LogAlertSocketWriterTest {
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:    430\r\n" +
+                            "Content-Length:      430\r\n" +
                             "\r\n" +
                             "[\n" +
                             "  {\n" +
@@ -139,9 +139,9 @@ public class LogAlertSocketWriterTest {
                     writer.getAlertBuilder().toString()
             );
 
-                Assert.assertTrue(haltLatch.await(10_000_000_000L));
-                Assert.assertFalse(alertsTarget[0].isRunning());
-                Assert.assertFalse(alertsTarget[1].isRunning());
+            Assert.assertTrue(haltLatch.await(10_000_000_000L));
+            Assert.assertFalse(alertsTarget[0].isRunning());
+            Assert.assertFalse(alertsTarget[1].isRunning());
         } finally {
             Unsafe.free(logRecordBuffPtr, logRecordBuffSize, MemoryTag.NATIVE_DEFAULT);
         }

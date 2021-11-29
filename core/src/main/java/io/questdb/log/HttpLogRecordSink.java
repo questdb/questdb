@@ -31,9 +31,8 @@ import io.questdb.std.*;
 public class HttpLogRecordSink extends LogRecordSink {
 
     static final String CRLF = "\r\n";
-    private static final String CL_MARKER = "#######";
+    private static final String CL_MARKER = "#########"; // with 9 digits, max content length = 999999999 bytes (953MB)
     private static final int CL_MARKER_LEN = CL_MARKER.length(); // number of digits available for contentLength
-    private static final int CL_MARKER_MAX_LEN = (int) Math.pow(10, CL_MARKER_LEN) - 1;
     private static final int MARK_NOT_SET = -1;
 
 
@@ -74,10 +73,6 @@ public class HttpLogRecordSink extends LogRecordSink {
         if (hasContentLengthMarker) {
             // take the body length and format it into the ###### contentLength marker
             int bodyLen = (int) (_wptr - bodyStart);
-            if (bodyLen > CL_MARKER_MAX_LEN) {
-                throw new LogError("Content too long");
-            }
-
             long p = contentLengthEnd;
             if (bodyLen == 0) {
                 Unsafe.getUnsafe().putByte(p--, (byte) '0');
