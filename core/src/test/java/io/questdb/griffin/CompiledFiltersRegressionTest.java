@@ -282,8 +282,19 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBoolean() throws Exception {
+        final String query = "select * from x where bool1 or bool2 = false";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_boolean() bool1," +
+                " rnd_boolean() bool2" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
+        assertQuery(query, ddl);
+    }
+
+    @Test
     public void testChar() throws Exception {
-        final String query = "select * from x where ch > 'a' and ch < 'z'";
+        final String query = "select * from x where ch > 'A' and ch < 'Z'";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_char() ch" +
@@ -292,12 +303,11 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBoolean() throws Exception {
-        final String query = "select * from x where bool1 or bool2 = false";
+    public void testSymbolNull() throws Exception {
+        final String query = "select * from x where sym <> null";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_boolean() bool1," +
-                " rnd_boolean() bool2" +
+                " rnd_symbol(3,1,3,5) sym" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
         assertQuery(query, ddl);
     }
@@ -344,9 +354,18 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
         assertQuery(query, ddl);
     }
 
+    @Test
+    public void testIntervalAndFilter() throws Exception {
+        final String query = "select * from x where k in '2021-11' and i32 > 0";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(to_timestamp('2021-11-29T10:00:00', 'yyyy-MM-ddTHH:mm:ss'), 500000000) as k," +
+                " rnd_int() i32" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
+        assertQuery(query, ddl);
+    }
+
     // TODO: test the following
     // filter on subquery
-    // interval and filter
     // wrong type expression a+b
     // join
     // latest by
@@ -379,9 +398,10 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 compiler.compile(ddl, sqlExecutionContext);
             }
 
-            runQuery(query, forceScalarJit);
+            long size = runQuery(query, forceScalarJit);
 
             TestUtils.assertEquals(sink, jitSink);
+            Assert.assertTrue("query is expected to return rows", size > 0);
         });
     }
 

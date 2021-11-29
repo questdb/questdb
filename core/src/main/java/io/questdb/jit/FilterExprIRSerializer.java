@@ -489,23 +489,6 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         return Chars.equals(token, ">=");
     }
 
-    private static int constantTypeSize(int typeCode) {
-        switch (typeCode) {
-            case IMM_I1:
-                return 1;
-            case IMM_I2:
-                return 2;
-            case IMM_I4:
-            case IMM_F4:
-                return 4;
-            case IMM_I8:
-            case IMM_F8:
-                return 8;
-            default:
-                return 0;
-        }
-    }
-
     private class ArithmeticExpressionContext implements Mutable {
 
         private ExpressionNode rootNode;
@@ -589,6 +572,14 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                                 .put(ColumnType.nameOf(columnType));
                     }
                     expressionType = ExpressionType.CHAR;
+                    break;
+                case ColumnType.SYMBOL:
+                    if (expressionType != null && expressionType != ExpressionType.SYMBOL) {
+                        throw SqlException.position(position)
+                                .put("non-symbol column in symbol expression: ")
+                                .put(ColumnType.nameOf(columnType));
+                    }
+                    expressionType = ExpressionType.SYMBOL;
                     break;
                 default:
                     if (expressionType != null && expressionType != ExpressionType.NUMERIC) {
@@ -732,6 +723,6 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
     }
 
     private enum ExpressionType {
-        NUMERIC, CHAR, BOOLEAN, GEO_HASH
+        NUMERIC, CHAR, SYMBOL, BOOLEAN, GEO_HASH
     }
 }

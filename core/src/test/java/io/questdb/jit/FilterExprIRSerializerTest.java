@@ -265,15 +265,20 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testNotNullColumns() throws Exception {
+        RecordMetadata originalMetadata = metadata;
         TestRecordMetadata metadataWrapper = new TestRecordMetadata(metadata);
         metadataWrapper.setNotNullColumn("afloat");
         metadataWrapper.setNotNullColumn("along");
         metadata = metadataWrapper;
 
-        serialize("abyte + afloat = -1 or along - anint  = 1");
-        assertIR("(i64 1L)(i32 anint)(i64 not_null along)(-)(=)" +
-                "(f32 -1.0D)(f32 not_null afloat)(i8 abyte)(+)(=)" +
-                "(||)(ret)");
+        try {
+            serialize("abyte + afloat = -1 or along - anint  = 1");
+            assertIR("(i64 1L)(i32 anint)(i64 not_null along)(-)(=)" +
+                    "(f32 -1.0D)(f32 not_null afloat)(i8 abyte)(+)(=)" +
+                    "(||)(ret)");
+        } finally {
+            metadata = originalMetadata;
+        }
     }
 
     @Test
@@ -403,13 +408,13 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedMixedNumericAndBooleanColumns() throws Exception {
-        serialize("abyte = aboolean");
+    public void testUnsupportedMixedCharAndNumericColumns() throws Exception {
+        serialize("achar = anint");
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedMixedCharAndNumericColumns() throws Exception {
-        serialize("achar = anint");
+    public void testUnsupportedMixedSymbolAndNumericColumns() throws Exception {
+        serialize("asymbol = anint");
     }
 
     @Test(expected = SqlException.class)
