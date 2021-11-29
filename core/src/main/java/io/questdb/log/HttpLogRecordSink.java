@@ -84,7 +84,7 @@ public class HttpLogRecordSink extends LogRecordSink {
             } else {
                 int rem = bodyLen % 10;
                 while (bodyLen > 0) {
-                    Unsafe.getUnsafe().putByte(p--, (byte) (('0' + rem) & 0x000000FF));
+                    Unsafe.getUnsafe().putByte(p--, (byte) ('0' + rem));
                     bodyLen /= 10;
                     rem = bodyLen % 10;
                 }
