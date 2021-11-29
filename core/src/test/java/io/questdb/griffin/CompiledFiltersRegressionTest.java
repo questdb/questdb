@@ -356,18 +356,13 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testInterval() throws Exception {
-        final String query = "select * from x where k in '2021-11' and i32 > 0";
+        final String query = "select * from x where k in '2021-11-29' and i32 > 0";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(to_timestamp('2021-11-29T10:00:00', 'yyyy-MM-ddTHH:mm:ss'), 500000000) as k," +
                 " rnd_int() i32" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
         assertQuery(query, ddl);
     }
-
-    // TODO: test the following
-    // join
-    // - latest by
-    // - filter on subquery
 
     private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {
         final boolean forceScalarJit = jitMode == JitMode.SCALAR;

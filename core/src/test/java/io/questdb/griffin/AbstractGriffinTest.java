@@ -29,6 +29,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.engine.table.CompiledFilterRecordCursorFactory;
 import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -562,6 +563,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 true,
                 expectSize,
                 false,
+                false,
                 null
         );
     }
@@ -576,6 +578,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize,
             boolean sizeCanBeVariable,
+            boolean expectJit,
             CharSequence expectedPlan
     ) throws SqlException {
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
@@ -584,6 +587,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             sink.clear();
             factory.toSink(sink);
             TestUtils.assertEquals(expectedPlan, sink);
+        }
+        if (expectJit) {
+            Assert.assertTrue("JIT was not enabled for query: " + query, factory instanceof CompiledFilterRecordCursorFactory);
         }
         try {
             assertTimestamp(expectedTimestamp, factory);
@@ -624,7 +630,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                                             boolean supportsRandomAccess,
                                             boolean checkSameStr,
                                             boolean expectSize,
-                                            boolean sizeCanBeVariable) throws Exception {
+                                            boolean sizeCanBeVariable,
+                                            boolean expectJit) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
                 compiler.compile(ddl, sqlExecutionContext);
@@ -639,6 +646,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     checkSameStr,
                     expectSize,
                     sizeCanBeVariable,
+                    expectJit,
                     null);
         });
     }
@@ -656,6 +664,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 null,
                 true,
                 true,
+                false,
                 false,
                 false);
     }
@@ -675,7 +684,26 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 supportsRandomAccess,
                 true,
                 false,
+                false,
                 false);
+    }
+
+    protected static void assertQueryRunWithJit(CharSequence expected,
+                                                CharSequence query,
+                                                CharSequence ddl,
+                                                @Nullable CharSequence expectedTimestamp) throws Exception {
+        assertQueryNoVerify(
+                expected,
+                query,
+                ddl,
+                expectedTimestamp,
+                null,
+                null,
+                false,
+                true,
+                false,
+                false,
+                true);
     }
 
     protected static void assertQueryExpectSize(CharSequence expected,
@@ -691,6 +719,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 true,
                 true,
                 true,
+                false,
                 false);
     }
 
@@ -710,6 +739,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 supportsRandomAccess,
                 checkSameStr,
                 false,
+                false,
                 false);
     }
 
@@ -730,6 +760,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 supportsRandomAccess,
                 checkSameStr,
                 expectSize,
+                false,
                 false);
     }
 
@@ -748,6 +779,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 expected2,
                 true,
                 true,
+                false,
                 false,
                 false);
     }
@@ -769,6 +801,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 supportsRandomAccess,
                 true,
                 false,
+                false,
                 false);
     }
 
@@ -791,6 +824,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 supportsRandomAccess,
                 checkSameStr,
                 expectSize,
+                false,
                 false);
     }
 
@@ -814,7 +848,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 supportsRandomAccess,
                 checkSameStr,
                 expectSize,
-                sizeCanBeVariable);
+                sizeCanBeVariable,
+                false);
     }
 
     protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory) throws SqlException {
