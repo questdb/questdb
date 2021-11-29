@@ -26,8 +26,8 @@ package io.questdb;
 
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -191,12 +191,14 @@ public class FilesTest {
         try (Path path = new Path().of(temp).$()) {
             try (Path cp = new Path()) {
                 Assert.assertTrue(Files.touch(cp.of(temp).concat("a.txt").$()));
-                NativeLPSZ name = new NativeLPSZ();
+                StringSink nameSink = new StringSink();
                 long pFind = Files.findFirst(path);
                 Assert.assertTrue(pFind != 0);
                 try {
                     do {
-                        names.add(name.of(Files.findName(pFind)).toString());
+                        nameSink.clear();
+                        Chars.utf8DecodeZ(Files.findName(pFind), nameSink);
+                        names.add(nameSink.toString());
                     } while (Files.findNext(pFind) > 0);
                 } finally {
                     Files.findClose(pFind);

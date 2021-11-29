@@ -26,5 +26,5 @@ package io.questdb.std;
 
 @FunctionalInterface
 public interface FindVisitor {
-    void onFind(long name, int type);
+    void onFind(long pUtf8NameZ, int type);
 }
