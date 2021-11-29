@@ -1383,6 +1383,82 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         });
     }
 
+    @Test
+    public void testDuplicateFieldWhenTableExistsAlready() throws Exception {
+        String table = "tableExistAlready";
+        runInContext(() -> {
+            try (
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                compiler.compile(
+                        "create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);",
+                        sqlExecutionContext);
+            } catch (SqlException ex) {
+                throw new RuntimeException(ex);
+            }
+            recvBuffer =
+                    table + ",location=us-midwest temperature=82,timestamp=1465839830100400200t 1465839830100300200\n" +
+                            table + ",location=us-midwest temperature=83 1465839830100500200\n" +
+                            table + ",location=us-eastcoast,city=york,city=london temperature=81 1465839830101400200\n" +
+                            table + ",location=us-midwest,city=london temperature=85 1465839830102300200\n" +
+                            table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
+                            table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
+                            table + ",location=us-westcost temperature=82,timestamp=1465839830102500200t\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\tcity\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\t\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\tyork\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\tlondon\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\t\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\t\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\t\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
+    public void testDesignatedTimestampNotCalledTimestampWhenTableExistAlready() throws Exception {
+        String table = "tableExistAlready";
+        runInContext(() -> {
+            try (
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                compiler.compile(
+                        "create table " + table + " (location SYMBOL, temperature DOUBLE, time TIMESTAMP) timestamp(time);",
+                        sqlExecutionContext);
+            } catch (SqlException ex) {
+                throw new RuntimeException(ex);
+            }
+            recvBuffer =
+                    table + ",location=us-midwest temperature=82,time=1465839830100300200t 1465839830100400200\n" +
+                            table + ",location=us-midwest temperature=83 1465839830100500200\n" +
+                            table + ",location=us-eastcoast,city=york temperature=81 1465839830101400200\n" +
+                            table + ",location=us-midwest,city=london temperature=85 1465839830102300200\n" +
+                            table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
+                            table + ",location=us-eastcoast temperature=80,time=1465839830102500200t\n" +
+                            table + ",location=us-westcost temperature=82,time=1465839830102600200t 1465839830102700200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            String expected = "location\ttemperature\ttime\tcity\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100300Z\t\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\t\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\tyork\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\tlondon\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\t\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102500Z\t\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102600Z\t\n";
+            assertTable(expected, table);
+        });
+    }
+
     private void addTable(String table) {
         try (
                 TableModel model = new TableModel(configuration, table, PartitionBy.NONE)
