@@ -143,6 +143,12 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
 
     @Override
     public boolean descend(ExpressionNode node) throws SqlException {
+        if (node.token == null) {
+            throw SqlException.position(node.position)
+                    .put("non-null token expected: ")
+                    .put(node.token);
+        }
+
         // Check if we're at the start of an arithmetic expression
         arithmeticContext.onNodeDescended(node);
 

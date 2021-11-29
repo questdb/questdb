@@ -393,6 +393,11 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
+    public void testUnsupportedOperatorToken() throws Exception {
+        serialize("asymbol in (select rnd_symbol('A','B','C') from long_sequence(10))");
+    }
+
+    @Test(expected = SqlException.class)
     public void testUnsupportedStringConstant() throws Exception {
         serialize("achar = 'abc'");
     }

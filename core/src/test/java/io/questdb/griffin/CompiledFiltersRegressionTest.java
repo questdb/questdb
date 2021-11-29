@@ -307,7 +307,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
         final String query = "select * from x where sym <> null";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_symbol(3,1,3,5) sym" +
+                " rnd_symbol(10,1,3,5) sym" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
         assertQuery(query, ddl);
     }
@@ -355,7 +355,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntervalAndFilter() throws Exception {
+    public void testInterval() throws Exception {
         final String query = "select * from x where k in '2021-11' and i32 > 0";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(to_timestamp('2021-11-29T10:00:00', 'yyyy-MM-ddTHH:mm:ss'), 500000000) as k," +
@@ -365,10 +365,13 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     }
 
     // TODO: test the following
-    // filter on subquery
-    // wrong type expression a+b
     // join
-    // latest by
+    // - latest by
+    // - filter on subquery
+    //
+    // i8 - i8 = null
+    // i8 * i8 = 0
+    // i32 * 3 + 42.5 + f32
 
     private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {
         final boolean forceScalarJit = jitMode == JitMode.SCALAR;
