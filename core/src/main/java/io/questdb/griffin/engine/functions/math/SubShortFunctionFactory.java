@@ -35,24 +35,39 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class AddShortFunctionFactory implements FunctionFactory {
+public class SubShortFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "+(EE)";
+        return "-(EE)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-        return new AddShortFunc(args.getQuick(0), args.getQuick(1));
+        return new SubShortFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class AddShortFunc extends ShortFunction implements BinaryFunction {
+    private static class SubShortFunction extends ShortFunction implements BinaryFunction {
         final Function left;
         final Function right;
 
-        public AddShortFunc(Function left, Function right) {
+        public SubShortFunction(Function left, Function right) {
+            super();
             this.left = left;
             this.right = right;
+        }
+
+        @Override
+        public short getShort(Record rec) {
+            final short left = this.left.getShort(rec);
+            final short right = this.right.getShort(rec);
+
+            short nullShort = NullConstant.NULL.getShort(null);
+            if (left != nullShort && right != nullShort) {
+                return (short) (left - right);
+            }
+
+            return nullShort;
         }
 
         @Override
@@ -63,19 +78,6 @@ public class AddShortFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
-        }
-
-        @Override
-        public short getShort(Record rec) {
-            final short left = this.left.getShort(rec);
-            final short right = this.right.getShort(rec);
-
-            short nullShort = NullConstant.NULL.getShort(null);
-            if (left != nullShort && right != nullShort) {
-                return (short) (left + right);
-            }
-
-            return nullShort;
         }
     }
 }

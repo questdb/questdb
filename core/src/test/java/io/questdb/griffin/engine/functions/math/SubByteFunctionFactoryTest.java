@@ -30,32 +30,32 @@ import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import org.junit.Test;
 
-public class AddShortFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class SubByteFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
-    private static final int NULL_SHORT = NullConstant.NULL.getShort(null);
+    private static final int NULL_BYTE = NullConstant.NULL.getByte(null);
 
     @Test
     public void testLeftNan() throws SqlException {
-        call(NULL_SHORT, 5).andAssert(NULL_SHORT);
+        call(NULL_BYTE, 5).andAssert(NULL_BYTE);
     }
 
     @Test
     public void testNegative() throws SqlException {
-        call(3, -4).andAssert(-1);
+        call(-3, 4).andAssert(-7);
     }
 
     @Test
     public void testRightNan() throws SqlException {
-        call(123, NULL_SHORT).andAssert(NULL_SHORT);
+        call(123, NULL_BYTE).andAssert(NULL_BYTE);
     }
 
     @Test
     public void testSimple() throws SqlException {
-        call(45, 51).andAssert((short) 96);
+        call(10, 8).andAssert(2);
     }
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new AddShortFunctionFactory();
+        return new SubByteFunctionFactory();
     }
 }

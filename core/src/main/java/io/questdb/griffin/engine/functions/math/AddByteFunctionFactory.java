@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.ByteFunction;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -56,7 +57,15 @@ public class AddByteFunctionFactory implements FunctionFactory {
 
         @Override
         public byte getByte(Record rec) {
-            return (byte) (left.getByte(rec) + right.getByte(rec));
+            final byte left = this.left.getByte(rec);
+            final byte right = this.right.getByte(rec);
+
+            byte nullByte = NullConstant.NULL.getByte(null);
+            if (left != nullByte && right != nullByte) {
+                return (byte) (left + right);
+            }
+
+            return nullByte;
         }
 
         @Override

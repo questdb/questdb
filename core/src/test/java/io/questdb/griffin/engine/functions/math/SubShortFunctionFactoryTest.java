@@ -30,7 +30,7 @@ import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import org.junit.Test;
 
-public class AddShortFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class SubShortFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     private static final int NULL_SHORT = NullConstant.NULL.getShort(null);
 
@@ -41,7 +41,7 @@ public class AddShortFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNegative() throws SqlException {
-        call(3, -4).andAssert(-1);
+        call(-3, 32700).andAssert(-32703);
     }
 
     @Test
@@ -51,11 +51,11 @@ public class AddShortFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testSimple() throws SqlException {
-        call(45, 51).andAssert((short) 96);
+        call(10, 8).andAssert(2);
     }
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new AddShortFunctionFactory();
+        return new SubShortFunctionFactory();
     }
 }

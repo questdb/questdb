@@ -30,29 +30,44 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.ShortFunction;
+import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class AddShortFunctionFactory implements FunctionFactory {
+public class SubByteFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "+(EE)";
+        return "-(BB)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-        return new AddShortFunc(args.getQuick(0), args.getQuick(1));
+        return new SubByteFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class AddShortFunc extends ShortFunction implements BinaryFunction {
+    private static class SubByteFunction extends ByteFunction implements BinaryFunction {
         final Function left;
         final Function right;
 
-        public AddShortFunc(Function left, Function right) {
+        public SubByteFunction(Function left, Function right) {
+            super();
             this.left = left;
             this.right = right;
+        }
+
+        @Override
+        public byte getByte(Record rec) {
+            final byte left = this.left.getByte(rec);
+            final byte right = this.right.getByte(rec);
+
+            byte nullByte = NullConstant.NULL.getByte(null);
+            if (left != nullByte && right != nullByte) {
+                return (byte) (left - right);
+            }
+
+            return nullByte;
         }
 
         @Override
@@ -63,19 +78,6 @@ public class AddShortFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
-        }
-
-        @Override
-        public short getShort(Record rec) {
-            final short left = this.left.getShort(rec);
-            final short right = this.right.getShort(rec);
-
-            short nullShort = NullConstant.NULL.getShort(null);
-            if (left != nullShort && right != nullShort) {
-                return (short) (left + right);
-            }
-
-            return nullShort;
         }
     }
 }

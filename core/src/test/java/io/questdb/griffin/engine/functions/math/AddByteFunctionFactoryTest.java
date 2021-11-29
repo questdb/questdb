@@ -27,9 +27,28 @@ package io.questdb.griffin.engine.functions.math;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
 import org.junit.Test;
 
 public class AddByteFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
+    private static final int NULL_BYTE = NullConstant.NULL.getByte(null);
+
+    @Test
+    public void testLeftNan() throws SqlException {
+        call(NULL_BYTE, 5).andAssert(NULL_BYTE);
+    }
+
+    @Test
+    public void testNegative() throws SqlException {
+        call(3, -4).andAssert(-1);
+    }
+
+    @Test
+    public void testRightNan() throws SqlException {
+        call(123, NULL_BYTE).andAssert(NULL_BYTE);
+    }
+
     @Test
     public void testSimple() throws SqlException {
         call(2, 5).andAssert((byte) 7);

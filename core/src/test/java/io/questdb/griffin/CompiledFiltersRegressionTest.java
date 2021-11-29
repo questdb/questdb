@@ -368,10 +368,6 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     // join
     // - latest by
     // - filter on subquery
-    //
-    // i8 - i8 = null
-    // i8 * i8 = 0
-    // i32 * 3 + 42.5 + f32
 
     private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {
         final boolean forceScalarJit = jitMode == JitMode.SCALAR;

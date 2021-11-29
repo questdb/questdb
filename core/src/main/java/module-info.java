@@ -153,6 +153,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.NegByteFunctionFactory,
 
             io.questdb.griffin.engine.functions.math.SubDoubleFunctionFactory,
+            io.questdb.griffin.engine.functions.math.SubByteFunctionFactory,
+            io.questdb.griffin.engine.functions.math.SubShortFunctionFactory,
             io.questdb.griffin.engine.functions.math.SubIntFunctionFactory,
             io.questdb.griffin.engine.functions.math.SubLongFunctionFactory,
             io.questdb.griffin.engine.functions.math.SubTimestampFunctionFactory,
