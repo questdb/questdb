@@ -29,6 +29,7 @@ import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
 import java.io.Closeable;
 import java.net.InetAddress;
@@ -80,7 +81,7 @@ public class LogAlertSocket implements Closeable {
 
     public LogAlertSocket(NetworkFacade nf, String alertTargets, int inBufferSize, int outBufferSize) {
         this.nf = nf;
-        this.rand = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
+        this.rand = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.alertTargets = alertTargets;
         parseAlertTargets();
         this.inBufferSize = inBufferSize;

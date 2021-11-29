@@ -29,12 +29,12 @@ import org.junit.*;
 
 import java.io.UnsupportedEncodingException;
 
-public class HttpLogAlertBuilderTest {
+public class HttpLogRecordSinkTest {
 
     private static final int bufferSize = 1024;
     private static long bufferPtr;
     private static long bufferLimit;
-    private HttpLogAlertBuilder alertBuilder;
+    private HttpLogRecordSink alertBuilder;
 
     @BeforeClass
     public static void classSetup() {
@@ -49,7 +49,7 @@ public class HttpLogAlertBuilderTest {
 
     @Before
     public void setUp() {
-        alertBuilder = new HttpLogAlertBuilder(bufferPtr, bufferLimit);
+        alertBuilder = new HttpLogRecordSink(bufferPtr, bufferLimit);
         alertBuilder.putHeader("localhost");
         alertBuilder.setFooter(s -> s.put("\nF.O.O.T.E.R"));
         alertBuilder.setMark();

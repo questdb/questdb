@@ -32,7 +32,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static io.questdb.log.HttpLogAlertBuilder.CRLF;
+import static io.questdb.log.HttpLogRecordSink.CRLF;
 
 class MockAlertTarget extends Thread {
     static final String ACK = "Ack";

@@ -32,7 +32,7 @@ import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
-import static io.questdb.log.HttpLogAlertBuilder.CRLF;
+import static io.questdb.log.HttpLogRecordSink.CRLF;
 
 public class LogAlertSocketTest {
 
@@ -108,7 +108,7 @@ public class LogAlertSocketTest {
     @Test
     public void testFailOver() {
         try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1242")) {
-            final HttpLogAlertBuilder builder = new HttpLogAlertBuilder(alertSkt)
+            final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
                     .putHeader("localhost")
                     .setMark();
 
@@ -162,7 +162,7 @@ public class LogAlertSocketTest {
     @Test
     public void testFailOverNoServers() {
         try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1243")) {
-            final HttpLogAlertBuilder builder = new HttpLogAlertBuilder(alertSkt)
+            final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
                     .putHeader("localhost")
                     .setMark();
 

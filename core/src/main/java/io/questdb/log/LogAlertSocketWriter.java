@@ -60,7 +60,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
     private final TemplateParser alertTemplate = new TemplateParser();
     private final CharSequenceObjHashMap<CharSequence> alertProps = TemplateParser.adaptMap(System.getenv());
-    private HttpLogAlertBuilder alertBuilder;
+    private HttpLogRecordSink alertBuilder;
     private LogAlertSocket socket;
 
     {
@@ -162,7 +162,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     }
 
     @VisibleForTesting
-    HttpLogAlertBuilder getAlertBuilder() {
+    HttpLogRecordSink getAlertBuilder() {
         return alertBuilder;
     }
 
@@ -209,7 +209,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                     MESSAGE_ENV_VALUE,
                     location));
         }
-        alertBuilder = new HttpLogAlertBuilder(socket)
+        alertBuilder = new HttpLogRecordSink(socket)
                 .putHeader(LogAlertSocket.localHostIp)
                 .put(components.getQuick(0)) // // this is the first static block
                 .setMark() // mark in buffer, message is appended here onLogRecord
