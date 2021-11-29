@@ -46,8 +46,8 @@ import java.util.List;
 public class CompiledFiltersRegressionTest extends AbstractCairoTest {
 
     private static final Log LOG = LogFactory.getLog(CompiledFiltersRegressionTest.class);
-    private static final int N_SIMD_NO_TAIL = 128;
-    private static final int N_SIMD_WITH_TAIL = N_SIMD_NO_TAIL + 3;
+    private static final int N_SIMD = 128;
+    private static final int N_SIMD_WITH_SCALAR_TAIL = N_SIMD + 3;
 
     @Parameterized.Parameters(name = "{0}")
     public static Object[] data() {
@@ -98,7 +98,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 " rnd_short() i16," +
                 " rnd_int() i32," +
                 " rnd_long() i64 " +
-                " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
         FilterGenerator gen = new FilterGenerator()
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
                 .withComparisonOperator()
@@ -112,7 +112,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_float() f32," +
                 " rnd_double() f64 " +
-                " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
         FilterGenerator gen = new FilterGenerator()
                 .withOptionalNegation().withAnyOf("f32", "f64")
                 .withComparisonOperator()
@@ -130,7 +130,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 " rnd_long() i64," +
                 " rnd_float() f32," +
                 " rnd_double() f64 " +
-                " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
         FilterGenerator gen = new FilterGenerator()
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
                 .withComparisonOperator()
@@ -148,7 +148,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 " rnd_long() i64," +
                 " rnd_float() f32," +
                 " rnd_double() f64 " +
-                " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
         FilterGenerator gen = new FilterGenerator()
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
                 .withArithmeticOperator()
@@ -167,7 +167,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 " rnd_long() i64," +
                 " rnd_float() f32," +
                 " rnd_double() f64 " +
-                " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
         FilterGenerator gen = new FilterGenerator()
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
                 .withArithmeticOperator()
@@ -187,7 +187,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 " rnd_byte() i8," +
                 " rnd_short() i16," +
                 " rnd_double() f64 " +
-                " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
         FilterGenerator gen = new FilterGenerator()
                 .withOptionalNot().withAnyOf("i8 / 2 = 4")
                 .withBooleanOperator()
@@ -207,7 +207,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 " rnd_long(-10, 10, 10) i64," +
                 " rnd_float(10) f32," +
                 " rnd_double(10) f64 " +
-                " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
         FilterGenerator gen = new FilterGenerator()
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
                 .withAnyOf(" = ", " <> ")
@@ -229,7 +229,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 " rnd_long(-10, 10, 10) i64," +
                 " rnd_float(10) f32," +
                 " rnd_double(10) f64 " +
-                " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
         FilterGenerator gen = new FilterGenerator()
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
                 .withArithmeticOperator()
@@ -249,13 +249,107 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 " rnd_long(-10, 10, 10) i64," +
                 " rnd_float(10) f32," +
                 " rnd_double(10) f64 " +
-                " from long_sequence(" + N_SIMD_WITH_TAIL + ")) timestamp(k) partition by DAY";
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
         FilterGenerator gen = new FilterGenerator()
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
                 .withComparisonOperator()
                 .withOptionalNegation().withAnyOf("f32", "f64");
         assertGeneratedQuery("select * from x", ddl, gen);
     }
+
+    @Test
+    public void testGeoHash() throws Exception {
+        final String query = "select * from x where geo8a = geo8b";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_geohash(4) geo8a," +
+                " rnd_geohash(4) geo8b" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
+        assertQuery(query, ddl);
+    }
+
+    @Test
+    public void testGeoHashNull() throws Exception {
+        final String query = "select * from x where geo8 <> null or geo16 <> null or geo32 <> null or geo64 <> null";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_geohash(4) geo8," +
+                " rnd_geohash(15) geo16," +
+                " rnd_geohash(16) geo32," +
+                " rnd_geohash(40) geo64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
+        assertQuery(query, ddl);
+    }
+
+    @Test
+    public void testChar() throws Exception {
+        final String query = "select * from x where ch > 'a' and ch < 'z'";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_char() ch" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
+        assertQuery(query, ddl);
+    }
+
+    @Test
+    public void testBoolean() throws Exception {
+        final String query = "select * from x where bool1 or bool2 = false";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_boolean() bool1," +
+                " rnd_boolean() bool2" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
+        assertQuery(query, ddl);
+    }
+
+    @Test
+    public void testDate() throws Exception {
+        final String query = "select * from x where d1 != d2";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 0) d1," +
+                " rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 0) d2" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
+        assertQuery(query, ddl);
+    }
+
+    @Test
+    public void testDateNull() throws Exception {
+        final String query = "select * from x where d <> null";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 5) d" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
+        assertQuery(query, ddl);
+    }
+
+    @Test
+    public void testTimestamp() throws Exception {
+        final String query = "select * from x where t1 != t2";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_timestamp(to_timestamp('2020', 'yyyy'), to_timestamp('2021', 'yyyy'), 0) t1," +
+                " rnd_timestamp(to_timestamp('2020', 'yyyy'), to_timestamp('2021', 'yyyy'), 0) t2" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
+        assertQuery(query, ddl);
+    }
+
+    @Test
+    public void testTimestampNull() throws Exception {
+        final String query = "select * from x where t <> null";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_timestamp(to_timestamp('2020', 'yyyy'), to_timestamp('2021', 'yyyy'), 5) t" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
+        assertQuery(query, ddl);
+    }
+
+    // TODO: test the following
+    // filter on subquery
+    // interval and filter
+    // wrong type expression a+b
+    // join
+    // latest by
 
     private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {
         final boolean forceScalarJit = jitMode == JitMode.SCALAR;
@@ -274,7 +368,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
 
                 TestUtils.assertEquals("result mismatch for filter: " + filter, sink, jitSink);
             }
-            Assert.assertTrue(maxSize > 0);
+            Assert.assertTrue("at least one query is expected to return rows", maxSize > 0);
         });
     }
 
@@ -452,12 +546,4 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
             return delegate.size();
         }
     }
-
-    // TODO: test the following
-    // geohash (+null), char, boolean, date, timestamp
-    // filter on subquery
-    // interval and filter
-    // wrong type expression a+b
-    // join
-    // latest by
 }

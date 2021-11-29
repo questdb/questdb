@@ -134,6 +134,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtIntFunctionFactory,
+            io.questdb.griffin.engine.functions.lt.LtCharFunctionFactory,
 
 //                   '+' operator
             io.questdb.griffin.engine.functions.math.AddByteFunctionFactory,

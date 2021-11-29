@@ -39,7 +39,7 @@ struct JitErrorHandler : public asmjit::ErrorHandler {
 };
 
 struct JitGlobalContext {
-    //rt allocator is thead-safe
+    //rt allocator is thread-safe
     JitRuntime rt;
     JitErrorHandler errorHandler;
 };

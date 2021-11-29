@@ -31,14 +31,15 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class LtIntFunctionFactory implements FunctionFactory {
+public class LtCharFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "<(II)";
+        return "<(AA)";
     }
 
     @Override
@@ -54,28 +55,30 @@ public class LtIntFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new LtIntFunction(args.getQuick(0), args.getQuick(1));
+        return new LtCharFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class LtIntFunction extends NegatableBooleanFunction implements BinaryFunction {
+    private static class LtCharFunction extends NegatableBooleanFunction implements BinaryFunction {
+
         private final Function left;
         private final Function right;
 
-        public LtIntFunction(Function left, Function right) {
+        public LtCharFunction(Function left, Function right) {
             this.left = left;
             this.right = right;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            long left = this.left.getInt(rec);
-            if (left != Numbers.INT_NaN) {
-                long right = this.right.getInt(rec);
-                if (right != Numbers.INT_NaN) {
-                    return negated == (left >= right);
-                }
+            char left = this.left.getChar(rec);
+            if (left == CharConstant.ZERO.getChar(null)) {
+                return false;
             }
-            return false;
+            char right = this.right.getChar(rec);
+            if (right == CharConstant.ZERO.getChar(null)) {
+                return false;
+            }
+            return negated == (left >= right);
         }
 
         @Override

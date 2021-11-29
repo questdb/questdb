@@ -363,8 +363,13 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedAllConstantsExpression() throws Exception {
+    public void testUnsupportedConstantExpression() throws Exception {
         serialize("2 > 1");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedConstantSubexpression() throws Exception {
+        serialize("anint = 0 or 2 > 1");
     }
 
     @Test(expected = SqlException.class)

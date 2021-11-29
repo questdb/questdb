@@ -256,7 +256,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         }
     }
 
-    private void serializeConstant(int position, final CharSequence token, boolean negate) throws SqlException {
+    private void serializeConstant(int position, final CharSequence token, boolean negated) throws SqlException {
         final byte typeCode = arithmeticContext.constantTypeCode;
         if (typeCode == UNDEFINED_CODE) {
             throw SqlException.position(position).put("all constants expression: ").put(token);
@@ -303,7 +303,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         if (ExpressionType.NUMERIC != arithmeticContext.expressionType) {
             throw SqlException.position(position).put("numeric constant in non-numeric expression: ").put(token);
         }
-        serializeNumber(position, token, typeCode, negate);
+        serializeNumber(position, token, typeCode, negated);
     }
 
     private void serializeNull(int position, byte typeCode, boolean geoHashExpression) throws SqlException {
@@ -332,9 +332,9 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         }
     }
 
-    private void serializeNumber(int position, final CharSequence token, byte typeCode, boolean negate) throws SqlException {
+    private void serializeNumber(int position, final CharSequence token, byte typeCode, boolean negated) throws SqlException {
         memory.putByte(typeCode);
-        long sign = negate ? -1 : 1;
+        long sign = negated ? -1 : 1;
         try {
             switch (typeCode) {
                 case IMM_I1:
