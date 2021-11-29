@@ -47,6 +47,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.concurrent.locks.ReadWriteLock;
 
 import static io.questdb.network.IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATION;
@@ -82,6 +83,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final Path path = new Path();
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final LineTcpReceiverConfiguration configuration;
+    private final BitSet processedCols = new BitSet();
     private Sequence pubSeq;
     private int loadCheckCycles = 0;
     private int reshuffleCount = 0;
@@ -481,15 +483,20 @@ class LineTcpMeasurementScheduler implements Closeable {
                 LineTcpParser protoParser,
                 FloatingDirectCharSink floatingCharSink
         ) {
+            processedCols.clear();
             threadId = INCOMPLETE_EVENT_ID;
             this.tableUpdateDetails = tableUpdateDetails;
+            TableWriter writer = tableUpdateDetails.getWriter();
+            final int timestampIndex = writer.getMetadata().getTimestampIndex();
             long timestamp = protoParser.getTimestamp();
             if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
                 timestamp = timestampAdapter.getMicros(timestamp);
+                processedCols.set(timestampIndex);
             }
             long bufPos = bufLo;
             long bufMax = bufLo + bufSize;
-            Unsafe.getUnsafe().putLong(bufPos, timestamp);
+            long timestampBufPos = bufPos;
+            //timestamp is saved to timestampBufPos after saving all fields
             bufPos += Long.BYTES;
             int nEntities = protoParser.getnEntities();
             Unsafe.getUnsafe().putInt(bufPos, nEntities);
@@ -513,6 +520,14 @@ class LineTcpMeasurementScheduler implements Closeable {
                         }
                         bufPos += colNameLen;
                     } else {
+                        if (colIndex == timestampIndex) {
+                            timestamp = timestampAdapter.getMicros(entity.getLongValue());
+                            continue;
+                        }
+                        if (processedCols.get(colIndex)) {
+                            continue;
+                        }
+                        processedCols.set(colIndex);
                         Unsafe.getUnsafe().putInt(bufPos, colIndex);
                         bufPos += Integer.BYTES;
                     }
@@ -658,6 +673,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     throw CairoException.instance(0).put("queue buffer overflow");
                 }
             }
+            Unsafe.getUnsafe().putLong(timestampBufPos, timestamp);
             threadId = tableUpdateDetails.writerThreadId;
         }
 
