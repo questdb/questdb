@@ -54,37 +54,37 @@ namespace questdb::x86 {
              const Gp &input_index) {
 
         auto column_idx = static_cast<int32_t>(read<int64_t>(istream, size, pos));
-        Gp column_address = c.newInt64();
+        Gp column_address = c.newInt64("column_address");
         c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
 
         switch (type) {
             case i8: {
-                Gp row_data = c.newGpd();
+                Gp row_data = c.newGpd("i8_mem");
                 c.movsx(row_data, Mem(column_address, input_index, 0, 0, 1));
                 return {row_data, type, kMemory};
             }
             case i16: {
-                Gp row_data = c.newGpd();
+                Gp row_data = c.newGpd("i16_mem");
                 c.movsx(row_data, Mem(column_address, input_index, 1, 0, 2));
                 return {row_data, type, kMemory};
             }
             case i32: {
-                Gp row_data = c.newGpd();
+                Gp row_data = c.newGpd("i32_mem");
                 c.mov(row_data, Mem(column_address, input_index, 2, 0, 4));
                 return {row_data, type, kMemory};
             }
             case i64: {
-                Gp row_data = c.newGpq();
+                Gp row_data = c.newGpq("i64_mem");
                 c.mov(row_data, Mem(column_address, input_index, 3, 0, 8));
                 return {row_data, type, kMemory};
             }
             case f32: {
-                Xmm row_data = c.newXmmSs();
+                Xmm row_data = c.newXmmSs("f32_mem");
                 c.vmovss(row_data, Mem(column_address, input_index, 2, 0, 4));
                 return {row_data, type, kMemory};
             }
             case f64: {
-                Xmm row_data = c.newXmmSd();
+                Xmm row_data = c.newXmmSd("f64_mem");
                 c.vmovsd(row_data, Mem(column_address, input_index, 3, 0, 8));
                 return {row_data, type, kMemory};
             }
@@ -97,26 +97,26 @@ namespace questdb::x86 {
             case i16:
             case i32: {
                 auto value = read<int64_t>(istream, size, pos);
-                Gp reg = c.newGpd();
+                Gp reg = c.newGpd("i32_imm %d", value);
                 c.mov(reg, value); //todo: check & cast value ?
                 return {reg, type, kConst};
             }
             case i64: {
                 auto value = read<int64_t>(istream, size, pos);
-                Gp reg = c.newGpq();
+                Gp reg = c.newGpq("i64_imm %d", value);
                 c.movabs(reg, value); //todo: check & cast value ?
                 return {reg, type, kConst};
             }
             case f32: {
                 auto value = read<double>(istream, size, pos);
-                Xmm reg = c.newXmmSs();
+                Xmm reg = c.newXmmSs("f32_imm %f", value);
                 Mem mem = c.newFloatConst(ConstPool::kScopeLocal, (float) value);
                 c.movss(reg, mem);
                 return {reg, type, kConst};
             }
             case f64: {
                 auto value = read<double>(istream, size, pos);
-                Xmm reg = c.newXmmSd();
+                Xmm reg = c.newXmmSd("f64_imm %f", value);
                 Mem mem = c.newDoubleConst(ConstPool::kScopeLocal, value);
                 c.movsd(reg, mem);
                 return {reg, type, kConst};
@@ -335,6 +335,7 @@ namespace questdb::x86 {
 
     inline std::pair<jit_value_t, jit_value_t>
     convert(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        c.comment("convert");
         switch (lhs.dtype()) {
             case i8:
             case i16:
@@ -346,15 +347,15 @@ namespace questdb::x86 {
                         return std::make_pair(lhs, rhs);
                     case i64:
                         return std::make_pair(
-                                jit_value_t(int32_to_int64(c, lhs.gp().r32(), cvt_null_check(lhs.dtype())), i64,
+                                jit_value_t(int32_to_int64(c, lhs.gp().r32(), null_check && cvt_null_check(lhs.dtype())), i64,
                                             lhs.dkind()), rhs);
                     case f32:
                         return std::make_pair(
-                                jit_value_t(int32_to_float(c, lhs.gp().r32(), cvt_null_check(lhs.dtype())), f32,
+                                jit_value_t(int32_to_float(c, lhs.gp().r32(), null_check && cvt_null_check(lhs.dtype())), f32,
                                             lhs.dkind()), rhs);
                     case f64:
                         return std::make_pair(
-                                jit_value_t(int32_to_double(c, lhs.gp().r32(), cvt_null_check(lhs.dtype())), f64,
+                                jit_value_t(int32_to_double(c, lhs.gp().r32(), null_check && cvt_null_check(lhs.dtype())), f64,
                                             lhs.dkind()), rhs);
                 }
                 break;
@@ -365,14 +366,14 @@ namespace questdb::x86 {
                     case i32:
                         return std::make_pair(lhs,
                                               jit_value_t(
-                                                      int32_to_int64(c, rhs.gp().r32(), cvt_null_check(rhs.dtype())),
+                                                      int32_to_int64(c, rhs.gp().r32(), null_check && cvt_null_check(rhs.dtype())),
                                                       i64, rhs.dkind()));
                     case i64:
                         return std::make_pair(lhs, rhs);
                     case f32:
                         return std::make_pair(
-                                jit_value_t(int64_to_float(c, lhs.gp().r64(), null_check), f32, lhs.dkind()),
-                                rhs);
+                                jit_value_t(int64_to_double(c, lhs.gp().r64(), null_check), f64, lhs.dkind()),
+                                jit_value_t(float_to_double(c, rhs.xmm()), f64, rhs.dkind()));
                     case f64:
                         return std::make_pair(
                                 jit_value_t(int64_to_double(c, lhs.gp().r64(), null_check), f64, lhs.dkind()),
@@ -386,11 +387,11 @@ namespace questdb::x86 {
                     case i32:
                         return std::make_pair(lhs,
                                               jit_value_t(
-                                                      int32_to_float(c, rhs.gp().r32(), cvt_null_check(rhs.dtype())),
+                                                      int32_to_float(c, rhs.gp().r32(), null_check && cvt_null_check(rhs.dtype())),
                                                       f32, rhs.dkind()));
                     case i64:
-                        return std::make_pair(lhs,
-                                              jit_value_t(int64_to_float(c, rhs.gp().r64(), null_check), f32,
+                        return std::make_pair(jit_value_t(float_to_double(c, lhs.xmm()), f64, lhs.dkind()),
+                                              jit_value_t(int64_to_double(c, rhs.gp().r64(), null_check), f64,
                                                           rhs.dkind()));
                     case f32:
                         return std::make_pair(lhs, rhs);
@@ -405,7 +406,7 @@ namespace questdb::x86 {
                     case i32:
                         return std::make_pair(lhs,
                                               jit_value_t(
-                                                      int32_to_double(c, rhs.gp().r32(), cvt_null_check(rhs.dtype())),
+                                                      int32_to_double(c, rhs.gp().r32(), null_check && cvt_null_check(rhs.dtype())),
                                                       f64, rhs.dkind()));
                     case i64:
                         return std::make_pair(lhs, jit_value_t(int64_to_double(c, rhs.gp().r64(), null_check), f64,
