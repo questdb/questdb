@@ -25,8 +25,8 @@
 package io.questdb.log;
 
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.util.HashMap;
@@ -40,14 +40,9 @@ public class TemplateParserTest {
         ENV.put("DATABASE_ROOT", "c:/\\/\\");
     }
 
-    private TemplateParser dollar$;
-    private StringSink sink;
+    private static final TemplateParser parser = new TemplateParser();
+    private static final StringSink sink = new StringSink();
 
-    @Before
-    public void setUp() {
-        dollar$ = new TemplateParser();
-        sink = new StringSink();
-    }
 
     @Test
     public void testSuccessfulParse() {
@@ -160,9 +155,9 @@ public class TemplateParserTest {
 
     @Test
     public void testChangeFileTimestamp() {
-        dollar$.parseEnv("${date:y}", 0);
-        dollar$.setDateValue(1637091363010000L); // time always in micros
-        Assert.assertEquals("2021", dollar$.toString());
+        parser.parseEnv("${date:y}", 0);
+        parser.setDateValue(1637091363010000L); // time always in micros
+        TestUtils.assertEquals("2021", parser);
     }
 
     @Test
@@ -170,11 +165,11 @@ public class TemplateParserTest {
         Map<String, String> props = new HashMap<>();
         props.put("tarzan", "T");
         props.put("jane", "J");
-        dollar$.parse("${date:yyyy}{${tarzan}^$jane}", 0, props);
-        Assert.assertEquals("1970{T^J}", dollar$.toString());
-        Assert.assertTrue(dollar$.getKeyOffset("date:") < 0);
-        Assert.assertEquals(dollar$.getKeyOffset("tarzan"), 13);
-        Assert.assertEquals(dollar$.getKeyOffset("jane"), 23);
+        parser.parse("${date:yyyy}{${tarzan}^$jane}", 0, props);
+        TestUtils.assertEquals("1970{T^J}", parser);
+        Assert.assertTrue(parser.getKeyOffset("date:") < 0);
+        Assert.assertEquals(parser.getKeyOffset("tarzan"), 13);
+        Assert.assertEquals(parser.getKeyOffset("jane"), 23);
     }
 
     private void assertParseEquals(String location, String expected, String expectedLocation) {
@@ -187,16 +182,16 @@ public class TemplateParserTest {
             String expectedLocation,
             Map<String, String> props
     ) {
-        dollar$.parse(location, 0, props);
+        parser.parse(location, 0, props);
         sink.clear();
-        sink.put(dollar$.getLocationComponents());
-        Assert.assertEquals(expected, dollar$.toString());
-        Assert.assertEquals(expectedLocation, sink.toString());
+        sink.put(parser.getLocationComponents());
+        TestUtils.assertEquals(expected, parser);
+        TestUtils.assertEquals(expectedLocation, sink);
     }
 
     private void assertFail(String location, String expected) {
         try {
-            dollar$.parse(location, 0, ENV);
+            parser.parse(location, 0, ENV);
             Assert.fail();
         } catch (LogError t) {
             Assert.assertEquals(expected, t.getMessage());

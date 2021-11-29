@@ -40,6 +40,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 
@@ -49,6 +50,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class TestUtils {
 
     public static final RecordCursorPrinter printer = new RecordCursorPrinter();
+
+    private static final StringSink sink = new StringSink();
 
     private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
 
@@ -280,6 +283,12 @@ public final class TestUtils {
                 Files.close(fda);
             }
         }
+    }
+
+    public static void assertEquals(CharSequence expected, Sinkable actual) {
+        sink.clear();
+        actual.toSink(sink);
+        assertEquals(null, expected, sink);
     }
 
     public static void assertEquals(CharSequence expected, CharSequence actual) {
