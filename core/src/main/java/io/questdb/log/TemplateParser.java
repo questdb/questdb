@@ -33,10 +33,7 @@ import io.questdb.std.str.StringSink;
 
 import java.util.Map;
 
-public class DollarExpr implements Sinkable {
-
-    private static final String DATE_FORMAT_KEY = "date:";
-    private static final int NIL = -1;
+public class TemplateParser implements Sinkable {
 
     public static CharSequenceObjHashMap<CharSequence> adaptMap(Map<String, String> props) {
         CharSequenceObjHashMap<CharSequence> properties = new CharSequenceObjHashMap<>(props.size());
@@ -46,6 +43,8 @@ public class DollarExpr implements Sinkable {
         return properties;
     }
 
+    private static final String DATE_FORMAT_KEY = "date:";
+    private static final int NIL = -1;
 
     private final TimestampFormatCompiler dateCompiler = new TimestampFormatCompiler();
     private final StringSink resolveSink = new StringSink();
@@ -56,15 +55,15 @@ public class DollarExpr implements Sinkable {
     private long dateValue;
 
 
-    public DollarExpr resolveEnv(CharSequence txt, long dateValue) {
-        return resolve(txt, dateValue, adaptMap(System.getenv()));
+    public TemplateParser parseEnv(CharSequence txt, long dateValue) {
+        return parse(txt, dateValue, adaptMap(System.getenv()));
     }
 
-    public DollarExpr resolve(CharSequence txt, long dateValue, Map<String, String> props) {
-        return resolve(txt, dateValue, adaptMap(props));
+    public TemplateParser parse(CharSequence txt, long dateValue, Map<String, String> props) {
+        return parse(txt, dateValue, adaptMap(props));
     }
 
-    public DollarExpr resolve(CharSequence txt, long dateValue, CharSequenceObjHashMap<CharSequence> props) {
+    public TemplateParser parse(CharSequence txt, long dateValue, CharSequenceObjHashMap<CharSequence> props) {
         originalTxt = txt;
         this.dateValue = dateValue;
         this.props = props;
@@ -208,7 +207,6 @@ public class DollarExpr implements Sinkable {
 
         @Override
         public void toSink(CharSink sink) {
-            // TODO: this is horrendously slow (DollarExprTest.testSuccessfulParse())
             dateFormat.format(dateValue, TimestampFormatUtils.enLocale, null, sink);
         }
     }

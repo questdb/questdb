@@ -58,8 +58,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private final SCSequence writeSequence;
     private final RingQueue<LogRecordSink> alertsSourceQueue;
     private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
-    private final DollarExpr dollar$ = new DollarExpr();
-    private final CharSequenceObjHashMap<CharSequence> alertProps = DollarExpr.adaptMap(System.getenv());
+    private final TemplateParser alertTemplate = new TemplateParser();
+    private final CharSequenceObjHashMap<CharSequence> alertProps = TemplateParser.adaptMap(System.getenv());
     private HttpLogAlertBuilder alertBuilder;
     private LogAlertSocket socket;
 
@@ -176,20 +176,20 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         if (location.isEmpty()) {
             location = DEFAULT_ALERT_TPT_FILE;
         }
-        location = dollar$.resolveEnv(location, now).toString(); // location may contain dollar expressions
+        location = alertTemplate.parseEnv(location, now).toString(); // location may contain dollar expressions
 
         // read template, resolve env vars within (except $ALERT_MESSAGE)
         boolean wasRead = false;
         try (InputStream is = LogAlertSocketWriter.class.getResourceAsStream(location)) {
             if (is != null) {
-                dollar$.resolve(CharSequenceView.of(is), now, alertProps);
+                alertTemplate.parse(CharSequenceView.of(is), now, alertProps);
                 wasRead = true;
             }
         } catch (IOException e) {
             // it was not a resource ("/resource_name")
         }
         if (!wasRead) {
-            dollar$.resolve(
+            alertTemplate.parse(
                     readFile(
                             location,
                             socket.getInBufferPtr(),
@@ -201,9 +201,9 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
             );
         }
         // consolidate/check/load template to the outbound socket buffer
-        dollar$.resolve(dollar$.toString(), now, alertProps);
-        ObjList<Sinkable> components = dollar$.getLocationComponents();
-        if (dollar$.getKeyOffset(MESSAGE_ENV) < 0 || components.size() < 3) {
+        alertTemplate.parse(alertTemplate.toString(), now, alertProps);
+        ObjList<Sinkable> components = alertTemplate.getLocationComponents();
+        if (alertTemplate.getKeyOffset(MESSAGE_ENV) < 0 || components.size() < 3) {
             throw new LogError(String.format(
                     "Bad template, no %s declaration found %s",
                     MESSAGE_ENV_VALUE,

@@ -51,7 +51,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private long _wptr;
     private int nBufferSize;
     private long nRollSize;
-    private final DollarExpr locationParser = new DollarExpr();
+    private final TemplateParser locationParser = new TemplateParser();
     // can be set via reflection
     private String location;
     private String bufferSize;
@@ -85,7 +85,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     @Override
     public void bindProperties() {
-        locationParser.resolveEnv(location, clock.getTicks());
+        locationParser.parseEnv(location, clock.getTicks());
         if (this.bufferSize != null) {
             try {
                 nBufferSize = Numbers.parseIntSize(this.bufferSize);

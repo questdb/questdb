@@ -32,7 +32,7 @@ import org.junit.Test;
 import java.util.HashMap;
 import java.util.Map;
 
-public class DollarExprTest {
+public class TemplateParserTest {
     private static final Map<String, String> ENV = new HashMap<>();
 
     static {
@@ -40,12 +40,12 @@ public class DollarExprTest {
         ENV.put("DATABASE_ROOT", "c:/\\/\\");
     }
 
-    private DollarExpr dollar$;
+    private TemplateParser dollar$;
     private StringSink sink;
 
     @Before
     public void setUp() {
-        dollar$ = new DollarExpr();
+        dollar$ = new TemplateParser();
         sink = new StringSink();
     }
 
@@ -160,7 +160,7 @@ public class DollarExprTest {
 
     @Test
     public void testChangeFileTimestamp() {
-        dollar$.resolveEnv("${date:y}", 0);
+        dollar$.parseEnv("${date:y}", 0);
         dollar$.setDateValue(1637091363010000L); // time always in micros
         Assert.assertEquals("2021", dollar$.toString());
     }
@@ -170,7 +170,7 @@ public class DollarExprTest {
         Map<String, String> props = new HashMap<>();
         props.put("tarzan", "T");
         props.put("jane", "J");
-        dollar$.resolve("${date:yyyy}{${tarzan}^$jane}", 0, props);
+        dollar$.parse("${date:yyyy}{${tarzan}^$jane}", 0, props);
         Assert.assertEquals("1970{T^J}", dollar$.toString());
         Assert.assertTrue(dollar$.getKeyOffset("date:") < 0);
         Assert.assertEquals(dollar$.getKeyOffset("tarzan"), 13);
@@ -187,7 +187,7 @@ public class DollarExprTest {
             String expectedLocation,
             Map<String, String> props
     ) {
-        dollar$.resolve(location, 0, props);
+        dollar$.parse(location, 0, props);
         sink.clear();
         sink.put(dollar$.getLocationComponents());
         Assert.assertEquals(expected, dollar$.toString());
@@ -196,7 +196,7 @@ public class DollarExprTest {
 
     private void assertFail(String location, String expected) {
         try {
-            dollar$.resolve(location, 0, ENV);
+            dollar$.parse(location, 0, ENV);
             Assert.fail();
         } catch (LogError t) {
             Assert.assertEquals(expected, t.getMessage());
