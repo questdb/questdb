@@ -25,6 +25,7 @@
 #include "compiler.h"
 #include <stack>
 #include <iostream>
+#include <cassert>
 
 using namespace asmjit;
 
