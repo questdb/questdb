@@ -43,6 +43,26 @@ if (!process.env.NODE_ENV) {
   process.env.NODE_ENV = "development"
 }
 
+const monacoPatterns = [
+  {
+    from: "node_modules/monaco-editor/min/vs/loader.js",
+    to: "assets/vs/loader.js",
+  },
+  {
+    from: "node_modules/monaco-editor/min/vs/editor/editor.main.js",
+    to: "assets/vs/editor/editor.main.js",
+  },
+  {
+    from: "node_modules/monaco-editor/min/vs/editor/editor.main.nls.js",
+    to: "assets/vs/editor/editor.main.nls.js",
+  },
+  {
+    from: "node_modules/monaco-editor/min/vs/editor/editor.main.css",
+    to: "assets/vs/editor/editor.main.css",
+  },
+  { from: "node_modules/monaco-editor/min/vs/base", to: "assets/vs/base" },
+]
+
 const basePlugins = [
   new CleanWebpackPlugin(),
   new HtmlWebpackPlugin({
@@ -75,6 +95,9 @@ const devPlugins = [
       files: "./src/**/*.ts[x]",
     },
   }),
+  new CopyWebpackPlugin({
+    patterns: monacoPatterns,
+  }),
 ]
 
 const devLoaders = [
@@ -86,7 +109,9 @@ const devLoaders = [
 ]
 
 const prodPlugins = [
-  new CopyWebpackPlugin({ patterns: [{ from: "./assets/", to: "assets/" }] }),
+  new CopyWebpackPlugin({
+    patterns: [{ from: "./assets/", to: "assets/" }, ...monacoPatterns],
+  }),
 ]
 
 module.exports = {
@@ -118,7 +143,7 @@ module.exports = {
   module: {
     rules: [
       {
-        test: /\.(png|jpg|woff)$/,
+        test: /\.(png|jpg|ttf|woff)$/,
         use: ["file-loader"],
       },
       {
