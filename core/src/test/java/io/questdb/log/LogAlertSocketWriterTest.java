@@ -243,6 +243,70 @@ public class LogAlertSocketWriterTest {
     }
 
     @Test
+    public void test_BindProperties_ReconnectDelay() {
+        try (LogAlertSocketWriter writer = new LogAlertSocketWriter(
+                null,
+                null,
+                LogLevel.ERROR
+        )) {
+            writer.setReconnectDelay(String.valueOf(50_000_000));
+            writer.setAlertTargets("\"\"");
+            writer.bindProperties();
+            Assert.assertNotNull(LogAlertSocket.localHostIp);
+            Assert.assertEquals(50_000_000, writer.getReconnectDelay());
+        }
+    }
+
+    @Test
+    public void test_BindProperties_ReconnectDelay_BadValue() {
+        try (LogAlertSocketWriter writer = new LogAlertSocketWriter(
+                null,
+                null,
+                LogLevel.ERROR
+        )) {
+            writer.setReconnectDelay("banana");
+            writer.setAlertTargets("\"\"");
+            try {
+                writer.bindProperties();
+            } catch (LogError e) {
+                Assert.assertEquals("Invalid value for reconnectDelay: banana", e.getMessage());
+            }
+        }
+    }
+
+    @Test
+    public void test_BindProperties_BufferSize() {
+        try (LogAlertSocketWriter writer = new LogAlertSocketWriter(
+                null,
+                null,
+                LogLevel.ERROR
+        )) {
+            writer.setBufferSize(String.valueOf(12));
+            writer.setAlertTargets("\"\"");
+            writer.bindProperties();
+            Assert.assertNotNull(LogAlertSocket.localHostIp);
+            Assert.assertEquals(12, writer.getBufferSize());
+        }
+    }
+
+    @Test
+    public void test_BindProperties_BufferSize_BadValue() {
+        try (LogAlertSocketWriter writer = new LogAlertSocketWriter(
+                null,
+                null,
+                LogLevel.ERROR
+        )) {
+            writer.setBufferSize("coconut");
+            writer.setAlertTargets("\"\"");
+            try {
+                writer.bindProperties();
+            } catch (LogError e) {
+                Assert.assertEquals("Invalid value for bufferSize: coconut", e.getMessage());
+            }
+        }
+    }
+
+    @Test
     public void testReadFile() {
         final String fileName = rand.nextString(10);
         final String fileContent = "யாமறிந்த மொழிகளிலே தமிழ்மொழி போல் இனிதாவது எங்கும் காணோம்,\n" +

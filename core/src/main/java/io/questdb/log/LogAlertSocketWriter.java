@@ -37,7 +37,6 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.*;
-import java.util.function.Consumer;
 
 public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, LogWriter {
 
@@ -80,9 +79,10 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     }
 
     // changed by introspection
-    private String location = DEFAULT_ALERT_TPT_FILE;
+    private String location;
     private String bufferSize;
     private String alertTargets;
+    private String reconnectDelay;
 
 
     public LogAlertSocketWriter(RingQueue<LogRecordSink> alertsSrc, SCSequence writeSequence, int level) {
@@ -116,10 +116,18 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
             try {
                 nBufferSize = Numbers.parseIntSize(bufferSize);
             } catch (NumericException e) {
-                throw new LogError("Invalid value for bufferSize");
+                throw new LogError("Invalid value for bufferSize: " + bufferSize);
             }
         }
-        socket = new LogAlertSocket(alertTargets, nBufferSize);
+        long nReconnectDelay = LogAlertSocket.RECONNECT_DELAY_NANO;
+        if (reconnectDelay != null) {
+            try {
+                nReconnectDelay = Numbers.parseLong(reconnectDelay);
+            } catch (NumericException e) {
+                throw new LogError("Invalid value for reconnectDelay: " + reconnectDelay);
+            }
+        }
+        socket = new LogAlertSocket(alertTargets, nBufferSize, nReconnectDelay);
         loadLogAlertTemplate();
         socket.connect();
     }
@@ -139,6 +147,11 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     @VisibleForTesting
     void setBufferSize(String bufferSize) {
         this.bufferSize = bufferSize;
+    }
+
+    @VisibleForTesting
+    int getBufferSize() {
+        return socket.getOutBufferSize();
     }
 
     @VisibleForTesting
@@ -167,13 +180,18 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     }
 
     @VisibleForTesting
-    int getBufferSize() {
-        return socket.getOutBufferSize();
+    long getReconnectDelay() {
+        return socket.getReconnectDelay();
+    }
+
+    @VisibleForTesting
+    void setReconnectDelay(String reconnectDelay) {
+        this.reconnectDelay = reconnectDelay;
     }
 
     private void loadLogAlertTemplate() {
         final long now = clock.getTicks();
-        if (location.isEmpty()) {
+        if (location == null || location.isEmpty()) {
             location = DEFAULT_ALERT_TPT_FILE;
         }
         location = alertTemplate.parseEnv(location, now).toString(); // location may contain dollar expressions
@@ -221,14 +239,6 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         final int len = logRecord.length();
         if ((logRecord.getLevel() & level) != 0 && len > 0) {
             socket.send(alertBuilder.rewindToMark().put(logRecord).$());
-        }
-    }
-
-    @VisibleForTesting
-    void onLogRecord(LogRecordSink logRecord, Consumer<String> ackReceiver) {
-        final int len = logRecord.length();
-        if ((logRecord.getLevel() & level) != 0 && len > 0) {
-            socket.send(alertBuilder.rewindToMark().put(logRecord).$(), ackReceiver);
         }
     }
 

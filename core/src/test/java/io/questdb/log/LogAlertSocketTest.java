@@ -136,7 +136,7 @@ public class LogAlertSocketTest {
                     .put(CRLF)
                     .$());
             try {
-                firstServerCompleted.await(5, TimeUnit.SECONDS);
+                Assert.assertTrue(firstServerCompleted.await(5, TimeUnit.SECONDS));
             } catch (InterruptedException e) {
                 Assert.fail("timed-out");
             }
@@ -144,11 +144,11 @@ public class LogAlertSocketTest {
             // by now there is only one server surviving, and we are connected to the other.
             // send a death pill and kill the surviving server.
             builder.clear();
-            alertSkt.send(builder.put(MockAlertTarget.DEATH_PILL).put(CRLF).$());
+            Assert.assertTrue(alertSkt.send(builder.put(MockAlertTarget.DEATH_PILL).put(CRLF).$()));
 
             // wait for haltness
             try {
-                haltLatch.await(30, TimeUnit.SECONDS);
+                Assert.assertTrue(haltLatch.await(30, TimeUnit.SECONDS));
             } catch (InterruptedException e) {
                 Assert.fail("timed-out");
             }
@@ -186,7 +186,7 @@ public class LogAlertSocketTest {
 
     private void assertLogError(String socketAddress, String expected) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LogAlertSocket ignored = new LogAlertSocket(socketAddress, 1024)) {
+            try (LogAlertSocket ignored = new LogAlertSocket(socketAddress, 1024, 50_000_000)) {
                 Assert.fail();
             } catch (LogError logError) {
                 Assert.assertEquals(expected, logError.getMessage());
@@ -200,7 +200,7 @@ public class LogAlertSocketTest {
             int[] expectedPorts
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LogAlertSocket socket = new LogAlertSocket(socketAddress, 1024)) {
+            try (LogAlertSocket socket = new LogAlertSocket(socketAddress, 1024, 50_000_000)) {
                 Assert.assertEquals(expectedHosts.length, socket.getAlertHostsCount());
                 Assert.assertEquals(expectedPorts.length, socket.getAlertHostsCount());
                 for (int i = 0; i < expectedHosts.length; i++) {

@@ -55,6 +55,7 @@ public class LogAlertSocket implements Closeable {
     public static final int DEFAULT_PORT = 9093;
     public static final int IN_BUFFER_SIZE = 2 * 1024 * 1024;
     public static final int OUT_BUFFER_SIZE = 4 * 1024 * 1024;
+    public static final long RECONNECT_DELAY_NANO = 250_000_000; // 1/4th sec
     private static final int HOSTS_LIMIT = 12;
 
     private final Rnd rand;
@@ -63,6 +64,7 @@ public class LogAlertSocket implements Closeable {
     private final int[] alertPorts = new int[HOSTS_LIMIT]; // indexed by alertHostIdx < alertHostsCount
     private final int outBufferSize;
     private final int inBufferSize;
+    private final long reconnectDelay;
     private long outBufferPtr;
     private long inBufferPtr;
     private int alertHostsCount;
@@ -72,14 +74,20 @@ public class LogAlertSocket implements Closeable {
     private String alertTargets; // host[:port](,host[:port])*
 
     public LogAlertSocket(String alertTargets) {
-        this(NetworkFacadeImpl.INSTANCE, alertTargets, IN_BUFFER_SIZE, OUT_BUFFER_SIZE);
+        this(NetworkFacadeImpl.INSTANCE, alertTargets, IN_BUFFER_SIZE, OUT_BUFFER_SIZE, RECONNECT_DELAY_NANO);
     }
 
-    public LogAlertSocket(String alertTargets, int outBufferSize) {
-        this(NetworkFacadeImpl.INSTANCE, alertTargets, IN_BUFFER_SIZE, outBufferSize);
+    public LogAlertSocket(String alertTargets, int outBufferSize, long reconnectDelay) {
+        this(NetworkFacadeImpl.INSTANCE, alertTargets, IN_BUFFER_SIZE, outBufferSize, reconnectDelay);
     }
 
-    public LogAlertSocket(NetworkFacade nf, String alertTargets, int inBufferSize, int outBufferSize) {
+    public LogAlertSocket(
+            NetworkFacade nf,
+            String alertTargets,
+            int inBufferSize,
+            int outBufferSize,
+            long reconnectDelay
+    ) {
         this.nf = nf;
         this.rand = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.alertTargets = alertTargets;
@@ -88,6 +96,7 @@ public class LogAlertSocket implements Closeable {
         this.inBufferPtr = Unsafe.malloc(inBufferSize, MemoryTag.NATIVE_DEFAULT);
         this.outBufferSize = outBufferSize;
         this.outBufferPtr = Unsafe.malloc(outBufferSize, MemoryTag.NATIVE_DEFAULT);
+        this.reconnectDelay = reconnectDelay;
     }
 
     public void connect() {
@@ -170,7 +179,7 @@ public class LogAlertSocket implements Closeable {
             int alertHostIdx = this.alertHostIdx;
             this.alertHostIdx = (this.alertHostIdx + 1) % alertHostsCount;
             if (alertHostIdx == this.alertHostIdx) {
-                LockSupport.parkNanos(250_000_000); // 1/4th a second
+                LockSupport.parkNanos(reconnectDelay);
             }
             connect();
             sendAttempts--;
@@ -237,6 +246,11 @@ public class LogAlertSocket implements Closeable {
     @VisibleForTesting
     int getAlertHostsCount() {
         return alertHostsCount;
+    }
+
+    @VisibleForTesting
+    long getReconnectDelay() {
+        return reconnectDelay;
     }
 
     private void freeSocketAndAddress() {
