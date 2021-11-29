@@ -24,7 +24,10 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -90,12 +93,71 @@ public final class SqlParser {
         this.expressionParser = new ExpressionParser(expressionNodePool, this, characterStore);
     }
 
+    public static boolean isFullSampleByPeriod(ExpressionNode n) {
+        return n != null && (n.type == ExpressionNode.CONSTANT || (n.type == ExpressionNode.LITERAL && isValidSampleByPeriodLetter(n.token)));
+    }
+
     private static SqlException err(GenericLexer lexer, String msg) {
         return SqlException.$(lexer.lastTokenPosition(), msg);
     }
 
     private static SqlException errUnexpected(GenericLexer lexer, CharSequence token) {
         return SqlException.unexpectedToken(lexer.lastTokenPosition(), token);
+    }
+
+    private static boolean isValidSampleByPeriodLetter(CharSequence token) {
+        if (token.length() != 1) return false;
+        switch (token.charAt(0)) {
+            case 'T':
+                // millis
+            case 's':
+                // seconds
+            case 'm':
+                // minutes
+            case 'h':
+                // hours
+            case 'd':
+                // days
+            case 'M':
+                // months
+            case 'y':
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    static int parseGeoHashBits(int position, int start, CharSequence sizeStr) throws SqlException {
+        assert start >= 0;
+        if (sizeStr.length() - start < 2) {
+            throw SqlException.position(position)
+                    .put("invalid GEOHASH size, must be number followed by 'C' or 'B' character");
+        }
+        int size;
+        try {
+            size = Numbers.parseInt(sizeStr, start, sizeStr.length() - 1);
+        } catch (NumericException e) {
+            throw SqlException.position(position)
+                    .put("invalid GEOHASH size, must be number followed by 'C' or 'B' character");
+        }
+        switch (sizeStr.charAt(sizeStr.length() - 1)) {
+            case 'C':
+            case 'c':
+                size *= 5;
+                break;
+            case 'B':
+            case 'b':
+                break;
+            default:
+                throw SqlException.position(position)
+                        .put("invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
+        }
+        if (size < 1 || size > ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
+            throw SqlException.position(position)
+                    .put("invalid GEOHASH type precision range, mast be [1, 60] bits, provided=")
+                    .put(size);
+        }
+        return size;
     }
 
     private void addConcatArgs(ObjList<ExpressionNode> args, ExpressionNode leaf) {
@@ -150,48 +212,6 @@ public final class SqlParser {
             return;
         }
         throw SqlException.$((lexer.lastTokenPosition()), "'by' expected");
-    }
-
-    private void expectSample(GenericLexer lexer, QueryModel model) throws SqlException {
-        final ExpressionNode n = expr(lexer, (QueryModel) null);
-        if (isFullSampleByPeriod(n)) {
-            model.setSampleBy(n);
-            return;
-        }
-        // This is complex expression of sample by period. It must follow time unit interval
-        ExpressionNode periodUnit = expectLiteral(lexer);
-        if (periodUnit == null || periodUnit.type != ExpressionNode.LITERAL || !isValidSampleByPeriodLetter(periodUnit.token)) {
-            int lexerPosition = lexer.getUnparsed() == null ? lexer.getPosition() : lexer.lastTokenPosition();
-            throw SqlException.$(periodUnit != null ? periodUnit.position : lexerPosition, "one letter sample by period unit expected");
-        }
-        model.setSampleBy(n, periodUnit);
-    }
-
-
-    public static boolean isFullSampleByPeriod(ExpressionNode n) {
-        return n != null && (n.type == ExpressionNode.CONSTANT || (n.type == ExpressionNode.LITERAL && isValidSampleByPeriodLetter(n.token)));
-    }
-
-    private static boolean isValidSampleByPeriodLetter(CharSequence token) {
-        if (token.length() != 1) return false;
-        switch (token.charAt(0)) {
-            case 'T':
-                // millis
-            case 's':
-                // seconds
-            case 'm':
-                // minutes
-            case 'h':
-                // hours
-            case 'd':
-                // days
-            case 'M':
-                // months
-            case 'y':
-                return true;
-            default:
-                return false;
-        }
     }
 
     private ExpressionNode expectExpr(GenericLexer lexer) throws SqlException {
@@ -255,6 +275,21 @@ public final class SqlParser {
             return;
         }
         throw SqlException.$((lexer.lastTokenPosition()), "'offset' expected");
+    }
+
+    private void expectSample(GenericLexer lexer, QueryModel model) throws SqlException {
+        final ExpressionNode n = expr(lexer, (QueryModel) null);
+        if (isFullSampleByPeriod(n)) {
+            model.setSampleBy(n);
+            return;
+        }
+        // This is complex expression of sample by period. It must follow time unit interval
+        ExpressionNode periodUnit = expectLiteral(lexer);
+        if (periodUnit == null || periodUnit.type != ExpressionNode.LITERAL || !isValidSampleByPeriodLetter(periodUnit.token)) {
+            int lexerPosition = lexer.getUnparsed() == null ? lexer.getPosition() : lexer.lastTokenPosition();
+            throw SqlException.$(periodUnit != null ? periodUnit.position : lexerPosition, "one letter sample by period unit expected");
+        }
+        model.setSampleBy(n, periodUnit);
     }
 
     private CharSequence expectTableNameOrSubQuery(GenericLexer lexer) throws SqlException {
@@ -1064,7 +1099,9 @@ public final class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "'into' expected");
         }
 
-        model.setTableName(expectLiteral(lexer));
+        tok = tok(lexer, "table name");
+
+        model.setTableName(nextLiteral(GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()));
 
         tok = tok(lexer, "'(' or 'select'");
 
@@ -1686,39 +1723,6 @@ public final class SqlParser {
         return type;
     }
 
-    static int parseGeoHashBits(int position, int start, CharSequence sizeStr) throws SqlException {
-        assert start >= 0;
-        if (sizeStr.length() - start < 2) {
-            throw SqlException.position(position)
-                    .put("invalid GEOHASH size, must be number followed by 'C' or 'B' character");
-        }
-        int size;
-        try {
-            size = Numbers.parseInt(sizeStr, start, sizeStr.length() - 1);
-        } catch (NumericException e) {
-            throw SqlException.position(position)
-                    .put("invalid GEOHASH size, must be number followed by 'C' or 'B' character");
-        }
-        switch (sizeStr.charAt(sizeStr.length() - 1)) {
-            case 'C':
-            case 'c':
-                size *= 5;
-                break;
-            case 'B':
-            case 'b':
-                break;
-            default:
-                throw SqlException.position(position)
-                        .put("invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
-        }
-        if (size < 1 || size > ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
-            throw SqlException.position(position)
-                    .put("invalid GEOHASH type precision range, mast be [1, 60] bits, provided=")
-                    .put(size);
-        }
-        return size;
-    }
-
     private @NotNull CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {
         final int pos = lexer.getPosition();
         CharSequence tok = optTok(lexer);
@@ -1743,12 +1747,10 @@ public final class SqlParser {
             case ')':
             case ',':
             case '`':
-//            case '"':
             case '\'':
                 throw SqlException.position(pos).put("literal expected");
             default:
                 break;
-
         }
     }
 

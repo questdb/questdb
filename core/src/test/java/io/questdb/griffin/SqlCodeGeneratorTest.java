@@ -192,20 +192,20 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testBindVariableInIndexLookupList() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (" +
-                    "deviceName SYMBOL capacity 1000 index, " +
-                    "time TIMESTAMP, " +
-                    "slot SYMBOL, " +
-                    "port SYMBOL, " +
-                    "downStream DOUBLE, " +
-                    "upStream DOUBLE" +
-                    ") timestamp(time) partition by DAY",
+                            "deviceName SYMBOL capacity 1000 index, " +
+                            "time TIMESTAMP, " +
+                            "slot SYMBOL, " +
+                            "port SYMBOL, " +
+                            "downStream DOUBLE, " +
+                            "upStream DOUBLE" +
+                            ") timestamp(time) partition by DAY",
                     sqlExecutionContext);
             compiler.compile("create table src as (" +
-                    "    select rnd_symbol(15000, 4,4,0) sym, " +
-                    "           timestamp_sequence(0, 100000) ts, " +
-                    "           rnd_double() val " +
-                    "    from long_sequence(500)" +
-                    ")",
+                            "    select rnd_symbol(15000, 4,4,0) sym, " +
+                            "           timestamp_sequence(0, 100000) ts, " +
+                            "           rnd_double() val " +
+                            "    from long_sequence(500)" +
+                            ")",
                     sqlExecutionContext);
             compiler.compile("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src",
                     sqlExecutionContext);
@@ -719,6 +719,38 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testEqGeoHashWhenOtherIsStr1() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(4);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.439000Z\tbbb\tewef\n",
+                            "select * from pos where hash = 'ewef'",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testEqGeoHashWhenOtherIsStr2() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(4);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.439000Z\tbbb\tewef\n",
+                            "select * from pos where 'ewef' = hash",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
     }
 
     @Test
@@ -1954,651 +1986,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         );
     }
 
-
-    @Test
-    public void testLatestByAllIndexedGeoHash1c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(1);
-                    assertQuery("time\tuuid\thash\n" +
-                                    "2021-05-10T23:59:59.150000Z\tXXX\tf\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
-                                    "2021-05-12T00:00:00.186000Z\tZZZ\tv\n",
-                            "select * from pos latest by uuid where hash within(#f, #z, #v)",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHash2c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    assertQuery("time\tuuid\thash\n" +
-                                    "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
-                                    "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
-                            "select * from pos latest by uuid where hash within(#f9, #z3, #ve)",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHash2cFn() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    assertQuery("time\tuuid\thash\n" +
-                                    "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
-                                    "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
-                            "select * from pos latest by uuid where hash within(make_geohash(-62, 53.4, 10), #z3, #ve)",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashOutOfRangeFn() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    try {
-                        assertQuery("time\tuuid\thash\n" +
-                                        "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
-                                        "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
-                                        "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
-                                "select * from pos latest by uuid where hash within(make_geohash(-620.0, 53.4, 10), #z3, #ve)",
-                                "time",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "longitude must be in [-180.0..180.0] range");
-                    }
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashStrCast() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    assertQuery("time\tuuid\thash\n" +
-                                    "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
-                                    "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
-                            "select * from pos latest by uuid where hash within(cast('f9' as geohash(2c)), #z3, #ve)",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashLiteralExpected() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    try {
-                        assertQuery("time\tuuid\thash\n" +
-                                        "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
-                                        "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
-                                        "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
-                                "select * from pos latest by uuid where hash within('z3', #z3, #ve)",
-                                "time",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash literal expected");
-                    }
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashFnNonConst() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    compiler.compile(
-                            "create table x as (" +
-                                    "select" +
-                                    " rnd_symbol(113, 4, 4, 2) s," +
-                                    " timestamp_sequence(500000000000L,100000000L) ts," +
-                                    " (rnd_double()*360.0 - 180.0) lon, " +
-                                    " (rnd_double()*180.0 - 90.0) lat, " +
-                                    " rnd_geohash(40) geo8" +
-                                    " from long_sequence(1000)" +
-                                    "), index(s) timestamp (ts) partition by DAY",
-                            sqlExecutionContext
-                    );
-                    try {
-                        assertQuery("time\tuuid\thash\n",
-                                "select * from x latest by s where geo8 within(make_geohash(lon, lat, 40), #z3, #vegg)",
-                                "ts",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash const function expected");
-                    }
-                });
-    }
-
-
-    @Test
-    public void testLatestByAllIndexedGeoHash4c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(4);
-                    assertQuery("time\tuuid\thash\n" +
-                                    "2021-05-10T23:59:59.150000Z\tXXX\tf91t\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
-                                    "2021-05-12T00:00:00.186000Z\tZZZ\tvepe\n",
-                            "select * from pos latest by uuid where hash within(#f91, #z31w, #vepe)",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHash8c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(8);
-                    assertQuery("time\tuuid\thash\n" +
-                                    "2021-05-10T23:59:59.150000Z\tXXX\tf91t48s7\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n" +
-                                    "2021-05-12T00:00:00.186000Z\tZZZ\tvepe7h62\n",
-                            "select * from pos latest by uuid where hash within(#f91, #z31w, #vepe7h)",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashExcludeLongPrefix() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    try {
-                        assertQuery("",
-                                "select * from pos latest by uuid where hash within(#f9, #z3, #vepe7h)",
-                                "time",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "prefix precision mismatch");
-                    }
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashWithinEmpty() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    try {
-                        assertQuery("",
-                                "select * from pos latest by uuid where hash within()",
-                                "time",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "Too few arguments for 'within'");
-                    }
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashWithinOr() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    try {
-                        assertQuery("",
-                                "select * from pos latest by uuid where hash within(#f9) or hash within(#z3)",
-                                "time",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "Multiple 'within' expressions not supported");
-                    }
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashWithinColumnWrongType() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    try {
-                        assertQuery("",
-                                "select * from pos latest by uuid where uuid within(#f9)",
-                                "time",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash column type expected");
-                    }
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashWithinColumnNotLiteral() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    try {
-                        assertQuery("",
-                                "select * from pos latest by uuid where 'hash' within(#f9)",
-                                "time",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "unexpected token:");
-                    }
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashWithinNullArg() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    try {
-                        assertQuery("",
-                                "select * from pos latest by uuid where hash within(#f9, #z3, null)",
-                                "time",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash value expected");
-                    }
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashWithinWrongCast() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    try {
-                        assertQuery("",
-                                "select * from pos latest by uuid where hash within(cast('f91t' as geohash(4c)), #z3, null)",
-                                "time",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "prefix precision mismatch");
-                    }
-                });
-    }
-
-    @Test
-    public void testEqGeoHashWhenOtherIsStr1() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(4);
-                    assertQuery("time\tuuid\thash\n" +
-                                    "2021-05-10T23:59:59.439000Z\tbbb\tewef\n",
-                            "select * from pos where hash = 'ewef'",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
-    }
-
-    @Test
-    public void testEqGeoHashWhenOtherIsStr2() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(4);
-                    assertQuery("time\tuuid\thash\n" +
-                                    "2021-05-10T23:59:59.439000Z\tbbb\tewef\n",
-                            "select * from pos where 'ewef' = hash",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashTimeRange1c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(1);
-                    assertQuery(
-                            "time\tuuid\thash\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
-                                    "2021-05-11T00:00:00.111000Z\tddd\tb\n",
-                            "select * from pos latest by uuid where time in '2021-05-11' and hash within (#z, #b)",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashTimeRange2c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    assertQuery(
-                            "time\tuuid\thash\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
-                                    "2021-05-11T00:00:00.111000Z\tddd\tbc\n",
-                            "select * from pos latest by uuid where time in '2021-05-11' and hash within (#z, #b)",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashTimeRange4c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(4);
-                    assertQuery(
-                            "time\tuuid\thash\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
-                                    "2021-05-11T00:00:00.111000Z\tddd\tbcnk\n",
-                            "select * from pos latest by uuid where time in '2021-05-11' and hash within (#z, #b)",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashTimeRange8c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(8);
-                    assertQuery(
-                            "time\tuuid\thash\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n",
-                            "select * from pos latest by uuid where time in '2021-05-11' and hash within (#z31, #bbx)",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashRnd6Bits() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createRndGeoHashBitsTable();
-                    assertQuery(
-                            "bits7\tts\n" +
-                                    "1111111\t1970-01-16T21:43:20.000000Z\n" +
-                                    "1111111\t1970-01-18T00:50:00.000000Z\n" +
-                                    "1111111\t1970-01-18T00:55:00.000000Z\n" +
-                                    "1111110\t1970-01-18T05:11:40.000000Z\n" +
-                                    "1111110\t1970-01-18T07:10:00.000000Z\n" +
-                                    "1111110\t1970-01-18T08:20:00.000000Z\n" +
-                                    "1111111\t1970-01-18T08:28:20.000000Z\n",
-                            "select bits7, ts from x latest by s where bits7 within(##111111)",
-                            "ts",
-                            true,
-                            true,
-                            true
-                    );
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashRndLongBitsPrefix() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createRndGeoHashBitsTable();
-                    try {
-                        assertQuery("",
-                                "select * from x latest by s where bits3 within(##111111)",
-                                "ts",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "prefix precision mismatch");
-                    }
-
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashRndLongBitsMask() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createRndGeoHashBitsTable();
-                    assertQuery("i\ts\tts\tbits3\tbits7\tbits9\n" +
-                                    "9384\tYFFD\t1970-01-17T15:31:40.000000Z\t101\t1110000\t101111011\n" +
-                                    "9397\tMXUK\t1970-01-17T15:53:20.000000Z\t100\t1110001\t110001111\n",
-                            "select * from x latest by s where bits7 within(#wt/5)",//(##11100)",
-                            "ts",
-                            true,
-                            true,
-                            true
-                    );
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashRnd1c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createRndGeoHashTable();
-                    assertQuery(
-                            "geo1\tts\n" +
-                                    "x\t1970-01-17T21:43:20.000000Z\n" +
-                                    "x\t1970-01-18T02:38:20.000000Z\n" +
-                                    "y\t1970-01-18T03:03:20.000000Z\n" +
-                                    "x\t1970-01-18T03:06:40.000000Z\n" +
-                                    "y\t1970-01-18T05:53:20.000000Z\n" +
-                                    "y\t1970-01-18T07:41:40.000000Z\n" +
-                                    "y\t1970-01-18T08:18:20.000000Z\n" +
-                                    "z\t1970-01-18T08:35:00.000000Z\n",
-                            "select geo1, ts from x latest by s where geo1 within(#x, #y, #z)",
-                            "ts",
-                            true,
-                            true,
-                            true
-                    );
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashRnd2c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createRndGeoHashTable();
-                    assertQuery(
-                            "geo2\tts\n" +
-                                    "z7g\t1970-01-17T18:45:00.000000Z\n" +
-                                    "xzu\t1970-01-17T21:06:40.000000Z\n" +
-                                    "yyg\t1970-01-18T01:36:40.000000Z\n" +
-                                    "yds\t1970-01-18T01:56:40.000000Z\n" +
-                                    "yjx\t1970-01-18T05:03:20.000000Z\n" +
-                                    "ymx\t1970-01-18T05:53:20.000000Z\n" +
-                                    "y8x\t1970-01-18T06:45:00.000000Z\n" +
-                                    "y25\t1970-01-18T06:48:20.000000Z\n" +
-                                    "yvh\t1970-01-18T06:55:00.000000Z\n" +
-                                    "y1n\t1970-01-18T07:28:20.000000Z\n" +
-                                    "zs4\t1970-01-18T08:03:20.000000Z\n",
-                            "select geo2, ts from x latest by s where geo2 within(#x, #y, #z)",
-                            "ts",
-                            true,
-                            true,
-                            true
-                    );
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashRnd4c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createRndGeoHashTable();
-                    assertQuery(
-                            "geo4\tts\n" +
-                                    "zd4gu\t1970-01-17T20:06:40.000000Z\n" +
-                                    "xwnjg\t1970-01-18T01:36:40.000000Z\n" +
-                                    "yv6gp\t1970-01-18T02:48:20.000000Z\n" +
-                                    "z4wbx\t1970-01-18T05:51:40.000000Z\n" +
-                                    "zejr0\t1970-01-18T06:43:20.000000Z\n" +
-                                    "ybsge\t1970-01-18T06:45:00.000000Z\n" +
-                                    "zdhfv\t1970-01-18T06:53:20.000000Z\n" +
-                                    "z4t7w\t1970-01-18T07:45:00.000000Z\n" +
-                                    "xxusm\t1970-01-18T07:55:00.000000Z\n" +
-                                    "x1dse\t1970-01-18T08:18:20.000000Z\n" +
-                                    "zmt6j\t1970-01-18T08:38:20.000000Z\n",
-                            "select geo4, ts from x latest by s where geo4 within(#x, #y, #z)",
-                            "ts",
-                            true,
-                            true,
-                            true
-                    );
-                });
-    }
-
-    @Test
-    public void testLatestByAllIndexedGeoHashRnd8c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createRndGeoHashTable();
-                    assertQuery(
-                            "geo4\tts\n" +
-                                    "yv6gp\t1970-01-18T02:48:20.000000Z\n" +
-                                    "z4wbx\t1970-01-18T05:51:40.000000Z\n" +
-                                    "ybsge\t1970-01-18T06:45:00.000000Z\n" +
-                                    "z4t7w\t1970-01-18T07:45:00.000000Z\n" +
-                                    "xxusm\t1970-01-18T07:55:00.000000Z\n",
-                            "select geo4, ts from x latest by s where geo4 within(#xx, #y, #z4)",
-                            "ts",
-                            true,
-                            true,
-                            true
-                    );
-                });
-    }
-
-    private void createRndGeoHashBitsTable() throws SqlException {
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol(113, 4, 4, 2) s," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
-                        " rnd_geohash(3) bits3," +
-                        " rnd_geohash(7) bits7," +
-                        " rnd_geohash(9) bits9" +
-                        " from long_sequence(10000)" +
-                        "), index(s) timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-    }
-
-    private void createRndGeoHashTable() throws SqlException {
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol(113, 4, 4, 2) s," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
-                        " rnd_geohash(5) geo1," +
-                        " rnd_geohash(15) geo2," +
-                        " rnd_geohash(25) geo4," +
-                        " rnd_geohash(40) geo8" +
-                        " from long_sequence(10000)" +
-                        "), index(s) timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-    }
-
-    private void createGeoHashTable(int chars) throws SqlException {
-        compiler.compile(
-                String.format("create table pos(time timestamp, uuid symbol, hash geohash(%dc))", chars) +
-                        ", index(uuid) timestamp(time) partition by DAY",
-                sqlExecutionContext
-        );
-        executeInsert("insert into pos values('2021-05-10T23:59:59.150000Z','XXX','f91t48s7')");
-        executeInsert("insert into pos values('2021-05-10T23:59:59.322000Z','ddd','bbqyzfp6')");
-        executeInsert("insert into pos values('2021-05-10T23:59:59.351000Z','bbb','9egcyrxq')");
-        executeInsert("insert into pos values('2021-05-10T23:59:59.439000Z','bbb','ewef1vk8')");
-        executeInsert("insert into pos values('2021-05-10T00:00:00.016000Z','aaa','vb2wg49h')");
-        executeInsert("insert into pos values('2021-05-10T00:00:00.042000Z','ccc','bft3gn89')");
-        executeInsert("insert into pos values('2021-05-10T00:00:00.055000Z','aaa','z6cf5j85')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.066000Z','ddd','vcunv6j7')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.072000Z','ccc','edez0n5y')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.074000Z','aaa','fds32zgc')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.083000Z','YYY','z31wzd5w')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.092000Z','ddd','v9nwc4ny')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.107000Z','ccc','f6yb1yx9')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.111000Z','ddd','bcnktpnw')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.123000Z','aaa','z3t2we5z')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.127000Z','aaa','bgn1yt4y')");
-        executeInsert("insert into pos values('2021-05-11T00:00:00.144000Z','aaa','fuetk3k6')");
-        executeInsert("insert into pos values('2021-05-12T00:00:00.167000Z','ccc','bchx5x14')");
-        executeInsert("insert into pos values('2021-05-12T00:00:00.167000Z','ZZZ','bbxwb5jj')");
-        executeInsert("insert into pos values('2021-05-12T00:00:00.186000Z','ZZZ','vepe7h62')");
-        executeInsert("insert into pos values('2021-05-12T00:00:00.241000Z','bbb','bchxpmmg')");
-        executeInsert("insert into pos values('2021-05-12T00:00:00.245000Z','ddd','f90z3bs5')");
-        executeInsert("insert into pos values('2021-05-12T00:00:00.247000Z','bbb','bftqreuh')");
-        executeInsert("insert into pos values('2021-05-12T00:00:00.295000Z','ddd','u2rqgy9s')");
-        executeInsert("insert into pos values('2021-05-12T00:00:00.304000Z','aaa','w23bhjd2')");
-    }
-
     @Test
     public void testLatestByAllIndexed() throws Exception {
         final String expected = "a\tb\tk\n" +
@@ -2719,28 +2106,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestByAllIndexedFilterColumnDereference() throws Exception {
-        final String expected = "b\tk\n" +
-                "RXGZ\t1970-01-12T13:46:40.000000Z\n";
-        assertQuery(expected,
-                "select b,k from x latest by b where b = 'RXGZ' and k < '1970-01-22'",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " timestamp_sequence(0, 100000000000) k," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " rnd_double(0)*100 a1," +
-                        " rnd_double(0)*100 a2" +
-                        " from long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                true,
-                true,
-                false
-        );
-    }
-
-    @Test
     public void testLatestByAllIndexedFilterBySymbol() throws Exception {
         final String expected = "a\tb\tc\tk\n" +
                 "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n";
@@ -2769,6 +2134,28 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true,
                 true
+        );
+    }
+
+    @Test
+    public void testLatestByAllIndexedFilterColumnDereference() throws Exception {
+        final String expected = "b\tk\n" +
+                "RXGZ\t1970-01-12T13:46:40.000000Z\n";
+        assertQuery(expected,
+                "select b,k from x latest by b where b = 'RXGZ' and k < '1970-01-22'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " timestamp_sequence(0, 100000000000) k," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_double(0)*100 a1," +
+                        " rnd_double(0)*100 a2" +
+                        " from long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                true,
+                true,
+                false
         );
     }
 
@@ -2818,6 +2205,551 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     );
                 }
         );
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHash1c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(1);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.150000Z\tXXX\tf\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
+                                    "2021-05-12T00:00:00.186000Z\tZZZ\tv\n",
+                            "select * from pos latest by uuid where hash within(#f, #z, #v)",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHash2c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
+                                    "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
+                            "select * from pos latest by uuid where hash within(#f9, #z3, #ve)",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHash2cFn() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
+                                    "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
+                            "select * from pos latest by uuid where hash within(make_geohash(-62, 53.4, 10), #z3, #ve)",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHash4c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(4);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.150000Z\tXXX\tf91t\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
+                                    "2021-05-12T00:00:00.186000Z\tZZZ\tvepe\n",
+                            "select * from pos latest by uuid where hash within(#f91, #z31w, #vepe)",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHash8c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(8);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.150000Z\tXXX\tf91t48s7\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n" +
+                                    "2021-05-12T00:00:00.186000Z\tZZZ\tvepe7h62\n",
+                            "select * from pos latest by uuid where hash within(#f91, #z31w, #vepe7h)",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashExcludeLongPrefix() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    try {
+                        assertQuery("",
+                                "select * from pos latest by uuid where hash within(#f9, #z3, #vepe7h)",
+                                "time",
+                                true,
+                                true,
+                                true
+                        );
+                    } catch (SqlException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "prefix precision mismatch");
+                    }
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashFnNonConst() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    compiler.compile(
+                            "create table x as (" +
+                                    "select" +
+                                    " rnd_symbol(113, 4, 4, 2) s," +
+                                    " timestamp_sequence(500000000000L,100000000L) ts," +
+                                    " (rnd_double()*360.0 - 180.0) lon, " +
+                                    " (rnd_double()*180.0 - 90.0) lat, " +
+                                    " rnd_geohash(40) geo8" +
+                                    " from long_sequence(1000)" +
+                                    "), index(s) timestamp (ts) partition by DAY",
+                            sqlExecutionContext
+                    );
+                    try {
+                        assertQuery("time\tuuid\thash\n",
+                                "select * from x latest by s where geo8 within(make_geohash(lon, lat, 40), #z3, #vegg)",
+                                "ts",
+                                true,
+                                true,
+                                true
+                        );
+                    } catch (SqlException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash const function expected");
+                    }
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashLiteralExpected() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    try {
+                        assertQuery("time\tuuid\thash\n" +
+                                        "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
+                                        "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
+                                        "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
+                                "select * from pos latest by uuid where hash within('z3', #z3, #ve)",
+                                "time",
+                                true,
+                                true,
+                                true
+                        );
+                    } catch (SqlException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash literal expected");
+                    }
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashOutOfRangeFn() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    try {
+                        assertQuery("time\tuuid\thash\n" +
+                                        "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
+                                        "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
+                                        "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
+                                "select * from pos latest by uuid where hash within(make_geohash(-620.0, 53.4, 10), #z3, #ve)",
+                                "time",
+                                true,
+                                true,
+                                true
+                        );
+                    } catch (SqlException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "longitude must be in [-180.0..180.0] range");
+                    }
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashRnd1c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createRndGeoHashTable();
+                    assertQuery(
+                            "geo1\tts\n" +
+                                    "x\t1970-01-17T21:43:20.000000Z\n" +
+                                    "x\t1970-01-18T02:38:20.000000Z\n" +
+                                    "y\t1970-01-18T03:03:20.000000Z\n" +
+                                    "x\t1970-01-18T03:06:40.000000Z\n" +
+                                    "y\t1970-01-18T05:53:20.000000Z\n" +
+                                    "y\t1970-01-18T07:41:40.000000Z\n" +
+                                    "y\t1970-01-18T08:18:20.000000Z\n" +
+                                    "z\t1970-01-18T08:35:00.000000Z\n",
+                            "select geo1, ts from x latest by s where geo1 within(#x, #y, #z)",
+                            "ts",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashRnd2c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createRndGeoHashTable();
+                    assertQuery(
+                            "geo2\tts\n" +
+                                    "z7g\t1970-01-17T18:45:00.000000Z\n" +
+                                    "xzu\t1970-01-17T21:06:40.000000Z\n" +
+                                    "yyg\t1970-01-18T01:36:40.000000Z\n" +
+                                    "yds\t1970-01-18T01:56:40.000000Z\n" +
+                                    "yjx\t1970-01-18T05:03:20.000000Z\n" +
+                                    "ymx\t1970-01-18T05:53:20.000000Z\n" +
+                                    "y8x\t1970-01-18T06:45:00.000000Z\n" +
+                                    "y25\t1970-01-18T06:48:20.000000Z\n" +
+                                    "yvh\t1970-01-18T06:55:00.000000Z\n" +
+                                    "y1n\t1970-01-18T07:28:20.000000Z\n" +
+                                    "zs4\t1970-01-18T08:03:20.000000Z\n",
+                            "select geo2, ts from x latest by s where geo2 within(#x, #y, #z)",
+                            "ts",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashRnd4c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createRndGeoHashTable();
+                    assertQuery(
+                            "geo4\tts\n" +
+                                    "zd4gu\t1970-01-17T20:06:40.000000Z\n" +
+                                    "xwnjg\t1970-01-18T01:36:40.000000Z\n" +
+                                    "yv6gp\t1970-01-18T02:48:20.000000Z\n" +
+                                    "z4wbx\t1970-01-18T05:51:40.000000Z\n" +
+                                    "zejr0\t1970-01-18T06:43:20.000000Z\n" +
+                                    "ybsge\t1970-01-18T06:45:00.000000Z\n" +
+                                    "zdhfv\t1970-01-18T06:53:20.000000Z\n" +
+                                    "z4t7w\t1970-01-18T07:45:00.000000Z\n" +
+                                    "xxusm\t1970-01-18T07:55:00.000000Z\n" +
+                                    "x1dse\t1970-01-18T08:18:20.000000Z\n" +
+                                    "zmt6j\t1970-01-18T08:38:20.000000Z\n",
+                            "select geo4, ts from x latest by s where geo4 within(#x, #y, #z)",
+                            "ts",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashRnd6Bits() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createRndGeoHashBitsTable();
+                    assertQuery(
+                            "bits7\tts\n" +
+                                    "1111111\t1970-01-16T21:43:20.000000Z\n" +
+                                    "1111111\t1970-01-18T00:50:00.000000Z\n" +
+                                    "1111111\t1970-01-18T00:55:00.000000Z\n" +
+                                    "1111110\t1970-01-18T05:11:40.000000Z\n" +
+                                    "1111110\t1970-01-18T07:10:00.000000Z\n" +
+                                    "1111110\t1970-01-18T08:20:00.000000Z\n" +
+                                    "1111111\t1970-01-18T08:28:20.000000Z\n",
+                            "select bits7, ts from x latest by s where bits7 within(##111111)",
+                            "ts",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashRnd8c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createRndGeoHashTable();
+                    assertQuery(
+                            "geo4\tts\n" +
+                                    "yv6gp\t1970-01-18T02:48:20.000000Z\n" +
+                                    "z4wbx\t1970-01-18T05:51:40.000000Z\n" +
+                                    "ybsge\t1970-01-18T06:45:00.000000Z\n" +
+                                    "z4t7w\t1970-01-18T07:45:00.000000Z\n" +
+                                    "xxusm\t1970-01-18T07:55:00.000000Z\n",
+                            "select geo4, ts from x latest by s where geo4 within(#xx, #y, #z4)",
+                            "ts",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashRndLongBitsMask() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createRndGeoHashBitsTable();
+                    assertQuery("i\ts\tts\tbits3\tbits7\tbits9\n" +
+                                    "9384\tYFFD\t1970-01-17T15:31:40.000000Z\t101\t1110000\t101111011\n" +
+                                    "9397\tMXUK\t1970-01-17T15:53:20.000000Z\t100\t1110001\t110001111\n",
+                            "select * from x latest by s where bits7 within(#wt/5)",//(##11100)",
+                            "ts",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashRndLongBitsPrefix() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createRndGeoHashBitsTable();
+                    try {
+                        assertQuery("",
+                                "select * from x latest by s where bits3 within(##111111)",
+                                "ts",
+                                true,
+                                true,
+                                true
+                        );
+                    } catch (SqlException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "prefix precision mismatch");
+                    }
+
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashStrCast() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    assertQuery("time\tuuid\thash\n" +
+                                    "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
+                                    "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
+                            "select * from pos latest by uuid where hash within(cast('f9' as geohash(2c)), #z3, #ve)",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashTimeRange1c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(1);
+                    assertQuery(
+                            "time\tuuid\thash\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
+                                    "2021-05-11T00:00:00.111000Z\tddd\tb\n",
+                            "select * from pos latest by uuid where time in '2021-05-11' and hash within (#z, #b)",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashTimeRange2c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    assertQuery(
+                            "time\tuuid\thash\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
+                                    "2021-05-11T00:00:00.111000Z\tddd\tbc\n",
+                            "select * from pos latest by uuid where time in '2021-05-11' and hash within (#z, #b)",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashTimeRange4c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(4);
+                    assertQuery(
+                            "time\tuuid\thash\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
+                                    "2021-05-11T00:00:00.111000Z\tddd\tbcnk\n",
+                            "select * from pos latest by uuid where time in '2021-05-11' and hash within (#z, #b)",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashTimeRange8c() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(8);
+                    assertQuery(
+                            "time\tuuid\thash\n" +
+                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n",
+                            "select * from pos latest by uuid where time in '2021-05-11' and hash within (#z31, #bbx)",
+                            "time",
+                            true,
+                            true,
+                            true
+                    );
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashWithinColumnNotLiteral() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    try {
+                        assertQuery("",
+                                "select * from pos latest by uuid where 'hash' within(#f9)",
+                                "time",
+                                true,
+                                true,
+                                true
+                        );
+                    } catch (SqlException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "unexpected token:");
+                    }
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashWithinColumnWrongType() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    try {
+                        assertQuery("",
+                                "select * from pos latest by uuid where uuid within(#f9)",
+                                "time",
+                                true,
+                                true,
+                                true
+                        );
+                    } catch (SqlException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash column type expected");
+                    }
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashWithinEmpty() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    try {
+                        assertQuery("",
+                                "select * from pos latest by uuid where hash within()",
+                                "time",
+                                true,
+                                true,
+                                true
+                        );
+                    } catch (SqlException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "Too few arguments for 'within'");
+                    }
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashWithinNullArg() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    try {
+                        assertQuery("",
+                                "select * from pos latest by uuid where hash within(#f9, #z3, null)",
+                                "time",
+                                true,
+                                true,
+                                true
+                        );
+                    } catch (SqlException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash value expected");
+                    }
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashWithinOr() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    try {
+                        assertQuery("",
+                                "select * from pos latest by uuid where hash within(#f9) or hash within(#z3)",
+                                "time",
+                                true,
+                                true,
+                                true
+                        );
+                    } catch (SqlException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "Multiple 'within' expressions not supported");
+                    }
+                });
+    }
+
+    @Test
+    public void testLatestByAllIndexedGeoHashWithinWrongCast() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createGeoHashTable(2);
+                    try {
+                        assertQuery("",
+                                "select * from pos latest by uuid where hash within(cast('f91t' as geohash(4c)), #z3, null)",
+                                "time",
+                                true,
+                                true,
+                                true
+                        );
+                    } catch (SqlException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "prefix precision mismatch");
+                    }
+                });
     }
 
     @Test
@@ -3142,6 +3074,78 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByAllValueIndexedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table balances(\n" +
+                    "cust_id SYMBOL index,\n" +
+                    "balance_ccy SYMBOL,\n" +
+                    "balance DOUBLE,\n" +
+                    "timestamp TIMESTAMP\n" +
+                    ")\n" +
+                    "timestamp(timestamp)", sqlExecutionContext);
+
+            executeInsert("insert into balances values ('c1', 'USD', 1500, '2021-09-14T17:35:01.000000Z')");
+            executeInsert("insert into balances values ('c1', 'USD', 900.75, '2021-09-14T17:35:02.000000Z')");
+            executeInsert("insert into balances values ('c1', 'EUR', 880.2, '2021-09-14T17:35:03.000000Z')");
+            executeInsert("insert into balances values ('c1', 'EUR', 782, '2021-09-14T17:35:04.000000Z')");
+            executeInsert("insert into balances values ('c2', 'USD', 900, '2021-09-14T17:35:05.000000Z')");
+            executeInsert("insert into balances values ('c2', 'USD', 190.75, '2021-09-14T17:35:06.000000Z')");
+            executeInsert("insert into balances values ('c2', 'EUR', 890.2, '2021-09-14T17:35:07.000000Z')");
+            executeInsert("insert into balances values ('c2', 'EUR', 1000, '2021-09-14T17:35:08.000000Z')");
+
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "SELECT * FROM balances LATEST BY cust_id, balance_ccy \n" +
+                            "WHERE cust_id = 'c1' and balance_ccy='EUR'",
+                    sink,
+                    "cust_id\tbalance_ccy\tbalance\ttimestamp\n" +
+                            "c1\tEUR\t782.0\t2021-09-14T17:35:04.000000Z\n"
+            );
+        });
+    }
+
+    @Test
+    public void testLatestByFilteredBySymbolInAllIndexed() throws Exception {
+        testLatestByFilteredBySymbolIn("create table x (\n" +
+                "  ts timestamp,\n" +
+                "  node symbol index,\n" +
+                "  metric symbol index,\n" +
+                "  value long) \n" +
+                "  timestamp(ts) partition by day");
+    }
+
+    @Test
+    public void testLatestByFilteredBySymbolInNoIndexes() throws Exception {
+        testLatestByFilteredBySymbolIn("create table x (\n" +
+                "  ts timestamp,\n" +
+                "  node symbol,\n" +
+                "  metric symbol,\n" +
+                "  value long) \n" +
+                "  timestamp(ts) partition by day");
+    }
+
+    @Test
+    public void testLatestByFilteredSymbolInPartiallyIndexed1() throws Exception {
+        testLatestByFilteredBySymbolIn("create table x (\n" +
+                "  ts timestamp,\n" +
+                "  node symbol index,\n" +
+                "  metric symbol,\n" +
+                "  value long) \n" +
+                "  timestamp(ts) partition by day");
+    }
+
+    @Test
+    public void testLatestByFilteredSymbolInPartiallyIndexed2() throws Exception {
+        testLatestByFilteredBySymbolIn("create table x (\n" +
+                "  ts timestamp,\n" +
+                "  node symbol,\n" +
+                "  metric symbol index,\n" +
+                "  value long) \n" +
+                "  timestamp(ts) partition by day");
+    }
+
+    @Test
     public void testLatestByIOFailure() throws Exception {
         assertMemoryLeak(() -> {
             FilesFacade ff = new FilesFacadeImpl() {
@@ -3195,6 +3199,28 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     engine.clear();
                 }
             }
+        });
+    }
+
+    @Ignore
+    // TODO: fix, where is applied after latest by, the optimized I suspect
+    @Test
+    public void testLatestByIsApplicableToSubQueriesNoDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab(" +
+                    "    id symbol, " +
+                    "    name symbol, " +
+                    "    value double, " +
+                    "    other_ts timestamp, " +
+                    "    ts timestamp" +
+                    ")", sqlExecutionContext);
+            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-15T11:31:35.878Z', '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-16T17:31:35.878Z', '2021-10-06T15:31:35.878Z')");
+            assertSql(
+                    "(tab latest by id where name in (select distinct name from tab where name != 'c2')) timestamp(other_ts)",
+                    "id\tname\tvalue\tother_ts\tts\n" +
+                            "d1\tc1\t101.4\t2021-10-15 14:31:35.878\t2021-10-05 14:31:35.878\n" +
+                            "d2\tc1\t111.7\t2021-10-16 17:31:35.878\t2021-10-06 15:31:35.878\n");
         });
     }
 
@@ -3779,6 +3805,92 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByMultiColumnPlusFilter0() throws Exception {
+        testLatestByMultiColumnPlusFilter("create table tab(" +
+                "    id symbol, " +
+                "    name symbol, " +
+                "    value double, " +
+                "    ts timestamp" +
+                ")");
+    }
+
+    @Test
+    public void testLatestByMultiColumnPlusFilter1() throws Exception {
+        testLatestByMultiColumnPlusFilter("create table tab(" +
+                "    id symbol, " +
+                "    name symbol, " +
+                "    value double, " +
+                "    ts timestamp" +
+                ") timestamp(ts) partition by DAY");
+    }
+
+    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory applies filter after latest by is executed")
+    @Test
+    public void testLatestByMultiColumnPlusFilter2() throws Exception {
+        testLatestByMultiColumnPlusFilter("create table tab(" +
+                "    id symbol index, " +
+                "    name symbol, " +
+                "    value double, " +
+                "    ts timestamp" +
+                ") timestamp(ts) partition by DAY");
+    }
+
+    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory applies filter after latest by is executed")
+    @Test
+    public void testLatestByMultiColumnPlusFilter3() throws Exception {
+        testLatestByMultiColumnPlusFilter("create table tab(" +
+                "    id symbol, " +
+                "    name symbol index, " +
+                "    value double, " +
+                "    ts timestamp" +
+                ") timestamp(ts) partition by DAY");
+    }
+
+    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory applies filter after latest by is executed")
+    @Test
+    public void testLatestByMultiColumnPlusFilter4() throws Exception {
+        testLatestByMultiColumnPlusFilter("create table tab(" +
+                "    id symbol index, " +
+                "    name symbol index, " +
+                "    value double, " +
+                "    ts timestamp" +
+                ") timestamp(ts) partition by DAY");
+    }
+
+    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory applies filter after latest by is executed")
+    @Test
+    public void testLatestByMultiColumnPlusFilter5() throws Exception {
+        testLatestByMultiColumnPlusFilter("create table tab(" +
+                "    id symbol index, " +
+                "    name symbol index, " +
+                "    value double, " +
+                "    ts timestamp" +
+                ")");
+    }
+
+    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory applies filter after latest by is executed")
+    @Test
+    public void testLatestByMultiColumnPlusFilter6() throws Exception {
+        testLatestByMultiColumnPlusFilter("create table tab(" +
+                "    id symbol, " +
+                "    name symbol index, " +
+                "    value double, " +
+                "    ts timestamp" +
+                ")");
+    }
+
+    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory applies filter after latest by is executed")
+    @Test
+    public void testLatestByMultiColumnPlusFilter7() throws Exception {
+        testLatestByMultiColumnPlusFilter("create table tab(" +
+                "    id symbol index, " +
+                "    name symbol, " +
+                "    value double, " +
+                "    ts timestamp" +
+                ")");
+    }
+
+    @Test
     public void testLatestByMultipleColumns() throws Exception {
         assertQuery("cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n",
                 "select * from balances latest by cust_id, balance_ccy",
@@ -3833,6 +3945,46 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "), index(b) timestamp(k) partition by DAY",
                 26,
                 "Invalid column");
+    }
+
+    @Test
+    public void testLatestBySelectAllFilteredBySymbolInAllIndexed() throws Exception {
+        testLatestBySelectAllFilteredBySymbolIn("create table x (\n" +
+                "  ts timestamp,\n" +
+                "  node symbol index,\n" +
+                "  metric symbol index,\n" +
+                "  value long) \n" +
+                "  timestamp(ts) partition by day");
+    }
+
+    @Test
+    public void testLatestBySelectAllFilteredBySymbolInNoIndexes() throws Exception {
+        testLatestBySelectAllFilteredBySymbolIn("create table x (\n" +
+                "  ts timestamp,\n" +
+                "  node symbol,\n" +
+                "  metric symbol,\n" +
+                "  value long) \n" +
+                "  timestamp(ts) partition by day");
+    }
+
+    @Test
+    public void testLatestBySelectAllFilteredBySymbolInPartiallyIndexed1() throws Exception {
+        testLatestBySelectAllFilteredBySymbolIn("create table x (\n" +
+                "  ts timestamp,\n" +
+                "  node symbol index,\n" +
+                "  metric symbol,\n" +
+                "  value long) \n" +
+                "  timestamp(ts) partition by day");
+    }
+
+    @Test
+    public void testLatestBySelectAllFilteredBySymbolInPartiallyIndexed2() throws Exception {
+        testLatestBySelectAllFilteredBySymbolIn("create table x (\n" +
+                "  ts timestamp,\n" +
+                "  node symbol,\n" +
+                "  metric symbol index,\n" +
+                "  value long) \n" +
+                "  timestamp(ts) partition by day");
     }
 
     @Test
@@ -4180,6 +4332,74 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestBySupportedColumnTypes0() throws Exception {
+        testLatestBySupportedColumnTypes(
+                "create table tab (" +
+                        "    boolean boolean, " +
+                        "    short short, " +
+                        "    int int, " +
+                        "    long long, " +
+                        "    long256 long256, " +
+                        "    char char, " +
+                        "    string string, " +
+                        "    symbol symbol, " +
+                        "    ts timestamp" +
+                        ")",
+                null);
+    }
+
+    @Test
+    public void testLatestBySupportedColumnTypes1() throws Exception {
+        testLatestBySupportedColumnTypes(
+                "create table tab (" +
+                        "    boolean boolean, " +
+                        "    short short, " +
+                        "    int int, " +
+                        "    long long, " +
+                        "    long256 long256, " +
+                        "    char char, " +
+                        "    string string, " +
+                        "    symbol symbol, " +
+                        "    ts timestamp" +
+                        ") timestamp(ts) partition by DAY",
+                "ts");
+    }
+
+    @Test
+    public void testLatestBySupportedColumnTypes2() throws Exception {
+        testLatestBySupportedColumnTypes(
+                "create table tab (" +
+                        "    boolean boolean, " +
+                        "    short short, " +
+                        "    int int, " +
+                        "    long long, " +
+                        "    long256 long256, " +
+                        "    char char, " +
+                        "    string string, " +
+                        "    symbol symbol index, " +
+                        "    ts timestamp" +
+                        ")",
+                null);
+    }
+
+    @Test
+    public void testLatestBySupportedColumnTypes3() throws Exception {
+        testLatestBySupportedColumnTypes(
+                "create table tab (" +
+                        "    boolean boolean, " +
+                        "    short short, " +
+                        "    int int, " +
+                        "    long long, " +
+                        "    long256 long256, " +
+                        "    char char, " +
+                        "    string string, " +
+                        "    symbol symbol index, " +
+                        "    ts timestamp" +
+                        ") timestamp(ts) partition by DAY",
+                "ts");
+    }
+
+    @Test
     public void testLatestByTimestampInclusion() throws Exception {
         assertQuery("ts\tmarket_type\tavg\n" +
                         "1970-01-01T00:00:09.999996Z\taaa\t0.02110922811597793\n" +
@@ -4197,6 +4417,124 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 false
         );
+    }
+
+    @Test
+    public void testLatestByTsIsPickedAtRuntimeNoDesignated() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab(" +
+                    "    id symbol, " +
+                    "    name symbol, " +
+                    "    value double, " +
+                    "    other_ts timestamp, " +
+                    "    ts timestamp" +
+                    ")", sqlExecutionContext);
+            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-15T11:31:35.878Z', '2021-10-05T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-15T12:31:35.878Z', '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-15T13:31:35.878Z', '2021-10-05T17:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.4, '2021-10-15T14:31:35.878Z', '2021-10-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.1, '2021-10-15T15:31:35.878Z', '2021-10-04T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.2, '2021-10-15T16:31:35.878Z', '2021-10-03T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.3, '2021-10-15T17:31:35.878Z', '2021-10-02T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.4, '2021-10-15T11:31:35.878Z', '2021-09-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.5, '2021-10-15T12:31:35.878Z', '2021-01-05T15:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.1, '2021-10-15T13:31:35.878Z', '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.2, '2021-10-15T14:31:35.878Z', '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.3, '2021-10-15T15:31:35.878Z', '2021-10-25T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.4, '2021-10-15T16:31:35.878Z', '2021-10-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c2', 401.1, '2021-10-16T17:31:35.878Z', '2021-10-26T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-16T11:31:35.878Z', '2021-10-06T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-16T17:31:35.878Z', '2021-10-26T15:31:35.878Z')");
+            assertSql(
+                    "(tab latest by id where name in ('c2')) timestamp(other_ts)",
+                    "id\tname\tvalue\tother_ts\tts\n" +
+                            "d1\tc2\t102.5\t2021-10-15T12:31:35.878000Z\t2021-01-05T15:31:35.878000Z\n" +
+                            "d2\tc2\t401.1\t2021-10-16T17:31:35.878000Z\t2021-10-26T11:31:35.878000Z\n");
+        });
+    }
+
+    @Ignore()
+    // TODO: if the table has a designated timestamp, it becomes sticky
+    //  on latest by, and we cannot change it explicitly.
+    //  The query: (tab latest by id where name in ('c2')) timestamp(ts)
+    //   - only interested in rows with name == 'c2'
+    //   - for these, we want the latest row based on the ts column,
+    //     using id as unique key for the whole row
+    @Test
+    public void testLatestByTsIsPickedAtRuntimeOtherThanDesignated() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab(" +
+                    "    id symbol, " +
+                    "    name symbol, " +
+                    "    value double, " +
+                    "    other_ts timestamp, " +
+                    "    ts timestamp" +
+                    ") timestamp(other_ts) partition by day", sqlExecutionContext);
+            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-15T11:31:35.878Z', '2021-10-05T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-15T12:31:35.878Z', '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-15T13:31:35.878Z', '2021-10-05T17:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.4, '2021-10-15T14:31:35.878Z', '2021-10-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.1, '2021-10-15T15:31:35.878Z', '2021-10-04T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.2, '2021-10-15T16:31:35.878Z', '2021-10-03T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.3, '2021-10-15T17:31:35.878Z', '2021-10-02T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.4, '2021-10-15T11:31:35.878Z', '2021-09-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.5, '2021-10-15T12:31:35.878Z', '2021-01-05T15:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.1, '2021-10-15T13:31:35.878Z', '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.2, '2021-10-15T14:31:35.878Z', '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.3, '2021-10-15T15:31:35.878Z', '2021-10-25T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.4, '2021-10-15T16:31:35.878Z', '2021-10-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c2', 401.1, '2021-10-16T17:31:35.878Z', '2021-10-26T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-16T11:31:35.878Z', '2021-10-06T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-16T17:31:35.878Z', '2021-10-26T15:31:35.878Z')");
+            assertSql(
+                    "(tab latest by id where name in ('c2')) timestamp(ts)",
+                    "id\tname\tvalue\tother_ts\tts\n" +
+                            "d1\tc2\t102.10000000000001\t2021-10-15T17:31:35.878000Z\t2021-10-04T11:31:35.878000Z\n" +
+                            "d2\tc2\t401.1\t2021-10-16T17:31:35.878000Z\t2021-10-26T11:31:35.878000Z\n");
+        });
+    }
+
+    @Test
+    public void testLatestByUnsupportedColumnTypes() throws Exception {
+        // unsupported: [BYTE, DATE, TIMESTAMP, FLOAT, DOUBLE, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY]
+        CharSequence createTableDDL = "create table comprehensive as (" +
+                "    select" +
+                "        rnd_byte(2,50) byte, " +
+                "        rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 2) date, " +
+                "        rnd_timestamp(to_timestamp('2020', 'yyyy'), to_timestamp('2021', 'yyyy'), 2) timestamp, " +
+                "        rnd_float(2) float, " +
+                "        rnd_double(2) double, " +
+                "        rnd_geohash(5) gbyte, " +
+                "        rnd_geohash(15) gshort, " +
+                "        rnd_geohash(30) gint, " +
+                "        rnd_geohash(60) glong, " +
+                "        rnd_bin(10, 20, 2) binary, " +
+                "        timestamp_sequence(0, 1000000000) ts" +
+                "    from long_sequence(10)" +
+                ") timestamp(ts) partition by DAY";
+        CharSequence expectedTail = "invalid type, only [BOOLEAN, SHORT, INT, LONG, LONG256, CHAR, STRING, SYMBOL] are supported in LATEST BY";
+        assertFailure(
+                "comprehensive latest by byte",
+                createTableDDL,
+                24,
+                "byte (BYTE): " + expectedTail);
+        for (String[] nameType : new String[][]{
+                {"date", "DATE"},
+                {"timestamp", "TIMESTAMP"},
+                {"float", "FLOAT"},
+                {"double", "DOUBLE"},
+                {"gbyte", "GEOHASH(1c)"},
+                {"gshort", "GEOHASH(3c)"},
+                {"gint", "GEOHASH(6c)"},
+                {"glong", "GEOHASH(12c)"},
+                {"binary", "BINARY"},
+                {"ts", "TIMESTAMP"}}) {
+            assertFailure(
+                    "comprehensive latest by " + nameType[0],
+                    null,
+                    24,
+                    String.format("%s (%s): %s", nameType[0], nameType[1], expectedTail));
+        }
     }
 
     @Test
@@ -4228,189 +4566,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 false,
                 true);
-    }
-
-    @Test
-    public void testLatestByAllValueIndexedColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table balances(\n" +
-                    "cust_id SYMBOL index,\n" +
-                    "balance_ccy SYMBOL,\n" +
-                    "balance DOUBLE,\n" +
-                    "timestamp TIMESTAMP\n" +
-                    ")\n" +
-                    "timestamp(timestamp)", sqlExecutionContext);
-
-            executeInsert("insert into balances values ('c1', 'USD', 1500, '2021-09-14T17:35:01.000000Z')");
-            executeInsert("insert into balances values ('c1', 'USD', 900.75, '2021-09-14T17:35:02.000000Z')");
-            executeInsert("insert into balances values ('c1', 'EUR', 880.2, '2021-09-14T17:35:03.000000Z')");
-            executeInsert("insert into balances values ('c1', 'EUR', 782, '2021-09-14T17:35:04.000000Z')");
-            executeInsert("insert into balances values ('c2', 'USD', 900, '2021-09-14T17:35:05.000000Z')");
-            executeInsert("insert into balances values ('c2', 'USD', 190.75, '2021-09-14T17:35:06.000000Z')");
-            executeInsert("insert into balances values ('c2', 'EUR', 890.2, '2021-09-14T17:35:07.000000Z')");
-            executeInsert("insert into balances values ('c2', 'EUR', 1000, '2021-09-14T17:35:08.000000Z')");
-
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "SELECT * FROM balances LATEST BY cust_id, balance_ccy \n" +
-                            "WHERE cust_id = 'c1' and balance_ccy='EUR'",
-                    sink,
-                    "cust_id\tbalance_ccy\tbalance\ttimestamp\n" +
-                            "c1\tEUR\t782.0\t2021-09-14T17:35:04.000000Z\n"
-            );
-        });
-    }
-
-    @Test
-    public void testLatestByFilteredBySymbolInNoIndexes() throws Exception {
-        testLatestByFilteredBySymbolIn("create table x (\n" +
-                "  ts timestamp,\n" +
-                "  node symbol,\n" +
-                "  metric symbol,\n" +
-                "  value long) \n" +
-                "  timestamp(ts) partition by day");
-    }
-
-    @Test
-    public void testLatestByFilteredSymbolInPartiallyIndexed1() throws Exception {
-        testLatestByFilteredBySymbolIn("create table x (\n" +
-                "  ts timestamp,\n" +
-                "  node symbol index,\n" +
-                "  metric symbol,\n" +
-                "  value long) \n" +
-                "  timestamp(ts) partition by day");
-    }
-
-    @Test
-    public void testLatestByFilteredSymbolInPartiallyIndexed2() throws Exception {
-        testLatestByFilteredBySymbolIn("create table x (\n" +
-                "  ts timestamp,\n" +
-                "  node symbol,\n" +
-                "  metric symbol index,\n" +
-                "  value long) \n" +
-                "  timestamp(ts) partition by day");
-    }
-
-    @Test
-    public void testLatestByFilteredBySymbolInAllIndexed() throws Exception {
-        testLatestByFilteredBySymbolIn("create table x (\n" +
-                "  ts timestamp,\n" +
-                "  node symbol index,\n" +
-                "  metric symbol index,\n" +
-                "  value long) \n" +
-                "  timestamp(ts) partition by day");
-    }
-
-    private void testLatestByFilteredBySymbolIn(String ddl) throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile(ddl, sqlExecutionContext);
-
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 1)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'cpu', 10)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'cpu', 100)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'cpu', 7)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'cpu', 15)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'cpu', 75)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'cpu', 5)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'cpu', 20)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'cpu', 25)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'memory', 20)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'memory', 200)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'memory', 2000)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'memory', 30)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'memory', 300)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'memory', 3000)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'memory', 40)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'memory', 400)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
-
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "select metric, sum(value) from x latest by node \n" +
-                            "where node in ('node1', 'node2') and metric in ('cpu')",
-                    sink,
-                    "metric\tsum\n" +
-                            "cpu\t175\n"
-            );
-        });
-    }
-
-    @Test
-    public void testLatestBySelectAllFilteredBySymbolInNoIndexes() throws Exception {
-        testLatestBySelectAllFilteredBySymbolIn("create table x (\n" +
-                "  ts timestamp,\n" +
-                "  node symbol,\n" +
-                "  metric symbol,\n" +
-                "  value long) \n" +
-                "  timestamp(ts) partition by day");
-    }
-
-    @Test
-    public void testLatestBySelectAllFilteredBySymbolInPartiallyIndexed1() throws Exception {
-        testLatestBySelectAllFilteredBySymbolIn("create table x (\n" +
-                "  ts timestamp,\n" +
-                "  node symbol index,\n" +
-                "  metric symbol,\n" +
-                "  value long) \n" +
-                "  timestamp(ts) partition by day");
-    }
-
-    @Test
-    public void testLatestBySelectAllFilteredBySymbolInPartiallyIndexed2() throws Exception {
-        testLatestBySelectAllFilteredBySymbolIn("create table x (\n" +
-                "  ts timestamp,\n" +
-                "  node symbol,\n" +
-                "  metric symbol index,\n" +
-                "  value long) \n" +
-                "  timestamp(ts) partition by day");
-    }
-
-    @Test
-    public void testLatestBySelectAllFilteredBySymbolInAllIndexed() throws Exception {
-        testLatestBySelectAllFilteredBySymbolIn("create table x (\n" +
-                "  ts timestamp,\n" +
-                "  node symbol index,\n" +
-                "  metric symbol index,\n" +
-                "  value long) \n" +
-                "  timestamp(ts) partition by day");
-    }
-
-    private void testLatestBySelectAllFilteredBySymbolIn(String ddl) throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile(ddl, sqlExecutionContext);
-
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 1)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'cpu', 10)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'cpu', 100)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'cpu', 7)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'cpu', 15)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'cpu', 75)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'cpu', 5)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'cpu', 20)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'cpu', 25)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'memory', 20)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'memory', 200)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'memory', 2000)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'memory', 30)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'memory', 300)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'memory', 3000)");
-            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'memory', 40)");
-            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'memory', 400)");
-            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
-
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "select * from x latest by node, metric \n" +
-                            "where node in ('node2') and metric in ('cpu', 'memory')",
-                    sink,
-                    "ts\tnode\tmetric\tvalue\n" +
-                            "2021-11-17T17:35:03.000000Z\tnode2\tcpu\t75\n" +
-                            "2021-11-17T17:35:03.000000Z\tnode2\tmemory\t3000\n"
-            );
-        });
     }
 
     @Test
@@ -6112,6 +6267,91 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         );
     }
 
+    @Ignore("result order is currently dependent on stability of sorting method")
+    // TODO: this is broken, the expected result order for "select * from tab" in the presence
+    //  of repeated timestamps needs to be predefined and consistent, one of two alternatives:
+    //  1.- most recent insert for a given timestamp first:
+    //    "d2\tc1\t201.10000000000002\t2021-10-05T11:31:35.878000Z\n" +
+    //    "d1\tc2\t102.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
+    //    "d1\tc1\t101.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
+    //    "d2\tc1\t201.20000000000002\t2021-10-05T12:31:35.878000Z\n" +
+    //    "d1\tc2\t102.2\t2021-10-05T12:31:35.878000Z\n" +
+    //    "d1\tc1\t101.2\t2021-10-05T12:31:35.878000Z\n" +
+    //    "d2\tc1\t201.3\t2021-10-05T13:31:35.878000Z\n" +
+    //    "d1\tc2\t102.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
+    //    "d1\tc1\t101.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
+    //    "d2\tc1\t201.4\t2021-10-05T14:31:35.878000Z\n" +
+    //    "d1\tc2\t102.4\t2021-10-05T14:31:35.878000Z\n" +
+    //    "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
+    //    "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n" +
+    //    "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n" +
+    //    "d2\tc1\t401.20000000000005\t2021-10-06T12:31:35.878000Z\n" +
+    //    "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n"
+    //  2.- least recent insert for a given timestamp first:
+    //    "d1\tc1\t101.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
+    //    "d1\tc2\t102.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
+    //    "d2\tc1\t201.10000000000002\t2021-10-05T11:31:35.878000Z\n" +
+    //    "d1\tc1\t101.2\t2021-10-05T12:31:35.878000Z\n" +
+    //    "d1\tc2\t102.2\t2021-10-05T12:31:35.878000Z\n" +
+    //    "d2\tc1\t201.20000000000002\t2021-10-05T12:31:35.878000Z\n" +
+    //    "d1\tc1\t101.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
+    //    "d1\tc2\t102.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
+    //    "d2\tc1\t201.3\t2021-10-05T13:31:35.878000Z\n" +
+    //    "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
+    //    "d1\tc2\t102.4\t2021-10-05T14:31:35.878000Z\n" +
+    //    "d2\tc1\t201.4\t2021-10-05T14:31:35.878000Z\n" +
+    //    "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n" +
+    //    "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n" +
+    //    "d2\tc1\t401.20000000000005\t2021-10-06T12:31:35.878000Z\n" +
+    //    "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n"
+    //  in the assertSql that follows, option #2 has been taken.
+    @Test
+    public void testSelectExpectedOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab(" +
+                    "    id symbol index, " +
+                    "    name symbol index, " +
+                    "    value double, " +
+                    "    ts timestamp" +
+                    ") timestamp(ts) partition by DAY", sqlExecutionContext);
+            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-05T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.4, '2021-10-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.1, '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.2, '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.3, '2021-10-05T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.4, '2021-10-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.5, '2021-10-05T15:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.1, '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.2, '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.3, '2021-10-05T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.4, '2021-10-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c2', 401.1, '2021-10-06T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-06T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-06T15:31:35.878Z')");
+            assertSql(
+                    "tab",
+                    "id\tname\tvalue\tts\n" +
+                            "d1\tc1\t101.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
+                            "d1\tc2\t102.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
+                            "d2\tc1\t201.10000000000002\t2021-10-05T11:31:35.878000Z\n" +
+                            "d1\tc1\t101.2\t2021-10-05T12:31:35.878000Z\n" +
+                            "d1\tc2\t102.2\t2021-10-05T12:31:35.878000Z\n" +
+                            "d2\tc1\t201.20000000000002\t2021-10-05T12:31:35.878000Z\n" +
+                            "d1\tc1\t101.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
+                            "d1\tc2\t102.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
+                            "d2\tc1\t201.3\t2021-10-05T13:31:35.878000Z\n" +
+                            "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
+                            "d1\tc2\t102.4\t2021-10-05T14:31:35.878000Z\n" +
+                            "d2\tc1\t201.4\t2021-10-05T14:31:35.878000Z\n" +
+                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n" +
+                            "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n" +
+                            "d2\tc1\t401.20000000000005\t2021-10-06T12:31:35.878000Z\n" +
+                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
+        });
+    }
+
     @Test
     public void testSelectFromAliasedTable() throws Exception {
         assertMemoryLeak(() -> {
@@ -6369,6 +6609,34 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUtf8TableName() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    compiler.compile("CREATE TABLE 'привет от штиблет' (f0 STRING, штиблет STRING, f2 STRING);", sqlExecutionContext);
+                    TestUtils.assertSql(
+                            compiler,
+                            sqlExecutionContext,
+                            "tables()",
+                            sink,
+                            "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
+                                    "1\tпривет от штиблет\t\tNONE\t1000\t0\n"
+                    );
+
+                    TestUtils.assertSql(
+                            compiler,
+                            sqlExecutionContext,
+                            "show columns from 'привет от штиблет'",
+                            sink,
+                            "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
+                                    "f0\tSTRING\tfalse\t0\tfalse\t0\tfalse\n" +
+                                    "штиблет\tSTRING\tfalse\t0\tfalse\t0\tfalse\n" +
+                                    "f2\tSTRING\tfalse\t0\tfalse\t0\tfalse\n"
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testVectorAggregateOnSparsePartitions() throws Exception {
         final String expected = "a\tk\n";
 
@@ -6558,115 +6826,281 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         );
     }
 
-    @Test
-    public void testLatestByUnsupportedColumnTypes() throws Exception {
-        // unsupported: [BYTE, DATE, TIMESTAMP, FLOAT, DOUBLE, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY]
-        CharSequence createTableDDL = "create table comprehensive as (" +
-                "    select" +
-                "        rnd_byte(2,50) byte, " +
-                "        rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 2) date, " +
-                "        rnd_timestamp(to_timestamp('2020', 'yyyy'), to_timestamp('2021', 'yyyy'), 2) timestamp, " +
-                "        rnd_float(2) float, " +
-                "        rnd_double(2) double, " +
-                "        rnd_geohash(5) gbyte, " +
-                "        rnd_geohash(15) gshort, " +
-                "        rnd_geohash(30) gint, " +
-                "        rnd_geohash(60) glong, " +
-                "        rnd_bin(10, 20, 2) binary, " +
-                "        timestamp_sequence(0, 1000000000) ts" +
-                "    from long_sequence(10)" +
-                ") timestamp(ts) partition by DAY";
-        CharSequence expectedTail = "invalid type, only [BOOLEAN, SHORT, INT, LONG, LONG256, CHAR, STRING, SYMBOL] are supported in LATEST BY";
-        assertFailure(
-                "comprehensive latest by byte",
-                createTableDDL,
-                24,
-                "byte (BYTE): " + expectedTail);
-        for (String[] nameType : new String[][]{
-                {"date", "DATE"},
-                {"timestamp", "TIMESTAMP"},
-                {"float", "FLOAT"},
-                {"double", "DOUBLE"},
-                {"gbyte", "GEOHASH(1c)"},
-                {"gshort", "GEOHASH(3c)"},
-                {"gint", "GEOHASH(6c)"},
-                {"glong", "GEOHASH(12c)"},
-                {"binary", "BINARY"},
-                {"ts", "TIMESTAMP"}}) {
-            assertFailure(
-                    "comprehensive latest by " + nameType[0],
-                    null,
-                    24,
-                    String.format("%s (%s): %s", nameType[0], nameType[1], expectedTail));
-        }
+    private void createGeoHashTable(int chars) throws SqlException {
+        compiler.compile(
+                String.format("create table pos(time timestamp, uuid symbol, hash geohash(%dc))", chars) +
+                        ", index(uuid) timestamp(time) partition by DAY",
+                sqlExecutionContext
+        );
+        executeInsert("insert into pos values('2021-05-10T23:59:59.150000Z','XXX','f91t48s7')");
+        executeInsert("insert into pos values('2021-05-10T23:59:59.322000Z','ddd','bbqyzfp6')");
+        executeInsert("insert into pos values('2021-05-10T23:59:59.351000Z','bbb','9egcyrxq')");
+        executeInsert("insert into pos values('2021-05-10T23:59:59.439000Z','bbb','ewef1vk8')");
+        executeInsert("insert into pos values('2021-05-10T00:00:00.016000Z','aaa','vb2wg49h')");
+        executeInsert("insert into pos values('2021-05-10T00:00:00.042000Z','ccc','bft3gn89')");
+        executeInsert("insert into pos values('2021-05-10T00:00:00.055000Z','aaa','z6cf5j85')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.066000Z','ddd','vcunv6j7')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.072000Z','ccc','edez0n5y')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.074000Z','aaa','fds32zgc')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.083000Z','YYY','z31wzd5w')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.092000Z','ddd','v9nwc4ny')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.107000Z','ccc','f6yb1yx9')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.111000Z','ddd','bcnktpnw')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.123000Z','aaa','z3t2we5z')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.127000Z','aaa','bgn1yt4y')");
+        executeInsert("insert into pos values('2021-05-11T00:00:00.144000Z','aaa','fuetk3k6')");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.167000Z','ccc','bchx5x14')");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.167000Z','ZZZ','bbxwb5jj')");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.186000Z','ZZZ','vepe7h62')");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.241000Z','bbb','bchxpmmg')");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.245000Z','ddd','f90z3bs5')");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.247000Z','bbb','bftqreuh')");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.295000Z','ddd','u2rqgy9s')");
+        executeInsert("insert into pos values('2021-05-12T00:00:00.304000Z','aaa','w23bhjd2')");
     }
 
-    @Test
-    public void testLatestBySupportedColumnTypes0() throws Exception {
-        testLatestBySupportedColumnTypes(
-                "create table tab (" +
-                        "    boolean boolean, " +
-                        "    short short, " +
-                        "    int int, " +
-                        "    long long, " +
-                        "    long256 long256, " +
-                        "    char char, " +
-                        "    string string, " +
-                        "    symbol symbol, " +
-                        "    ts timestamp" +
-                        ")",
+    private void createRndGeoHashBitsTable() throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol(113, 4, 4, 2) s," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_geohash(3) bits3," +
+                        " rnd_geohash(7) bits7," +
+                        " rnd_geohash(9) bits9" +
+                        " from long_sequence(10000)" +
+                        "), index(s) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+    }
+
+    private void createRndGeoHashTable() throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol(113, 4, 4, 2) s," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_geohash(5) geo1," +
+                        " rnd_geohash(15) geo2," +
+                        " rnd_geohash(25) geo4," +
+                        " rnd_geohash(40) geo8" +
+                        " from long_sequence(10000)" +
+                        "), index(s) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+    }
+
+    private void executeInsertStatement(double d) throws SqlException {
+        String ddl = "insert into x (ds) values (" + d + ")";
+        executeInsert(ddl);
+    }
+
+    private void expectSqlResult(CharSequence expected, CharSequence query, CharSequence ts) throws SqlException {
+        printSqlResult(expected, query, ts,
+                null,
+                null,
+                true,
+                true,
+                true,
+                false,
                 null);
     }
 
-    @Test
-    public void testLatestBySupportedColumnTypes1() throws Exception {
-        testLatestBySupportedColumnTypes(
-                "create table tab (" +
-                        "    boolean boolean, " +
-                        "    short short, " +
-                        "    int int, " +
-                        "    long long, " +
-                        "    long256 long256, " +
-                        "    char char, " +
-                        "    string string, " +
-                        "    symbol symbol, " +
-                        "    ts timestamp" +
-                        ") timestamp(ts) partition by DAY",
-                "ts");
+    private void testBindVariableWithLike0(String keyword) throws Exception {
+        assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    SqlCompiler compiler = new SqlCompiler(engine)
+            ) {
+                compiler.compile("create table xy as (select rnd_str() v from long_sequence(100))", sqlExecutionContext);
+                bindVariableService.clear();
+                try (RecordCursorFactory factory = compiler.compile("xy where v " + keyword + " $1", sqlExecutionContext).getRecordCursorFactory()) {
+
+                    bindVariableService.setStr(0, "MBE%");
+                    assertCursor("v\n" +
+                                    "MBEZGHW\n",
+                            factory,
+                            true,
+                            true,
+                            false
+                    );
+
+                    bindVariableService.setStr(0, "Z%");
+                    assertCursor("v\n" +
+                                    "ZSQLDGLOG\n" +
+                                    "ZLUOG\n" +
+                                    "ZLCBDMIG\n" +
+                                    "ZJYYFLSVI\n" +
+                                    "ZWEVQTQO\n" +
+                                    "ZSFXUNYQ\n",
+                            factory,
+                            true,
+                            true,
+                            false
+                    );
+
+                    assertCursor("v\n" +
+                                    "ZSQLDGLOG\n" +
+                                    "ZLUOG\n" +
+                                    "ZLCBDMIG\n" +
+                                    "ZJYYFLSVI\n" +
+                                    "ZWEVQTQO\n" +
+                                    "ZSFXUNYQ\n",
+                            factory,
+                            true,
+                            true,
+                            false
+                    );
+
+
+                    bindVariableService.setStr(0, null);
+                    assertCursor("v\n",
+                            factory,
+                            true,
+                            true,
+                            false
+                    );
+                }
+            }
+        });
     }
 
-    @Test
-    public void testLatestBySupportedColumnTypes2() throws Exception {
-        testLatestBySupportedColumnTypes(
-                "create table tab (" +
-                        "    boolean boolean, " +
-                        "    short short, " +
-                        "    int int, " +
-                        "    long long, " +
-                        "    long256 long256, " +
-                        "    char char, " +
-                        "    string string, " +
-                        "    symbol symbol index, " +
-                        "    ts timestamp" +
-                        ")",
-                null);
+    private void testLatestByFilteredBySymbolIn(String ddl) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(ddl, sqlExecutionContext);
+
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 1)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'cpu', 10)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'cpu', 100)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'cpu', 7)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'cpu', 15)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'cpu', 75)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'cpu', 5)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'cpu', 20)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'cpu', 25)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'memory', 20)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'memory', 200)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'memory', 2000)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'memory', 30)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'memory', 300)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'memory', 3000)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'memory', 40)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'memory', 400)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
+
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "select metric, sum(value) from x latest by node \n" +
+                            "where node in ('node1', 'node2') and metric in ('cpu')",
+                    sink,
+                    "metric\tsum\n" +
+                            "cpu\t175\n"
+            );
+        });
     }
 
-    @Test
-    public void testLatestBySupportedColumnTypes3() throws Exception {
-        testLatestBySupportedColumnTypes(
-                "create table tab (" +
-                        "    boolean boolean, " +
-                        "    short short, " +
-                        "    int int, " +
-                        "    long long, " +
-                        "    long256 long256, " +
-                        "    char char, " +
-                        "    string string, " +
-                        "    symbol symbol index, " +
-                        "    ts timestamp" +
-                        ") timestamp(ts) partition by DAY",
-                "ts");
+    private void testLatestByMultiColumnPlusFilter(CharSequence ddl) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(ddl, sqlExecutionContext);
+            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-05T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.4, '2021-10-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.1, '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.2, '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.3, '2021-10-05T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.4, '2021-10-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.5, '2021-10-05T15:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.1, '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.2, '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.3, '2021-10-05T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 201.4, '2021-10-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c2', 401.1, '2021-10-06T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-06T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-06T15:31:35.878Z')");
+            assertSql(
+                    "tab latest by id, name where id = 'd1'",
+                    "id\tname\tvalue\tts\n" +
+                            "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
+                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n");
+            assertSql(
+                    "tab latest by id, name where id != 'd2' and value < 102.5",
+                    "id\tname\tvalue\tts\n" +
+                            "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
+                            "d1\tc2\t102.4\t2021-10-05T14:31:35.878000Z\n");
+            assertSql(
+                    "tab latest by id, name where name = 'c1'",
+                    "id\tname\tvalue\tts\n" +
+                            "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
+                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
+            assertSql(
+                    "tab latest by id, name where name != 'c2' and value <= 111.7",
+                    "id\tname\tvalue\tts\n" +
+                            "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
+                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
+            // TODO: broken 2,4,5,7
+            assertSql(
+                    "tab latest by id where name = 'c2'",
+                    "id\tname\tvalue\tts\n" +
+                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n" +
+                            "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n");
+            // TODO: broken 3,4,5,6
+            assertSql(
+                    "tab latest by name where id = 'd1'",
+                    "id\tname\tvalue\tts\n" +
+                            "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
+                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n");
+            assertSql(
+                    "tab latest by name where id = 'd2'",
+                    "id\tname\tvalue\tts\n" +
+                            "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n" +
+                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
+            assertSql(
+                    "tab latest by name where id != 'd1'",
+                    "id\tname\tvalue\tts\n" +
+                            "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n" +
+                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
+        });
+    }
+
+    private void testLatestBySelectAllFilteredBySymbolIn(String ddl) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(ddl, sqlExecutionContext);
+
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'cpu', 1)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'cpu', 10)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'cpu', 100)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'cpu', 7)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'cpu', 15)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'cpu', 75)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'cpu', 5)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'cpu', 20)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'cpu', 25)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node1', 'memory', 20)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node1', 'memory', 200)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node1', 'memory', 2000)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node2', 'memory', 30)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node2', 'memory', 300)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node2', 'memory', 3000)");
+            executeInsert("insert into x values ('2021-11-17T17:35:01.000000Z', 'node3', 'memory', 40)");
+            executeInsert("insert into x values ('2021-11-17T17:35:02.000000Z', 'node3', 'memory', 400)");
+            executeInsert("insert into x values ('2021-11-17T17:35:03.000000Z', 'node3', 'memory', 4000)");
+
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "select * from x latest by node, metric \n" +
+                            "where node in ('node2') and metric in ('cpu', 'memory')",
+                    sink,
+                    "ts\tnode\tmetric\tvalue\n" +
+                            "2021-11-17T17:35:03.000000Z\tnode2\tcpu\t75\n" +
+                            "2021-11-17T17:35:03.000000Z\tnode2\tmemory\t3000\n"
+            );
+        });
     }
 
     private void testLatestBySupportedColumnTypes(CharSequence ddl, CharSequence ts) throws Exception {
@@ -6744,414 +7178,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
                     "tab latest by symbol", ts);
-        });
-    }
-
-    @Test
-    public void testLatestByTsIsPickedAtRuntimeNoDesignated() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table tab(" +
-                    "    id symbol, " +
-                    "    name symbol, " +
-                    "    value double, " +
-                    "    other_ts timestamp, " +
-                    "    ts timestamp" +
-                    ")", sqlExecutionContext);
-            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-15T11:31:35.878Z', '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-15T12:31:35.878Z', '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-15T13:31:35.878Z', '2021-10-05T17:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.4, '2021-10-15T14:31:35.878Z', '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.1, '2021-10-15T15:31:35.878Z', '2021-10-04T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.2, '2021-10-15T16:31:35.878Z', '2021-10-03T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.3, '2021-10-15T17:31:35.878Z', '2021-10-02T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.4, '2021-10-15T11:31:35.878Z', '2021-09-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.5, '2021-10-15T12:31:35.878Z', '2021-01-05T15:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.1, '2021-10-15T13:31:35.878Z', '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.2, '2021-10-15T14:31:35.878Z', '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.3, '2021-10-15T15:31:35.878Z', '2021-10-25T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.4, '2021-10-15T16:31:35.878Z', '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c2', 401.1, '2021-10-16T17:31:35.878Z', '2021-10-26T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-16T11:31:35.878Z', '2021-10-06T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-16T17:31:35.878Z', '2021-10-26T15:31:35.878Z')");
-            assertSql(
-                    "(tab latest by id where name in ('c2')) timestamp(other_ts)",
-                    "id\tname\tvalue\tother_ts\tts\n" +
-                            "d1\tc2\t102.5\t2021-10-15T12:31:35.878000Z\t2021-01-05T15:31:35.878000Z\n" +
-                            "d2\tc2\t401.1\t2021-10-16T17:31:35.878000Z\t2021-10-26T11:31:35.878000Z\n");
-        });
-    }
-
-    @Ignore()
-    // TODO: if the table has a designated timestamp, it becomes sticky
-    //  on latest by, and we cannot change it explicitly.
-    //  The query: (tab latest by id where name in ('c2')) timestamp(ts)
-    //   - only interested in rows with name == 'c2'
-    //   - for these, we want the latest row based on the ts column,
-    //     using id as unique key for the whole row
-    @Test
-    public void testLatestByTsIsPickedAtRuntimeOtherThanDesignated() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table tab(" +
-                    "    id symbol, " +
-                    "    name symbol, " +
-                    "    value double, " +
-                    "    other_ts timestamp, " +
-                    "    ts timestamp" +
-                    ") timestamp(other_ts) partition by day", sqlExecutionContext);
-            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-15T11:31:35.878Z', '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-15T12:31:35.878Z', '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-15T13:31:35.878Z', '2021-10-05T17:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.4, '2021-10-15T14:31:35.878Z', '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.1, '2021-10-15T15:31:35.878Z', '2021-10-04T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.2, '2021-10-15T16:31:35.878Z', '2021-10-03T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.3, '2021-10-15T17:31:35.878Z', '2021-10-02T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.4, '2021-10-15T11:31:35.878Z', '2021-09-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.5, '2021-10-15T12:31:35.878Z', '2021-01-05T15:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.1, '2021-10-15T13:31:35.878Z', '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.2, '2021-10-15T14:31:35.878Z', '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.3, '2021-10-15T15:31:35.878Z', '2021-10-25T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.4, '2021-10-15T16:31:35.878Z', '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c2', 401.1, '2021-10-16T17:31:35.878Z', '2021-10-26T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-16T11:31:35.878Z', '2021-10-06T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-16T17:31:35.878Z', '2021-10-26T15:31:35.878Z')");
-            assertSql(
-                    "(tab latest by id where name in ('c2')) timestamp(ts)",
-                    "id\tname\tvalue\tother_ts\tts\n" +
-                            "d1\tc2\t102.10000000000001\t2021-10-15T17:31:35.878000Z\t2021-10-04T11:31:35.878000Z\n" +
-                            "d2\tc2\t401.1\t2021-10-16T17:31:35.878000Z\t2021-10-26T11:31:35.878000Z\n");
-        });
-    }
-
-    @Ignore
-    // TODO: fix, where is applied after latest by, the optimized I suspect
-    @Test
-    public void testLatestByIsApplicableToSubQueriesNoDesignatedTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table tab(" +
-                    "    id symbol, " +
-                    "    name symbol, " +
-                    "    value double, " +
-                    "    other_ts timestamp, " +
-                    "    ts timestamp" +
-                    ")", sqlExecutionContext);
-            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-15T11:31:35.878Z', '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-16T17:31:35.878Z', '2021-10-06T15:31:35.878Z')");
-            assertSql(
-                    "(tab latest by id where name in (select distinct name from tab where name != 'c2')) timestamp(other_ts)",
-                    "id\tname\tvalue\tother_ts\tts\n" +
-                            "d1\tc1\t101.4\t2021-10-15 14:31:35.878\t2021-10-05 14:31:35.878\n" +
-                            "d2\tc1\t111.7\t2021-10-16 17:31:35.878\t2021-10-06 15:31:35.878\n");
-        });
-    }
-
-    @Test
-    public void testLatestByMultiColumnPlusFilter0() throws Exception {
-        testLatestByMultiColumnPlusFilter("create table tab(" +
-                "    id symbol, " +
-                "    name symbol, " +
-                "    value double, " +
-                "    ts timestamp" +
-                ")");
-    }
-
-    @Test
-    public void testLatestByMultiColumnPlusFilter1() throws Exception {
-        testLatestByMultiColumnPlusFilter("create table tab(" +
-                "    id symbol, " +
-                "    name symbol, " +
-                "    value double, " +
-                "    ts timestamp" +
-                ") timestamp(ts) partition by DAY");
-    }
-
-    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory applies filter after latest by is executed")
-    @Test
-    public void testLatestByMultiColumnPlusFilter2() throws Exception {
-        testLatestByMultiColumnPlusFilter("create table tab(" +
-                "    id symbol index, " +
-                "    name symbol, " +
-                "    value double, " +
-                "    ts timestamp" +
-                ") timestamp(ts) partition by DAY");
-    }
-
-    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory applies filter after latest by is executed")
-    @Test
-    public void testLatestByMultiColumnPlusFilter3() throws Exception {
-        testLatestByMultiColumnPlusFilter("create table tab(" +
-                "    id symbol, " +
-                "    name symbol index, " +
-                "    value double, " +
-                "    ts timestamp" +
-                ") timestamp(ts) partition by DAY");
-    }
-
-    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory applies filter after latest by is executed")
-    @Test
-    public void testLatestByMultiColumnPlusFilter4() throws Exception {
-        testLatestByMultiColumnPlusFilter("create table tab(" +
-                "    id symbol index, " +
-                "    name symbol index, " +
-                "    value double, " +
-                "    ts timestamp" +
-                ") timestamp(ts) partition by DAY");
-    }
-
-    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory applies filter after latest by is executed")
-    @Test
-    public void testLatestByMultiColumnPlusFilter5() throws Exception {
-        testLatestByMultiColumnPlusFilter("create table tab(" +
-                "    id symbol index, " +
-                "    name symbol index, " +
-                "    value double, " +
-                "    ts timestamp" +
-                ")");
-    }
-
-    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory applies filter after latest by is executed")
-    @Test
-    public void testLatestByMultiColumnPlusFilter6() throws Exception {
-        testLatestByMultiColumnPlusFilter("create table tab(" +
-                "    id symbol, " +
-                "    name symbol index, " +
-                "    value double, " +
-                "    ts timestamp" +
-                ")");
-    }
-
-    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory applies filter after latest by is executed")
-    @Test
-    public void testLatestByMultiColumnPlusFilter7() throws Exception {
-        testLatestByMultiColumnPlusFilter("create table tab(" +
-                "    id symbol index, " +
-                "    name symbol, " +
-                "    value double, " +
-                "    ts timestamp" +
-                ")");
-    }
-
-    private void testLatestByMultiColumnPlusFilter(CharSequence ddl) throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile(ddl, sqlExecutionContext);
-            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.4, '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.1, '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.2, '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.3, '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.4, '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.5, '2021-10-05T15:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.1, '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.2, '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.3, '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.4, '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c2', 401.1, '2021-10-06T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-06T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-06T15:31:35.878Z')");
-            assertSql(
-                    "tab latest by id, name where id = 'd1'",
-                    "id\tname\tvalue\tts\n" +
-                            "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
-                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n");
-            assertSql(
-                    "tab latest by id, name where id != 'd2' and value < 102.5",
-                    "id\tname\tvalue\tts\n" +
-                            "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
-                            "d1\tc2\t102.4\t2021-10-05T14:31:35.878000Z\n");
-            assertSql(
-                    "tab latest by id, name where name = 'c1'",
-                    "id\tname\tvalue\tts\n" +
-                            "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
-                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
-            assertSql(
-                    "tab latest by id, name where name != 'c2' and value <= 111.7",
-                    "id\tname\tvalue\tts\n" +
-                            "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
-                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
-            // TODO: broken 2,4,5,7
-            assertSql(
-                    "tab latest by id where name = 'c2'",
-                    "id\tname\tvalue\tts\n" +
-                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n" +
-                            "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n");
-            // TODO: broken 3,4,5,6
-            assertSql(
-                    "tab latest by name where id = 'd1'",
-                    "id\tname\tvalue\tts\n" +
-                            "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
-                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n");
-            assertSql(
-                    "tab latest by name where id = 'd2'",
-                    "id\tname\tvalue\tts\n" +
-                            "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n" +
-                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
-            assertSql(
-                    "tab latest by name where id != 'd1'",
-                    "id\tname\tvalue\tts\n" +
-                            "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n" +
-                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
-        });
-    }
-
-    @Ignore("result order is currently dependent on stability of sorting method")
-    // TODO: this is broken, the expected result order for "select * from tab" in the presence
-    //  of repeated timestamps needs to be predefined and consistent, one of two alternatives:
-    //  1.- most recent insert for a given timestamp first:
-    //    "d2\tc1\t201.10000000000002\t2021-10-05T11:31:35.878000Z\n" +
-    //    "d1\tc2\t102.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
-    //    "d1\tc1\t101.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
-    //    "d2\tc1\t201.20000000000002\t2021-10-05T12:31:35.878000Z\n" +
-    //    "d1\tc2\t102.2\t2021-10-05T12:31:35.878000Z\n" +
-    //    "d1\tc1\t101.2\t2021-10-05T12:31:35.878000Z\n" +
-    //    "d2\tc1\t201.3\t2021-10-05T13:31:35.878000Z\n" +
-    //    "d1\tc2\t102.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
-    //    "d1\tc1\t101.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
-    //    "d2\tc1\t201.4\t2021-10-05T14:31:35.878000Z\n" +
-    //    "d1\tc2\t102.4\t2021-10-05T14:31:35.878000Z\n" +
-    //    "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
-    //    "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n" +
-    //    "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n" +
-    //    "d2\tc1\t401.20000000000005\t2021-10-06T12:31:35.878000Z\n" +
-    //    "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n"
-    //  2.- least recent insert for a given timestamp first:
-    //    "d1\tc1\t101.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
-    //    "d1\tc2\t102.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
-    //    "d2\tc1\t201.10000000000002\t2021-10-05T11:31:35.878000Z\n" +
-    //    "d1\tc1\t101.2\t2021-10-05T12:31:35.878000Z\n" +
-    //    "d1\tc2\t102.2\t2021-10-05T12:31:35.878000Z\n" +
-    //    "d2\tc1\t201.20000000000002\t2021-10-05T12:31:35.878000Z\n" +
-    //    "d1\tc1\t101.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
-    //    "d1\tc2\t102.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
-    //    "d2\tc1\t201.3\t2021-10-05T13:31:35.878000Z\n" +
-    //    "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
-    //    "d1\tc2\t102.4\t2021-10-05T14:31:35.878000Z\n" +
-    //    "d2\tc1\t201.4\t2021-10-05T14:31:35.878000Z\n" +
-    //    "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n" +
-    //    "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n" +
-    //    "d2\tc1\t401.20000000000005\t2021-10-06T12:31:35.878000Z\n" +
-    //    "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n"
-    //  in the assertSql that follows, option #2 has been taken.
-    @Test
-    public void testSelectExpectedOrder() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table tab(" +
-                    "    id symbol index, " +
-                    "    name symbol index, " +
-                    "    value double, " +
-                    "    ts timestamp" +
-                    ") timestamp(ts) partition by DAY", sqlExecutionContext);
-            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.4, '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.1, '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.2, '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.3, '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.4, '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.5, '2021-10-05T15:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.1, '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.2, '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.3, '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.4, '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c2', 401.1, '2021-10-06T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-06T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-06T15:31:35.878Z')");
-            assertSql(
-                    "tab",
-                    "id\tname\tvalue\tts\n" +
-                            "d1\tc1\t101.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
-                            "d1\tc2\t102.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
-                            "d2\tc1\t201.10000000000002\t2021-10-05T11:31:35.878000Z\n" +
-                            "d1\tc1\t101.2\t2021-10-05T12:31:35.878000Z\n" +
-                            "d1\tc2\t102.2\t2021-10-05T12:31:35.878000Z\n" +
-                            "d2\tc1\t201.20000000000002\t2021-10-05T12:31:35.878000Z\n" +
-                            "d1\tc1\t101.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
-                            "d1\tc2\t102.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
-                            "d2\tc1\t201.3\t2021-10-05T13:31:35.878000Z\n" +
-                            "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
-                            "d1\tc2\t102.4\t2021-10-05T14:31:35.878000Z\n" +
-                            "d2\tc1\t201.4\t2021-10-05T14:31:35.878000Z\n" +
-                            "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n" +
-                            "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n" +
-                            "d2\tc1\t401.20000000000005\t2021-10-06T12:31:35.878000Z\n" +
-                            "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
-        });
-    }
-
-    private void expectSqlResult(CharSequence expected, CharSequence query, CharSequence ts) throws SqlException {
-        printSqlResult(expected, query, ts,
-                null,
-                null,
-                true,
-                true,
-                true,
-                false,
-                null);
-    }
-
-    private void executeInsertStatement(double d) throws SqlException {
-        String ddl = "insert into x (ds) values (" + d + ")";
-        executeInsert(ddl);
-    }
-
-    private void testBindVariableWithLike0(String keyword) throws Exception {
-        assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine)
-            ) {
-                compiler.compile("create table xy as (select rnd_str() v from long_sequence(100))", sqlExecutionContext);
-                bindVariableService.clear();
-                try (RecordCursorFactory factory = compiler.compile("xy where v " + keyword + " $1", sqlExecutionContext).getRecordCursorFactory()) {
-
-                    bindVariableService.setStr(0, "MBE%");
-                    assertCursor("v\n" +
-                                    "MBEZGHW\n",
-                            factory,
-                            true,
-                            true,
-                            false
-                    );
-
-                    bindVariableService.setStr(0, "Z%");
-                    assertCursor("v\n" +
-                                    "ZSQLDGLOG\n" +
-                                    "ZLUOG\n" +
-                                    "ZLCBDMIG\n" +
-                                    "ZJYYFLSVI\n" +
-                                    "ZWEVQTQO\n" +
-                                    "ZSFXUNYQ\n",
-                            factory,
-                            true,
-                            true,
-                            false
-                    );
-
-                    assertCursor("v\n" +
-                                    "ZSQLDGLOG\n" +
-                                    "ZLUOG\n" +
-                                    "ZLCBDMIG\n" +
-                                    "ZJYYFLSVI\n" +
-                                    "ZWEVQTQO\n" +
-                                    "ZSFXUNYQ\n",
-                            factory,
-                            true,
-                            true,
-                            false
-                    );
-
-
-                    bindVariableService.setStr(0, null);
-                    assertCursor("v\n",
-                            factory,
-                            true,
-                            true,
-                            false
-                    );
-                }
-            }
         });
     }
 }
