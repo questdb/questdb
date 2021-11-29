@@ -26,6 +26,7 @@ package io.questdb.std;
 
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 import java.io.File;
 import java.nio.charset.Charset;
@@ -199,6 +200,41 @@ public final class Files {
         if (address != 0 && munmap0(address, len) != -1) {
             Unsafe.recordMemAlloc(-len, memoryTag);
         }
+    }
+
+    public static boolean notDots(CharSequence value) {
+        final int len = value.length();
+        if (len > 2) {
+            return true;
+        }
+        if (value.charAt(0) != '.') {
+            return true;
+        }
+        return len == 2 && value.charAt(1) != '.';
+    }
+
+    public static boolean notDots(long pUtf8NameZ) {
+        final byte b0 = Unsafe.getUnsafe().getByte(pUtf8NameZ);
+
+        if (b0 != '.') {
+            return true;
+        }
+
+        final byte b1 = Unsafe.getUnsafe().getByte(pUtf8NameZ + 1);
+        return b1 != 0 && (b1 != '.' || Unsafe.getUnsafe().getByte(pUtf8NameZ + 2) != 0);
+    }
+
+    public static boolean isDir(long pUtf8NameZ, long type, StringSink nameSink) {
+        if (type == DT_DIR) {
+            nameSink.clear();
+            Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
+            return notDots(nameSink);
+        }
+        return false;
+    }
+
+    public static boolean isDir(long pUtf8NameZ, long type) {
+        return type == DT_DIR && notDots(pUtf8NameZ);
     }
 
     public static long openAppend(LPSZ lpsz) {
