@@ -153,7 +153,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
                 .withArithmeticOperator()
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
-                .withAnyOf(" = 0");
+                .withAnyOf(" = 1");
         assertGeneratedQuery("select * from x", ddl, gen);
     }
 
@@ -176,7 +176,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 .withAnyOf("42.5", "-42")
                 .withArithmeticOperator()
                 .withOptionalNegation().withAnyOf("f32", "f64")
-                .withAnyOf(" > 0");
+                .withAnyOf(" > 1");
         assertGeneratedQuery("select * from x", ddl, gen);
     }
 

@@ -286,10 +286,15 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             case ColumnType.LONG:
                 return (long) arg < 0 && (long) arg != Numbers.LONG_NaN;
             case ColumnType.SHORT:
+                if (arg instanceof Integer) {
+                    return (int) arg < 0;
+                }
+                return (short) arg < 0 && (short) arg != Numbers.SHORT_NaN;
             case ColumnType.BYTE:
-                // byte is passed as int
-                // short is passed as int
-                return (int) arg < 0;
+                if (arg instanceof Integer) {
+                    return (int) arg < 0;
+                }
+                return (byte) arg < 0 && (byte) arg != Numbers.BYTE_NaN;
             case ColumnType.DOUBLE:
                 // double can be auto-overloaded, e.g. lesser types passed
                 // into this method. Even though method accepts double we could
@@ -401,16 +406,23 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 toTimestampRefs++;
                 break;
             case ColumnType.SHORT:
-                sink.put("cast(").put((Integer) value).put(" as short)");
+                if (value instanceof Integer) {
+                    sink.put("cast(").put((Integer) value).put(" as short)");
+                } else {
+                    sink.put("cast(").put((Short) value).put(" as short)");
+                }
                 toShortRefs++;
+                break;
+            case ColumnType.BYTE:
+                if (value instanceof Integer) {
+                    sink.put("cast(").put((Integer) value).put(" as byte)");
+                } else {
+                    sink.put("cast(").put((Byte) value).put(" as byte)");
+                }
+                toByteRefs++;
                 break;
             case ColumnType.CHAR:
                 sink.put('\'').put((char) value).put('\'');
-                break;
-            default:
-                // byte
-                sink.put("cast(").put((Integer) value).put(" as byte)");
-                toByteRefs++;
                 break;
         }
     }
@@ -548,7 +560,11 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
         @Override
         public byte getByte(int col) {
-            return (byte) (int) args[col];
+            Object value = args[col];
+            if (value instanceof Integer) {
+                return ((Integer) value).byteValue();
+            }
+            return (byte) value;
         }
 
         @Override
@@ -582,7 +598,11 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
         @Override
         public short getShort(int col) {
-            return (short) (int) args[col];
+            Object value = args[col];
+            if (value instanceof Integer) {
+                return ((Integer) value).shortValue();
+            }
+            return (short) value;
         }
 
         @Override

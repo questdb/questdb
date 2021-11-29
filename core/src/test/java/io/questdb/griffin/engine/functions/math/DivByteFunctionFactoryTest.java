@@ -30,7 +30,12 @@ import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.std.Numbers;
 import org.junit.Test;
 
-public class AddByteFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class DivByteFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void testDivByZero() throws SqlException {
+        call(24, 0).andAssert(Numbers.BYTE_NaN);
+    }
+
     @Test
     public void testLeftNan() throws SqlException {
         call(Numbers.BYTE_NaN, 5).andAssert(Numbers.BYTE_NaN);
@@ -38,7 +43,7 @@ public class AddByteFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNegative() throws SqlException {
-        call(3, -4).andAssert(-1);
+        call(-12, 4).andAssert(-3);
     }
 
     @Test
@@ -48,11 +53,11 @@ public class AddByteFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testSimple() throws SqlException {
-        call(2, 5).andAssert((byte) 7);
+        call(24, 8).andAssert(3);
     }
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new AddByteFunctionFactory();
+        return new DivByteFunctionFactory();
     }
 }

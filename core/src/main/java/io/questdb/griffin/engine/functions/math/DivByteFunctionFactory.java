@@ -35,35 +35,24 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class AddByteFunctionFactory implements FunctionFactory {
+public class DivByteFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "+(BB)";
+        return "/(BB)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-        return new AddShortVVFunc(args.getQuick(0), args.getQuick(1));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class AddShortVVFunc extends ByteFunction implements BinaryFunction {
-        final Function left;
-        final Function right;
+    private static class Func extends ByteFunction implements BinaryFunction {
+        private final Function left;
+        private final Function right;
 
-        public AddShortVVFunc(Function left, Function right) {
+        public Func(Function left, Function right) {
             this.left = left;
             this.right = right;
-        }
-
-        @Override
-        public byte getByte(Record rec) {
-            final byte left = this.left.getByte(rec);
-            final byte right = this.right.getByte(rec);
-
-            if (left == Numbers.BYTE_NaN || right == Numbers.BYTE_NaN) {
-                return Numbers.BYTE_NaN;
-            }
-            return (byte) (left + right);
         }
 
         @Override
@@ -74,6 +63,17 @@ public class AddByteFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
+        }
+
+        @Override
+        public byte getByte(Record rec) {
+            final byte l = left.getByte(rec);
+            final byte r = right.getByte(rec);
+
+            if (l == Numbers.BYTE_NaN || r == Numbers.BYTE_NaN) {
+                return Numbers.BYTE_NaN;
+            }
+            return (byte) (l / r);
         }
     }
 }

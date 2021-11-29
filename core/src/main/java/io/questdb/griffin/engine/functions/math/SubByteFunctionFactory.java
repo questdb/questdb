@@ -31,8 +31,8 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.ByteFunction;
-import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class SubByteFunctionFactory implements FunctionFactory {
@@ -62,12 +62,10 @@ public class SubByteFunctionFactory implements FunctionFactory {
             final byte left = this.left.getByte(rec);
             final byte right = this.right.getByte(rec);
 
-            byte nullByte = NullConstant.NULL.getByte(null);
-            if (left != nullByte && right != nullByte) {
-                return (byte) (left - right);
+            if (left == Numbers.BYTE_NaN || right == Numbers.BYTE_NaN) {
+                return Numbers.BYTE_NaN;
             }
-
-            return nullByte;
+            return (byte) (left - right);
         }
 
         @Override

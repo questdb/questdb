@@ -30,15 +30,15 @@ import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.std.Numbers;
 import org.junit.Test;
 
-public class AddByteFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class MulByteFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testLeftNan() throws SqlException {
         call(Numbers.BYTE_NaN, 5).andAssert(Numbers.BYTE_NaN);
     }
 
     @Test
-    public void testNegative() throws SqlException {
-        call(3, -4).andAssert(-1);
+    public void testMulByZero() throws SqlException {
+        call(10, 0).andAssert(0);
     }
 
     @Test
@@ -47,12 +47,17 @@ public class AddByteFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
+    public void testBothNan() throws SqlException {
+        call(Numbers.BYTE_NaN, Numbers.BYTE_NaN).andAssert(Numbers.BYTE_NaN);
+    }
+
+    @Test
     public void testSimple() throws SqlException {
-        call(2, 5).andAssert((byte) 7);
+        call(11, 7).andAssert(77);
     }
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new AddByteFunctionFactory();
+        return new MulByteFunctionFactory();
     }
 }

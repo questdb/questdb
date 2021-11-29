@@ -30,7 +30,6 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.PostOrderTreeTraversalAlgo;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
-import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.*;
 
@@ -316,22 +315,22 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         memory.putByte(typeCode);
         switch (typeCode) {
             case IMM_I1:
-                memory.putLong(geoHashExpression ? GeoHashes.BYTE_NULL : NullConstant.NULL.getByte(null));
+                memory.putLong(geoHashExpression ? GeoHashes.BYTE_NULL : Numbers.BYTE_NaN);
                 break;
             case IMM_I2:
-                memory.putLong(geoHashExpression ? GeoHashes.SHORT_NULL : NullConstant.NULL.getShort(null));
+                memory.putLong(geoHashExpression ? GeoHashes.SHORT_NULL : Numbers.SHORT_NaN);
                 break;
             case IMM_I4:
-                memory.putLong(geoHashExpression ? GeoHashes.INT_NULL : NullConstant.NULL.getInt(null));
+                memory.putLong(geoHashExpression ? GeoHashes.INT_NULL : Numbers.INT_NaN);
                 break;
             case IMM_I8:
-                memory.putLong(geoHashExpression ? GeoHashes.NULL : NullConstant.NULL.getLong(null));
+                memory.putLong(geoHashExpression ? GeoHashes.NULL : Numbers.LONG_NaN);
                 break;
             case IMM_F4:
-                memory.putDouble(NullConstant.NULL.getFloat(null));
+                memory.putDouble(Float.NaN);
                 break;
             case IMM_F8:
-                memory.putDouble(NullConstant.NULL.getDouble(null));
+                memory.putDouble(Double.NaN);
                 break;
             default:
                 throw SqlException.position(position).put("unexpected null type: ").put(typeCode);

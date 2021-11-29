@@ -31,8 +31,8 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
-import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class SubShortFunctionFactory implements FunctionFactory {
@@ -62,12 +62,10 @@ public class SubShortFunctionFactory implements FunctionFactory {
             final short left = this.left.getShort(rec);
             final short right = this.right.getShort(rec);
 
-            short nullShort = NullConstant.NULL.getShort(null);
-            if (left != nullShort && right != nullShort) {
-                return (short) (left - right);
+            if (left == Numbers.SHORT_NaN || right == Numbers.SHORT_NaN) {
+                return Numbers.SHORT_NaN;
             }
-
-            return nullShort;
+            return (short) (left - right);
         }
 
         @Override

@@ -27,16 +27,13 @@ package io.questdb.griffin.engine.functions.math;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.std.Numbers;
 import org.junit.Test;
 
 public class SubShortFunctionFactoryTest extends AbstractFunctionFactoryTest {
-
-    private static final int NULL_SHORT = NullConstant.NULL.getShort(null);
-
     @Test
     public void testLeftNan() throws SqlException {
-        call(NULL_SHORT, 5).andAssert(NULL_SHORT);
+        call(Numbers.SHORT_NaN, 5).andAssert(Numbers.SHORT_NaN);
     }
 
     @Test
@@ -46,7 +43,7 @@ public class SubShortFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testRightNan() throws SqlException {
-        call(123, NULL_SHORT).andAssert(NULL_SHORT);
+        call(123, Numbers.SHORT_NaN).andAssert(Numbers.SHORT_NaN);
     }
 
     @Test
