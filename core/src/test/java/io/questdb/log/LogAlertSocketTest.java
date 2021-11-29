@@ -24,13 +24,12 @@
 
 package io.questdb.log;
 
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Arrays;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 import static io.questdb.log.HttpLogRecordSink.CRLF;
 
@@ -115,8 +114,8 @@ public class LogAlertSocketTest {
             // start servers
             final int numHosts = alertSkt.getAlertHostsCount();
             Assert.assertEquals(2, numHosts);
-            final CountDownLatch haltLatch = new CountDownLatch(numHosts);
-            final CountDownLatch firstServerCompleted = new CountDownLatch(1);
+            final SOCountDownLatch haltLatch = new SOCountDownLatch(numHosts);
+            final SOCountDownLatch firstServerCompleted = new SOCountDownLatch(1);
             final MockAlertTarget[] servers = new MockAlertTarget[numHosts];
             for (int i = 0; i < numHosts; i++) {
                 final int portNumber = alertSkt.getAlertPorts()[i];
@@ -135,24 +134,15 @@ public class LogAlertSocketTest {
                     .put(MockAlertTarget.DEATH_PILL)
                     .put(CRLF)
                     .$());
-            try {
-                Assert.assertTrue(firstServerCompleted.await(5, TimeUnit.SECONDS));
-            } catch (InterruptedException e) {
-                Assert.fail("timed-out");
-            }
+            Assert.assertTrue(firstServerCompleted.await(5_000_000_000L));
 
             // by now there is only one server surviving, and we are connected to the other.
             // send a death pill and kill the surviving server.
             builder.clear();
-            Assert.assertTrue(alertSkt.send(builder.put(MockAlertTarget.DEATH_PILL).put(CRLF).$()));
+            alertSkt.send(builder.put(MockAlertTarget.DEATH_PILL).put(CRLF).$());
 
-            // wait for haltness
-            try {
-                Assert.assertTrue(haltLatch.await(30, TimeUnit.SECONDS));
-            } catch (InterruptedException e) {
-                Assert.fail("timed-out");
-            }
-            // all servers should be done.
+            // wait for haltness, and then all servers should be done.
+            Assert.assertTrue(haltLatch.await(10_000_000_000L));
             for (int i = 0; i < numHosts; i++) {
                 Assert.assertFalse(servers[i].isRunning());
             }
