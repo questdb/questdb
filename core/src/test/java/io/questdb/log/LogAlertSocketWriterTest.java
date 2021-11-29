@@ -24,6 +24,7 @@
 
 package io.questdb.log;
 
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -31,9 +32,6 @@ import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 public class LogAlertSocketWriterTest {
 
@@ -61,10 +59,10 @@ public class LogAlertSocketWriterTest {
                 LogLevel.ERROR
         )) {
             // create mock alert target servers
-            final CountDownLatch haltLatch = new CountDownLatch(2);
+            final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
             final MockAlertTarget[] alertsTarget = new MockAlertTarget[2];
-            alertsTarget[0] = new MockAlertTarget(1234, () -> haltLatch.countDown());
-            alertsTarget[1] = new MockAlertTarget(1242, () -> haltLatch.countDown());
+            alertsTarget[0] = new MockAlertTarget(1234, haltLatch::countDown);
+            alertsTarget[1] = new MockAlertTarget(1242, haltLatch::countDown);
             alertsTarget[0].start();
             alertsTarget[1].start();
 
@@ -141,13 +139,9 @@ public class LogAlertSocketWriterTest {
                     writer.getAlertBuilder().toString()
             );
 
-            try {
-                haltLatch.await(10, TimeUnit.SECONDS);
+                Assert.assertTrue(haltLatch.await(10_000_000_000L));
                 Assert.assertFalse(alertsTarget[0].isRunning());
                 Assert.assertFalse(alertsTarget[1].isRunning());
-            } catch (InterruptedException e) {
-                Assert.fail("timed-out");
-            }
         } finally {
             Unsafe.free(logRecordBuffPtr, logRecordBuffSize, MemoryTag.NATIVE_DEFAULT);
         }
