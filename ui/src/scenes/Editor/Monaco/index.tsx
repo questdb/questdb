@@ -292,6 +292,7 @@ const MonacoEditor = () => {
           minimap: {
             enabled: false,
           },
+          scrollBeyondLastLine: false,
         }}
         theme="vs-dark"
       />
