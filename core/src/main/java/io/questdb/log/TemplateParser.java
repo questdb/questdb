@@ -87,7 +87,7 @@ public class TemplateParser implements Sinkable {
                         }
                     } else {
                         if (i - lastExprEnd > 0) {
-                            txtComponents.add(new SSubStr(lastExprEnd, i));
+                            txtComponents.add(new SubStrComponent(lastExprEnd, i));
                             lastExprEnd = i + 1;
                         }
                     }
@@ -115,7 +115,7 @@ public class TemplateParser implements Sinkable {
                         }
                         int formatStart = keyStart + DATE_FORMAT_KEY.length();
                         if (Chars.startsWith(originalTxt, keyStart, formatStart, DATE_FORMAT_KEY)) {
-                            txtComponents.add(new SDate(formatStart, i));
+                            txtComponents.add(new DateComponent(formatStart, i));
                         } else {
                             txtComponents.add(resolveEnv(dollarStart, dollarStart + 2, i));
                         }
@@ -130,7 +130,7 @@ public class TemplateParser implements Sinkable {
                 throw new LogError("Mismatched '{}' at position " + lastExprEnd);
             }
             if (locationLen - lastExprEnd > 0) {
-                txtComponents.add(new SSubStr(lastExprEnd, locationLen));
+                txtComponents.add(new SubStrComponent(lastExprEnd, locationLen));
             }
         } else {
             if (keyStart != NIL) {
@@ -183,11 +183,10 @@ public class TemplateParser implements Sinkable {
         return sink -> sink.put(envValue);
     }
 
-    private class SDate implements Sinkable {
-
+    private class DateComponent implements Sinkable {
         private final DateFormat dateFormat;
 
-        SDate(int start, int end) {
+        DateComponent(int start, int end) {
             if (end - start < 1) {
                 throw new LogError("Missing expression at position " + start);
             }
@@ -211,11 +210,11 @@ public class TemplateParser implements Sinkable {
         }
     }
 
-    private class SSubStr implements Sinkable {
+    private class SubStrComponent implements Sinkable {
         protected final int start;
         protected final int end;
 
-        SSubStr(int start, int end) {
+        SubStrComponent(int start, int end) {
             this.start = start;
             this.end = end;
         }

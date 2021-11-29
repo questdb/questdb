@@ -150,6 +150,7 @@ public class TemplateParserTest {
         assertFail("${COCO", "Missing '}' at position 6");
         assertFail("$JSON_FILE}", "Mismatched '{}' at position 10");
         assertFail("${date:}", "Missing expression at position 7");
+        assertFail("${date:       }", "Missing expression at position 14");
         assertFail("/a/b/$DATABASE_ROOT/c", "Undefined property: DATABASE_ROOT/c");
     }
 
@@ -170,6 +171,14 @@ public class TemplateParserTest {
         Assert.assertTrue(parser.getKeyOffset("date:") < 0);
         Assert.assertEquals(parser.getKeyOffset("tarzan"), 13);
         Assert.assertEquals(parser.getKeyOffset("jane"), 23);
+    }
+
+    @Test
+    public void testToString() {
+        parser.parseEnv("calendar:${date:y}!", 0);
+        parser.setDateValue(1637091363010000L); // time always in micros
+        String str = parser.toString();
+        TestUtils.assertEquals("calendar:2021!", str);
     }
 
     private void assertParseEquals(String location, String expected, String expectedLocation) {
