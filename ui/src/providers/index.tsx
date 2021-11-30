@@ -23,3 +23,4 @@
  ******************************************************************************/
 
 export * from "./QuestProvider"
+export * from "./EditorProvider"
