@@ -3832,7 +3832,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     private void assertCastInt(String expectedData, int castTo) throws SqlException {
-        assertCastInt( expectedData, castTo, 2);
+        assertCastInt(expectedData, castTo, 2);
     }
 
     private void assertCastInt(String expectedData, int castTo, int nanRate) throws SqlException {
@@ -3890,7 +3890,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     private void assertCastShort(String expectedData, int castTo) throws SqlException {
-        assertCastShort(expectedData, castTo, 1024, 2048 );
+        assertCastShort(expectedData, castTo, 1024, 2048);
     }
 
     private void assertCastShort(String expectedData, int castTo, int min, int max) throws SqlException {

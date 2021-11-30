@@ -594,7 +594,7 @@ public class BytecodeAssembler {
         }
         buf.putDouble(value);
     }
-    
+
     public void putLong(long value) {
         if (buf.remaining() < 4) {
             resize();

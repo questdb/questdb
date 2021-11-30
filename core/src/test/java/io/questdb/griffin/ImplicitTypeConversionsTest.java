@@ -5,24 +5,24 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Test implicit narrowing conversions : 
+ * Test implicit narrowing conversions :
  * double -> float, long, int, short, byte
  * float -> long, int, short, byte
  * long -> int, short, byte
  * int -> short, byte
- * short -> byte 
+ * short -> byte
  */
 public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     //double->float
     @Test
     public void testInsertDoubleAsFloat_CausesUnderflow_And_ReturnsException() throws Exception {
-        testInsertCausesException("double","-34028235000000000000000000000000000000.0","float");
+        testInsertCausesException("double", "-34028235000000000000000000000000000000.0", "float");
     }
 
     @Test
     public void testInsertDoubleAsFloat_CausesOverflow_And_ReturnsException() throws Exception {
-        testInsertCausesException("double","34028235700000000000000000000000000000.0","float");
+        testInsertCausesException("double", "34028235700000000000000000000000000000.0", "float");
     }
 
     @Test
@@ -42,7 +42,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertNonZeroDoubleAsFloat_ReturnsValueWithoutFraction() throws Exception {
-        testInsert("double","2.34567","float", "2.3457");//formatting issue, number is stored properly
+        testInsert("double", "2.34567", "float", "2.3457");//formatting issue, number is stored properly
     }
 
     @Test
@@ -57,12 +57,12 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertDoubleAsFloat_Causes_Overflow_and_throws_exception() throws Exception {
-        testInsertCausesException("double","3.4028235E38","float");
+        testInsertCausesException("double", "3.4028235E38", "float");
     }
 
     @Test
     public void testInsertDoubleAsFloat_Causes_Underflow_and_throws_exception() throws Exception {
-        testInsertCausesException("double","-3.4028236E38","float");
+        testInsertCausesException("double", "-3.4028236E38", "float");
     }
 
     //double->long
@@ -73,7 +73,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertZeroNonDoubleDoubleAsLong_ReturnsValueWithoutFraction() throws Exception {
-        testInsert("double","2.34567","short", "2");
+        testInsert("double", "2.34567", "short", "2");
     }
 
     //input can't be -9223372036854775808 due to  #1615
@@ -95,12 +95,12 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertDoubleAsLong_Causes_Overflow_and_throws_exception() throws Exception {
-        testInsertCausesException("double","9223372036854775908.0","long");
+        testInsertCausesException("double", "9223372036854775908.0", "long");
     }
 
     @Test
     public void testInsertDoubleAsLong_Causes_Underflow_and_throws_exception() throws Exception {
-        testInsertCausesException("double","-9223372036855775809.0","long");
+        testInsertCausesException("double", "-9223372036855775809.0", "long");
     }
 
     //double->int
@@ -111,7 +111,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertZeroNonDoubleDoubleAsInt_ReturnsValueWithoutFraction() throws Exception {
-        testInsert("double","2.34567","int", "2");
+        testInsert("double", "2.34567", "int", "2");
     }
 
     @Test
@@ -131,12 +131,12 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertDoubleAsInt_Causes_Overflow_and_throws_exception() throws Exception {
-        testInsertCausesException("double","2147483648.0","int");
+        testInsertCausesException("double", "2147483648.0", "int");
     }
 
     @Test
     public void testInsertDoubleAsInt_Causes_Underflow_and_throws_exception() throws Exception {
-        testInsertCausesException("double","-2147483649.0","int");
+        testInsertCausesException("double", "-2147483649.0", "int");
     }
 
     //double->short
@@ -147,7 +147,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertZeroNonIntegerDoubleAsShort_ReturnsValueWithoutFraction() throws Exception {
-        testInsert("double","5.678","short", "5");
+        testInsert("double", "5.678", "short", "5");
     }
 
     @Test
@@ -162,33 +162,33 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertDoubleAsShort_Causes_Overflow_and_throws_exception() throws Exception {
-        testInsertCausesException("double","32768","short");
+        testInsertCausesException("double", "32768", "short");
     }
 
     @Test
     public void testInsertDoubleAsShort_Causes_Underflow_and_throws_exception() throws Exception {
-        testInsertCausesException("double","-32769","short");
+        testInsertCausesException("double", "-32769", "short");
     }
 
     //double->byte
     @Test
     public void testInsertZeroIntegerDoubleAsByte_ReturnsExactValue() throws Exception {
-        testInsert("double","0.0","byte", "0");
+        testInsert("double", "0.0", "byte", "0");
     }
 
     @Test
     public void testInsertZeroNonIntegerDoubleAsByte_ReturnsValueWithoutFraction() throws Exception {
-        testInsert("double","1.1234","byte", "1");
+        testInsert("double", "1.1234", "byte", "1");
     }
 
     @Test
     public void testInsertDoubleAsByte_ReturnsMinValue() throws Exception {
-        testInsert("double","-128.0","byte", "-128");
+        testInsert("double", "-128.0", "byte", "-128");
     }
 
     @Test
     public void testInsertDoublesByte_ReturnsMaxValue() throws Exception {
-        testInsert("double","127.0","byte", "127");
+        testInsert("double", "127.0", "byte", "127");
     }
 
     @Test
@@ -210,7 +210,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertZeroNonFloatFloatAsLong_ReturnsValueWithoutFraction() throws Exception {
-        testInsert("float","7.891","long", "7");
+        testInsert("float", "7.891", "long", "7");
     }
 
     @Test
@@ -231,12 +231,12 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertFloatAsLong_Causes_Overflow_and_throws_exception() throws Exception {
-        testInsertCausesException("float","9223373036854775808.0","long");
+        testInsertCausesException("float", "9223373036854775808.0", "long");
     }
 
     @Test
     public void testInsertFloatAsLong_Causes_Underflow_and_throws_exception() throws Exception {
-        testInsertCausesException("float","-9223373036854775808.0","long");
+        testInsertCausesException("float", "-9223373036854775808.0", "long");
     }
 
     //float->int
@@ -247,7 +247,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertZeroNonFloatFloatAsInt_ReturnsValueWithoutFraction() throws Exception {
-        testInsert("float","2.34567","int", "2");
+        testInsert("float", "2.34567", "int", "2");
     }
 
     @Test
@@ -267,12 +267,12 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertFloatAsInt_Causes_Overflow_and_throws_exception() throws Exception {
-        testInsertCausesException("float","2147483648.0","int");
+        testInsertCausesException("float", "2147483648.0", "int");
     }
 
     @Test
     public void testInsertFloatAsInt_Causes_Underflow_and_throws_exception() throws Exception {
-        testInsertCausesException("float","-2147483848.0","int");
+        testInsertCausesException("float", "-2147483848.0", "int");
     }
 
     //float->short
@@ -283,7 +283,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertZeroNonIntegerFloatAsShort_ReturnsValueWithoutFraction() throws Exception {
-        testInsert("float","5.678","short", "5");
+        testInsert("float", "5.678", "short", "5");
     }
 
     @Test
@@ -298,33 +298,33 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertFloatAsShort_Causes_Overflow_and_throws_exception() throws Exception {
-        testInsertCausesException("float","32768","short");
+        testInsertCausesException("float", "32768", "short");
     }
 
     @Test
     public void testInsertFloatAsShort_Causes_Underflow_and_throws_exception() throws Exception {
-        testInsertCausesException("float","-32769","short");
+        testInsertCausesException("float", "-32769", "short");
     }
 
     //float->byte
     @Test
     public void testInsertZeroIntegerFloatAsByte_ReturnsExactValue() throws Exception {
-        testInsert("float","0.0","byte", "0");
+        testInsert("float", "0.0", "byte", "0");
     }
 
     @Test
     public void testInsertZeroNonIntegerFloatAsByte_ReturnsValueWithoutFraction() throws Exception {
-        testInsert("float","1.1234","byte", "1");
+        testInsert("float", "1.1234", "byte", "1");
     }
 
     @Test
     public void testInsertFloatAsByte_ReturnsMinValue() throws Exception {
-        testInsert("float","-128.0","byte", "-128");
+        testInsert("float", "-128.0", "byte", "-128");
     }
 
     @Test
     public void testInsertFloatsByte_ReturnsMaxValue() throws Exception {
-        testInsert("float","127.0","byte", "127");
+        testInsert("float", "127.0", "byte", "127");
     }
 
     @Test
@@ -360,12 +360,12 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertLongAsInt_Causes_Overflow_and_throws_exception() throws Exception {
-        testInsertCausesException("long","2147483648","int");
+        testInsertCausesException("long", "2147483648", "int");
     }
 
     @Test
     public void testInsertLongAsInt_Causes_Underflow_and_throws_exception() throws Exception {
-        testInsertCausesException("long","-2147483649","int");
+        testInsertCausesException("long", "-2147483649", "int");
     }
 
     //long->short
@@ -386,28 +386,28 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertLongAsShort_Causes_Overflow_and_throws_exception() throws Exception {
-        testInsertCausesException("long","32768","short");
+        testInsertCausesException("long", "32768", "short");
     }
 
     @Test
     public void testInsertLongAsShort_Causes_Underflow_and_throws_exception() throws Exception {
-        testInsertCausesException("long","-32769","short");
+        testInsertCausesException("long", "-32769", "short");
     }
 
     //long->byte
     @Test
     public void testInsertZeroLongAsByte_ReturnsExactValue() throws Exception {
-        testInsert("long","0","byte");
+        testInsert("long", "0", "byte");
     }
 
     @Test
     public void testInsertLongAsByte_ReturnsMinValue() throws Exception {
-        testInsert("long","-128","byte");
+        testInsert("long", "-128", "byte");
     }
 
     @Test
     public void testInsertLongsByte_ReturnsMaxValue() throws Exception {
-        testInsert("long","127","byte");
+        testInsert("long", "127", "byte");
     }
 
     @Test
@@ -439,29 +439,29 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertIntAsShort_Causes_Overflow_and_throws_exception() throws Exception {
-        testInsertCausesException("int","32768","short");
+        testInsertCausesException("int", "32768", "short");
     }
 
     @Test
     public void testInsertIntAsShort_Causes_Underflow_and_throws_exception() throws Exception {
-        testInsertCausesException("int","-32769","short");
+        testInsertCausesException("int", "-32769", "short");
     }
 
 
     //int->byte
     @Test
     public void testInsertZeroIntAsByte_ReturnsExactValue() throws Exception {
-        testInsert("int","0","byte");
+        testInsert("int", "0", "byte");
     }
 
     @Test
     public void testInsertIntAsByte_ReturnsMinValue() throws Exception {
-        testInsert("int","-128","byte");
+        testInsert("int", "-128", "byte");
     }
 
     @Test
     public void testInsertIntsByte_ReturnsMaxValue() throws Exception {
-        testInsert("int","127","byte");
+        testInsert("int", "127", "byte");
     }
 
     @Test
@@ -478,27 +478,27 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
     //short->byte
     @Test
     public void testInsertZeroShortAsByte_ReturnsExactValue() throws Exception {
-        testInsert( "short", "0", "byte" );
+        testInsert("short", "0", "byte");
     }
 
     @Test
     public void testInsertShortAsByte_ReturnsMinValue() throws Exception {
-        testInsert( "short", "-128", "byte" );
+        testInsert("short", "-128", "byte");
     }
 
     @Test
     public void testInsertShortAsByte_ReturnsMaxValue() throws Exception {
-        testInsert( "short", "127", "byte" );
+        testInsert("short", "127", "byte");
     }
 
     @Test
     public void testInsertShortAsByte_Causes_Overflow_and_throws_exception() throws Exception {
-        testInsertCausesException( "short", "128", "byte" );
+        testInsertCausesException("short", "128", "byte");
     }
 
     @Test
     public void testInsertShortAsByte_Causes_Underflow_and_throws_exception() throws Exception {
-        testInsertCausesException( "short", "-129", "byte" );
+        testInsertCausesException("short", "-129", "byte");
     }
 
     private void testInsert(String valueType, String value, String targetColumnType, String expectedValue) throws Exception {
@@ -513,7 +513,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
     }
 
     private void testInsert(String valueType, String value, String targetColumnType) throws Exception {
-        testInsert( valueType, value, targetColumnType, value );
+        testInsert(valueType, value, targetColumnType, value);
     }
 
     private void testInsertCausesException(String valueType, String value, String targetColumnType) throws Exception {
@@ -524,8 +524,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
             });
 
             Assert.fail("SqlException should be thrown!");
-        }
-        catch (SqlException sqlE){
+        } catch (SqlException sqlE) {
             TestUtils.assertContains(sqlE.getFlyweightMessage(), "inconvertible value");
         }
     }
