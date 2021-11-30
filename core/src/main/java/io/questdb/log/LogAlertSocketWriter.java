@@ -51,7 +51,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private static final String MESSAGE_ENV_VALUE = "${" + MESSAGE_ENV + "}";
     private static final CharSequenceObjHashMap<CharSequence> ALERT_PROPS = TemplateParser.adaptMap(System.getenv());
 
-    {
+    static {
         if (!ALERT_PROPS.contains(ORG_ID_ENV)) {
             ALERT_PROPS.put(ORG_ID_ENV, DEFAULT_ENV_VALUE);
         }

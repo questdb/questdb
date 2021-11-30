@@ -73,10 +73,14 @@ public class HttpLogRecordSink extends LogRecordSink {
         if (hasContentLengthMarker) {
             // take the body length and format it into the ###### contentLength marker
             int bodyLen = (int) (_wptr - bodyStart);
-            long p = contentLengthEnd;
+            long p = contentLengthEnd; // note, we replace # from lowest significant digit (right to left)
             if (bodyLen == 0) {
                 Unsafe.getUnsafe().putByte(p--, (byte) '0');
             } else {
+                // note, we reserved CL_MARKER_LEN (9) positions for the value of
+                // http header attribute Content-Length. With 9 positions, the max
+                // length is assumed to be way larger than needed, to avoid
+                // additional checks for overflow here.
                 int rem = bodyLen % 10;
                 while (bodyLen > 0) {
                     Unsafe.getUnsafe().putByte(p--, (byte) ('0' + rem));
@@ -84,12 +88,12 @@ public class HttpLogRecordSink extends LogRecordSink {
                     rem = bodyLen % 10;
                 }
             }
-            int lpadLen = (int) (CL_MARKER_LEN - contentLengthEnd + p);
+            int lpadLen = (int) (CL_MARKER_LEN - contentLengthEnd + p); // remaining # become white space
             for (int lpad = 0; lpad < lpadLen; lpad++) {
                 Unsafe.getUnsafe().putByte(p--, (byte) ' ');
             }
         }
-        return length();
+        return length(); // length of the http log record
     }
 
 
