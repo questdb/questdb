@@ -298,6 +298,7 @@ namespace questdb::x86 {
     inline Xmm int64_to_double(Compiler &c, const Gpq &rhs, bool check_null) {
         c.comment("int64_to_double");
         Xmm r = c.newXmmSd();
+        //c.vxorps(r, r, r);
         if (!check_null) {
             c.vcvtsi2sd(r, r, rhs);
             return r;
@@ -1659,29 +1660,44 @@ namespace questdb::avx2 {
     }
 
     inline Ymm cvt_ltod(Compiler &c, const Ymm &rhs, bool null_check) {
-        Gp t = c.newGpq();
-        const Ymm &ymm0 = rhs;
+        Ymm dst = c.newYmm();
 
-        Xmm xmm0 = c.newXmm();
         Xmm xmm1 = c.newXmm();
         Xmm xmm2 = c.newXmm();
         Xmm xmm3 = c.newXmm();
+        Xmm xmm4 = c.newXmm();
+        Xmm xmm5 = c.newXmm();
+        Xmm xmm6 = c.newXmm();
 
-        c.vextracti128(xmm1, ymm0, 1);
-        c.vpextrq(t, xmm1, 1);
-        c.vcvtsi2sd(xmm2, xmm2, t);
-        c.vmovq(t, xmm1);
-        c.vcvtsi2sd(xmm1, xmm3, t);
-        c.vpextrq(t, xmm0, 1);
-        c.vunpcklpd(xmm1, xmm1, xmm2);
-        c.vcvtsi2sd(xmm2, xmm3, t);
-        c.vmovq(t, xmm0);
-        c.vcvtsi2sd(xmm0, xmm3, t);
-        c.vunpcklpd(xmm0, xmm0, xmm2);
-        c.vinsertf128(ymm0, ymm0, xmm1, 1);
-        return ymm0;
+
+        c.vxorpd( xmm1, xmm1, xmm1);
+        c.vxorpd( xmm2, xmm2, xmm2);
+        c.vxorpd( xmm3, xmm3, xmm3);
+        c.vxorpd( xmm4, xmm4, xmm4);
+
+        Mem mem = c.newStack(32, 32);
+        c.vmovdqu( mem, rhs);
+        mem.setSize(8);
+        c.vcvtsi2sd( xmm1, xmm1, mem);
+        mem.addOffset(8);
+        c.vcvtsi2sd( xmm2, xmm2, mem);
+        mem.addOffset(8);
+        c.vcvtsi2sd( xmm3, xmm3, mem);
+        mem.addOffset(8);
+        c.vcvtsi2sd( xmm4, xmm4, mem);
+
+        c.vunpcklpd( xmm5, xmm1, xmm2);
+        c.vunpcklpd( xmm6, xmm3, xmm4);
+        c.vinsertf128( dst, xmm5.ymm(), xmm6, 1);
+        //c.vzeroupper();
+        if(null_check) {
+            Ymm int_nulls_mask = cmp_eq_null(c, i64, rhs);
+            Ymm nans = c.newYmm();
+            c.vmovups(nans, vec_double_null(c));
+            return select_bytes(c, int_nulls_mask, dst, nans);
+        }
+        return dst;
     }
-
 }
 
 #endif //QUESTDB_COMPILER_H
