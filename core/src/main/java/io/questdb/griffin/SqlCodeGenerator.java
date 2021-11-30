@@ -753,7 +753,7 @@ public class SqlCodeGenerator implements Mutable {
     }
 
     UpdateStatementBuilder generateUpdate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {
-        // Hint that this is UPDATE query plan
+        // Hint that this is an UPDATE query plan
         queryModel.setIsUpdate(true);
         queryModel.getNestedModel().setIsUpdate(true);
 

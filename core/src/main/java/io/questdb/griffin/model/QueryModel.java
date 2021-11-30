@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
@@ -119,6 +120,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final QueryWithClauseModel withClauseModel = new QueryWithClauseModel();
     private int modelType;
     private final ObjList<ExpressionNode> updateSetColumns = new ObjList<>();
+    private final IntList tableColumnTypes = new IntList();
 
     private QueryModel() {
         joinModels.add(this);
@@ -150,6 +152,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         columnNameToAliasMap.put(ast.token, alias);
         bottomUpColumnNames.add(alias);
         aliasToColumnMap.put(alias, column);
+    }
+
+    public void addTableColumnType(int columnType) {
+        tableColumnTypes.add(columnType);
     }
 
     public void addGroupBy(ExpressionNode node) {
@@ -239,6 +245,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         isUpdateModel = false;
         modelType = ExecutionModel.QUERY;
         updateSetColumns.clear();
+        tableColumnTypes.clear();
     }
 
     public void clearColumnMapStructs() {
@@ -309,6 +316,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ExpressionNode getAlias() {
         return alias;
+    }
+
+    public IntList getTableColumnTypes() {
+        return tableColumnTypes;
     }
 
     public ObjList<ExpressionNode> getUpdateExpressions() {

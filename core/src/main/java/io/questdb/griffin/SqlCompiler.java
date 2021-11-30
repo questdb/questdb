@@ -1802,16 +1802,25 @@ public class SqlCompiler implements Closeable {
         // |-- QueryModel of select-virtual or select-choose of data selected for update
         //     |-- QueryModel with selected data
         //         |-- QueryModel to represent FROM clause for JOINs in UPDATE
+        final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
+        final QueryModel tableQueryModel = selectQueryModel.getNestedModel();
+
         // First generate plan for nested SELECT QueryModel
-        UpdateStatementBuilder updateStatementBuilder = codeGenerator.generateUpdate(updateQueryModel.getNestedModel(), executionContext);
-        try (TableReader reader = engine.getReader(
-                executionContext.getCairoSecurityContext(),
-                updateQueryModel.getTableName().token
-        )) {
-            // And then generate plan for UPDATE top level QueryModel
-            TableReaderMetadata updateTableMetadata = reader.getMetadata();
-            return updateStatementBuilder.buildUpdate(updateQueryModel, updateTableMetadata, executionContext.getBindVariableService());
-        }
+        final UpdateStatementBuilder updateStatementBuilder = codeGenerator.generateUpdate(selectQueryModel, executionContext);
+
+        // And then generate plan for UPDATE top level QueryModel
+        final IntList tableColumnTypes = tableQueryModel.getTableColumnTypes();
+        final ObjList<CharSequence> tableColumnNames = tableQueryModel.getBottomUpColumnNames();
+        final int tableId = tableQueryModel.getTableId();
+        final long tableVersion = tableQueryModel.getTableVersion();
+        return updateStatementBuilder.buildUpdate(
+                updateQueryModel,
+                tableColumnTypes,
+                tableColumnNames,
+                tableId,
+                tableVersion,
+                executionContext.getBindVariableService()
+        );
     }
 
     RecordCursorFactory generate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {

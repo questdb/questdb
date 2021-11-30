@@ -70,6 +70,12 @@ public class InplaceUpdateExecution implements Closeable {
         }
 
         TableWriterMetadata writerMetadata = tableWriter.getMetadata();
+
+        // Check that table structure hasn't changed between planning and executing the UPDATE
+        if (writerMetadata.getId() != updateStatement.getTableId() || tableWriter.getStructureVersion() != updateStatement.getTableVersion()) {
+            throw ReaderOutOfDateException.of(tableWriter.getTableName());
+        }
+
         RecordMetadata updateMetadata = updateStatement.getValuesMetadata();
         int updateStatementColumnCount = updateMetadata.getColumnCount();
 
@@ -82,14 +88,11 @@ public class InplaceUpdateExecution implements Closeable {
             updateToColumnMap.add(tableColumnIndex);
         }
 
-        // Create update memory list of all columns to be udpated
+        // Create update memory list of all columns to be updated
         initUpdateMemory(updateStatementColumnCount);
 
         // Start execution frame by frame
         RecordCursorFactory rowIdFactory = updateStatement.getRowIdFactory();
-        if (!rowIdFactory.supportPageFrameCursor()) {
-            throw SqlException.$(updateStatement.getPosition(), "Only simple UPDATE statements without joins are supported");
-        }
 
         // Track how many records updated
         long rowsUpdated = 0;

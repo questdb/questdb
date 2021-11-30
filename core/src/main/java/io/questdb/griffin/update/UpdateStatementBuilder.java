@@ -26,7 +26,6 @@ package io.questdb.griffin.update;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -36,6 +35,7 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 import java.io.Closeable;
 
@@ -57,13 +57,20 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
     }
 
     public UpdateStatement buildUpdate(
-            QueryModel updateQueryModel,
-            TableReaderMetadata updateTableMetadata,
+            @Transient QueryModel updateQueryModel,
+            @Transient IntList tableColumnTypes,
+            @Transient ObjList<CharSequence> tableColumnNames,
+            int tableId,
+            long tableVersion,
             BindVariableService bindVariableService
     ) throws SqlException {
         if (joinRecordCursorFactory == null && setValuesFunctions == null && selectChooseColumnMaps == null) {
             // This is update of column to the same values, e.g. changing nothing
             return UpdateStatement.EMPTY;
+        }
+
+        if (!rowIdFactory.supportPageFrameCursor()) {
+            throw SqlException.$(updateQueryModel.getModelPosition(), "Only simple UPDATE statements without joins are supported");
         }
 
         // Check that virtualColumnFunctions match types of updateTableMetadata
@@ -73,7 +80,8 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
         for (int i = 0, n = valuesResultMetadata.getColumnCount(); i < n; i++) {
             int virtualColumnType = valuesResultMetadata.getColumnType(i);
             CharSequence updateColumnName = valuesResultMetadata.getColumnName(i);
-            int columnType = updateTableMetadata.getColumnType(updateColumnName);
+            int tableColumnIndex = tableColumnNames.indexOf(updateColumnName);
+            int columnType = tableColumnTypes.get(tableColumnIndex);
 
             if (virtualColumnType != columnType) {
                 implicitCastNeeded = true;
@@ -102,13 +110,14 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
 
         UpdateStatement updateStatement = new UpdateStatement(
                 updateQueryModel.getTableName().token,
-                updateQueryModel.getTableName().position,
                 rowIdFactory,
                 masterFilter,
                 postJoinFilter,
                 valuesResultMetadata,
                 joinRecordCursorFactory,
-                columnMapper
+                columnMapper,
+                tableId,
+                tableVersion
         );
 
         // Closing responsibility is within resulting updateStatement

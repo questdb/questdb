@@ -688,12 +688,22 @@ class SqlOptimiser {
         }
     }
 
+    private void copyColumnTypesFromMetadata(QueryModel model, TableReaderMetadata m){
+        for (int i = 0, k = m.getColumnCount(); i < k; i++) {
+            model.addTableColumnType(m.getColumnType(i));
+        }
+    }
+
     private void copyColumnsFromMetadata(QueryModel model, RecordMetadata m, boolean cleanColumnNames) throws SqlException {
         // column names are not allowed to have dot
 
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
             CharSequence columnName = createColumnAlias(m.getColumnName(i), model, cleanColumnNames);
-            model.addField(queryColumnPool.next().of(columnName, expressionNodePool.next().of(LITERAL, columnName, 0, 0)));
+            QueryColumn column = queryColumnPool.next().of(columnName, expressionNodePool.next().of(LITERAL, columnName, 0, 0));
+            model.addField(column);
+            if (model.isUpdate()) {
+                model.addTableColumnType(m.getColumnType(i));
+            }
         }
 
         // validate explicitly defined timestamp, if it exists
@@ -1864,6 +1874,9 @@ class SqlOptimiser {
             model.setTableVersion(r.getVersion());
             model.setTableId(r.getMetadata().getId());
             copyColumnsFromMetadata(model, r.getMetadata(), false);
+            if (model.isUpdate()) {
+                copyColumnTypesFromMetadata(model, r.getMetadata());
+            }
         } catch (EntryLockedException e) {
             throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableLookupSequence);
         } catch (CairoException e) {

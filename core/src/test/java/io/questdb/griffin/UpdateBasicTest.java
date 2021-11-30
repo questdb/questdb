@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.griffin.update.InplaceUpdateExecution;
 import io.questdb.griffin.update.UpdateStatement;
 import io.questdb.std.Misc;
@@ -216,6 +217,10 @@ public class UpdateBasicTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY", sqlExecutionContext);
 
+            // Bump table version
+            compiler.compile("alter table up add column y long", sqlExecutionContext);
+            compiler.compile("alter table up drop column y", sqlExecutionContext);
+
             executeUpdate("UPDATE up SET x = 1");
 
             assertSql("up", "ts\tx\n" +
@@ -224,6 +229,53 @@ public class UpdateBasicTest extends AbstractGriffinTest {
                     "1970-01-01T00:00:02.000000Z\t1\n" +
                     "1970-01-01T00:00:03.000000Z\t1\n" +
                     "1970-01-01T00:00:04.000000Z\t1\n");
+        });
+    }
+
+    @Test
+    public void testUpdateOnAlteredTable() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x as int) x" +
+                    " from long_sequence(1))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            // Bump table version
+            compiler.compile("alter table up add column y long", sqlExecutionContext);
+            compiler.compile("alter table up drop column y", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET x = 1");
+
+            assertSql("up", "ts\tx\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\n");
+        });
+    }
+
+    @Test
+    public void testUpdateNoFilterOnAlteredTable() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x as int) x" +
+                    " from long_sequence(1))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            CompiledQuery cc = compiler.compile("UPDATE up SET x = 1", sqlExecutionContext);
+
+            // Bump table version
+            try (SqlCompiler compiler2 = new SqlCompiler(engine)) {
+                compiler2.compile("alter table up add column y long", sqlExecutionContext);
+                compiler2.compile("alter table up drop column y", sqlExecutionContext);
+            }
+
+            Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
+            try (UpdateStatement updateStatement = cc.getUpdateStatement()) {
+                applyUpdate(updateStatement);
+                Assert.fail();
+            } catch (ReaderOutOfDateException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "up");
+            }
         });
     }
 

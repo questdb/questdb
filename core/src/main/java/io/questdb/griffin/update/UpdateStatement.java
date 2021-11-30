@@ -34,39 +34,39 @@ import java.io.Closeable;
 public class UpdateStatement implements Closeable {
     public final static UpdateStatement EMPTY = new UpdateStatement();
     private final CharSequence updateTableName;
-    private final int position;
     private RecordCursorFactory rowIdFactory;
     private Function rowIdFilter;
     private Function postJoinFilter;
     private RecordMetadata valuesMetadata;
     private UpdateStatementMasterCursorFactory joinRecordCursorFactory;
     private RecordColumnMapper columnMapper;
+    private int tableId;
+    private long tableVersion;
 
     public UpdateStatement(
-            CharSequence updateTableName,
-            int position,
+            CharSequence tableName,
             RecordCursorFactory rowIdFactory,
             Function rowIdFilter,
             Function joinFilter,
             RecordMetadata valuesMetadata,
             UpdateStatementMasterCursorFactory joinRecordCursorFactory,
-            RecordColumnMapper columnMapper
+            RecordColumnMapper columnMapper,
+            int tableId,
+            long tableVersion
     ) {
-        this.updateTableName = updateTableName;
-        this.position = position;
+        this.updateTableName = tableName;
         this.rowIdFactory = rowIdFactory;
         this.rowIdFilter = rowIdFilter;
         this.postJoinFilter = joinFilter;
         this.valuesMetadata = valuesMetadata;
         this.joinRecordCursorFactory = joinRecordCursorFactory;
         this.columnMapper = columnMapper;
+        this.tableId = tableId;
+        this.tableVersion = tableVersion;
     }
 
     private UpdateStatement() {
-        this.updateTableName = null;
-        valuesMetadata = null;
-        this.position = 0;
-        joinRecordCursorFactory = null;
+        updateTableName = "";
     }
 
     @Override
@@ -77,6 +77,14 @@ public class UpdateStatement implements Closeable {
         valuesMetadata = Misc.free(valuesMetadata);
         postJoinFilter = Misc.free(postJoinFilter);
         joinRecordCursorFactory = Misc.free(joinRecordCursorFactory);
+    }
+
+    public int getTableId() {
+        return tableId;
+    }
+
+    public long getTableVersion() {
+        return tableVersion;
     }
 
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
@@ -92,10 +100,6 @@ public class UpdateStatement implements Closeable {
 
     public UpdateStatementMasterCursorFactory getJoinRecordCursorFactory() {
         return joinRecordCursorFactory;
-    }
-
-    public int getPosition() {
-        return position;
     }
 
     public Function getPostJoinFilter() {
@@ -116,5 +120,13 @@ public class UpdateStatement implements Closeable {
 
     public RecordMetadata getValuesMetadata() {
         return valuesMetadata;
+    }
+
+    public void setTableId(int tableId) {
+        this.tableId = tableId;
+    }
+
+    public void setTableVersion(long tableVersion) {
+        this.tableVersion = tableVersion;
     }
 }

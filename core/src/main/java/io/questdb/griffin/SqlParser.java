@@ -934,6 +934,8 @@ public final class SqlParser {
         updateQueryModel.setModelPosition(modelPosition);
         QueryModel fromModel = queryModelPool.next();
         fromModel.setModelPosition(modelPosition);
+        updateQueryModel.setIsUpdate(true);
+        fromModel.setIsUpdate(true);
         tok = tok(lexer, "UPDATE, WITH or table name expected");
 
         // [update]
@@ -942,10 +944,10 @@ public final class SqlParser {
             QueryModel nestedModel = queryModelPool.next();
             nestedModel.setTableName(fromModel.getTableName());
             nestedModel.setAlias(updateQueryModel.getAlias());
+            nestedModel.setIsUpdate(true);
             fromModel.setTableName(null);
             fromModel.setNestedModel(nestedModel);
             fromModel.getWithClauses().addWithClauses(topLevelWithModel);
-            fromModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
 
             tok = optTok(lexer);
 
