@@ -46,10 +46,10 @@ public class Metrics implements Scrapable {
     }
 
     private void createMemoryGauges(MetricsRegistry metricsRegistry) {
-        for ( int i =0; i < MemoryTag.SIZE; i++){
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
             metricsRegistry.newGauge(i);
         }
-        
+
         metricsRegistry.newVirtualGauge("memory_free_count", Unsafe::getFreeCount);
         metricsRegistry.newVirtualGauge("memory_mem_used", Unsafe::getMemUsed);
         metricsRegistry.newVirtualGauge("memory_malloc_count", Unsafe::getMallocCount);

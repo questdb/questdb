@@ -3,19 +3,19 @@ package io.questdb.metrics;
 import io.questdb.std.str.CharSink;
 
 /**
- *  Read Only gauge used to expose various stats .
+ * Read Only gauge used to expose various stats .
  */
 public class VirtualGauge implements Gauge {
 
     private final CharSequence name;
     private final StatProvider provider;
 
-    public VirtualGauge(CharSequence name, StatProvider statProvider ) {
+    public VirtualGauge(CharSequence name, StatProvider statProvider) {
         this.name = name;
         this.provider = statProvider;
     }
 
-    public long getValue(){
+    public long getValue() {
         return provider.getValue();
     }
 
@@ -28,8 +28,8 @@ public class VirtualGauge implements Gauge {
     public void dec() {
         //do nothing as this gauge is RO view of some stat
     }
-    
-    private CharSequence getName(){
+
+    private CharSequence getName() {
         return this.name;
     }
 

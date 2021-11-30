@@ -34,6 +34,7 @@ import org.junit.Test;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
 import static org.hamcrest.CoreMatchers.*;
 
 public class MetricsTest {
@@ -48,20 +49,20 @@ public class MetricsTest {
             Assert.assertTrue("Invalid metric name: " + name, matcher.matches());
         }
     }
-    
+
     @Test
     public void testMetricNamesContainAllMemoryTags() {
-        
+
         SpyingMetricsRegistry metricsRegistry = new SpyingMetricsRegistry();
         new Metrics(true, metricsRegistry);
-        
-        for ( int i=0; i<MemoryTag.SIZE; i++){
-            MatcherAssert.assertThat( metricsRegistry.getMetricNames(), hasItem( "memory_tag_" + MemoryTag.nameOf(i) )  );
+
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_tag_" + MemoryTag.nameOf(i)));
         }
 
-        MatcherAssert.assertThat( metricsRegistry.getMetricNames(), hasItem("memory_free_count") );
-        MatcherAssert.assertThat( metricsRegistry.getMetricNames(), hasItem("memory_mem_used") );
-        MatcherAssert.assertThat( metricsRegistry.getMetricNames(), hasItem("memory_malloc_count") );
+        MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_free_count"));
+        MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_mem_used"));
+        MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_malloc_count"));
     }
 
     @Test

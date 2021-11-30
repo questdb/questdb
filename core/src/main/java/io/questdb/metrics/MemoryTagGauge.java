@@ -5,19 +5,19 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 
 /**
- *  MemoryTag statistic dressed up as prometheus gauge . 
+ * MemoryTag statistic dressed up as prometheus gauge .
  */
 public class MemoryTagGauge implements Gauge {
-    
-    private static final String MEMORY_TAG_PREFIX = "memory_tag_"; 
-    
-    private final int memoryTag ;
 
-    public MemoryTagGauge(int memoryTag){
-        assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE ;
+    private static final String MEMORY_TAG_PREFIX = "memory_tag_";
+
+    private final int memoryTag;
+
+    public MemoryTagGauge(int memoryTag) {
+        assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
         this.memoryTag = memoryTag;
     }
-    
+
     @Override
     public void inc() {
         //do nothing as this gauge is RO view of memory tag stats  
@@ -27,14 +27,14 @@ public class MemoryTagGauge implements Gauge {
     public void dec() {
         //do nothing as this gauge is RO view of memory tag stats
     }
-    
-    public String getName(){
+
+    public String getName() {
         return MemoryTag.nameOf(memoryTag);
     }
-    
-    private long getValue(){
+
+    private long getValue() {
         return Unsafe.getMemUsedByTag(memoryTag);
-    } 
+    }
 
     @Override
     public void scrapeIntoPrometheus(CharSink sink) {

@@ -59,9 +59,9 @@ public class MetricsRegistryImpl implements MetricsRegistry {
         metrics.add(gauge);
         return gauge;
     }
-    
+
     @Override
-    public Gauge newGauge(int memoryTag){
+    public Gauge newGauge(int memoryTag) {
         Gauge gauge = new MemoryTagGauge(memoryTag);
         metrics.add(gauge);
         return gauge;
