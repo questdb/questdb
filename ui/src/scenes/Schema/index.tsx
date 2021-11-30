@@ -57,6 +57,9 @@ import * as QuestDB from "utils/questdb"
 import Table from "./Table"
 import LoadingError from "./LoadingError"
 import { BusEvent } from "../../consts"
+import { ArrowLeftCircle } from "@styled-icons/remix-line/ArrowLeftCircle"
+import { StoreKey } from "../../utils/localStorage/types"
+import { useLocalStorage } from "../../providers/LocalStorageProvider"
 
 type Props = Readonly<{
   hideMenu?: boolean
@@ -95,6 +98,10 @@ const DatabaseIcon = styled(Database2)`
   margin-right: 1rem;
 `
 
+const HideSchemaButton = styled(SecondaryButton)`
+  margin-left: 1rem;
+`
+
 const Loader = styled(Loader3)`
   margin-left: 1rem;
   align-self: center;
@@ -119,6 +126,7 @@ const Schema = ({
   const [refresh, setRefresh] = useState(Date.now())
   const [isScrolling, setIsScrolling] = useState(false)
   const { readOnly } = useSelector(selectors.console.getConfig)
+  const { updateSettings } = useLocalStorage()
 
   const handleChange = useCallback((name: string) => {
     setOpened(name)
@@ -178,6 +186,10 @@ const Schema = ({
     )
   }, [quest])
 
+  const handleHideSchemaClick = useCallback(() => {
+    updateSettings(StoreKey.RESULTS_SPLITTER_BASIS, 0)
+  }, [])
+
   useEffect(() => {
     void fetchTables()
 
@@ -209,19 +221,32 @@ const Schema = ({
           Tables
         </Header>
 
-        {readOnly === false && (
+        <div style={{ display: "flex" }}>
+          {readOnly === false && (
+            <PopperHover
+              delay={350}
+              placement="bottom"
+              trigger={
+                <SecondaryButton onClick={fetchTables}>
+                  <Refresh size="18px" />
+                </SecondaryButton>
+              }
+            >
+              <Tooltip>Refresh</Tooltip>
+            </PopperHover>
+          )}
           <PopperHover
             delay={350}
             placement="bottom"
             trigger={
-              <SecondaryButton onClick={fetchTables}>
-                <Refresh size="18px" />
-              </SecondaryButton>
+              <HideSchemaButton onClick={handleHideSchemaClick}>
+                <ArrowLeftCircle size="18px" />
+              </HideSchemaButton>
             }
           >
-            <Tooltip>Refresh</Tooltip>
+            <Tooltip>Hide tables</Tooltip>
           </PopperHover>
-        )}
+        </div>
       </Menu>
 
       <Content _loading={loading}>

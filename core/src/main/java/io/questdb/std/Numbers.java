@@ -58,7 +58,7 @@ public final class Numbers {
     private static final int MAX_SMALL_BIN_EXP = 62;
     private static final int MIN_SMALL_BIN_EXP = -(63 / 3);
     private static final long[] pow10;
-    private static final long LONG_OVERFLOW_MAX = Long.MAX_VALUE / 10 + 1;
+    private static final long LONG_OVERFLOW_MAX = Long.MAX_VALUE / 10;
     private static final long INT_OVERFLOW_MAX = Integer.MAX_VALUE / 10;
     private final static String NaN = "NaN";
     private static final String INFINITY = "Infinity";
@@ -637,6 +637,8 @@ public final class Numbers {
         int dp = -1;
         int dpe = lim;
         int exp = 0;
+        int dexp = -1; //exponent position
+        
         out:
         for (; i < lim; i++) {
             final int c = sequence.charAt(i);
@@ -646,6 +648,7 @@ public final class Numbers {
                     continue;
                 case 'E':
                 case 'e':
+                    dexp = i;
                     exp = parseInt(sequence, i + 1, lim);
                     if (dpe == lim) {
                         dpe = i;
@@ -674,8 +677,15 @@ public final class Numbers {
                     break;
             }
         }
+        
+        if ( dp == -1 && dexp == -1 ){
+            dp = lim;//implicit decimal point
+        }
 
-        exp = dp == -1 ? exp : exp - (dpe - dp - 1);
+        if ( dp != -1 ){
+            int adjust = dp < lim && dpe > dp ? 1 : 0; 
+            exp = exp - (dpe - dp - adjust ); 
+        }
 
         if (exp > 308) {
             exp = 308;
@@ -721,6 +731,8 @@ public final class Numbers {
         int dp = -1;
         int dpe = lim;
         int exp = 0;
+        int dexp = -1; //exponent position
+        
         out:
         for (int i = p; i < lim; i++) {
             int c = sequence.charAt(i);
@@ -730,6 +742,7 @@ public final class Numbers {
                     continue;
                 case 'E':
                 case 'e':
+                    dexp = i;
                     exp = parseInt(sequence, i + 1, lim);
                     if (dpe == lim) {
                         dpe = i;
@@ -750,7 +763,7 @@ public final class Numbers {
                         throw NumericException.INSTANCE;
                     }
 
-                    if (val <= INT_OVERFLOW_MAX) {
+                    if (val < INT_OVERFLOW_MAX) {
                         // val * 10 + (c - '0')
                         val = (val << 3) + (val << 1) + (c - '0');
                     } else if (dpe == lim) {
@@ -760,7 +773,14 @@ public final class Numbers {
             }
         }
 
-        exp = dp == -1 ? exp : exp - (dpe - dp - 1);
+        if ( dp == -1 && dexp == -1 ){
+            dp = lim;//implicit decimal point
+        }
+
+        if ( dp != -1 ){
+            int adjust = dp < lim && dpe > dp ? 1 : 0;
+            exp = exp - (dpe - dp - adjust );
+        }
 
         if (exp > 38) {
             exp = 38;

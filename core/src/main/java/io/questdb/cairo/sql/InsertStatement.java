@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.pool.WriterSource;
+import io.questdb.griffin.InsertRowImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
@@ -43,4 +44,6 @@ public interface InsertStatement extends Closeable {
     CharSequence getTableName();
 
     void detachWriter();
+
+    void addInsertRow(InsertRowImpl row);
 }
