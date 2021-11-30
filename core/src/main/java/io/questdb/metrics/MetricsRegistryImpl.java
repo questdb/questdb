@@ -59,6 +59,20 @@ public class MetricsRegistryImpl implements MetricsRegistry {
         metrics.add(gauge);
         return gauge;
     }
+    
+    @Override
+    public Gauge newGauge(int memoryTag){
+        Gauge gauge = new MemoryTagGauge(memoryTag);
+        metrics.add(gauge);
+        return gauge;
+    }
+
+    @Override
+    public Gauge newVirtualGauge(CharSequence _name, VirtualGauge.StatProvider provider) {
+        VirtualGauge gauge = new VirtualGauge(_name, provider);
+        metrics.add(gauge);
+        return gauge;
+    }
 
     @Override
     public void scrapeIntoPrometheus(CharSink sink) {
