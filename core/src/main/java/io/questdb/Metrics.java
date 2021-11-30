@@ -29,6 +29,8 @@ import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.metrics.NullMetricsRegistry;
 import io.questdb.metrics.Scrapable;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 
 public class Metrics implements Scrapable {
@@ -39,7 +41,18 @@ public class Metrics implements Scrapable {
     Metrics(boolean enabled, MetricsRegistry metricsRegistry) {
         this.enabled = enabled;
         this.jsonQuery = new JsonQueryMetrics(metricsRegistry);
+        createMemoryGauges(metricsRegistry);
         this.metricsRegistry = metricsRegistry;
+    }
+
+    private void createMemoryGauges(MetricsRegistry metricsRegistry) {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            metricsRegistry.newGauge(i);
+        }
+
+        metricsRegistry.newVirtualGauge("memory_free_count", Unsafe::getFreeCount);
+        metricsRegistry.newVirtualGauge("memory_mem_used", Unsafe::getMemUsed);
+        metricsRegistry.newVirtualGauge("memory_malloc_count", Unsafe::getMallocCount);
     }
 
     public static Metrics enabled() {

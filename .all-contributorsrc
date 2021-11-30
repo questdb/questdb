@@ -741,6 +741,16 @@
         "code",
         "projectManagement"
       ]
+    },
+    {
+      "login": "Zapfmeister",
+      "name": "Zapfmeister",
+      "avatar_url": "https://avatars.githubusercontent.com/u/20150586?v=4",
+      "profile": "https://github.com/Zapfmeister",
+      "contributions": [
+        "code",
+        "userTesting"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
