@@ -39,7 +39,7 @@ import {
   IconWithTooltip,
 } from "components"
 import { color } from "utils"
-import { useEditor } from "../../../providers"
+import { BusEvent } from "../../../consts"
 
 type Props = Readonly<{
   className?: string
@@ -161,12 +161,13 @@ const Row = ({
   tooltip,
   type,
 }: Props) => {
-  const { insertTextAtCursor } = useEditor()
-
   const handlePlusButtonClick = useCallback(
     (event: MouseEvent) => {
       event.stopPropagation()
-      insertTextAtCursor(kind === "table" ? `'${name}'` : name)
+      window.bus.trigger(
+        BusEvent.MSG_EDITOR_INSERT_COLUMN,
+        kind === "table" ? `'${name}'` : name,
+      )
     },
     [name, kind],
   )

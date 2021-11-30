@@ -48,8 +48,7 @@ module.exports = {
   },
   plugins: ["@typescript-eslint", "babel", "prettier", "react", "standard"],
   rules: {
-    "react-hooks/exhaustive-deps": "off",
-    "react/jsx-no-bind": "off",
+    "react/jsx-no-bind": "error",
     "react/no-deprecated": "error",
     "react/style-prop-object": "error",
     "react/self-closing-comp": "error",

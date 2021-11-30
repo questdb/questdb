@@ -91,7 +91,6 @@ const HorizontalWrapper = styled.div`
   border-top: none;
   border-bottom: none;
   cursor: ew-resize;
-  flex-shrink: 0;
 `
 
 const VerticalWrapper = styled.div`
@@ -101,7 +100,6 @@ const VerticalWrapper = styled.div`
   border-left: none;
   border-right: none;
   cursor: row-resize;
-  flex-shrink: 0;
 `
 
 const ghostStyles = css`
@@ -250,7 +248,7 @@ export const Splitter = ({
     display: "flex",
     flexGrow: 0,
     flexBasis: basis ?? fallback,
-    flexShrink: 0,
+    flexShrink: 1,
   }
 
   if (children.length === 1) {
