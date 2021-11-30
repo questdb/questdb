@@ -67,11 +67,13 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
                 " rnd_geohash(40) hash8c" +
                 " from long_sequence(100)) timestamp(k) partition by DAY";
 
-        assertQueryRunWithJit(expected,
+        assertQuery(expected,
                 query,
                 ddl,
                 "k",
                 true);
+
+        assertQueryRunWithJit(query);
     }
 
     @Test
@@ -101,11 +103,15 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
                     "15\t1970-01-01T00:01:54.000000Z\t-4094902006239100839\n" +
                     "16\t1970-01-01T00:01:55.000000Z\t-4474835130332302712\n" +
                     "17\t1970-01-01T00:01:56.000000Z\t-6943924477733600060\n";
-            assertQueryRunWithJit(expected,
+
+
+            assertQuery(expected,
                     query,
                     null,
                     "ts",
                     true);
+
+            assertQueryRunWithJit(query);
         });
     }
 }

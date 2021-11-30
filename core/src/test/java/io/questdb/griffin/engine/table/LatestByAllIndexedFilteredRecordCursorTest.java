@@ -117,7 +117,6 @@ public abstract class LatestByAllIndexedFilteredRecordCursorTest extends Abstrac
                 true,
                 true,
                 true,
-                false,
                 null
         );
     }
