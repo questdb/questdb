@@ -205,6 +205,12 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
     }
 
     private void serializeColumn(int position, final CharSequence token) throws SqlException {
+        if (!arithmeticContext.isActive()) {
+            throw SqlException.position(position)
+                    .put("non-boolean column outside of arithmetic expression: ")
+                    .put(token);
+        }
+
         int index = metadata.getColumnIndexQuiet(token);
         if (index == -1) {
             throw SqlException.invalidColumn(position, token);
@@ -217,12 +223,24 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                     .put("unsupported column type: ")
                     .put(ColumnType.nameOf(columnType));
         }
-        memory.putByte(typeCode);
-        if (!metadata.isColumnNullable(index)) {
-            memory.putLong(index | NOT_NULL_COLUMN_MASK);
-        } else {
+
+        index = metadata.isColumnNullable(index) ? index : index | NOT_NULL_COLUMN_MASK;
+
+        // In case of a top level boolean column, expand it to "boolean_column = true" expression.
+        if (arithmeticContext.singleBooleanColumn && columnType == ColumnType.BOOLEAN) {
+            // "true" constant
+            memory.putByte(IMM_I1);
+            memory.putLong(1);
+            // column
+            memory.putByte(typeCode);
             memory.putLong(index);
+            // =
+            memory.putByte(EQ);
+            return;
         }
+
+        memory.putByte(typeCode);
+        memory.putLong(index);
     }
 
     private void serializeConstantStub(final ExpressionNode node) throws SqlException {
@@ -511,6 +529,31 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         return Chars.equals(token, ">=");
     }
 
+    private boolean isTopLevelBooleanColumn(ExpressionNode node) {
+        if (node.type == ExpressionNode.LITERAL && isBooleanColumn(node)) {
+            return true;
+        }
+        // Lookahead for "not boolean_column" case
+        final CharSequence token = node.token;
+        if (SqlKeywords.isNotKeyword(token)) {
+            ExpressionNode columnNode = node.lhs != null ? node.lhs : node.rhs;
+            return columnNode != null && isBooleanColumn(columnNode);
+        }
+        return false;
+    }
+
+    private boolean isBooleanColumn(ExpressionNode node) {
+        if (node.type != ExpressionNode.LITERAL) {
+            return false;
+        }
+        int index = metadata.getColumnIndexQuiet(node.token);
+        if (index == -1) {
+            return false;
+        }
+        int columnType = metadata.getColumnType(index);
+        return columnType == ColumnType.BOOLEAN;
+    }
+
     private class ArithmeticExpressionContext implements Mutable {
 
         private ExpressionNode rootNode;
@@ -518,16 +561,22 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         // in the expression (contains IMM_* or UNDEFINED_CODE value)
         byte constantTypeCode;
         ExpressionType expressionType;
+        boolean singleBooleanColumn;
 
         // container for all observed types
         final TypesObserver typesObserver = new TypesObserver();
 
         @Override
         public void clear() {
+            reset();
+            typesObserver.clear();
+        }
+
+        private void reset() {
             rootNode = null;
             constantTypeCode = UNDEFINED_CODE;
             expressionType = null;
-            typesObserver.clear();
+            singleBooleanColumn = false;
         }
 
         public boolean isActive() {
@@ -535,20 +584,25 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         }
 
         public void onNodeDescended(final ExpressionNode node) {
-            boolean columnNode = node.type == ExpressionNode.LITERAL;
-            if (rootNode == null && (isTopLevelOperation(node) || columnNode)) {
-                rootNode = node;
-                constantTypeCode = UNDEFINED_CODE;
-                // Root column node implies boolean expression
-                expressionType = columnNode ? ExpressionType.BOOLEAN : null;
+            if (rootNode == null) {
+                boolean topLevelOperation = isTopLevelOperation(node);
+                boolean topLevelBooleanColumn = isTopLevelBooleanColumn(node);
+                if (topLevelOperation || topLevelBooleanColumn) {
+                    reset();
+                    rootNode = node;
+                }
+                if (topLevelBooleanColumn) {
+                    expressionType = ExpressionType.BOOLEAN;
+                    singleBooleanColumn = true;
+                }
             }
         }
 
         public boolean onNodeVisited(final ExpressionNode node) throws SqlException {
-            boolean leftContext = false;
+            boolean contextLeft = false;
             if (node == rootNode) {
                 rootNode = null;
-                leftContext = true;
+                contextLeft = true;
             }
 
             if (node.type == ExpressionNode.LITERAL) {
@@ -563,7 +617,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                 updateTypeCode(node.position, columnType);
             }
 
-            return leftContext;
+            return contextLeft;
         }
 
         private void updateExpressionType(int position, int columnType) throws SqlException {

@@ -109,21 +109,15 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testBooleanColumnAsRootNode() throws Exception {
-        serialize("aboolean and anint > 0");
-        assertIR("(i32 0L)(i32 anint)(>)(i8 aboolean)(&&)(ret)");
-    }
-
-    @Test
-    public void testNegatedBooleanColumnAsRootNode() throws Exception {
-        serialize("not aboolean and anint > 0");
-        assertIR("(i32 0L)(i32 anint)(>)(i8 aboolean)(!)(&&)(ret)");
+    public void testSingleBooleanColumn() throws Exception {
+        serialize("aboolean or not aboolean");
+        assertIR("(i8 1L)(i8 aboolean)(=)(!)(i8 1L)(i8 aboolean)(=)(||)(ret)");
     }
 
     @Test
     public void testBooleanOperators() throws Exception {
-        serialize("aboolean and not aboolean or aboolean");
-        assertIR("(i8 aboolean)(i8 aboolean)(!)(i8 aboolean)(&&)(||)(ret)");
+        serialize("anint = 0 and not (abyte = 0) or along = 0");
+        assertIR("(i64 0L)(i64 along)(=)(i8 0L)(i8 abyte)(=)(!)(i32 0L)(i32 anint)(=)(&&)(||)(ret)");
     }
 
     @Test
