@@ -731,6 +731,16 @@
         "ideas",
         "maintenance"
       ]
+    },
+    {
+      "login": "bziobrowski",
+      "name": "Bolek Ziobrowski",
+      "avatar_url": "https://avatars.githubusercontent.com/u/26925920?v=4",
+      "profile": "https://github.com/bziobrowski",
+      "contributions": [
+        "code",
+        "projectManagement"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
