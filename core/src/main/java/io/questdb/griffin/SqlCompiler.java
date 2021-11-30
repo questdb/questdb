@@ -1082,7 +1082,8 @@ public class SqlCompiler implements Closeable {
             int symbolCapacity;
             final boolean indexed;
 
-            if (ColumnType.isSymbol(type) && tok != null && !Chars.equals(tok, ',')) {
+            if (ColumnType.isSymbol(type) && tok != null &&
+                    !Chars.equals(tok, ',') && !Chars.equals(tok, ';')) {
 
                 if (isCapacityKeyword(tok)) {
                     tok = expectToken(lexer, "symbol capacity");
@@ -1143,7 +1144,7 @@ public class SqlCompiler implements Closeable {
                 } else {
                     indexValueBlockCapacity = configuration.getIndexValueBlockSize();
                 }
-            } else {
+            } else { //set defaults 
 
                 //ignoring `NULL` and `NOT NULL`
                 if (tok != null && SqlKeywords.isNotKeyword(tok)) {
@@ -1181,7 +1182,7 @@ public class SqlCompiler implements Closeable {
                         .put(']');
             }
 
-            if (tok == null) {
+            if (tok == null || Chars.equals(tok, ';')) {
                 break;
             }
 
