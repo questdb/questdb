@@ -27,7 +27,7 @@ package io.questdb.cairo.sql;
 import java.io.Closeable;
 
 /**
- * A cursor for managing position of operations over multiple records
+ * A cursor for managing position of operations over multiple records.
  *
  * Interfaces which extend Closeable are not optionally-closeable.
  * close() method must be called after other calls are complete.

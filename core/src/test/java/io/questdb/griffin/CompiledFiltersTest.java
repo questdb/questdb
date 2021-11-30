@@ -70,7 +70,8 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
         assertQueryRunWithJit(expected,
                 query,
                 ddl,
-                "k");
+                "k",
+                true);
     }
 
     @Test
@@ -103,7 +104,8 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
             assertQueryRunWithJit(expected,
                     query,
                     null,
-                    "ts");
+                    "ts",
+                    true);
         });
     }
 }

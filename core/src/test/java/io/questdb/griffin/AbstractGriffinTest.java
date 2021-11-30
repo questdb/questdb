@@ -691,7 +691,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected static void assertQueryRunWithJit(CharSequence expected,
                                                 CharSequence query,
                                                 CharSequence ddl,
-                                                @Nullable CharSequence expectedTimestamp) throws Exception {
+                                                @Nullable CharSequence expectedTimestamp,
+                                                boolean supportsRandomAccess) throws Exception {
         assertQueryNoVerify(
                 expected,
                 query,
@@ -699,7 +700,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 expectedTimestamp,
                 null,
                 null,
-                false,
+                supportsRandomAccess,
                 true,
                 false,
                 false,

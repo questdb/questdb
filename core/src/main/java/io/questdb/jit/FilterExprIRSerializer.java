@@ -38,6 +38,11 @@ import java.util.Arrays;
 /**
  * Intermediate representation (IR) serializer for filters (think, WHERE clause)
  * to be used in SQL JIT compiler.
+ *
+ * TODO:
+ *  - i32 * 3 + 42.5 + f64 > 1 => 3 should be i32, 42.5 should be f32 (check Java???), 1 should be f64
+ *  - i8 + i8 = null and i16 + i8 = null => revert new SQL functions?
+ *  - f64 > -50 => -50 should be of double type since we don't have long -> double conversion in AVX
  */
 public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
 

@@ -185,6 +185,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             return reader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
         }
 
+        @Override
+        public TableReader getTableReader() {
+            return reader;
+        }
+
         public TableReaderPageFrameCursor of(DataFrameCursor dataFrameCursor) {
             this.reader = dataFrameCursor.getTableReader();
             this.dataFrameCursor = dataFrameCursor;

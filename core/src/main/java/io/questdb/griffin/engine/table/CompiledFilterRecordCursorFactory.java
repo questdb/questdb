@@ -24,7 +24,9 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.api.MemoryAR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -72,6 +74,6 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return false;
+        return true;
     }
 }
