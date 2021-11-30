@@ -17,12 +17,12 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
     //double->float
     @Test
     public void testInsertDoubleAsFloat_CausesUnderflow_And_ReturnsException() throws Exception {
-        testInsertCausesException("double", "-34028235000000000000000000000000000000.0", "float");
+        testInsertCausesException("double", "-340282350000000000000000000000000000000.0", "float");
     }
 
     @Test
     public void testInsertDoubleAsFloat_CausesOverflow_And_ReturnsException() throws Exception {
-        testInsertCausesException("double", "34028235700000000000000000000000000000.0", "float");
+        testInsertCausesException("double", "340282357000000000000000000000000000000.0", "float");
     }
 
     @Test
@@ -95,7 +95,7 @@ public class ImplicitTypeConversionsTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertDoubleAsLong_Causes_Overflow_and_throws_exception() throws Exception {
-        testInsertCausesException("double", "9223372036854775908.0", "long");
+        testInsertCausesException("double", "9223372036854779908.0", "long");
     }
 
     @Test
