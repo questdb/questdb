@@ -80,23 +80,23 @@ public class LogAlertSocketWriterTest {
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:      434\r\n" +
+                            "Content-Length:      447\r\n" +
                             "\r\n" +
                             "[\n" +
                             "  {\n" +
                             "    \"Status\": \"firing\",\n" +
                             "    \"Labels\": {\n" +
                             "      \"alertname\": \"QuestDbInstanceLogs\",\n" +
+                            "      \"service\": \"QuestDB\",\n" +
                             "      \"category\": \"application-logs\",\n" +
                             "      \"severity\": \"critical\",\n" +
-                            "      \"orgid\": \"GLOBAL\",\n" +
-                            "      \"service\": \"QuestDB\",\n" +
-                            "      \"namespace\": \"GLOBAL\",\n" +
                             "      \"cluster\": \"GLOBAL\",\n" +
+                            "      \"orgid\": \"GLOBAL\",\n" +
+                            "      \"namespace\": \"GLOBAL\",\n" +
                             "      \"instance\": \"GLOBAL\"\n" +
                             "    },\n" +
                             "    \"Annotations\": {\n" +
-                            "      \"description\": \"ERROR/GLOBAL/GLOBAL/GLOBAL/GLOBAL\",\n" +
+                            "      \"description\": \"ERROR/cl:GLOBAL/org:GLOBAL/ns:GLOBAL/db:GLOBAL\",\n" +
                             "      \"message\": \"A \\\"simple\\\" \\$message\\$\"" +
                             "\n" +
                             "    }\n" +
@@ -114,23 +114,23 @@ public class LogAlertSocketWriterTest {
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:      430\r\n" +
+                            "Content-Length:      443\r\n" +
                             "\r\n" +
                             "[\n" +
                             "  {\n" +
                             "    \"Status\": \"firing\",\n" +
                             "    \"Labels\": {\n" +
                             "      \"alertname\": \"QuestDbInstanceLogs\",\n" +
+                            "      \"service\": \"QuestDB\",\n" +
                             "      \"category\": \"application-logs\",\n" +
                             "      \"severity\": \"critical\",\n" +
-                            "      \"orgid\": \"GLOBAL\",\n" +
-                            "      \"service\": \"QuestDB\",\n" +
-                            "      \"namespace\": \"GLOBAL\",\n" +
                             "      \"cluster\": \"GLOBAL\",\n" +
+                            "      \"orgid\": \"GLOBAL\",\n" +
+                            "      \"namespace\": \"GLOBAL\",\n" +
                             "      \"instance\": \"GLOBAL\"\n" +
                             "    },\n" +
                             "    \"Annotations\": {\n" +
-                            "      \"description\": \"ERROR/GLOBAL/GLOBAL/GLOBAL/GLOBAL\",\n" +
+                            "      \"description\": \"ERROR/cl:GLOBAL/org:GLOBAL/ns:GLOBAL/db:GLOBAL\",\n" +
                             "      \"message\": \"A second log message\"" +
                             "\n" +
                             "    }\n" +

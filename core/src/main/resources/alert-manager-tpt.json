@@ -3,16 +3,16 @@
     "Status": "firing",
     "Labels": {
       "alertname": "QuestDbInstanceLogs",
+      "service": "QuestDB",
       "category": "application-logs",
       "severity": "critical",
-      "orgid": "${ORGID}",
-      "service": "QuestDB",
-      "namespace": "${NAMESPACE}",
       "cluster": "${CLUSTER_NAME}",
+      "orgid": "${ORGID}",
+      "namespace": "${NAMESPACE}",
       "instance": "${INSTANCE_NAME}"
     },
     "Annotations": {
-      "description": "ERROR/${ORGID}/${NAMESPACE}/${CLUSTER_NAME}/${INSTANCE_NAME}",
+      "description": "ERROR/cl:${CLUSTER_NAME}/org:${ORGID}/ns:${NAMESPACE}/db:${INSTANCE_NAME}",
       "message": "${ALERT_MESSAGE}"
     }
   }
