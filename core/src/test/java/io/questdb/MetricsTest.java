@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.metrics.*;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.CharSink;
+import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
 import org.junit.Test;
 
