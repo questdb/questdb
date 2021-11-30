@@ -40,7 +40,6 @@ public class HttpLogRecordSink extends LogRecordSink {
     private boolean hasContentLengthMarker;
     private long contentLengthEnd;
     private long bodyStart;
-    private Sinkable footer;
 
     public HttpLogRecordSink(LogAlertSocket alertSkt) {
         this(alertSkt.getOutBufferPtr(), alertSkt.getOutBufferSize());
@@ -66,10 +65,6 @@ public class HttpLogRecordSink extends LogRecordSink {
     }
 
     public int $() {
-        if (footer != null) {
-            footer.toSink(this);
-        }
-
         if (hasContentLengthMarker) {
             // take the body length and format it into the ###### contentLength marker
             int bodyLen = (int) (_wptr - bodyStart);
@@ -96,12 +91,6 @@ public class HttpLogRecordSink extends LogRecordSink {
         return length(); // length of the http log record
     }
 
-
-    public HttpLogRecordSink setFooter(Sinkable footer) {
-        this.footer = footer;
-        return this;
-    }
-
     public HttpLogRecordSink setMark() {
         mark = _wptr;
         return this;
@@ -122,7 +111,6 @@ public class HttpLogRecordSink extends LogRecordSink {
         mark = MARK_NOT_SET;
         contentLengthEnd = _wptr;
         bodyStart = _wptr;
-        footer = null;
         hasContentLengthMarker = false;
     }
 

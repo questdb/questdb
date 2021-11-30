@@ -32,6 +32,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class TemplateParser implements Sinkable {
 
@@ -48,11 +49,11 @@ public class TemplateParser implements Sinkable {
 
     private final TimestampFormatCompiler dateCompiler = new TimestampFormatCompiler();
     private final StringSink resolveSink = new StringSink();
-    private final ObjList<Sinkable> txtComponents = new ObjList<>();
-    private final CharSequenceIntHashMap keyStartIdxs = new CharSequenceIntHashMap();
+    private final ObjList<Component> txtComponents = new ObjList<>();
+    private final CharSequenceIntHashMap envStartIdxs = new CharSequenceIntHashMap();
+    private final AtomicLong dateValue = new AtomicLong();
     private CharSequenceObjHashMap<CharSequence> props;
     private CharSequence originalTxt;
-    private long dateValue;
 
 
     public TemplateParser parseEnv(CharSequence txt, long dateValue) {
@@ -65,10 +66,10 @@ public class TemplateParser implements Sinkable {
 
     public TemplateParser parse(CharSequence txt, long dateValue, CharSequenceObjHashMap<CharSequence> props) {
         originalTxt = txt;
-        this.dateValue = dateValue;
+        this.dateValue.set(dateValue);
         this.props = props;
         txtComponents.clear();
-        keyStartIdxs.clear();
+        envStartIdxs.clear();
         int dollarStart = NIL; // points at $
         int keyStart = NIL;   // points at the first char after {
         int lastExprEnd = 0;   // points to the char right after the expression
@@ -80,14 +81,14 @@ public class TemplateParser implements Sinkable {
                 case '$':
                     if (dollarStart != NIL) { // already found a $
                         if (i - dollarStart > 1) {
-                            txtComponents.add(resolveEnv(dollarStart, dollarStart + 1, i));
+                            addEnvComponent(dollarStart, dollarStart + 1, i);
                             lastExprEnd = i + 1;
                         } else {
                             throw new LogError("Unexpected '$' at position " + i);
                         }
                     } else {
                         if (i - lastExprEnd > 0) {
-                            txtComponents.add(new SubStrComponent(lastExprEnd, i));
+                            addStaticComponent(lastExprEnd, i);
                             lastExprEnd = i + 1;
                         }
                     }
@@ -106,7 +107,7 @@ public class TemplateParser implements Sinkable {
                         continue;
                     }
                     if (keyStart == NIL) {
-                        txtComponents.add(resolveEnv(dollarStart, dollarStart + 1, i));
+                        addEnvComponent(dollarStart, dollarStart + 1, i);
                         lastExprEnd = i;
                     } else {
                         int exprLen = i - keyStart;
@@ -115,9 +116,9 @@ public class TemplateParser implements Sinkable {
                         }
                         int formatStart = keyStart + DATE_FORMAT_KEY.length();
                         if (Chars.startsWith(originalTxt, keyStart, formatStart, DATE_FORMAT_KEY)) {
-                            txtComponents.add(new DateComponent(formatStart, i));
+                            addDateComponent(formatStart, i);
                         } else {
-                            txtComponents.add(resolveEnv(dollarStart, dollarStart + 2, i));
+                            addEnvComponent(dollarStart, dollarStart + 2, i);
                         }
                         lastExprEnd = i + 1;
                     }
@@ -130,14 +131,14 @@ public class TemplateParser implements Sinkable {
                 throw new LogError("Mismatched '{}' at position " + lastExprEnd);
             }
             if (locationLen - lastExprEnd > 0) {
-                txtComponents.add(new SubStrComponent(lastExprEnd, locationLen));
+                addStaticComponent(lastExprEnd, locationLen);
             }
         } else {
             if (keyStart != NIL) {
                 throw new LogError("Missing '}' at position " + locationLen);
             }
             if (locationLen - dollarStart > 1) {
-                txtComponents.add(resolveEnv(dollarStart, dollarStart + 1, locationLen));
+                addEnvComponent(dollarStart, dollarStart + 1, locationLen);
             } else {
                 throw new LogError("Unexpected '$' at position " + dollarStart);
             }
@@ -146,14 +147,14 @@ public class TemplateParser implements Sinkable {
     }
 
     public void setDateValue(long dateValue) {
-        this.dateValue = dateValue;
+        this.dateValue.set(dateValue);
     }
 
     public int getKeyOffset(CharSequence key) {
-        return keyStartIdxs.get(key); // relative to originalTxt
+        return envStartIdxs.get(key); // relative to originalTxt
     }
 
-    public ObjList<Sinkable> getLocationComponents() {
+    public ObjList<Component> getComponents() {
         return txtComponents;
     }
 
@@ -173,55 +174,79 @@ public class TemplateParser implements Sinkable {
         return resolveSink.toString();
     }
 
-    private Sinkable resolveEnv(int dollarOffset, int envStart, int envEnd) {
-        CharSequence envKey = originalTxt.subSequence(envStart, envEnd);
-        final CharSequence envValue = props.get(envKey);
-        if (envValue == null) {
+    public enum ComponentType {
+        STATIC, ENV, DATE
+    }
+
+    public static abstract class Component implements Sinkable {
+        private final ComponentType type;
+        private final CharSequence key;
+        private final CharSequence val;
+
+        private Component(ComponentType type, CharSequence key, CharSequence val) {
+            this.type = type;
+            this.key = key;
+            this.val = val;
+        }
+
+        public ComponentType getType() {
+            return type;
+        }
+
+        public CharSequence getKey() {
+            return key;
+        }
+
+        public CharSequence getVal() {
+            return val;
+        }
+    }
+
+    private void addEnvComponent(int dollarOffset, int envStart, int envEnd) {
+        final String envKey = originalTxt.subSequence(envStart, envEnd).toString();
+        final CharSequence envVal = props.get(envKey);
+        if (envVal == null) {
             throw new LogError("Undefined property: " + envKey);
         }
-        keyStartIdxs.put(envKey, dollarOffset);
-        return sink -> sink.put(envValue);
+        envStartIdxs.put(envKey, dollarOffset);
+        txtComponents.add(new Component(ComponentType.ENV, envKey, envVal) {
+            @Override
+            public void toSink(CharSink sink) {
+                sink.put(envVal);
+            }
+        });
     }
 
-    private class DateComponent implements Sinkable {
-        private final DateFormat dateFormat;
-
-        DateComponent(int start, int end) {
-            if (end - start < 1) {
-                throw new LogError("Missing expression at position " + start);
-            }
-            int actualStart = start;
-            int actualEnd = end;
-            while (originalTxt.charAt(actualStart) == ' ' && actualStart < actualEnd) {
-                actualStart++;
-            }
-            while (originalTxt.charAt(actualEnd - 1) == ' ' && actualEnd > actualStart) {
-                actualEnd--;
-            }
-            if (actualEnd - actualStart < 1) {
-                throw new LogError("Missing expression at position " + actualStart);
-            }
-            dateFormat = dateCompiler.compile(originalTxt, actualStart, actualEnd, false);
+    private void addDateComponent(int start, int end) {
+        if (end - start < 1) {
+            throw new LogError("Missing expression at position " + start);
         }
-
-        @Override
-        public void toSink(CharSink sink) {
-            dateFormat.format(dateValue, TimestampFormatUtils.enLocale, null, sink);
+        int actualStart = start;
+        int actualEnd = end;
+        while (originalTxt.charAt(actualStart) == ' ' && actualStart < actualEnd) {
+            actualStart++;
         }
+        while (originalTxt.charAt(actualEnd - 1) == ' ' && actualEnd > actualStart) {
+            actualEnd--;
+        }
+        if (actualEnd - actualStart < 1) {
+            throw new LogError("Missing expression at position " + actualStart);
+        }
+        final DateFormat dateFormat = dateCompiler.compile(originalTxt, actualStart, actualEnd, false);
+        txtComponents.add(new Component(ComponentType.DATE, DATE_FORMAT_KEY, originalTxt.subSequence(actualStart, actualEnd)) {
+            @Override
+            public void toSink(CharSink sink) {
+                dateFormat.format(dateValue.get(), TimestampFormatUtils.enLocale, null, sink);
+            }
+        });
     }
 
-    private class SubStrComponent implements Sinkable {
-        protected final int start;
-        protected final int end;
-
-        SubStrComponent(int start, int end) {
-            this.start = start;
-            this.end = end;
-        }
-
-        @Override
-        public void toSink(CharSink sink) {
-            sink.put(originalTxt, start, end);
-        }
+    private void addStaticComponent(int start, int end) {
+        txtComponents.add(new Component(ComponentType.STATIC, null, null) {
+            @Override
+            public void toSink(CharSink sink) {
+                sink.put(originalTxt, start, end);
+            }
+        });
     }
 }

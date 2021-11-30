@@ -193,7 +193,7 @@ public class TemplateParserTest {
     ) {
         parser.parse(location, 0, props);
         sink.clear();
-        sink.put(parser.getLocationComponents());
+        sink.put(parser.getComponents());
         TestUtils.assertEquals(expected, parser);
         TestUtils.assertEquals(expectedLocation, sink);
     }

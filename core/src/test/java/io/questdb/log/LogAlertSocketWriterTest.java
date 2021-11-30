@@ -26,6 +26,7 @@ package io.questdb.log;
 
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
@@ -53,7 +54,7 @@ public class LogAlertSocketWriterTest {
         final long logRecordBuffPtr = Unsafe.malloc(logRecordBuffSize, MemoryTag.NATIVE_DEFAULT);
         try (LogAlertSocketWriter writer = new LogAlertSocketWriter(
                 ff,
-                MicrosecondClockImpl.INSTANCE,
+                () -> 1637091363010000L,
                 null,
                 null,
                 LogLevel.ERROR
@@ -80,7 +81,7 @@ public class LogAlertSocketWriterTest {
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:      447\r\n" +
+                            "Content-Length:      498\r\n" +
                             "\r\n" +
                             "[\n" +
                             "  {\n" +
@@ -93,7 +94,8 @@ public class LogAlertSocketWriterTest {
                             "      \"cluster\": \"GLOBAL\",\n" +
                             "      \"orgid\": \"GLOBAL\",\n" +
                             "      \"namespace\": \"GLOBAL\",\n" +
-                            "      \"instance\": \"GLOBAL\"\n" +
+                            "      \"instance\": \"GLOBAL\",\n" +
+                            "      \"alertTimestamp\": \"2021/11/16T19:36:03.010\"\n" +
                             "    },\n" +
                             "    \"Annotations\": {\n" +
                             "      \"description\": \"ERROR/cl:GLOBAL/org:GLOBAL/ns:GLOBAL/db:GLOBAL\",\n" +
@@ -102,7 +104,7 @@ public class LogAlertSocketWriterTest {
                             "    }\n" +
                             "  }\n" +
                             "]\n",
-                    writer.getAlertBuilder().toString()
+                    writer.getAlertSink().toString()
             );
 
             recordSink.clear();
@@ -114,7 +116,7 @@ public class LogAlertSocketWriterTest {
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:      443\r\n" +
+                            "Content-Length:      494\r\n" +
                             "\r\n" +
                             "[\n" +
                             "  {\n" +
@@ -127,7 +129,8 @@ public class LogAlertSocketWriterTest {
                             "      \"cluster\": \"GLOBAL\",\n" +
                             "      \"orgid\": \"GLOBAL\",\n" +
                             "      \"namespace\": \"GLOBAL\",\n" +
-                            "      \"instance\": \"GLOBAL\"\n" +
+                            "      \"instance\": \"GLOBAL\",\n" +
+                            "      \"alertTimestamp\": \"2021/11/16T19:36:03.010\"\n" +
                             "    },\n" +
                             "    \"Annotations\": {\n" +
                             "      \"description\": \"ERROR/cl:GLOBAL/org:GLOBAL/ns:GLOBAL/db:GLOBAL\",\n" +
@@ -136,7 +139,7 @@ public class LogAlertSocketWriterTest {
                             "    }\n" +
                             "  }\n" +
                             "]\n",
-                    writer.getAlertBuilder().toString()
+                    writer.getAlertSink().toString()
             );
 
             Assert.assertTrue(haltLatch.await(10_000_000_000L));

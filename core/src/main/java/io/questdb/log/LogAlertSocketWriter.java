@@ -38,6 +38,9 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.*;
 
+import static io.questdb.log.TemplateParser.ComponentType;
+import static io.questdb.log.TemplateParser.Component;
+
 public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, LogWriter {
 
     static final String DEFAULT_ALERT_TPT_FILE = "/alert-manager-tpt.json";
@@ -75,7 +78,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
     private final TemplateParser alertTemplate = new TemplateParser();
 
-    private HttpLogRecordSink alertBuilder;
+    private HttpLogRecordSink alertSink;
     private LogAlertSocket socket;
     // changed by introspection
     private String location;
@@ -127,6 +130,9 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
             }
         }
         socket = new LogAlertSocket(alertTargets, nBufferSize, nReconnectDelay);
+        alertSink = new HttpLogRecordSink(socket)
+                .putHeader(LogAlertSocket.localHostIp)
+                .setMark();
         loadLogAlertTemplate();
         socket.connect();
     }
@@ -172,8 +178,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     }
 
     @VisibleForTesting
-    HttpLogRecordSink getAlertBuilder() {
-        return alertBuilder;
+    HttpLogRecordSink getAlertSink() {
+        return alertSink;
     }
 
     @VisibleForTesting
@@ -215,27 +221,30 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                     ALERT_PROPS
             );
         }
-        // consolidate/check/load template to the outbound socket buffer
-        alertTemplate.parse(alertTemplate.toString(), now, ALERT_PROPS);
-        ObjList<Sinkable> components = alertTemplate.getLocationComponents();
-        if (alertTemplate.getKeyOffset(MESSAGE_ENV) < 0 || components.size() < 3) {
+        if (alertTemplate.getKeyOffset(MESSAGE_ENV) < 0) {
             throw new LogError(String.format(
                     "Bad template, no %s declaration found %s",
                     MESSAGE_ENV_VALUE,
                     location));
         }
-        alertBuilder = new HttpLogRecordSink(socket)
-                .putHeader(LogAlertSocket.localHostIp)
-                .put(components.getQuick(0)) // // this is the first static block
-                .setMark() // mark in buffer, message is appended here onLogRecord
-                .setFooter(components.getQuick(2)); // this is the final static block
     }
 
     @VisibleForTesting
     void onLogRecord(LogRecordSink logRecord) {
         final int len = logRecord.length();
         if ((logRecord.getLevel() & level) != 0 && len > 0) {
-            socket.send(alertBuilder.rewindToMark().put(logRecord).$());
+            alertTemplate.setDateValue(clock.getTicks());
+            alertSink.rewindToMark();
+            ObjList<TemplateParser.Component> components = alertTemplate.getComponents();
+            for (int i = 0, n = components.size(); i < n; i++) {
+                Component comp = components.getQuick(i);
+                if (ComponentType.ENV == comp.getType() && MESSAGE_ENV.equals(comp.getKey())) {
+                    alertSink.put(logRecord);
+                } else {
+                    alertSink.put(comp);
+                }
+            }
+            socket.send(alertSink.$());
         }
     }
 
@@ -305,6 +314,11 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         @Override
         public CharSequenceView subSequence(int start, int end) {
             return new CharSequenceView(lo + start, end - start);
+        }
+
+        @Override
+        public String toString() {
+            return new String(BUFF, lo, len, Files.UTF_8);
         }
     }
 }

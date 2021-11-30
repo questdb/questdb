@@ -51,7 +51,6 @@ public class HttpLogRecordSinkTest {
     public void setUp() {
         alertBuilder = new HttpLogRecordSink(bufferPtr, bufferLimit);
         alertBuilder.putHeader("localhost");
-        alertBuilder.setFooter(s -> s.put("\nF.O.O.T.E.R"));
         alertBuilder.setMark();
         Assert.assertEquals(
                 "POST /api/v1/alerts HTTP/1.1\r\n" +
@@ -68,7 +67,6 @@ public class HttpLogRecordSinkTest {
 
     @Test
     public void testEmptyMessage() {
-        alertBuilder.setFooter(null);
         alertBuilder.$(); // we are adding nothing, just finish the build
         Assert.assertEquals(
                 "POST /api/v1/alerts HTTP/1.1\r\n" +
@@ -99,7 +97,6 @@ public class HttpLogRecordSinkTest {
         try {
             LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
             logRecord.put(msg);
-            alertBuilder.setFooter(null);
             alertBuilder.put(logRecord).$();
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
@@ -148,13 +145,12 @@ public class HttpLogRecordSinkTest {
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:       18\r\n" +
+                            "Content-Length:        6\r\n" +
                             "\r\n" +
-                            " \\$\\\"\\" +
-                            "\nF.O.O.T.E.R",
+                            " \\$\\\"\\",
                     alertBuilder.toString()
             );
-            Assert.assertEquals(168, alertBuilder.length());
+            Assert.assertEquals(156, alertBuilder.length());
         } finally {
             if (msgPtr != 0) {
                 Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
@@ -178,13 +174,12 @@ public class HttpLogRecordSinkTest {
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:       40\r\n" +
+                            "Content-Length:       28\r\n" +
                             "\r\n" +
-                            "test: Tres, Dos, Uno, Zero!!" +
-                            "\nF.O.O.T.E.R",
+                            "test: Tres, Dos, Uno, Zero!!",
                     alertBuilder.toString()
             );
-            Assert.assertEquals(190, alertBuilder.length());
+            Assert.assertEquals(178, alertBuilder.length());
         } finally {
             if (msgPtr != 0) {
                 Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
