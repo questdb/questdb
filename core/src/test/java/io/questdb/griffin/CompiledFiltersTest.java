@@ -30,7 +30,6 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
 
     // TODO: keep this test for advanced features such as:
     //  * col tops
-    //  * random access cursor
 
     @Test
     public void testSelectAllTypesFromRecord() throws Exception {

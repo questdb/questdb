@@ -210,8 +210,8 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
                 {"along", "i64", "-1", "-1L", "i64"},
                 {"afloat", "f32", "1", "1L", "i32"},
                 {"afloat", "f32", "-1", "-1L", "i32"},
-                {"adouble", "f64", "1", "1L", "i64"},
-                {"adouble", "f64", "-1", "-1L", "i64"},
+                {"adouble", "f64", "1", "1.0D", "f64"},
+                {"adouble", "f64", "-1", "-1.0D", "f64"},
                 {"afloat", "f32", "1.5", "1.5D", "f32"},
                 {"adouble", "f64", "1.5", "1.5D", "f64"},
         };
