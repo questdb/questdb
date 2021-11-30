@@ -1021,7 +1021,27 @@ public class SqlCompiler implements Closeable {
                         tok = expectToken(lexer, "'add index' or 'cache' or 'nocache'");
                         if (SqlKeywords.isAddKeyword(tok)) {
                             expectKeyword(lexer, "index");
-                            alterTableColumnAddIndex(tableNamePosition, columnNameNamePosition, columnName, writer);
+                            tok = SqlUtil.fetchNext(lexer);
+                            int indexValueCapacity = -1;
+
+                            if (tok != null) {
+                                if (!SqlKeywords.isCapacityKeyword(tok)) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "'capacity' expected");
+                                } else {
+                                    tok = expectToken(lexer, "capacity value");
+                                    try {
+                                        indexValueCapacity = Numbers.parseInt(tok);
+                                        if (indexValueCapacity <= 0) {
+                                            throw SqlException.$(lexer.lastTokenPosition(), "positive integer literal expected as index capacity");
+                                        }
+                                    } catch (NumericException e) {
+                                        throw SqlException.$(lexer.lastTokenPosition(), "positive integer literal expected as index capacity");
+                                    }
+                                }
+                            }
+
+                            alterTableColumnAddIndex(tableNamePosition, columnNameNamePosition, columnName, writer, indexValueCapacity);
+                            
                         } else {
                             if (SqlKeywords.isCacheKeyword(tok)) {
                                 alterTableColumnCacheFlag(tableNamePosition, columnName, writer, true);
@@ -1144,7 +1164,8 @@ public class SqlCompiler implements Closeable {
             int symbolCapacity;
             final boolean indexed;
 
-            if (ColumnType.isSymbol(type) && tok != null && !Chars.equals(tok, ',')) {
+            if (ColumnType.isSymbol(type) && tok != null &&
+                    !Chars.equals(tok, ',') && !Chars.equals(tok, ';')) {
 
                 if (isCapacityKeyword(tok)) {
                     tok = expectToken(lexer, "symbol capacity");
@@ -1205,7 +1226,7 @@ public class SqlCompiler implements Closeable {
                 } else {
                     indexValueBlockCapacity = configuration.getIndexValueBlockSize();
                 }
-            } else {
+            } else { //set defaults 
 
                 //ignoring `NULL` and `NOT NULL`
                 if (tok != null && SqlKeywords.isNotKeyword(tok)) {
@@ -1243,7 +1264,7 @@ public class SqlCompiler implements Closeable {
                         .put(']');
             }
 
-            if (tok == null) {
+            if (tok == null || Chars.equals(tok, ';')) {
                 break;
             }
 
@@ -1254,12 +1275,18 @@ public class SqlCompiler implements Closeable {
         } while (true);
     }
 
-    private void alterTableColumnAddIndex(int tableNamePosition, int columnNamePosition, CharSequence columnName, TableWriter w) throws SqlException {
+    private void alterTableColumnAddIndex(int tableNamePosition, int columnNamePosition, CharSequence columnName, TableWriter w, int indexValueBlockSize) 
+            throws SqlException {
         try {
             if (w.getMetadata().getColumnIndexQuiet(columnName) == -1) {
                 throw SqlException.invalidColumn(columnNamePosition, columnName);
             }
-            w.addIndex(columnName, configuration.getIndexValueBlockSize());
+            
+            if ( indexValueBlockSize == -1 ){
+                indexValueBlockSize = configuration.getIndexValueBlockSize(); 
+            }
+
+            w.addIndex(columnName, Numbers.ceilPow2(indexValueBlockSize));
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage())
                     .put("[errno=").put(e.getErrno()).put(']');
