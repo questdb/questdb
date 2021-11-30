@@ -46,7 +46,6 @@ public final class SqlParser {
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionTreeBuilder expressionTreeBuilder;
     private final ObjectPool<QueryModel> queryModelPool;
-    private final UpdateModel updateModelPool;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<AnalyticColumn> analyticColumnPool;
     private final ObjectPool<CreateTableModel> createTableModelPool;
@@ -75,13 +74,11 @@ public final class SqlParser {
             ObjectPool<ExpressionNode> expressionNodePool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
-            UpdateModel updateModel,
             PostOrderTreeTraversalAlgo traversalAlgo
     ) {
         this.expressionNodePool = expressionNodePool;
         this.queryModelPool = queryModelPool;
         this.queryColumnPool = queryColumnPool;
-        this.updateModelPool = updateModel;
         this.expressionTreeBuilder = new ExpressionTreeBuilder();
         this.analyticColumnPool = new ObjectPool<>(AnalyticColumn.FACTORY, configuration.getAnalyticColumnPoolCapacity());
         this.createTableModelPool = new ObjectPool<>(CreateTableModel.FACTORY, configuration.getCreateTableModelPoolCapacity());
@@ -928,22 +925,23 @@ public final class SqlParser {
         return model;
     }
 
-    private UpdateModel parseDmlUpdate(GenericLexer lexer) throws SqlException {
+    private QueryModel parseDmlUpdate(GenericLexer lexer) throws SqlException {
         CharSequence tok;
         final int modelPosition = lexer.getPosition();
 
-        UpdateModel updateModel = this.updateModelPool;
-        updateModel.setModelPosition(modelPosition);
+        QueryModel updateQueryModel = queryModelPool.next();
+        updateQueryModel.setModelType(ExecutionModel.UPDATE);
+        updateQueryModel.setModelPosition(modelPosition);
         QueryModel fromModel = queryModelPool.next();
         fromModel.setModelPosition(modelPosition);
         tok = tok(lexer, "UPDATE, WITH or table name expected");
 
         // [update]
         if (isUpdateKeyword(tok)) {
-            parseUpdateClause(lexer, updateModel, fromModel);
+            parseUpdateClause(lexer, updateQueryModel, fromModel);
             QueryModel nestedModel = queryModelPool.next();
             nestedModel.setTableName(fromModel.getTableName());
-            nestedModel.setAlias(updateModel.getUpdateTableAlias());
+            nestedModel.setAlias(updateQueryModel.getAlias());
             fromModel.setTableName(null);
             fromModel.setNestedModel(nestedModel);
             fromModel.getWithClauses().addWithClauses(topLevelWithModel);
@@ -980,16 +978,17 @@ public final class SqlParser {
                 throw errUnexpected(lexer, tok);
             }
 
-            updateModel.setFromModel(fromModel);
+            updateQueryModel.setNestedModel(fromModel);
         }
-        return updateModel;
+        return updateQueryModel;
     }
 
-    private void parseUpdateClause(GenericLexer lexer, UpdateModel updateModel, QueryModel nestedModel) throws SqlException {
+    private void parseUpdateClause(GenericLexer lexer, QueryModel updateQueryModel, QueryModel nestedModel) throws SqlException {
         CharSequence tok = tok(lexer, "table name or alias");
         CharSequence tableName = GenericLexer.immutableOf(tok);
-        updateModel.setUpdateTableName(tableName);
-        nestedModel.setTableName(ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableName, 0, 0));
+        ExpressionNode tableNameExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableName, 0, 0);
+        updateQueryModel.setTableName(tableNameExpr);
+        nestedModel.setTableName(tableNameExpr);
 
         tok = tok(lexer, "AS, SET or table alias expected");
         if (isAsKeyword(tok)) {
@@ -1003,7 +1002,7 @@ public final class SqlParser {
             // This is table alias
             CharSequence tableAlias = GenericLexer.immutableOf(tok);
             ExpressionNode tableAliasExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableAlias, 0, 0);
-            updateModel.setUpdateTableAlias(tableAliasExpr);
+            updateQueryModel.setAlias(tableAliasExpr);
             tok = tok(lexer, "SET expected");
         }
 
@@ -1021,8 +1020,10 @@ public final class SqlParser {
 
             // Value expression
             ExpressionNode expr = expr(lexer, (QueryModel) null);
+            ExpressionNode setColumnExpression = expressionNodePool.next().of(ExpressionNode.LITERAL, col, 0, colPosition);
+            updateQueryModel.getUpdateExpressions().add(setColumnExpression);
+
             QueryColumn valueColumn = queryColumnPool.next().of(col, expr);
-            updateModel.withSet(expressionNodePool.next().of(ExpressionNode.LITERAL, col, 0, colPosition), expr);
             nestedModel.addBottomUpColumn(valueColumn);
 
             tok = optTok(lexer);
@@ -1652,7 +1653,7 @@ public final class SqlParser {
 
     private ExecutionModel parseUpdate(GenericLexer lexer) throws SqlException {
         lexer.unparse();
-        final UpdateModel model = parseDmlUpdate(lexer);
+        final QueryModel model = parseDmlUpdate(lexer);
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
             return model;

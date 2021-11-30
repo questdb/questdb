@@ -117,6 +117,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int tableId;
     private boolean isUpdateModel;
     private final QueryWithClauseModel withClauseModel = new QueryWithClauseModel();
+    private int modelType;
+    private final ObjList<ExpressionNode> updateSetColumns = new ObjList<>();
 
     private QueryModel() {
         joinModels.add(this);
@@ -235,6 +237,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         topDownNameSet.clear();
         aliasToColumnMap.clear();
         isUpdateModel = false;
+        modelType = ExecutionModel.QUERY;
+        updateSetColumns.clear();
     }
 
     public void clearColumnMapStructs() {
@@ -305,6 +309,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ExpressionNode getAlias() {
         return alias;
+    }
+
+    public ObjList<ExpressionNode> getUpdateExpressions() {
+        return updateSetColumns;
     }
 
     public QueryWithClauseModel getWithClauses() {
@@ -457,7 +465,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     @Override
     public int getModelType() {
-        return ExecutionModel.QUERY;
+        return modelType;
     }
 
     public CharSequence getName() {
@@ -474,6 +482,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public QueryModel getNestedModel() {
         return nestedModel;
+    }
+
+    public void setModelType(int modelType) {
+        this.modelType = modelType;
     }
 
     public void setNestedModel(QueryModel nestedModel) {
@@ -735,7 +747,38 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     @Override
     public void toSink(CharSink sink) {
-        toSink0(sink, false);
+        if (modelType == ExecutionModel.QUERY) {
+            toSink0(sink, false);
+        } else if (modelType == ExecutionModel.UPDATE) {
+            updateToSink(sink);
+        }
+    }
+
+    private void updateToSink(CharSink sink) {
+        sink.put("update ");
+        tableName.toSink(sink);
+        if (alias != null) {
+            sink.put(" as");
+            aliasToSink(alias.token, sink);
+        }
+        sink.put(" set ");
+        for (int i = 0, n = getUpdateExpressions().size(); i < n; i++) {
+
+            if (i > 0) {
+                sink.put(',');
+            }
+            CharSequence columnExpr = getUpdateExpressions().get(i).token;
+            sink.put(columnExpr);
+            sink.put(" = ");
+            QueryColumn setColumn = getNestedModel().getColumns().getQuick(i);
+            setColumn.getAst().toSink(sink);
+        }
+
+        if (getNestedModel() != null) {
+            sink.put(" from (");
+            getNestedModel().toSink(sink);
+            sink.put(")");
+        }
     }
 
     @Override

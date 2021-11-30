@@ -76,7 +76,6 @@ public class SqlCompiler implements Closeable {
     private final CharacterStore characterStore;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
-    private final UpdateModel updateModel;
     private final SqlCodeGenerator codeGenerator;
     private final CairoConfiguration configuration;
     private final Path renamePath = new Path();
@@ -108,7 +107,6 @@ public class SqlCompiler implements Closeable {
         this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
         this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
         this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
-        this.updateModel = new UpdateModel();
         this.characterStore = new CharacterStore(
                 configuration.getSqlCharacterStoreCapacity(),
                 configuration.getSqlCharacterStoreSequencePoolCapacity());
@@ -182,7 +180,6 @@ public class SqlCompiler implements Closeable {
                 sqlNodePool,
                 queryColumnPool,
                 queryModelPool,
-                updateModel,
                 postOrderTreeTraversalAlgo
         );
         this.textLoader = new TextLoader(engine);
@@ -1405,7 +1402,6 @@ public class SqlCompiler implements Closeable {
         characterStore.clear();
         queryColumnPool.clear();
         queryModelPool.clear();
-        updateModel.clear();
         optimiser.clear();
         parser.clear();
         backupAgent.clear();
@@ -1424,8 +1420,7 @@ public class SqlCompiler implements Closeable {
                     return lightlyValidateInsertModel(insertModel);
                 }
             case ExecutionModel.UPDATE:
-                UpdateModel updateModel = (UpdateModel) model;
-                optimiser.optimise(updateModel, executionContext);
+                optimiser.optimiseUpdate((QueryModel) model, executionContext);
             default:
                 return model;
         }
@@ -1462,8 +1457,8 @@ public class SqlCompiler implements Closeable {
                 engine.rename(executionContext.getCairoSecurityContext(), path, GenericLexer.unquote(rtm.getFrom().token), renamePath, GenericLexer.unquote(rtm.getTo().token));
                 return compiledQuery.ofRenameTable();
             case ExecutionModel.UPDATE:
-                final UpdateModel upd = (UpdateModel) executionModel;
-                UpdateStatement updateStatement = generateUpdate(upd, executionContext);
+                final QueryModel updateQueryModel = (QueryModel) executionModel;
+                UpdateStatement updateStatement = generateUpdate(updateQueryModel, executionContext);
                 return compiledQuery.ofUpdate(updateStatement);
             default:
                 InsertModel insertModel = (InsertModel) executionModel;
@@ -1801,14 +1796,21 @@ public class SqlCompiler implements Closeable {
         throw SqlException.position(0).put("underlying cursor is extremely volatile");
     }
 
-    UpdateStatement generateUpdate(UpdateModel updateModel, SqlExecutionContext executionContext) throws SqlException {
-        UpdateStatementBuilder updateStatementBuilder = codeGenerator.generateUpdate(updateModel.getQueryModel(), executionContext);
+    UpdateStatement generateUpdate(QueryModel updateQueryModel, SqlExecutionContext executionContext) throws SqlException {
+        // Update QueryModel structure is
+        // QueryModel with SET column expressions
+        // |-- QueryModel of select-virtual or select-choose of data selected for update
+        //     |-- QueryModel with selected data
+        //         |-- QueryModel to represent FROM clause for JOINs in UPDATE
+        // First generate plan for nested SELECT QueryModel
+        UpdateStatementBuilder updateStatementBuilder = codeGenerator.generateUpdate(updateQueryModel.getNestedModel(), executionContext);
         try (TableReader reader = engine.getReader(
                 executionContext.getCairoSecurityContext(),
-                updateModel.getUpdateTableName()
+                updateQueryModel.getTableName().token
         )) {
+            // And then generate plan for UPDATE top level QueryModel
             TableReaderMetadata updateTableMetadata = reader.getMetadata();
-            return updateStatementBuilder.buildUpdate(updateModel, updateTableMetadata, executionContext.getBindVariableService());
+            return updateStatementBuilder.buildUpdate(updateQueryModel, updateTableMetadata, executionContext.getBindVariableService());
         }
     }
 

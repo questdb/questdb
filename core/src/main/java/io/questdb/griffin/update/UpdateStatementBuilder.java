@@ -32,7 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.UpdateModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -57,7 +57,7 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
     }
 
     public UpdateStatement buildUpdate(
-            UpdateModel updateModel,
+            QueryModel updateQueryModel,
             TableReaderMetadata updateTableMetadata,
             BindVariableService bindVariableService
     ) throws SqlException {
@@ -80,7 +80,7 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
                 Function virtualColumn = setValuesFunctions != null ? setValuesFunctions.get(i) : null;
                 if (!implicitCastAllowed(virtualColumnType, columnType, virtualColumn, bindVariableService)) {
                     // get column position
-                    ExpressionNode setRhs = updateModel.getUpdateColumnExpressions().get(i);
+                    ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
                     int position = setRhs.position;
                     throw SqlException.inconvertibleTypes(position, virtualColumnType, "", columnType, updateColumnName);
                 }
@@ -101,8 +101,8 @@ public class UpdateStatementBuilder implements RecordCursorFactory, Closeable {
         }
 
         UpdateStatement updateStatement = new UpdateStatement(
-                updateModel.getUpdateTableName(),
-                updateModel.getPosition(),
+                updateQueryModel.getTableName().token,
+                updateQueryModel.getTableName().position,
                 rowIdFactory,
                 masterFilter,
                 postJoinFilter,

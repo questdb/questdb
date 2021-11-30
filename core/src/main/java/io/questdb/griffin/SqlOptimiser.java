@@ -1871,50 +1871,54 @@ class SqlOptimiser {
         }
     }
 
-    void optimise(UpdateModel updateModel, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        assert updateModel.getQueryModel() != null;
-        QueryModel optimizedModel = optimise(updateModel.getQueryModel(), sqlExecutionContext);
-        updateModel.setFromModel(optimizedModel);
-        validateUpdateColumns(updateModel, sqlExecutionContext);
+    void optimiseUpdate(QueryModel updateQueryModel, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        QueryModel optimisedNested = optimise(updateQueryModel.getNestedModel(), sqlExecutionContext);
+        updateQueryModel.setNestedModel(optimisedNested);
+        validateUpdateColumns(updateQueryModel, sqlExecutionContext);
     }
 
-    private void validateUpdateColumns(UpdateModel updateModel, SqlExecutionContext executionContext) throws SqlException {
+    private void validateUpdateColumns(QueryModel updateQueryModel, SqlExecutionContext executionContext) throws SqlException {
         try (
                 TableReader r = engine.getReader(
                         executionContext.getCairoSecurityContext(),
-                        updateModel.getUpdateTableName(),
+                        updateQueryModel.getTableName().token,
                         TableUtils.ANY_TABLE_ID,
                         TableUtils.ANY_TABLE_VERSION
                 )
         ) {
             TableReaderMetadata metadata = r.getMetadata();
             if (metadata.getPartitionBy() == PartitionBy.NONE) {
-                throw SqlException.$(updateModel.getPosition(), "UPDATE query can only be executed on partitioned tables");
+                throw SqlException.$(updateQueryModel.getModelPosition(), "UPDATE query can only be executed on partitioned tables");
             }
             int timestampIndex = metadata.getTimestampIndex();
             if (timestampIndex < 0) {
-                throw SqlException.$(updateModel.getPosition(), "UPDATE query can only be executed on tables with Designated timestamp");
+                throw SqlException.$(updateQueryModel.getModelPosition(), "UPDATE query can only be executed on tables with Designated timestamp");
             }
 
             tempList.clear(metadata.getColumnCount());
             tempList.setPos(metadata.getColumnCount());
-            int updateSetColumnCount = updateModel.getUpdateColumns().size();
+            int updateSetColumnCount = updateQueryModel.getUpdateExpressions().size();
             for(int i = 0; i < updateSetColumnCount; i++) {
 
-                ExpressionNode lhs = updateModel.getUpdateColumns().get(i);
-                int columnIndex = metadata.getColumnIndexQuiet(lhs.token);
+                // SET left hand side expressions are stored in top level UPDATE QueryModel
+                ExpressionNode columnExpression = updateQueryModel.getUpdateExpressions().get(i);
+                int position = columnExpression.position;
+                int columnIndex = metadata.getColumnIndexQuiet(columnExpression.token);
+
+                // SET right hand side expressions are stored in the Nested SELECT QueryModel as columns
+                QueryColumn queryColumn = updateQueryModel.getNestedModel().getColumns().get(i);
                 if (columnIndex < 0) {
-                    throw SqlException.invalidColumn(lhs.position, lhs.token);
+                    throw SqlException.invalidColumn(position, queryColumn.getName());
                 }
                 if (columnIndex == timestampIndex) {
-                    throw SqlException.$(lhs.position, "Designated timestamp column cannot be updated");
+                    throw SqlException.$(position, "Designated timestamp column cannot be updated");
                 }
                 if (tempList.getQuick(columnIndex) == 1) {
-                    throw SqlException.$(lhs.position, "Duplicate column ").put(lhs.token).put(" in SET clause");
+                    throw SqlException.$(position, "Duplicate column ").put(queryColumn.getName()).put(" in SET clause");
                 }
                 tempList.set(columnIndex, 1);
 
-                ExpressionNode rhs = updateModel.getUpdateColumnExpressions().get(i);
+                ExpressionNode rhs = queryColumn.getAst();
                 if (rhs.type == FUNCTION) {
                     if (functionParser.isGroupBy(rhs.token)) {
                         throw SqlException.$(rhs.position, "Unsupported function in SET clause");
@@ -1922,9 +1926,9 @@ class SqlOptimiser {
                 }
             }
         } catch (EntryLockedException e) {
-            throw SqlException.position(updateModel.getPosition()).put("table is locked: ").put(tableLookupSequence);
+            throw SqlException.position(updateQueryModel.getModelPosition()).put("table is locked: ").put(tableLookupSequence);
         } catch (CairoException e) {
-            throw SqlException.position(updateModel.getPosition()).put(e);
+            throw SqlException.position(updateQueryModel.getModelPosition()).put(e);
         }
     }
 
