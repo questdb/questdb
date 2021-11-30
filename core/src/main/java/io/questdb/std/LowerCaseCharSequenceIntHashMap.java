@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import io.questdb.std.str.IntIntFunction;
+
 import java.util.Arrays;
 
 public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequenceHashSet {
@@ -107,6 +109,38 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
             return true;
         }
         return false;
+    }
+
+    public int compute(final CharSequence key, final IntIntFunction function) {
+        final int result;
+        final int index = keyIndex(key);
+        if (index < 0) {
+            final int valueIndex = -index - 1;
+            result = function.apply(values[valueIndex]);
+
+            if (result != noEntryValue) {
+                values[valueIndex] = result;
+            } else {
+                removeAt(index);
+            }
+
+            return result;
+        } else {
+            result = function.apply(noEntryValue);
+            if (result != noEntryValue) {
+                putAt0(index, key, result);
+            }
+        }
+
+        return result;
+    }
+
+    public void updateAllValues(final int value) {
+        for (int i = 0; i < values.length; i++) {
+            if (values[i] != noEntryValue) {
+                values[i] = value;
+            }
+        }
     }
 
     @Override

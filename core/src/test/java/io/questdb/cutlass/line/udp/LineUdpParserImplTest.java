@@ -670,6 +670,101 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDuplicatedFields() throws Exception {
+        String expected = "g\ta\twindspeed\ttimestamp\n" +
+                "1\t0.1\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                "4\t0.71\t67.72\t1970-01-01T00:03:00.000000Z\n";
+        String lines = "weather g=1i,a=0.1,windspeed=1.0 0\n" +
+                "weather g=2i,windspeed=2.0,windspeed=3.0 60000000000\n" +
+                "weather g=3i,a=0.4,a=0.5 120000000000\n" +
+                "weather g=4i,a=0.71,windspeed=67.72 180000000000\n";
+
+        assertThat(expected, lines, "weather");
+    }
+
+    @Test
+    public void testDuplicatedFieldsInFirstLine() throws Exception {
+        String expected = "g\ta\twindspeed\ttimestamp\n" +
+                "1\t0.1\t1.0\t1970-01-01T00:01:00.000000Z\n" +
+                "4\t0.71\t67.72\t1970-01-01T00:03:00.000000Z\n";
+        String lines = "weather g=2i,windspeed=2.0,windspeed=3.0 0\n" +
+                "weather g=1i,a=0.1,windspeed=1.0 60000000000\n" +
+                "weather g=3i,a=0.4,a=0.5 120000000000\n" +
+                "weather g=4i,a=0.71,windspeed=67.72 180000000000\n";
+
+        assertThat(expected, lines, "weather");
+    }
+
+    @Test
+    public void testDuplicatedFieldsInFirstLines() throws Exception {
+        String expected = "g\ta\twindspeed\ttimestamp\n" +
+                "1\t0.1\t1.0\t1970-01-01T00:02:00.000000Z\n" +
+                "4\t0.71\t67.72\t1970-01-01T00:03:00.000000Z\n";
+        String lines = "weather g=2i,windspeed=2.0,windspeed=3.0 0\n" +
+                "weather g=3i,a=0.4,a=0.5 60000000000\n" +
+                "weather g=1i,a=0.1,windspeed=1.0 120000000000\n" +
+                "weather g=4i,a=0.71,windspeed=67.72 180000000000\n";
+
+        assertThat(expected, lines, "weather");
+    }
+
+    @Test
+    public void testDuplicatedFieldsFirstAndLastLine() throws Exception {
+        String expected = "g\ta\twindspeed\ttimestamp\n" +
+                "1\t0.1\t1.0\t1970-01-01T00:01:00.000000Z\n" +
+                "4\t0.71\t67.72\t1970-01-01T00:02:00.000000Z\n";
+        String lines = "weather g=2i,windspeed=2.0,windspeed=3.0 0\n" +
+                "weather g=1i,a=0.1,windspeed=1.0 60000000000\n" +
+                "weather g=4i,a=0.71,windspeed=67.72 120000000000\n" +
+                "weather g=3i,a=0.4,a=0.5 180000000000\n";
+
+        assertThat(expected, lines, "weather");
+    }
+
+    @Test
+    public void testDuplicatedFieldsTwoTables() throws Exception {
+        String expected = "g\ta\twindspeed\ttimestamp\n" +
+                "1\t0.1\t1.0\t1970-01-01T00:01:00.000000Z\n" +
+                "4\t0.71\t67.72\t1970-01-01T00:04:00.000000Z\n";
+        String lines =
+                "table val1=1,val2=2 0\n" +
+                        "weather g=1i,a=0.1,windspeed=1.0 60000000000\n" +
+                        "weather g=2i,windspeed=2.0,windspeed=3.0 120000000000\n" +
+                        "weather g=3i,a=0.4,a=0.5 180000000000\n" +
+                        "weather g=4i,a=0.71,windspeed=67.72 240000000000\n";
+
+        assertThat(expected, lines, "weather");
+    }
+
+    @Test
+    public void testDuplicatedFieldsInTwoTables() throws Exception {
+        String expected = "g\ta\twindspeed\ttimestamp\n" +
+                "1\t0.1\t1.0\t1970-01-01T00:01:00.000000Z\n" +
+                "4\t0.71\t67.72\t1970-01-01T00:04:00.000000Z\n";
+        String lines =
+                "table val1=1,val2=2,val1=1 0\n" +
+                        "weather g=1i,a=0.1,windspeed=1.0 60000000000\n" +
+                        "weather g=2i,windspeed=2.0,windspeed=3.0 120000000000\n" +
+                        "weather g=3i,a=0.4,a=0.5 180000000000\n" +
+                        "weather g=4i,a=0.71,windspeed=67.72 240000000000\n";
+
+        assertThat(expected, lines, "weather");
+    }
+
+    @Test
+    public void testDuplicatedFieldsInternational() throws Exception {
+        String expected = "г\tа\tветер\ttimestamp\n" +
+                "1\t0.1\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                "4\t0.71\t67.72\t1970-01-01T00:03:00.000000Z\n";
+        String lines = "погода г=1i,а=0.1,ветер=1.0 0\n" +
+                "погода г=2i,ветер=2.0,ветер=3.0 60000000000\n" +
+                "погода г=3i,а=0.4,а=0.5 120000000000\n" +
+                "погода г=4i,а=0.71,ветер=67.72 180000000000\n";
+
+        assertThat(expected, lines, "погода");
+    }
+
+    @Test
     public void testColumnConversion1() throws Exception {
         try (
                 @SuppressWarnings("resource")

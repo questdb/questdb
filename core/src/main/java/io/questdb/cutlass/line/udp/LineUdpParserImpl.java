@@ -34,6 +34,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.IntIntFunction;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -48,7 +49,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     };
     private static final FieldValueParser NOOP_FIELD_VALUE = (value, cache) -> {
     };
-    private static final FieldNameParser NOOP_FIELD_NAME = name -> {
+    private static final FieldNameParser NOOP_FIELD_NAME = (name, cache) -> {
     };
 
     private final CairoEngine engine;
@@ -67,6 +68,12 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final CairoSecurityContext cairoSecurityContext;
     private final LineProtoTimestampAdapter timestampAdapter;
+
+    private final IntList duplicationCountersByColumnIndex = new IntList();
+    private final LowerCaseCharSequenceIntHashMap duplicateCountersByColumnName = new LowerCaseCharSequenceIntHashMap();
+
+    private final IntIntFunction UPDATE_DUPLICATION_COUNTER = this::updateDuplicationCounter;
+
     // state
     // cache entry index is always a negative value
     private int cacheEntryIndex = 0;
@@ -107,6 +114,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         for (int i = 0, n = writerCache.size(); i < n; i++) {
             Misc.free(writerCache.valueQuick(i).writer);
         }
+        duplicateCountersByColumnName.clear();
     }
 
     public void commitAll(int commitMode) {
@@ -146,7 +154,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 break;
             case EVT_FIELD_NAME:
             case EVT_TAG_NAME:
-                onFieldName.parse(token);
+                onFieldName.parse(token, cache);
                 break;
             case EVT_TAG_VALUE:
                 onTagValue.parse(token, cache);
@@ -293,6 +301,12 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                             onFieldValue = MY_NEW_FIELD_VALUE;
                             onTagValue = MY_NEW_TAG_VALUE;
                         }
+
+                        //we need to invalidate counters at the begging,
+                        // because the rest of the processing can be skipped
+                        if (duplicateCountersByColumnName.size() > 0) {
+                            duplicateCountersByColumnName.clear();
+                        }
                         break;
                     default:
                         entry.state = 3;
@@ -309,17 +323,48 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
     }
 
-    private void parseFieldName(CachedCharSequence token) {
+    private void parseFieldName(CachedCharSequence token, CharSequenceCache cache) {
         columnIndex = metadata.getColumnIndexQuiet(token);
         if (columnIndex > -1) {
             columnType = metadata.getColumnType(columnIndex);
+            if (columnIndex < duplicationCountersByColumnIndex.size()) {
+                final int counter = duplicationCountersByColumnIndex.getQuick(columnIndex);
+                if (counter >= 1) {
+                    switchModeToSkipLine();
+                    LOG.error().$("Measurement was skipped because of duplicated field name [table=").$(cache.get(tableName)).
+                            $(",field=").$(token).$("]").$();
+                } else {
+                    duplicationCountersByColumnIndex.setQuick(columnIndex, counter + 1);
+                }
+            } else {
+                duplicationCountersByColumnIndex.setPos(columnIndex + 1);
+                duplicationCountersByColumnIndex.setQuick(columnIndex, 1);
+            }
+
+
         } else {
             prepareNewColumn(token);
         }
     }
 
-    private void parseFieldNameNewTable(CachedCharSequence token) {
+    private void parseFieldNameNewTable(CachedCharSequence token, CharSequenceCache cache) {
+        final int duplicationCounter = duplicateCountersByColumnName.compute(token.toString(), UPDATE_DUPLICATION_COUNTER);
+        if (duplicationCounter > 1) {
+            switchModeToSkipLine();
+            LOG.error().$("Measurement was skipped because of duplicated field name [table=").$(cache.get(tableName)).
+                    $(",field=").$(token).$("]").$();
+            return;
+        }
+
         columnNameType.add(token.getCacheAddress());
+    }
+
+    private int updateDuplicationCounter(final int value) {
+        if (value == -1) {
+            return 1;
+        }
+
+        return value + 1;
     }
 
     private void parseFieldValue(CachedCharSequence value, CharSequenceCache cache) {
@@ -410,9 +455,17 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             CharSequence colNameAsChars = cache.get(columnName);
             if (TableUtils.isValidColumnName(colNameAsChars)) {
                 writer.addColumn(colNameAsChars, valueType);
-                columnIndexAndType.add(Numbers.encodeLowHighInts(columnCount++, valueType));
+
+                final int columnIndex = columnCount++;
+                columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, valueType));
                 columnValues.add(value.getCacheAddress());
                 geohashBitsSizeByColIdx.add(0);
+
+                if (columnIndex >= duplicationCountersByColumnIndex.size()) {
+                    duplicationCountersByColumnIndex.setPos(columnIndex + 1);
+                }
+
+                duplicationCountersByColumnIndex.setQuick(columnIndex, 1);
             } else {
                 LOG.error().$("invalid column name [table=").$(writer.getTableName())
                         .$(", columnName=").$(colNameAsChars)
@@ -440,6 +493,12 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             onFieldName = MY_FIELD_NAME;
             onFieldValue = MY_FIELD_VALUE;
             onTagValue = MY_TAG_VALUE;
+        }
+
+        //clear all duplication counters.
+        final int countersSize = duplicationCountersByColumnIndex.size();
+        for (int i = 0; i < countersSize; i++) {
+            duplicationCountersByColumnIndex.setQuick(i, 0);
         }
     }
 
@@ -487,7 +546,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
     @FunctionalInterface
     private interface FieldNameParser {
-        void parse(CachedCharSequence name);
+        void parse(CachedCharSequence name, CharSequenceCache cachedCharSequence);
     }
 
     @FunctionalInterface

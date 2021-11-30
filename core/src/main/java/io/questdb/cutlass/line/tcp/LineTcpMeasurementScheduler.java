@@ -456,6 +456,8 @@ class LineTcpMeasurementScheduler implements Closeable {
         private volatile boolean rebalanceReleasedByFromThread;
         private boolean commitOnWriterClose;
 
+        private final IntIntFunction updateCounter = this::updateCounter;
+
         private LineTcpMeasurementEvent(
                 long bufLo,
                 long bufSize,
@@ -475,6 +477,14 @@ class LineTcpMeasurementScheduler implements Closeable {
             bufLo = 0;
         }
 
+        private int updateCounter(int value) {
+            if (value == -1) {
+                return 1;
+            }
+
+            return value + 1;
+        }
+
         void createMeasurementEvent(
                 TableUpdateDetails tableUpdateDetails,
                 TableUpdateDetails.ThreadLocalDetails localDetails,
@@ -492,13 +502,34 @@ class LineTcpMeasurementScheduler implements Closeable {
             Unsafe.getUnsafe().putLong(bufPos, timestamp);
             bufPos += Long.BYTES;
             int nEntities = protoParser.getnEntities();
-            Unsafe.getUnsafe().putInt(bufPos, nEntities);
+
+            final long entitiesBufPos = bufPos;
+            Unsafe.getUnsafe().putInt(entitiesBufPos, nEntities);
             bufPos += Integer.BYTES;
+
+            final IntList currentAccessCounters = localDetails.accessCountersByColumnIndex;
+            final LowerCaseCharSequenceIntHashMap accessCountersByColumnName =
+                    localDetails.accessCountersByColumnName;
+
+            final int countersSize = currentAccessCounters.size();
+            for (int i = 0; i < countersSize; i++) {
+                currentAccessCounters.setQuick(i, 0);
+            }
+
+            int writtenEntities = 0;
+            boolean undefinedColumnEncountered = false;
+
             for (int nEntity = 0; nEntity < nEntities; nEntity++) {
                 if (bufPos + Long.BYTES < bufMax) {
                     ProtoEntity entity = protoParser.getEntity(nEntity);
                     int colIndex = localDetails.getColumnIndex(entity.getName());
+
                     if (colIndex < 0) {
+                        if (!undefinedColumnEncountered) {
+                            accessCountersByColumnName.updateAllValues(0);
+                            undefinedColumnEncountered = true;
+                        }
+
                         int colNameLen = entity.getName().length();
                         Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
                         bufPos += Integer.BYTES;
@@ -512,7 +543,51 @@ class LineTcpMeasurementScheduler implements Closeable {
                             throw CairoException.instance(0).put("queue buffer overflow");
                         }
                         bufPos += colNameLen;
+
+                        final CharSequence columnName;
+                        if (protoParser.hasNonAsciiChars()) {
+                            final StringSink tempSink = localDetails.tempSink;
+                            tempSink.clear();
+                            //we need to convert UTF8 encoding because column comparison is case insensitive
+                            if (!Chars.utf8Decode(entity.getName().getLo(), entity.getName().getHi(), tempSink)) {
+                                throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
+                            }
+
+                            columnName = tempSink.toString();
+                        } else {
+                            columnName = entity.getName().toString();
+                        }
+
+                        final int currentCounter =
+                                accessCountersByColumnName.compute(columnName, updateCounter);
+
+                        if (currentCounter > 1) {
+                            final StringSink tempSink = localDetails.tempSink;
+                            tempSink.clear();
+                            assembleLine(protoParser, tempSink);
+
+                            LOG.error().$("Measurement  has been rejected because field has been duplicated [").
+                                    $(tempSink).$("]").$();
+                            break;
+                        }
                     } else {
+                        if (colIndex >= currentAccessCounters.size()) {
+                            currentAccessCounters.setPos(colIndex + 1);
+                            currentAccessCounters.set(colIndex, 1);
+                        } else {
+                            final int currentCounter = currentAccessCounters.getQuick(colIndex);
+
+                            if (currentCounter >= 1) {
+                                final StringSink tempSink = localDetails.tempSink;
+                                tempSink.clear();
+                                assembleLine(protoParser, tempSink);
+                                LOG.error().$("Measurement  has been rejected because field has been duplicated [").
+                                        $(tempSink).$("]").$();
+                                break;
+                            }
+                            currentAccessCounters.setQuick(colIndex, currentCounter + 1);
+                        }
+
                         Unsafe.getUnsafe().putInt(bufPos, colIndex);
                         bufPos += Integer.BYTES;
                     }
@@ -657,8 +732,60 @@ class LineTcpMeasurementScheduler implements Closeable {
                 } else {
                     throw CairoException.instance(0).put("queue buffer overflow");
                 }
+
+                writtenEntities++;
             }
+
+            if (writtenEntities != nEntities) {
+                Unsafe.getUnsafe().putInt(entitiesBufPos, 0);
+            }
+
             threadId = tableUpdateDetails.writerThreadId;
+        }
+
+        private void assembleLine(final LineTcpParser lineTcpParser, final CharSink sink) {
+            final int nEntities = lineTcpParser.getnEntities();
+            if (!Chars.utf8Decode(lineTcpParser.getMeasurementName().getLo(), lineTcpParser.getMeasurementName().getHi(), sink)) {
+                throw CairoException.instance(0).put("invalid UTF8 in value for ").put(lineTcpParser.getMeasurementName());
+            }
+            int n = 0;
+            boolean tagsComplete = false;
+            while (n < nEntities) {
+                ProtoEntity entity = lineTcpParser.getEntity(n++);
+                if (!tagsComplete && entity.getType() != LineTcpParser.ENTITY_TYPE_TAG) {
+                    tagsComplete = true;
+                    sink.put(' ');
+                } else {
+                    sink.put(',');
+                }
+                if (!Chars.utf8Decode(entity.getName().getLo(), entity.getName().getHi(), sink)) {
+                    throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
+                }
+                sink.put('=');
+                switch (entity.getType()) {
+                    case LineTcpParser.ENTITY_TYPE_STRING:
+                        sink.put('"');
+                        if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), sink)) {
+                            throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getValue());
+                        }
+                        sink.put('"');
+                        break;
+                    case LineTcpParser.ENTITY_TYPE_INTEGER:
+                    case LineTcpParser.ENTITY_TYPE_LONG256:
+                        sink.put(entity.getValue()).put('i');
+                        break;
+                    default:
+                        if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), sink)) {
+                            throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getValue());
+                        }
+                        break;
+                }
+            }
+
+            if (lineTcpParser.hasTimestamp()) {
+                sink.put(' ');
+                Numbers.append(sink, lineTcpParser.getTimestamp());
+            }
         }
 
         void createReshuffleEvent(int fromThreadId, int toThreadId, TableUpdateDetails tableUpdateDetails) {
@@ -678,16 +805,24 @@ class LineTcpMeasurementScheduler implements Closeable {
         void processMeasurementEvent(WriterJob job) {
             TableWriter.Row row = null;
             try {
-                TableWriter writer = tableUpdateDetails.getWriter();
                 long bufPos = bufLo;
+
                 long timestamp = Unsafe.getUnsafe().getLong(bufPos);
                 bufPos += Long.BYTES;
                 if (timestamp == LineTcpParser.NULL_TIMESTAMP) {
                     timestamp = clock.getTicks();
                 }
-                row = writer.newRow(timestamp);
+
                 int nEntities = Unsafe.getUnsafe().getInt(bufPos);
                 bufPos += Integer.BYTES;
+
+                if (nEntities == 0) {
+                    return;
+                }
+
+                TableWriter writer = tableUpdateDetails.getWriter();
+
+                row = writer.newRow(timestamp);
                 long firstEntityBufPos = bufPos;
                 for (int nEntity = 0; nEntity < nEntities; nEntity++) {
                     int colIndex = Unsafe.getUnsafe().getInt(bufPos);
@@ -1124,9 +1259,13 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         private class ThreadLocalDetails implements Closeable {
             private final Path path = new Path();
-            private final ObjIntHashMap<CharSequence> columnIndexByName = new ObjIntHashMap<>();
+            private final LowerCaseCharSequenceIntHashMap columnIndexByName = new LowerCaseCharSequenceIntHashMap();
             private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
             private final ObjList<SymbolCache> unusedSymbolCaches;
+
+            private final IntList accessCountersByColumnIndex = new IntList();
+            private final LowerCaseCharSequenceIntHashMap accessCountersByColumnName = new LowerCaseCharSequenceIntHashMap();
+
             // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
             private final IntList geoHashBitsSizeByColIdx = new IntList();
             private final StringSink tempSink = new StringSink();
@@ -1162,6 +1301,9 @@ class LineTcpMeasurementScheduler implements Closeable {
 
             void clear() {
                 columnIndexByName.clear();
+
+                accessCountersByColumnName.clear();
+
                 for (int n = 0, sz = symbolCacheByColumnIndex.size(); n < sz; n++) {
                     SymbolCache symCache = symbolCacheByColumnIndex.getQuick(n);
                     if (null != symCache) {

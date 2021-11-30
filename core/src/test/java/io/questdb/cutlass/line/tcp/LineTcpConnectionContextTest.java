@@ -26,13 +26,15 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
@@ -288,6 +290,184 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             assertTable(expected, table);
         });
     }
+
+    @Test
+    public void testDuplicatedFields() throws Exception {
+        String table = "weather";
+        runInContext(() -> {
+            recvBuffer =
+                    table + " g=1i,a=0.1,windspeed=1.0 0\n" +
+                            table + " g=2i,windspeed=2.0,windspeed=3.0 60000000000\n" +
+                            table + " g=3i,a=0.4,a=0.5 120000000000\n" +
+                            table + " g=4i,a=0.71,windspeed=67.72 180000000000\n";
+
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            closeContext();
+            String expected = "g\ta\twindspeed\ttimestamp\n" +
+                    "1\t0.1\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "4\t0.71\t67.72\t1970-01-01T00:03:00.000000Z\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
+    public void testDuplicatedTags() throws Exception {
+        String table = "weather";
+        runInContext(() -> {
+            recvBuffer =
+                    table + ",tag1=val1,tag2=val2 g=1i,a=0.1,windspeed=1.0 0\n" +
+                            table + ",tag1=val1,tag2=val2,tag1=val2 g=2i,windspeed=2.0 60000000000\n" +
+                            table + ",tag1=val1,tag2=val2,tag2=val1 g=3i,a=0.4 120000000000\n" +
+                            table + " g=4i,a=0.71,windspeed=67.72 180000000000\n";
+
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            closeContext();
+            String expected = "tag1\ttag2\tg\ta\twindspeed\ttimestamp\n" +
+                    "val1\tval2\t1\t0.1\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "\t\t4\t0.71\t67.72\t1970-01-01T00:03:00.000000Z\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
+    public void testDuplicatedFieldsWithTags() throws Exception {
+        String table = "weather";
+        runInContext(() -> {
+            recvBuffer =
+                    table + ",tag=val g=1i,a=0.1,windspeed=1.0 0\n" +
+                            table + ",tag=val2 g=2i,windspeed=2.0,tag=1i 60000000000\n" +
+                            table + ",tag=val3 g=3i,tag=2i,a=0.4,a=0.5 120000000000\n" +
+                            table + " g=4i,a=0.71,windspeed=67.72 180000000000\n";
+
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            closeContext();
+            String expected = "tag\tg\ta\twindspeed\ttimestamp\n" +
+                    "val\t1\t0.1\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "\t4\t0.71\t67.72\t1970-01-01T00:03:00.000000Z\n";
+            assertTable(expected, table);
+        });
+    }
+
+
+    @Test
+    public void testDuplicatedFieldsReverseOrder() throws Exception {
+        String table = "weather";
+
+        runInContext(() -> {
+            recvBuffer =
+                    table + " windspeed=1.0,a=0.1,g=1i 0\n" +
+                            table + " g=2i,windspeed=2.0,windspeed=3.0 60000000000\n" +
+                            table + " g=3i,a=0.4,a=0.5 120000000000\n" +
+                            table + " g=4i,a=0.71,windspeed=67.72 180000000000\n";
+
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            closeContext();
+            String expected = "windspeed\ta\tg\ttimestamp\n" +
+                    "1.0\t0.1\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "67.72\t0.71\t4\t1970-01-01T00:03:00.000000Z\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
+    public void testDuplicatedFieldsMapCounters() throws Exception {
+        String table = "weather";
+
+        runInContext(() -> {
+            final TableStructureMock tableStructureMock = new TableStructureMock(engine.getConfiguration(), table);
+
+            try (final Path path = new Path()) {
+                try (final MemoryMARW ddlMem = Vm.getMARWInstance()) {
+                    final int status = engine.getStatus(lineTcpConfiguration.getCairoSecurityContext(), path, table);
+                    Assert.assertNotEquals(TableUtils.TABLE_EXISTS, status);
+
+                    engine.createTable(lineTcpConfiguration.getCairoSecurityContext(), ddlMem, path, tableStructureMock);
+                }
+            }
+
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table)) {
+                final TableReaderMetadata metadata = reader.getMetadata();
+                Assert.assertEquals(1, metadata.getColumnCount());
+            }
+
+            recvBuffer =
+                    table + " g=2i,windspeed=2.0,windspeed=3.0 0\n" +
+                            table + " g=3i,a=0.4,a=0.5 60000000000\n" +
+                            table + " g=1i,a=0.1,windspeed=1.0 120000000000\n" +
+                            table + " g=4i,a=0.71,windspeed=67.72 180000000000\n";
+
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            closeContext();
+            String expected = "timestamp\tg\ta\twindspeed\n" +
+                    "1970-01-01T00:02:00.000000Z\t1\t0.1\t1.0\n" +
+                    "1970-01-01T00:03:00.000000Z\t4\t0.71\t67.72\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
+    public void testDuplicatedFieldsMapCountersInternational() throws Exception {
+        String table = "weather";
+
+        runInContext(() -> {
+            final TableStructureMock tableStructureMock = new TableStructureMock(engine.getConfiguration(), table);
+
+            try (final Path path = new Path()) {
+                try (final MemoryMARW ddlMem = Vm.getMARWInstance()) {
+                    final int status = engine.getStatus(lineTcpConfiguration.getCairoSecurityContext(), path, table);
+                    Assert.assertNotEquals(TableUtils.TABLE_EXISTS, status);
+
+                    engine.createTable(lineTcpConfiguration.getCairoSecurityContext(), ddlMem, path, tableStructureMock);
+                }
+            }
+
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table)) {
+                final TableReaderMetadata metadata = reader.getMetadata();
+                Assert.assertEquals(1, metadata.getColumnCount());
+            }
+
+            recvBuffer =
+                    table + " г=2i,ветер=2.0,ветер=3.0 0\n" +
+                            table + " г=3i,а=0.4,а=0.5 60000000000\n" +
+                            table + " г=1i,а=0.1,ветер=1.0 120000000000\n" +
+                            table + " г=4i,а=0.71,ветер=67.72 180000000000\n";
+
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            closeContext();
+            String expected = "timestamp\tг\tа\tветер\n" +
+                    "1970-01-01T00:02:00.000000Z\t1\t0.1\t1.0\n" +
+                    "1970-01-01T00:03:00.000000Z\t4\t0.71\t67.72\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
+    public void testDuplicatedTagsTwoTables() throws Exception {
+        String table = "weather";
+        runInContext(() -> {
+            recvBuffer =
+                    "table val1=1,val2=2\n" +
+                            table + ",tag1=val1,tag2=val2 g=1i,a=0.1,windspeed=1.0 0\n" +
+                            table + ",tag1=val1,tag2=val2,tag1=val2 g=2i,windspeed=2.0 60000000000\n" +
+                            table + ",tag1=val1,tag2=val2,tag2=val1 g=3i,a=0.4 120000000000\n" +
+                            table + " g=4i,a=0.71,windspeed=67.72 180000000000\n";
+
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            closeContext();
+            String expected = "tag1\ttag2\tg\ta\twindspeed\ttimestamp\n" +
+                    "val1\tval2\t1\t0.1\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "\t\t4\t0.71\t67.72\t1970-01-01T00:03:00.000000Z\n";
+            assertTable(expected, table);
+        });
+    }
+
 
     @Test
     public void testBadLineSyntax5() throws Exception {
@@ -1256,5 +1436,117 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 assertTableCount("weather" + nTable, countByTable[nTable], maxTimestampByTable[nTable] - timestampIncrementInNanos);
             }
         });
+    }
+
+    private static final class TableStructureMock implements TableStructure {
+        private final CairoConfiguration cairoConfiguration;
+        private final String tableName;
+
+        private final ObjList<CharSequence> columnNames = new ObjList<>();
+        private final IntList columnTypes = new IntList();
+
+        private TableStructureMock(CairoConfiguration cairoConfiguration, String tableName) {
+            this.cairoConfiguration = cairoConfiguration;
+            this.tableName = tableName;
+        }
+
+        public void addColumn(final CharSequence columnName, final int columnType) {
+            columnNames.add(columnName);
+            columnTypes.add(columnType);
+        }
+
+        @Override
+        public int getColumnCount() {
+            return columnNames.size() + 1;
+        }
+
+        @Override
+        public CharSequence getColumnName(int columnIndex) {
+            assert columnIndex <= columnNames.size();
+
+            if (columnNames.size() == columnIndex) {
+                return "timestamp";
+            }
+
+            return columnNames.get(columnIndex);
+        }
+
+        @Override
+        public int getColumnType(int columnIndex) {
+            assert columnIndex <= columnNames.size();
+
+            if (columnIndex == columnNames.size()) {
+                return ColumnType.TIMESTAMP;
+            }
+
+            return columnTypes.get(columnIndex);
+        }
+
+        @Override
+        public long getColumnHash(int columnIndex) {
+            assert columnIndex <= columnNames.size();
+
+            return cairoConfiguration.getRandom().nextLong();
+        }
+
+        @Override
+        public int getIndexBlockCapacity(int columnIndex) {
+            assert columnIndex <= columnNames.size();
+
+            return 0;
+        }
+
+        @Override
+        public boolean isIndexed(int columnIndex) {
+            assert columnIndex <= columnNames.size();
+
+            return false;
+        }
+
+        @Override
+        public boolean isSequential(int columnIndex) {
+            assert columnIndex <= columnNames.size();
+
+            return false;
+        }
+
+        @Override
+        public int getPartitionBy() {
+            return PartitionBy.DAY;
+        }
+
+        @Override
+        public boolean getSymbolCacheFlag(int columnIndex) {
+            assert columnIndex <= columnNames.size();
+
+            return cairoConfiguration.getDefaultSymbolCacheFlag();
+        }
+
+        @Override
+        public int getSymbolCapacity(int columnIndex) {
+            assert columnIndex <= columnNames.size();
+
+            return cairoConfiguration.getDefaultSymbolCapacity();
+        }
+
+        @Override
+        public CharSequence getTableName() {
+            return tableName;
+        }
+
+        @Override
+        public int getTimestampIndex() {
+            return columnNames.size();
+        }
+
+        @Override
+        public int getMaxUncommittedRows() {
+            return cairoConfiguration.getMaxUncommittedRows();
+        }
+
+        @Override
+        public long getCommitLag() {
+            return cairoConfiguration.getCommitLag();
+        }
     }
 }
