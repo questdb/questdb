@@ -56,16 +56,41 @@ public class ColumnVersionWriter implements Closeable {
         this.size = size;
     }
 
-    public void add(long timestamp, int column, long columnVersion) {
-        int index = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, timestamp);
+    /**
+     * Adds column version entry to the cached list. Entries from the cache are committed to disk via
+     * commit() call. In cache and on disk entries are maintained in chronological order of partition timestamps.
+     *
+     * @param timestamp     partition timestamp
+     * @param columnIndex   column index
+     * @param columnVersion column version.
+     */
+    public void add(long timestamp, int columnIndex, long columnVersion) {
+        final int sz = cachedList.size();
+        int index = cachedList.binarySearchBlock(0, sz, BLOCK_SIZE_MSB, timestamp);
+        boolean insert = true;
         if (index < 0) {
-            int p = -index - 1;
+            index = -index - 1;
             // brute force columns for this timestamp
-            do {
-
-            } while (cachedList.getQuick(p) == timestamp);
+            while (index < sz && cachedList.getQuick(index) == timestamp){
+                if (cachedList.getQuick(index + 1) == columnIndex) {
+                    cachedList.setQuick(index + 2, columnVersion);
+                    insert = false;
+                    break;
+                }
+                index += BLOCK_SIZE;
+            }
         }
 
+        cachedList.setPos(Math.max(index + BLOCK_SIZE, sz));
+
+        if (insert) {
+            if (index < sz) {
+                cachedList.insert(index, BLOCK_SIZE);
+            }
+            cachedList.setQuick(index, timestamp);
+            cachedList.setQuick(index + 1, columnIndex);
+            cachedList.setQuick(index + 2, columnVersion);
+        }
     }
 
     @Override
@@ -73,7 +98,7 @@ public class ColumnVersionWriter implements Closeable {
         mem.close();
     }
 
-    public void commit(LongList columnVersions) {
+    public void commit() {
         // + 8 is the A/B switch at top of the file, it is 8 bytes to keep data aligned
         // + 8 is the offset of A area
         // + 8 is the length of A area
@@ -82,15 +107,15 @@ public class ColumnVersionWriter implements Closeable {
         final long headerSize = 8 + 8 + 8 + 8 + 8;
         // calculate the area size required to store the versions
         // we're assuming that 'columnVersions' contains 4 longs per entry
-        final int entryCount = columnVersions.size() / 4;
-        // We're storing 3 longs per entry in the file
-        final long areaSize = entryCount * 3 * 8L;
+        final int entryCount = cachedList.size() / BLOCK_SIZE;
+        // We're storing 4 longs per entry in the file
+        final long areaSize = entryCount * 4 * 8L;
 
         if (size == 0) {
             // This is initial write, include header size into the resize
             bumpFileSize(headerSize + areaSize);
             // writing A group
-            store(columnVersions, entryCount, headerSize);
+            store(entryCount, headerSize);
             // We update transient offset and size here
             // the important values are for area 'A'.
             // This is the reason 'B' is updated first so that
@@ -117,7 +142,7 @@ public class ColumnVersionWriter implements Closeable {
                         bumpFileSize(aOffset + areaSize);
                     }
                 }
-                store(columnVersions, entryCount, aOffset);
+                store(entryCount, aOffset);
                 // update offsets of 'A'
                 updateA(aOffset, areaSize);
                 // switch to 'A'
@@ -141,7 +166,7 @@ public class ColumnVersionWriter implements Closeable {
                     }
                 }
                 // if 'B' is last we just overwrite it
-                store(columnVersions, entryCount, bOffset);
+                store(entryCount, bOffset);
                 updateB(bOffset, areaSize);
                 switchToB();
             }
@@ -181,13 +206,18 @@ public class ColumnVersionWriter implements Closeable {
         this.size = size;
     }
 
-    private void store(LongList columnVersions, int entryCount, long offset) {
+    LongList getCachedList() {
+        return cachedList;
+    }
+
+    private void store(int entryCount, long offset) {
         for (int i = 0; i < entryCount; i++) {
             int x = i * BLOCK_SIZE;
-            mem.putLong(offset, columnVersions.getQuick(x));
-            mem.putLong(offset + 8, columnVersions.getQuick(x + 1));
-            mem.putLong(offset + 16, columnVersions.getQuick(x + 2));
-            offset += 24;
+            mem.putLong(offset, cachedList.getQuick(x));
+            mem.putLong(offset + 8, cachedList.getQuick(x + 1));
+            mem.putLong(offset + 16, cachedList.getQuick(x + 2));
+            mem.putLong(offset + 24, cachedList.getQuick(x + 3));
+            offset += BLOCK_SIZE * 8;
         }
     }
 

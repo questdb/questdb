@@ -48,12 +48,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 ColumnVersionWriter w = new ColumnVersionWriter(FilesFacadeImpl.INSTANCE, path.of(root).concat("_cv").$(), 0);
                 ColumnVersionReader r = new ColumnVersionReader(FilesFacadeImpl.INSTANCE, path, 0)
         ) {
-            final LongList writtenColumns = new LongList();
-
-            writtenColumns.extendAndSet(0, 1); // timestamp
-            writtenColumns.extendAndSet(1, 2); // column index
-            writtenColumns.extendAndSet(2, 3); // version
-            writtenColumns.extendAndSet(3, 0); // reserved
+            w.add(1, 2, 3);
 
             int lastSize = 4; // number of items in last batch; 4 items per column entry
 
@@ -61,19 +56,15 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 // increment from 0 to 4 columns
                 int increment = rnd.nextInt(4);
 
-                writtenColumns.setPos(lastSize + increment * 4);
                 for (int j = 0; j < increment; j++) {
-                    writtenColumns.setQuick(lastSize++, rnd.nextLong()); // timestamp
-                    writtenColumns.setQuick(lastSize++, rnd.nextLong()); // column index
-                    writtenColumns.setQuick(lastSize++, rnd.nextLong()); // version
-                    writtenColumns.setQuick(lastSize++, 0); // reserved
+                    w.add(rnd.nextLong(20), rnd.nextInt(10), rnd.nextLong());
                 }
 
-                w.commit(writtenColumns);
+                w.commit();
                 final long offset = w.getOffset();
                 final long size = w.getSize();
                 r.load(offset, size);
-                assertEqual(writtenColumns, r.getColumnVersions());
+                assertEqual(w.getCachedList(), r.getColumnVersions());
             }
         }
     }
