@@ -174,31 +174,23 @@ public class TemplateParser implements Sinkable {
         return resolveSink.toString();
     }
 
-    public enum ComponentType {
+    private enum ComponentType {
         STATIC, ENV, DATE
     }
 
     public static abstract class Component implements Sinkable {
+
+
         private final ComponentType type;
         private final CharSequence key;
-        private final CharSequence val;
 
-        private Component(ComponentType type, CharSequence key, CharSequence val) {
+        private Component(ComponentType type, CharSequence key) {
             this.type = type;
             this.key = key;
-            this.val = val;
         }
 
-        public ComponentType getType() {
-            return type;
-        }
-
-        public CharSequence getKey() {
-            return key;
-        }
-
-        public CharSequence getVal() {
-            return val;
+        public boolean isEnv(CharSequence key) {
+            return type == ComponentType.ENV && this.key.equals(key);
         }
     }
 
@@ -209,7 +201,7 @@ public class TemplateParser implements Sinkable {
             throw new LogError("Undefined property: " + envKey);
         }
         envStartIdxs.put(envKey, dollarOffset);
-        txtComponents.add(new Component(ComponentType.ENV, envKey, envVal) {
+        txtComponents.add(new Component(ComponentType.ENV, envKey) {
             @Override
             public void toSink(CharSink sink) {
                 sink.put(envVal);
@@ -233,7 +225,7 @@ public class TemplateParser implements Sinkable {
             throw new LogError("Missing expression at position " + actualStart);
         }
         final DateFormat dateFormat = dateCompiler.compile(originalTxt, actualStart, actualEnd, false);
-        txtComponents.add(new Component(ComponentType.DATE, DATE_FORMAT_KEY, originalTxt.subSequence(actualStart, actualEnd)) {
+        txtComponents.add(new Component(ComponentType.DATE, DATE_FORMAT_KEY) {
             @Override
             public void toSink(CharSink sink) {
                 dateFormat.format(dateValue.get(), TimestampFormatUtils.enLocale, null, sink);
@@ -242,7 +234,7 @@ public class TemplateParser implements Sinkable {
     }
 
     private void addStaticComponent(int start, int end) {
-        txtComponents.add(new Component(ComponentType.STATIC, null, null) {
+        txtComponents.add(new Component(ComponentType.STATIC, null) {
             @Override
             public void toSink(CharSink sink) {
                 sink.put(originalTxt, start, end);

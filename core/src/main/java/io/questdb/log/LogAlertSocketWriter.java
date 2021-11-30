@@ -38,7 +38,6 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.*;
 
-import static io.questdb.log.TemplateParser.ComponentType;
 import static io.questdb.log.TemplateParser.Component;
 
 public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, LogWriter {
@@ -80,6 +79,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
 
     private HttpLogRecordSink alertSink;
     private LogAlertSocket socket;
+    private ObjList<TemplateParser.Component> alertTemplateComponents;
+    private int alertTemplateComponentsLen;
     // changed by introspection
     private String location;
     private String bufferSize;
@@ -227,6 +228,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                     MESSAGE_ENV_VALUE,
                     location));
         }
+        alertTemplateComponents = alertTemplate.getComponents();
+        alertTemplateComponentsLen = alertTemplateComponents.size();
     }
 
     @VisibleForTesting
@@ -235,10 +238,9 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         if ((logRecord.getLevel() & level) != 0 && len > 0) {
             alertTemplate.setDateValue(clock.getTicks());
             alertSink.rewindToMark();
-            ObjList<TemplateParser.Component> components = alertTemplate.getComponents();
-            for (int i = 0, n = components.size(); i < n; i++) {
-                Component comp = components.getQuick(i);
-                if (ComponentType.ENV == comp.getType() && MESSAGE_ENV.equals(comp.getKey())) {
+            for (int i = 0; i < alertTemplateComponentsLen; i++) {
+                Component comp = alertTemplateComponents.getQuick(i);
+                if (comp.isEnv(MESSAGE_ENV)) {
                     alertSink.put(logRecord);
                 } else {
                     alertSink.put(comp);
