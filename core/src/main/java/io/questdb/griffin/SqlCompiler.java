@@ -941,28 +941,24 @@ public class SqlCompiler implements Closeable {
                             expectKeyword(lexer, "index");
                             tok = SqlUtil.fetchNext(lexer);
                             int indexValueCapacity = -1;
-                           
-                            if ( tok != null ){
-                                if (!SqlKeywords.isCapacityKeyword(tok) ){
+
+                            if (tok != null) {
+                                if (!SqlKeywords.isCapacityKeyword(tok)) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "'capacity' expected");
-                                }
-                                else {
+                                } else {
                                     tok = expectToken(lexer, "capacity value");
                                     try {
                                         indexValueCapacity = Numbers.parseInt(tok);
-                                        if ( indexValueCapacity <= 0 ){
+                                        if (indexValueCapacity <= 0) {
                                             throw SqlException.$(lexer.lastTokenPosition(), "positive integer literal expected as index capacity");
-                                        }
-                                        if (indexValueCapacity != Numbers.ceilPow2(indexValueCapacity) ){
-                                            throw SqlException.$(lexer.lastTokenPosition(), "power of 2 expected as index capacity");
                                         }
                                     } catch (NumericException e) {
                                         throw SqlException.$(lexer.lastTokenPosition(), "positive integer literal expected as index capacity");
                                     }
                                 }
                             }
-                            
-                            alterTableColumnAddIndex(tableNamePosition, columnNameNamePosition, columnName, writer, indexValueCapacity );
+
+                            alterTableColumnAddIndex(tableNamePosition, columnNameNamePosition, columnName, writer, indexValueCapacity);
                             
                         } else {
                             if (SqlKeywords.isCacheKeyword(tok)) {
@@ -1206,8 +1202,8 @@ public class SqlCompiler implements Closeable {
             if ( indexValueBlockSize == -1 ){
                 indexValueBlockSize = configuration.getIndexValueBlockSize(); 
             }
-            
-            w.addIndex(columnName, indexValueBlockSize );
+
+            w.addIndex(columnName, Numbers.ceilPow2(indexValueBlockSize));
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage())
                     .put("[errno=").put(e.getErrno()).put(']');

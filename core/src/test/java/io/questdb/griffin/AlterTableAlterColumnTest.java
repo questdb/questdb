@@ -49,12 +49,12 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
 
                     try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing");) {
                         int blockCapacity = writer.getMetadata().getIndexValueBlockCapacity("ik");
-                        Assert.assertEquals( 1024,  blockCapacity );
+                        Assert.assertEquals(1024, blockCapacity);
                     }
                 }
         );
     }
-    
+
     @Test
     public void testAddIndexColumns() throws Exception {
         assertMemoryLeak(
@@ -105,11 +105,6 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
     @Test
     public void testAlterExpectCapacityValueIsPositiveInteger() throws Exception {
         assertFailure("alter table x alter column y add index capacity -123", 48, "positive integer literal expected as index capacity");
-    }
-
-    @Test
-    public void testAlterExpectCapacityValueIsPositiveIntegerPowerOfTwo() throws Exception {
-        assertFailure("alter table x alter column y add index capacity 1023", 48, "power of 2 expected as index capacity");
     }
 
     @Test
