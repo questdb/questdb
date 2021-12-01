@@ -179,7 +179,7 @@ public class LogAlertSocketWriterTest {
                                         "User-Agent: QuestDB/LogAlert\r\n" +
                                         "Accept: */*\r\n" +
                                         "Content-Type: application/json\r\n" +
-                                        "Content-Length:      559\r\n" +
+                                        "Content-Length:      560\r\n" +
                                         "\r\n" +
                                         "[\n" +
                                         "  {\n" +
