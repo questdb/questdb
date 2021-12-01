@@ -56,19 +56,20 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private final BooleanSupplier nextRow = this::nextRow;
     private final BooleanSupplier nextPage = this::nextPage;
     private long filterFnAddress;
-    private final long filterAddress;
-    private final long filterSize;
 
-    public CompiledFilterRecordCursor(@NotNull IntList columnIndexes, MemoryAR filter) {
+    public CompiledFilterRecordCursor(@NotNull IntList columnIndexes) {
         this.recordA = new TableReaderSelectedColumnRecord(columnIndexes);
         this.recordB = new TableReaderSelectedColumnRecord(columnIndexes);
-        //todo: what if filter changed outside?
-        filterSize = filter.getAppendOffset();
-        filter.jumpTo(0);
-        filterAddress = filter.getPageAddress(0);
     }
 
-    void of(RecordCursorFactory factory, DirectLongList rows, DirectLongList columns, SqlExecutionContext executionContext, int options) throws SqlException {
+    void of(
+            RecordCursorFactory factory,
+            MemoryAR filter,
+            DirectLongList rows,
+            DirectLongList columns,
+            SqlExecutionContext executionContext,
+            int options
+    ) throws SqlException {
         this.rows = rows;
         this.columns = columns;
         this.pageFrameCursor = factory.getPageFrameCursor(executionContext);
@@ -76,8 +77,11 @@ class CompiledFilterRecordCursor implements RecordCursor {
         this.recordB.of(pageFrameCursor.getTableReader());
         this.metadata = factory.getMetadata();
         this.next = nextPage;
-        //todo: error reporting
-        //todo: how not to recompile it?
+        final long filterSize = filter.getAppendOffset();
+        filter.jumpTo(0);
+        final long filterAddress = filter.getPageAddress(0);
+        // TODO: error reporting
+        // TODO: how not to recompile it?
         this.filterFnAddress = FiltersCompiler.compileFunction(filterAddress, filterSize, options);
     }
 

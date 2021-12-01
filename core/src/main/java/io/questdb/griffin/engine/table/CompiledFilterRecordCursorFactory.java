@@ -46,24 +46,23 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
         assert !(factory instanceof FilteredRecordCursorFactory);
         assert !(factory instanceof CompiledFilterRecordCursorFactory);
         this.factory = factory;
-        this.cursor = new CompiledFilterRecordCursor(columnIndexes, filter);
+        this.cursor = new CompiledFilterRecordCursor(columnIndexes);
         this.filter = filter;
         this.options = options;
         this.rows = new DirectLongList(1024);
-        this.columns = new DirectLongList(10);
+        this.columns = new DirectLongList(16);
     }
 
     @Override
     public void close() {
         factory.close();
-        filter.close();
         rows.close();
         columns.close();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        this.cursor.of(factory, rows, columns, executionContext, options);
+        this.cursor.of(factory, filter, rows, columns, executionContext, options);
         return this.cursor;
     }
 
