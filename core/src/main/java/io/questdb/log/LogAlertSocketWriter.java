@@ -34,7 +34,6 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
-import org.jetbrains.annotations.NotNull;
 
 import java.io.*;
 
@@ -204,7 +203,10 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         boolean wasRead = false;
         try (InputStream is = LogAlertSocketWriter.class.getResourceAsStream(location)) {
             if (is != null) {
-                alertTemplate.parse(CharSequenceView.of(is), now, ALERT_PROPS);
+                byte[] buff = new byte[LogAlertSocket.IN_BUFFER_SIZE];
+                int len = is.read(buff, 0, buff.length);
+                String template = new String(buff, 0, len, Files.UTF_8);
+                alertTemplate.parse(template, now, ALERT_PROPS);
                 wasRead = true;
             }
         } catch (IOException e) {
@@ -282,50 +284,6 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
             if (fdTemplate != -1) {
                 ff.close(fdTemplate);
             }
-        }
-    }
-
-    private static class CharSequenceView implements CharSequence {
-        private static final byte[] BUFF = new byte[LogAlertSocket.IN_BUFFER_SIZE];
-
-        static CharSequenceView of(InputStream is) throws IOException {
-            return new CharSequenceView(is);
-        }
-
-        private final int lo;
-        private final int len;
-
-        private CharSequenceView(InputStream is) throws IOException {
-            this(0, is.read(BUFF, 0, BUFF.length));
-        }
-
-        private CharSequenceView(int lo, int len) {
-            this.lo = lo;
-            this.len = len;
-        }
-
-        @Override
-        public int length() {
-            return len;
-        }
-
-        @Override
-        public char charAt(int index) {
-            if (index > -1 && index < len) {
-                return (char) BUFF[lo + index];
-            }
-            throw new IndexOutOfBoundsException("Index out of range: " + index);
-        }
-
-        @NotNull
-        @Override
-        public CharSequenceView subSequence(int start, int end) {
-            return new CharSequenceView(lo + start, end - start);
-        }
-
-        @Override
-        public String toString() {
-            return new String(BUFF, lo, len, Files.UTF_8);
         }
     }
 }
