@@ -882,6 +882,7 @@ public class SqlCompiler implements Closeable {
     @Override
     public void close() {
         backupAgent.close();
+        codeGenerator.close();
         Misc.free(path);
         Misc.free(renamePath);
         Misc.free(textLoader);

@@ -29,6 +29,7 @@ import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.api.MemoryAR;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
@@ -53,12 +54,14 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.io.Closeable;
+
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
 import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 import static io.questdb.griffin.model.QueryModel.*;
 
-public class SqlCodeGenerator implements Mutable {
+public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_VANILLA_INT = 0;
     public static final int GKK_HOUR_INT = 1;
     private static final IntHashSet limitTypes = new IntHashSet();
@@ -77,6 +80,7 @@ public class SqlCodeGenerator implements Mutable {
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
     private final FilterExprIRSerializer jitIRSerializer = new FilterExprIRSerializer();
+    private final MemoryAR jitIRMem = new MemoryCARWImpl(1024, 1, MemoryTag.NATIVE_DEFAULT);
     private final FunctionParser functionParser;
     private final CairoEngine engine;
     private final BytecodeAssembler asm = new BytecodeAssembler();
@@ -129,6 +133,11 @@ public class SqlCodeGenerator implements Mutable {
     @Override
     public void clear() {
         whereClauseParser.clear();
+    }
+
+    @Override
+    public void close() {
+        jitIRMem.close();
     }
 
     @NotNull
@@ -711,10 +720,9 @@ public class SqlCodeGenerator implements Mutable {
             final boolean arm = Os.type == Os.LINUX_ARM64 || Os.type == Os.OSX_ARM64;
             final boolean optimize = factory.supportPageFrameCursor() && !arm;
             if (optimize) {
-                MemoryCARWImpl mem = new MemoryCARWImpl(1024, 1, MemoryTag.NATIVE_DEFAULT);
                 try {
                     boolean scalarMode = executionContext.getJitMode() == SqlExecutionContext.JIT_MODE_FORCE_SCALAR;
-                    int jitOptions = jitIRSerializer.of(mem, factory.getMetadata()).serialize(filter, scalarMode, false);
+                    int jitOptions = jitIRSerializer.of(jitIRMem, factory.getMetadata()).serialize(filter, scalarMode, false);
                     f.close();
                     final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
                     final int topDownColumnCount = topDownColumns.size();
@@ -723,11 +731,12 @@ public class SqlCodeGenerator implements Mutable {
                         int columnIndex = factory.getMetadata().getColumnIndexQuiet(topDownColumns.getQuick(i).getName());
                         columnIndexes.add(columnIndex);
                     }
-                    return new CompiledFilterRecordCursorFactory(factory, columnIndexes, mem, jitOptions);
-                } catch (SqlException e) {
-                    mem.close();
+                    return new CompiledFilterRecordCursorFactory(factory, columnIndexes, jitIRMem, jitOptions);
+                } catch (SqlException ignored) {
+                    // JIT can't be applied to the filter.
                 } finally {
                     jitIRSerializer.clear();
+                    jitIRMem.truncate();
                 }
             }
         }
