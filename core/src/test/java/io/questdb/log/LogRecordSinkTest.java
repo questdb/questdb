@@ -26,6 +26,7 @@ package io.questdb.log;
 
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -75,76 +76,84 @@ public class LogRecordSinkTest {
     }
 
     @Test
-    public void testConvoluted() {
-        final String expected = "ππππππππππππππππππππ"; // len == 20
-        final int len = expected.length();
-        final int buffSize = len * 3;
-        final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
-        try {
-            LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
-            recordSink.setLevel(LogLevel.ERROR);
-            Assert.assertEquals(LogLevel.ERROR, recordSink.getLevel());
-            Assert.assertEquals(buffPtr, recordSink.getAddress());
-            recordSink.put(expected);
-            recordSink.toSink(sink);
-            Assert.assertEquals(expected, sink.toString());
-            Assert.assertEquals(recordSink.length(), sink.length() * 2);
-            recordSink.clear();
-            Assert.assertEquals(0, recordSink.length());
-            sink.clear();
-            recordSink.toSink(sink);
-            Assert.assertEquals(0, recordSink.length());
-            Assert.assertEquals("", sink.toString());
-        } finally {
-            Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
-        }
+    public void testConvoluted() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String expected = "ππππππππππππππππππππ"; // len == 20
+            final int len = expected.length();
+            final int buffSize = len * 3;
+            final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
+                recordSink.setLevel(LogLevel.ERROR);
+                Assert.assertEquals(LogLevel.ERROR, recordSink.getLevel());
+                Assert.assertEquals(buffPtr, recordSink.getAddress());
+                recordSink.put(expected);
+                recordSink.toSink(sink);
+                Assert.assertEquals(expected, sink.toString());
+                Assert.assertEquals(recordSink.length(), sink.length() * 2);
+                recordSink.clear();
+                Assert.assertEquals(0, recordSink.length());
+                sink.clear();
+                recordSink.toSink(sink);
+                Assert.assertEquals(0, recordSink.length());
+                Assert.assertEquals("", sink.toString());
+            } finally {
+                Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @Test
-    public void testSimpleMessage1() {
-        final String expected = "我能吞下玻璃而不傷身體";
-        final int len = expected.length();
-        final int buffSize = len * 3;
-        final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
-        try {
-            LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
-            recordSink.put(expected.toCharArray(), 1, len - 1);
-            recordSink.toSink(sink);
-            Assert.assertEquals(expected.substring(1, len - 1), sink.toString());
-        } finally {
-            Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
-        }
+    public void testSimpleMessage1() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String expected = "我能吞下玻璃而不傷身體";
+            final int len = expected.length();
+            final int buffSize = len * 3;
+            final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
+                recordSink.put(expected.toCharArray(), 1, len - 1);
+                recordSink.toSink(sink);
+                Assert.assertEquals(expected.substring(1, len - 1), sink.toString());
+            } finally {
+                Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @Test
-    public void testSimpleMessage2() {
-        final String expected = "Я можу їсти скло, і воно мені не зашкодить.";
-        final int len = expected.length();
-        final int buffSize = len * 3;
-        final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
-        try {
-            LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
-            recordSink.put(expected, 2, len - 1);
-            recordSink.toSink(sink);
-            Assert.assertEquals(expected.substring(2, len - 1), sink.toString());
-        } finally {
-            Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
-        }
+    public void testSimpleMessage2() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String expected = "Я можу їсти скло, і воно мені не зашкодить.";
+            final int len = expected.length();
+            final int buffSize = len * 3;
+            final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
+                recordSink.put(expected, 2, len - 1);
+                recordSink.toSink(sink);
+                Assert.assertEquals(expected.substring(2, len - 1), sink.toString());
+            } finally {
+                Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @Test
-    public void testSimpleMessage3() {
-        final String expected = "This is a simple message";
-        final int len = expected.length();
-        final int buffSize = len * 3;
-        final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
-        try {
-            LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
-            recordSink.put(expected, 2, len - 1);
-            recordSink.toSink(sink);
-            Assert.assertEquals(expected.substring(2, len - 1), sink.toString());
-        } finally {
-            Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
-        }
+    public void testSimpleMessage3() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String expected = "This is a simple message";
+            final int len = expected.length();
+            final int buffSize = len * 3;
+            final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
+                recordSink.put(expected, 2, len - 1);
+                recordSink.toSink(sink);
+                Assert.assertEquals(expected.substring(2, len - 1), sink.toString());
+            } finally {
+                Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 }

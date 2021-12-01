@@ -25,221 +25,229 @@
 package io.questdb.log;
 
 import io.questdb.std.*;
+import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
-import java.io.UnsupportedEncodingException;
+import java.util.function.Consumer;
 
 public class HttpLogRecordSinkTest {
 
-    private static final int bufferSize = 1024;
-    private static long bufferPtr;
-    private static long bufferLimit;
-    private HttpLogRecordSink alertBuilder;
-
-    @BeforeClass
-    public static void classSetup() {
-        bufferPtr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        bufferLimit = bufferPtr + bufferSize;
-    }
-
-    @AfterClass
-    public static void classTeardown() {
-        Unsafe.free(bufferPtr, bufferSize, MemoryTag.NATIVE_DEFAULT);
-    }
-
-    @Before
-    public void setUp() {
-        alertBuilder = new HttpLogRecordSink(bufferPtr, bufferLimit);
-        alertBuilder.putHeader("localhost");
-        alertBuilder.setMark();
-        Assert.assertEquals(
-                "POST /api/v1/alerts HTTP/1.1\r\n" +
-                        "Host: localhost\r\n" +
-                        "User-Agent: QuestDB/LogAlert\r\n" +
-                        "Accept: */*\r\n" +
-                        "Content-Type: application/json\r\n" +
-                        "Content-Length:#########\r\n" +
-                        "\r\n",
-                Chars.stringFromUtf8Bytes(bufferPtr, alertBuilder.getMark())
-        );
-        Assert.assertEquals(150, alertBuilder.length());
-    }
-
     @Test
-    public void testEmptyMessage() {
-        alertBuilder.$(); // we are adding nothing, just finish the build
-        Assert.assertEquals(
-                "POST /api/v1/alerts HTTP/1.1\r\n" +
-                        "Host: localhost\r\n" +
-                        "User-Agent: QuestDB/LogAlert\r\n" +
-                        "Accept: */*\r\n" +
-                        "Content-Type: application/json\r\n" +
-                        "Content-Length:        0\r\n" +
-                        "\r\n",
-                Chars.stringFromUtf8Bytes(bufferPtr, alertBuilder.getMark())
-        );
-        Assert.assertEquals(150, alertBuilder.length());
-        Assert.assertEquals("POST /api/v1/alerts HTTP/1.1\r\n" +
-                "Host: localhost\r\n" +
-                "User-Agent: QuestDB/LogAlert\r\n" +
-                "Accept: */*\r\n" +
-                "Content-Type: application/json\r\n" +
-                "Content-Length:        0\r\n" +
-                "\r\n", alertBuilder.toString());
-    }
-
-    @Test
-    public void testSimpleMessage() throws UnsupportedEncodingException {
-        final String msg = "Hello, my name is Íñigo Montoya, you killed my father, prepare to ∑π¬µ∫√ç©!!";
-        final byte[] msgBytes = msg.getBytes(Files.UTF_8);
-        final int len = msgBytes.length;
-        final long msgPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-        try {
-            LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
-            logRecord.put(msg);
-            alertBuilder.put(logRecord).$();
+    public void testEmptyMessage() throws Exception {
+        withHttpLogRecordSink(alertBuilder -> {
+            alertBuilder.$(); // we are adding nothing, just finish the build
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
                             "Host: localhost\r\n" +
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:       89\r\n" +
-                            "\r\n" +
-                            "Hello, my name is Íñigo Montoya, you killed my father, prepare to ∑π¬µ∫√ç©!!",
-                    alertBuilder.toString()
+                            "Content-Length:        0\r\n" +
+                            "\r\n",
+                    Chars.stringFromUtf8Bytes(alertBuilder.getAddress(), alertBuilder.getMark())
             );
-            Assert.assertEquals(239, alertBuilder.length());
-
-            String randomMsg = "Yup, this is a random message.";
-            alertBuilder.rewindToMark().put(randomMsg, 5, randomMsg.length()).$();
-            Assert.assertEquals(175, alertBuilder.length());
+            Assert.assertEquals(150, alertBuilder.length());
             Assert.assertEquals("POST /api/v1/alerts HTTP/1.1\r\n" +
                     "Host: localhost\r\n" +
                     "User-Agent: QuestDB/LogAlert\r\n" +
                     "Accept: */*\r\n" +
                     "Content-Type: application/json\r\n" +
-                    "Content-Length:       25\r\n" +
-                    "\r\n" +
-                    "this is a random message.", alertBuilder.toString());
-        } finally {
-            if (msgPtr != 0) {
-                Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
-            }
-        }
+                    "Content-Length:        0\r\n" +
+                    "\r\n", alertBuilder.toString());
+        });
     }
 
     @Test
-    public void testFilteringSimpleMessage() throws UnsupportedEncodingException {
-        final String msg = "\b\f\t$\"\\\r\n";
-        final byte[] msgBytes = msg.getBytes(Files.UTF_8);
-        final int len = msgBytes.length;
-        final long msgPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-        try {
-            LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
-            logRecord.put(msg);
-            alertBuilder.put(logRecord).$();
+    public void testSimpleMessage() throws Exception {
+        withHttpLogRecordSink(alertBuilder -> {
+            final String msg = "Hello, my name is Íñigo Montoya, you killed my father, prepare to ∑π¬µ∫√ç©!!";
+            final byte[] msgBytes = msg.getBytes(Files.UTF_8);
+            final int len = msgBytes.length;
+            final long msgPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+            try {
+                LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
+                logRecord.put(msg);
+                alertBuilder.put(logRecord).$();
+                Assert.assertEquals(
+                        "POST /api/v1/alerts HTTP/1.1\r\n" +
+                                "Host: localhost\r\n" +
+                                "User-Agent: QuestDB/LogAlert\r\n" +
+                                "Accept: */*\r\n" +
+                                "Content-Type: application/json\r\n" +
+                                "Content-Length:       89\r\n" +
+                                "\r\n" +
+                                "Hello, my name is Íñigo Montoya, you killed my father, prepare to ∑π¬µ∫√ç©!!",
+                        alertBuilder.toString()
+                );
+                Assert.assertEquals(239, alertBuilder.length());
+
+                String randomMsg = "Yup, this is a random message.";
+                alertBuilder.rewindToMark().put(randomMsg, 5, randomMsg.length()).$();
+                Assert.assertEquals(175, alertBuilder.length());
+                Assert.assertEquals("POST /api/v1/alerts HTTP/1.1\r\n" +
+                        "Host: localhost\r\n" +
+                        "User-Agent: QuestDB/LogAlert\r\n" +
+                        "Accept: */*\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Content-Length:       25\r\n" +
+                        "\r\n" +
+                        "this is a random message.", alertBuilder.toString());
+            } finally {
+                if (msgPtr != 0) {
+                    Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFilteringSimpleMessage() throws Exception {
+        withHttpLogRecordSink(alertBuilder -> {
+            final String msg = "\b\f\t$\"\\\r\n";
+            final byte[] msgBytes = msg.getBytes(Files.UTF_8);
+            final int len = msgBytes.length;
+            final long msgPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+            try {
+                LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
+                logRecord.put(msg);
+                alertBuilder.put(logRecord).$();
+                Assert.assertEquals(
+                        "POST /api/v1/alerts HTTP/1.1\r\n" +
+                                "Host: localhost\r\n" +
+                                "User-Agent: QuestDB/LogAlert\r\n" +
+                                "Accept: */*\r\n" +
+                                "Content-Type: application/json\r\n" +
+                                "Content-Length:        6\r\n" +
+                                "\r\n" +
+                                " \\$\\\"\\",
+                        alertBuilder.toString()
+                );
+                Assert.assertEquals(156, alertBuilder.length());
+            } finally {
+                if (msgPtr != 0) {
+                    Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSinkable() throws Exception {
+        withHttpLogRecordSink(alertBuilder -> {
+            final String msg = "test: ";
+            final byte[] msgBytes = msg.getBytes(Files.UTF_8);
+            final int len = msgBytes.length;
+            final long msgPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+            try {
+                LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
+                logRecord.put(msg);
+                alertBuilder.put(logRecord).put(s -> s.put("Tres, Dos, Uno, Zero!!")).$();
+                Assert.assertEquals(
+                        "POST /api/v1/alerts HTTP/1.1\r\n" +
+                                "Host: localhost\r\n" +
+                                "User-Agent: QuestDB/LogAlert\r\n" +
+                                "Accept: */*\r\n" +
+                                "Content-Type: application/json\r\n" +
+                                "Content-Length:       28\r\n" +
+                                "\r\n" +
+                                "test: Tres, Dos, Uno, Zero!!",
+                        alertBuilder.toString()
+                );
+                Assert.assertEquals(178, alertBuilder.length());
+            } finally {
+                if (msgPtr != 0) {
+                    Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testContentLengthNoMarker() throws Exception {
+        withHttpLogRecordSink(alertBuilder -> {
+            alertBuilder.clear();
+            Assert.assertEquals(0, alertBuilder.$());
+            Assert.assertEquals("", alertBuilder.toString());
+
+            alertBuilder.clear();
+            Assert.assertEquals(12, alertBuilder.put("clairvoyance").$());
+            Assert.assertEquals("clairvoyance", alertBuilder.toString());
+        });
+    }
+
+    @Test
+    public void testContentLengthMarker() throws Exception {
+        withHttpLogRecordSink(alertBuilder -> {
+            alertBuilder.clear();
+            alertBuilder.putContentLengthMarker();
+            Assert.assertEquals(26, alertBuilder.$());
+            Assert.assertEquals("Content-Length:       26\r\n", alertBuilder.toString());
+
+            alertBuilder.clear();
+            alertBuilder.putContentLengthMarker();
+            Assert.assertEquals(38, alertBuilder.put("clairvoyance").$());
+            Assert.assertEquals("Content-Length:       38\r\nclairvoyance", alertBuilder.toString());
+
+            alertBuilder.clear();
+            alertBuilder.putContentLengthMarker();
+            String message = "$Sîne klâwen durh die wolken sint geslagen,sîn vil manegiu tugent michz leisten hiez.$\r\n\";";
+            Assert.assertEquals(119, alertBuilder.put(message).$());
+            Assert.assertEquals("Content-Length:      119\r\n" + message, alertBuilder.toString());
+
+            alertBuilder.clear();
+            alertBuilder.putContentLengthMarker();
+            message = "2021-11-26T19:22:47.8658077Z 2021-11-26T19:22:47.860908Z E i.q.c.BitmapIndexBwdReader cursor could not consistently read index header [corrupt?] [timeout=5000000μs]\n";
+            Assert.assertEquals(192, alertBuilder.put(message).$());
+            Assert.assertEquals("Content-Length:      192\r\n" + message, alertBuilder.toString());
+
+            alertBuilder.clear();
+            alertBuilder.putContentLengthMarker();
+            Assert.assertEquals("Content-Length:#########\r\n", alertBuilder.toString());
+            int limit = bufferSize - alertBuilder.length();
+            for (int i = 0; i < limit; i++) {
+                alertBuilder.put('Q');
+            }
+            alertBuilder.$();
+            Assert.assertEquals(bufferSize, alertBuilder.length());
+            Assert.assertTrue(alertBuilder
+                    .toString()
+                    .startsWith("Content-Length:     1024\r\nQQQQQQQQQQQQQQQQQQQQQQ"));
+            Assert.assertTrue(alertBuilder
+                    .toString()
+                    .endsWith("QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ" +
+                            "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ" +
+                            "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ" +
+                            "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ" +
+                            "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"));
+        });
+    }
+
+    private static final int bufferSize = 1024;
+
+    private static void withHttpLogRecordSink(Consumer<HttpLogRecordSink> consumer) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+
+            final long bufferPtr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+            final long bufferLimit = bufferPtr + bufferSize;
+            final HttpLogRecordSink alertBuilder = new HttpLogRecordSink(bufferPtr, bufferLimit);
+            alertBuilder.putHeader("localhost");
+            alertBuilder.setMark();
             Assert.assertEquals(
                     "POST /api/v1/alerts HTTP/1.1\r\n" +
                             "Host: localhost\r\n" +
                             "User-Agent: QuestDB/LogAlert\r\n" +
                             "Accept: */*\r\n" +
                             "Content-Type: application/json\r\n" +
-                            "Content-Length:        6\r\n" +
-                            "\r\n" +
-                            " \\$\\\"\\",
-                    alertBuilder.toString()
+                            "Content-Length:#########\r\n" +
+                            "\r\n",
+                    Chars.stringFromUtf8Bytes(bufferPtr, alertBuilder.getMark())
             );
-            Assert.assertEquals(156, alertBuilder.length());
-        } finally {
-            if (msgPtr != 0) {
-                Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
+            Assert.assertEquals(150, alertBuilder.length());
+            try {
+                consumer.accept(alertBuilder);
+            } finally {
+                Unsafe.free(bufferPtr, bufferSize, MemoryTag.NATIVE_DEFAULT);
             }
-        }
-    }
-
-    @Test
-    public void testSinkable() {
-        final String msg = "test: ";
-        final byte[] msgBytes = msg.getBytes(Files.UTF_8);
-        final int len = msgBytes.length;
-        final long msgPtr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-        try {
-            LogRecordSink logRecord = new LogRecordSink(msgPtr, len);
-            logRecord.put(msg);
-            alertBuilder.put(logRecord).put(s -> s.put("Tres, Dos, Uno, Zero!!")).$();
-            Assert.assertEquals(
-                    "POST /api/v1/alerts HTTP/1.1\r\n" +
-                            "Host: localhost\r\n" +
-                            "User-Agent: QuestDB/LogAlert\r\n" +
-                            "Accept: */*\r\n" +
-                            "Content-Type: application/json\r\n" +
-                            "Content-Length:       28\r\n" +
-                            "\r\n" +
-                            "test: Tres, Dos, Uno, Zero!!",
-                    alertBuilder.toString()
-            );
-            Assert.assertEquals(178, alertBuilder.length());
-        } finally {
-            if (msgPtr != 0) {
-                Unsafe.free(msgPtr, len, MemoryTag.NATIVE_DEFAULT);
-            }
-        }
-    }
-
-    @Test
-    public void testContentLengthNoMarker() {
-        alertBuilder.clear();
-        Assert.assertEquals(0, alertBuilder.$());
-        Assert.assertEquals("", alertBuilder.toString());
-
-        alertBuilder.clear();
-        Assert.assertEquals(12, alertBuilder.put("clairvoyance").$());
-        Assert.assertEquals("clairvoyance", alertBuilder.toString());
-    }
-
-    @Test
-    public void testContentLengthMarker() {
-        alertBuilder.clear();
-        alertBuilder.putContentLengthMarker();
-        Assert.assertEquals(26, alertBuilder.$());
-        Assert.assertEquals("Content-Length:       26\r\n", alertBuilder.toString());
-
-        alertBuilder.clear();
-        alertBuilder.putContentLengthMarker();
-        Assert.assertEquals(38, alertBuilder.put("clairvoyance").$());
-        Assert.assertEquals("Content-Length:       38\r\nclairvoyance", alertBuilder.toString());
-
-        alertBuilder.clear();
-        alertBuilder.putContentLengthMarker();
-        String message = "$Sîne klâwen durh die wolken sint geslagen,sîn vil manegiu tugent michz leisten hiez.$\r\n\";";
-        Assert.assertEquals(119, alertBuilder.put(message).$());
-        Assert.assertEquals("Content-Length:      119\r\n" + message, alertBuilder.toString());
-
-        alertBuilder.clear();
-        alertBuilder.putContentLengthMarker();
-        message = "2021-11-26T19:22:47.8658077Z 2021-11-26T19:22:47.860908Z E i.q.c.BitmapIndexBwdReader cursor could not consistently read index header [corrupt?] [timeout=5000000μs]\n";
-        Assert.assertEquals(192, alertBuilder.put(message).$());
-        Assert.assertEquals("Content-Length:      192\r\n" + message, alertBuilder.toString());
-
-        alertBuilder.clear();
-        alertBuilder.putContentLengthMarker();
-        Assert.assertEquals("Content-Length:#########\r\n", alertBuilder.toString());
-        int limit = bufferSize - alertBuilder.length();
-        for (int i = 0; i < limit; i++) {
-            alertBuilder.put('Q');
-        }
-        alertBuilder.$();
-        Assert.assertEquals(bufferSize, alertBuilder.length());
-        Assert.assertTrue(alertBuilder
-                .toString()
-                .startsWith("Content-Length:     1024\r\nQQQQQQQQQQQQQQQQQQQQQQ"));
-        Assert.assertTrue(alertBuilder
-                .toString()
-                .endsWith("QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ" +
-                        "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ" +
-                        "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ" +
-                        "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ" +
-                        "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"));
+        });
     }
 }

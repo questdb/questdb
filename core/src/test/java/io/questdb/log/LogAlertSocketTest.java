@@ -105,73 +105,77 @@ public class LogAlertSocketTest {
     }
 
     @Test
-    public void testFailOver() {
-        try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1242")) {
-            final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
-                    .putHeader("localhost")
-                    .setMark();
+    public void testFailOver() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1242")) {
+                final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
+                        .putHeader("localhost")
+                        .setMark();
 
-            // start servers
-            final int numHosts = alertSkt.getAlertHostsCount();
-            Assert.assertEquals(2, numHosts);
-            final SOCountDownLatch haltLatch = new SOCountDownLatch(numHosts);
-            final SOCountDownLatch firstServerCompleted = new SOCountDownLatch(1);
-            final MockAlertTarget[] servers = new MockAlertTarget[numHosts];
-            for (int i = 0; i < numHosts; i++) {
-                final int portNumber = alertSkt.getAlertPorts()[i];
-                servers[i] = new MockAlertTarget(portNumber, () -> {
-                    firstServerCompleted.countDown();
-                    haltLatch.countDown();
-                });
-                servers[i].start();
+                // start servers
+                final int numHosts = alertSkt.getAlertHostsCount();
+                Assert.assertEquals(2, numHosts);
+                final SOCountDownLatch haltLatch = new SOCountDownLatch(numHosts);
+                final SOCountDownLatch firstServerCompleted = new SOCountDownLatch(1);
+                final MockAlertTarget[] servers = new MockAlertTarget[numHosts];
+                for (int i = 0; i < numHosts; i++) {
+                    final int portNumber = alertSkt.getAlertPorts()[i];
+                    servers[i] = new MockAlertTarget(portNumber, () -> {
+                        firstServerCompleted.countDown();
+                        haltLatch.countDown();
+                    });
+                    servers[i].start();
+                }
+
+                // connect to a server and send something
+                alertSkt.send(builder
+                        .rewindToMark()
+                        .put("Something")
+                        .put(CRLF)
+                        .put(MockAlertTarget.DEATH_PILL)
+                        .put(CRLF)
+                        .$());
+                Assert.assertTrue(firstServerCompleted.await(20_000_000_000L));
+
+                // by now there is only one server surviving, and we are connected to the other.
+                // send a death pill and kill the surviving server.
+                builder.clear();
+                alertSkt.send(builder.put(MockAlertTarget.DEATH_PILL).put(CRLF).$());
+
+                // wait for haltness, and then all servers should be done.
+                Assert.assertTrue(haltLatch.await(20_000_000_000L));
+                for (int i = 0; i < numHosts; i++) {
+                    Assert.assertFalse(servers[i].isRunning());
+                }
             }
-
-            // connect to a server and send something
-            alertSkt.send(builder
-                    .rewindToMark()
-                    .put("Something")
-                    .put(CRLF)
-                    .put(MockAlertTarget.DEATH_PILL)
-                    .put(CRLF)
-                    .$());
-            Assert.assertTrue(firstServerCompleted.await(20_000_000_000L));
-
-            // by now there is only one server surviving, and we are connected to the other.
-            // send a death pill and kill the surviving server.
-            builder.clear();
-            alertSkt.send(builder.put(MockAlertTarget.DEATH_PILL).put(CRLF).$());
-
-            // wait for haltness, and then all servers should be done.
-            Assert.assertTrue(haltLatch.await(20_000_000_000L));
-            for (int i = 0; i < numHosts; i++) {
-                Assert.assertFalse(servers[i].isRunning());
-            }
-        }
+        });
     }
 
     @Test
-    public void testFailOverNoServers() {
-        try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1243")) {
-            final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
-                    .putHeader("localhost")
-                    .setMark();
+    public void testFailOverNoServers() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1243")) {
+                final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
+                        .putHeader("localhost")
+                        .setMark();
 
-            // start servers
-            final int numHosts = alertSkt.getAlertHostsCount();
-            Assert.assertEquals(2, numHosts);
+                // start servers
+                final int numHosts = alertSkt.getAlertHostsCount();
+                Assert.assertEquals(2, numHosts);
 
-            // connect to a server and send something
-            Assert.assertFalse(
-                    alertSkt.send(builder
-                                    .rewindToMark()
-                                    .put("Something")
-                                    .put(CRLF)
-                                    .put(MockAlertTarget.DEATH_PILL)
-                                    .put(CRLF)
-                                    .$(),
-                            ack -> Assert.assertEquals(ack, LogAlertSocket.NACK)
-                    ));
-        }
+                // connect to a server and send something
+                Assert.assertFalse(
+                        alertSkt.send(builder
+                                        .rewindToMark()
+                                        .put("Something")
+                                        .put(CRLF)
+                                        .put(MockAlertTarget.DEATH_PILL)
+                                        .put(CRLF)
+                                        .$(),
+                                ack -> Assert.assertEquals(ack, LogAlertSocket.NACK)
+                        ));
+            }
+        });
     }
 
     private void assertLogError(String socketAddress, String expected) throws Exception {
