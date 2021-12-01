@@ -646,16 +646,17 @@ namespace questdb::x86 {
 
     inline Gpd int32_ge(Compiler &c, const Gpd &lhs, const Gpd &rhs, bool check_null) {
         Gp r = c.newInt32();
-        c.xor_(r, r);
         if (!check_null) {
+            c.xor_(r, r);
             c.cmp(lhs, rhs);
             c.setge(r.r8Lo());
             return r.as<Gpd>();
         } else {
             Gp t = c.newInt32();
-            c.xor_(t, t);
+            c.xor_(r, r);
             c.cmp(lhs, INT_NULL);
             c.setne(r.r8Lo());
+            c.xor_(t, t);
             c.cmp(lhs, rhs);
             c.setge(t.r8Lo());
             c.and_(r, t);
@@ -704,21 +705,21 @@ namespace questdb::x86 {
 
     inline Gpq int64_le(Compiler &c, const Gpq &lhs, const Gpq &rhs, bool check_null) {
         Gp r = c.newInt64();
-        c.xor_(r, r);
         if (!check_null) {
+            c.xor_(r, r);
             c.cmp(lhs, rhs);
             c.setle(r.r8Lo());
             return r.as<Gpq>();
         } else {
             Gp t = c.newInt64();
-            c.xor_(t, t);
+            c.movabs(t, LONG_NULL);
+            c.xor_(r, r);
+            c.cmp(lhs, t);
+            c.setne(r.r8Lo());
             Gp t2 = c.newInt64();
             c.xor_(t2, t2);
-            c.movabs(t, LONG_NULL);
-            c.cmp(lhs, r);
-            c.setne(r.r8Lo());
             c.cmp(lhs, rhs);
-            c.setle(t2);
+            c.setle(t2.r8Lo());
             c.and_(r, t2);
             c.cmp(rhs, t);
             c.setne(t.r8Lo());
@@ -1133,6 +1134,16 @@ namespace questdb::avx2 {
         return dst;
     }
 
+    inline Ymm nulls_mask(Compiler &c, data_type_t &type, const Ymm &lhs, const Ymm &rhs) {
+        Ymm lhs_nulls = cmp_eq_null(c, type, lhs);
+        Ymm rhs_nulls = cmp_eq_null(c, type, rhs);
+        return mask_or(c, lhs_nulls, rhs_nulls);
+    }
+
+    inline Ymm not_nulls_mask(Compiler &c, data_type_t &type, const Ymm &lhs, const Ymm &rhs) {
+        return mask_not(c, nulls_mask(c, type, lhs, rhs));
+    }
+
     inline Ymm cmp_eq(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
         Ymm dst = c.newYmm();
         switch (type) {
@@ -1218,13 +1229,8 @@ namespace questdb::avx2 {
             return cmp_gt(c, type, lhs, rhs);
         } else {
             Ymm r = cmp_gt(c, type, lhs, rhs);
-            Ymm not_nulls = mask_not(c, cmp_eq_null(c, type, rhs));
+            Ymm not_nulls = not_nulls_mask(c, type, lhs, rhs);
             return mask_and(c, r, not_nulls);
-//            Ymm lhs_nulls = cmp_eq_null(c, type, lhs);
-//            Ymm rhs_nulls = cmp_eq_null(c, type, rhs);
-//            Ymm not_nulls = mask_not(c, mask_or(c, lhs_nulls, rhs_nulls));
-//            Ymm r = cmp_gt(c, type, lhs, rhs);
-//            return mask_and(c, r, not_nulls);
         }
     }
 
@@ -1233,18 +1239,13 @@ namespace questdb::avx2 {
             return cmp_lt(c, type, lhs, rhs);
         } else {
             Ymm r = cmp_lt(c, type, lhs, rhs);
-            Ymm not_nulls = mask_not(c, cmp_eq_null(c, type, lhs));
+            Ymm not_nulls = not_nulls_mask(c, type, lhs, rhs);
             return mask_and(c, r, not_nulls);
-
-//            Ymm lhs_nulls = cmp_eq_null(c, type, lhs);
-//            Ymm rhs_nulls = cmp_eq_null(c, type, rhs);
-//            Ymm not_nulls = mask_not(c, mask_or(c, lhs_nulls, rhs_nulls));
-//            Ymm r = cmp_lt(c, type, lhs, rhs);
-//            return mask_and(c, r, not_nulls);
         }
     }
 
     inline Ymm cmp_le(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs, bool null_check);
+
     inline Ymm cmp_ge(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs, bool null_check) {
         switch (type) {
             case f32:
@@ -1252,11 +1253,12 @@ namespace questdb::avx2 {
                 return cmp_le(c, type, rhs, lhs, null_check);
             default: {
                 Ymm mask = mask_not(c, cmp_lt(c, type, lhs, rhs));
-                Ymm not_nulls = mask_not(c, cmp_eq_null(c, type, lhs));
+                Ymm not_nulls = not_nulls_mask(c, type, lhs, rhs);
                 return mask_and(c, mask, not_nulls);
             }
         }
     }
+
 
     inline Ymm cmp_le(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs, bool null_check) {
         switch (type) {
@@ -1300,16 +1302,18 @@ namespace questdb::avx2 {
         return dst;
     }
 
+    inline Ymm blend_with_nulls(Compiler &c, data_type_t &type, const Ymm &t, const Ymm &lhs, const Ymm &rhs) {
+        Ymm nulls_msk = nulls_mask(c, type, lhs, rhs);
+        Mem nulls_const =  (type == i32) ? vec_int_null(c) : vec_long_null(c);
+        return select_bytes(c, nulls_msk, t, nulls_const);
+    }
+
     inline Ymm add(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs, bool null_check) {
         if(!is_check_for_null(type, null_check)) {
             return add(c, type, lhs, rhs);
         } else {
             Ymm t = add(c, type, lhs, rhs);
-            Ymm lhs_nulls = cmp_eq_null(c, type, lhs);
-            Ymm rhs_nulls = cmp_eq_null(c, type, rhs);
-            Ymm nulls_mask = mask_or(c, lhs_nulls, rhs_nulls);
-            Mem nulls_const =  (type == i32) ? vec_int_null(c) : vec_long_null(c);
-            return select_bytes(c, nulls_mask, t, nulls_const);
+            return blend_with_nulls(c, type, t, lhs, rhs);
         }
     }
 
@@ -1343,11 +1347,7 @@ namespace questdb::avx2 {
             return sub(c, type, lhs, rhs);
         } else {
             Ymm t = sub(c, type, lhs, rhs);
-            Ymm lhs_nulls = cmp_eq_null(c, type, lhs);
-            Ymm rhs_nulls = cmp_eq_null(c, type, rhs);
-            Ymm nulls_mask = mask_or(c, lhs_nulls, rhs_nulls);
-            Mem nulls_const =  (type == i32) ? vec_int_null(c) : vec_long_null(c);
-            return select_bytes(c, nulls_mask, t, nulls_const);
+            return blend_with_nulls(c, type, t, lhs, rhs);
         }
     }
 
@@ -1423,11 +1423,7 @@ namespace questdb::avx2 {
             return mul(c, type, lhs, rhs);
         } else {
             Ymm t = mul(c, type, lhs, rhs);
-            Ymm lhs_nulls = cmp_eq_null(c, type, lhs);
-            Ymm rhs_nulls = cmp_eq_null(c, type, rhs);
-            Ymm nulls_mask = mask_or(c, lhs_nulls, rhs_nulls);
-            Mem nulls_const =  (type == i32) ? vec_int_null(c) : vec_long_null(c);
-            return select_bytes(c, nulls_mask, t, nulls_const);
+            return blend_with_nulls(c, type, t, lhs, rhs);
         }
     }
 
@@ -1553,11 +1549,7 @@ namespace questdb::avx2 {
             return div_unrolled(c, type, lhs, rhs);
         } else {
             Ymm t = div_unrolled(c, type, lhs, rhs);
-            Ymm lhs_nulls = cmp_eq_null(c, type, lhs);
-            Ymm rhs_nulls = cmp_eq_null(c, type, rhs);
-            Ymm nulls_mask = mask_or(c, lhs_nulls, rhs_nulls);
-            Mem nulls_const =  (type == i32) ? vec_int_null(c) : vec_long_null(c);
-            return select_bytes(c, nulls_mask, t, nulls_const);
+            return blend_with_nulls(c, type, t, lhs, rhs);
         }
     }
 
