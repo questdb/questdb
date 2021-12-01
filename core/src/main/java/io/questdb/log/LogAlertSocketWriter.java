@@ -252,9 +252,10 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
 
     @VisibleForTesting
     static DirectByteCharSequence readFile(String location, long address, long addressSize, FilesFacade ff) {
+        long fdTemplate = -1;
         try (Path path = new Path()) {
             path.of(location);
-            long fdTemplate = ff.openRO(path.$());
+            fdTemplate = ff.openRO(path.$());
             if (fdTemplate == -1) {
                 throw new LogError(String.format(
                         "Cannot read %s [errno=%d]",
@@ -277,6 +278,10 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
             DirectByteCharSequence template = new DirectByteCharSequence();
             template.of(address, address + size);
             return template;
+        } finally {
+            if (fdTemplate != -1) {
+                ff.close(fdTemplate);
+            }
         }
     }
 
