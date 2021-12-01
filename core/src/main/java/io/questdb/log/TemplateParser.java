@@ -55,7 +55,6 @@ public class TemplateParser implements Sinkable {
     private CharSequenceObjHashMap<CharSequence> props;
     private CharSequence originalTxt;
 
-
     public TemplateParser parseEnv(CharSequence txt, long dateValue) {
         return parse(txt, dateValue, adaptMap(System.getenv()));
     }
