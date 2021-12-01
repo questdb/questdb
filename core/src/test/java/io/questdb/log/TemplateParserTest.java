@@ -211,7 +211,8 @@ public class TemplateParserTest {
                             "      \"message\": \"${ALERT_MESSAGE}\"\n" +
                             "    }\n" +
                             "  }\n" +
-                            "]\n",
+                            "]\n" +
+                    "\n",
                     parser
             );
         }

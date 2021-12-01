@@ -200,7 +200,8 @@ public class LogAlertSocketWriterTest {
                                         "      \"message\": \"A \\\"simple\\\" \\$message\\$\"\n" +
                                         "    }\n" +
                                         "  }\n" +
-                                        "]\n",
+                                        "]\n" +
+                                "\n",
                                 writer.getAlertSink()
                         );
 
