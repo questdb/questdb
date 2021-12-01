@@ -53,7 +53,6 @@ public class LogAlertSocketWriterTest {
     @Test
     public void testOnLogRecord() throws Exception {
         withLogAlertSocketWriter(
-                StdoutSink.DEFAULT_BUFFER_CAPACITY,
                 () -> 1637091363010000L,
                 writer -> {
 
@@ -365,16 +364,15 @@ public class LogAlertSocketWriterTest {
     }
 
     private static void withLogAlertSocketWriter(Consumer<LogAlertSocketWriter> consumer) throws Exception {
-        withLogAlertSocketWriter(0L, MicrosecondClockImpl.INSTANCE, consumer);
+        withLogAlertSocketWriter(MicrosecondClockImpl.INSTANCE, consumer);
     }
 
     private static void withLogAlertSocketWriter(
-            long expectedNotFreed,
             MicrosecondClock clock,
             Consumer<LogAlertSocketWriter> consumer
     ) throws Exception {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log-silent.conf");
-        TestUtils.assertMemoryLeak(expectedNotFreed, MemoryTag.NATIVE_DEFAULT, () -> {
+        TestUtils.assertMemoryLeak(() -> {
             try (LogAlertSocketWriter writer = new LogAlertSocketWriter(
                     FilesFacadeImpl.INSTANCE,
                     clock,

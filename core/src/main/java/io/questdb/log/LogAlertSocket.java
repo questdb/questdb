@@ -166,7 +166,10 @@ public class LogAlertSocket implements Closeable {
                         if (ackReceiver != null) {
                             ackReceiver.accept(Chars.stringFromUtf8Bytes(inBufferPtr, inBufferPtr + n));
                         } else {
-                            Net.dumpAscii(p, n);
+                            System.out.printf("%sReceived:%s%n",
+                                    LogLevel.INFO_HEADER,
+                                    Chars.stringFromUtf8Bytes(inBufferPtr, inBufferPtr + n)
+                            );
                         }
                         break;
                     }

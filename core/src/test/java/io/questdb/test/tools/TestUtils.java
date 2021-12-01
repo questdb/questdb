@@ -401,10 +401,6 @@ public final class TestUtils {
     }
 
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
-        assertMemoryLeak(0L, MemoryTag.NATIVE_DEFAULT, runnable);
-    }
-
-    public static void assertMemoryLeak(long expectedSize, int memoryTag, LeakProneCode runnable) throws Exception {
         Path.clearThreadLocals();
         long mem = Unsafe.getMemUsed();
         long[] memoryUsageByTag = new long[MemoryTag.SIZE];
@@ -418,17 +414,11 @@ public final class TestUtils {
         runnable.run();
         Path.clearThreadLocals();
         Assert.assertEquals(fileCount, Files.getOpenFileCount());
-        if (expectedSize > 0) {
-            mem += expectedSize;
-        }
         Assert.assertEquals(mem, Unsafe.getMemUsed());
 
         // Checks that the same tag used for allocation and freeing native memory
         for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
             long actualMemByTag = Unsafe.getMemUsedByTag(i);
-            if (i == memoryTag) {
-                actualMemByTag -= expectedSize;
-            }
             if (memoryUsageByTag[i] != actualMemByTag) {
                 Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i), memoryUsageByTag[i], actualMemByTag);
             }
