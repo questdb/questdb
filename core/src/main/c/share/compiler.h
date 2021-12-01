@@ -177,7 +177,8 @@ JNIEXPORT long JNICALL Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEn
                                                                            jclass cl,
                                                                            jlong filterAddress,
                                                                            jlong filterSize,
-                                                                           jint options);
+                                                                           jint options,
+                                                                           jobject error);
 
 JNIEXPORT void JNICALL Java_io_questdb_jit_FiltersCompiler_freeFunction(JNIEnv *e, jclass cl, jlong fnAddress);
 
@@ -1496,7 +1497,6 @@ namespace questdb::avx2 {
                         rhs_m.setSize(size);
 
                         for (int32_t i = 0; i < step; ++i) {
-                            Label l_zero = c.newLabel();
                             lhs_m.setOffset(i * size);
                             c.mov(a.r32(), lhs_m);
                             rhs_m.setOffset(i * size);
@@ -1517,7 +1517,6 @@ namespace questdb::avx2 {
                         rhs_m.setSize(size);
 
                         for (int32_t i = 0; i < step; ++i) {
-                            Label l_zero = c.newLabel();
                             lhs_m.setOffset(i * size);
                             rhs_m.setOffset(i * size);
                             c.mov(a, lhs_m);

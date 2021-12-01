@@ -29,12 +29,20 @@
 
 using namespace asmjit;
 
-struct JitErrorHandler : public asmjit::ErrorHandler {
-    Error _error = kErrorOk;
+class JitException : public std::exception {
+public:
+    Error err;
+    std::string message;
 
+    JitException(Error err, const char *message) noexcept
+        : err(err), message(message) {}
+
+    const char *what() const noexcept override { return message.c_str(); }
+};
+
+struct JitErrorHandler : public asmjit::ErrorHandler {
     void handleError(asmjit::Error err, const char *msg, asmjit::BaseEmitter * /*origin*/) override {
-        _error = err;
-        fprintf(stderr, "ERROR: %s\n", msg);
+        throw JitException(err, msg);
     }
 };
 
@@ -44,7 +52,9 @@ struct JitGlobalContext {
     JitErrorHandler errorHandler;
 };
 
+#ifndef __aarch64__
 static JitGlobalContext gGlobalContext;
+#endif
 
 namespace questdb::x86 {
     using namespace asmjit::x86;
@@ -760,7 +770,7 @@ namespace questdb::avx2 {
                     case f32:
                         return std::make_pair(jit_value_t(cvt_itof(c, lhs.ymm(), null_check), f32, lhs.dkind()), rhs);
                     default:
-                        assert(false);
+                        break;
                 }
                 break;
             case i64:
@@ -768,7 +778,7 @@ namespace questdb::avx2 {
                     case f64:
                         return std::make_pair(jit_value_t(cvt_ltod(c, lhs.ymm(), null_check), f64, lhs.dkind()), rhs);
                     default:
-                        assert(false);
+                        break;
                 }
                 break;
             case f32:
@@ -776,7 +786,7 @@ namespace questdb::avx2 {
                     case i32:
                         return std::make_pair(lhs, jit_value_t(cvt_itof(c, rhs.ymm(), null_check), f32, rhs.dkind()));
                     default:
-                        assert(false);
+                        break;
                 }
                 break;
             case f64:
@@ -784,11 +794,11 @@ namespace questdb::avx2 {
                     case i64:
                         return std::make_pair(lhs, jit_value_t(cvt_ltod(c, rhs.ymm(), null_check), f64, rhs.dkind()));
                     default:
-                        assert(false);
+                        break;
                 }
                 break;
             default:
-                assert(false);
+                break;
         }
         return std::make_pair(lhs, rhs);
     }
@@ -1052,12 +1062,35 @@ struct JitCompiler {
 
 };
 
+void fillJitErrorObject(JNIEnv *e, jobject error, uint32_t code, const char * msg) {
+
+    if(!msg) {
+        return;
+    }
+
+    jclass errorClass = e->GetObjectClass(error);
+    if(errorClass) {
+        jfieldID fieldError = e->GetFieldID(errorClass, "errorCode", "I");
+        if(fieldError) {
+            e->SetLongField(error, fieldError, static_cast<jlong>(code));
+        }
+        jmethodID methodPut = e->GetMethodID(errorClass, "put", "(B)V");
+        if(methodPut) {
+            for (const char *c = msg; *c; ++c) {
+                e->CallVoidMethod(error, methodPut, *c);
+            }
+        }
+    }
+}
+
 JNIEXPORT jlong JNICALL
 Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
                                                     jclass cl,
                                                     jlong filterAddress,
                                                     jlong filterSize,
-                                                    jint options) {
+                                                    jint options,
+                                                    jobject error) {
+#ifndef __aarch64__
     CodeHolder code;
     code.init(gGlobalContext.rt.environment());
     FileLogger logger(stdout);
@@ -1072,26 +1105,32 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
     x86::Compiler c(&code);
     JitCompiler compiler(c);
 
-    compiler.begin_fn();
-    compiler.compile(reinterpret_cast<uint8_t *>(filterAddress), filterSize, options);
-    compiler.end_fn();
-
-    c.finalize();
-
     CompiledFn fn;
-    Error err = gGlobalContext.rt.add(&fn, &code);
-    if (err) {
-        //todo: pass error to java side
-        std::cerr << "some error happened" << std::endl;
+    try {
+        compiler.begin_fn();
+        compiler.compile(reinterpret_cast<uint8_t *>(filterAddress), filterSize, options);
+        compiler.end_fn();
+
+        c.finalize();
+        gGlobalContext.rt.add(&fn, &code);
+    } catch (JitException &ex) {
+        fillJitErrorObject(e, error, ex.err, ex.what());
+        return 0;
     }
-    auto r = reinterpret_cast<uint64_t>(fn);
-    return r;
+
+    return reinterpret_cast<jlong>(fn);
+#else
+    return 0;
+#endif
+
 }
 
 JNIEXPORT void JNICALL
 Java_io_questdb_jit_FiltersCompiler_freeFunction(JNIEnv *e, jclass cl, jlong fnAddress) {
+#ifndef __aarch64__
     auto fn = reinterpret_cast<void *>(fnAddress);
     gGlobalContext.rt.release(fn);
+#endif
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv *e,
@@ -1102,10 +1141,14 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv 
                                                                          jlong rowsAddress,
                                                                          jlong rowsSize,
                                                                          jlong rowsStartOffset) {
+#ifndef __aarch64__
     auto fn = reinterpret_cast<CompiledFn>(fnAddress);
     return fn(reinterpret_cast<int64_t *>(colsAddress),
               colsSize,
               reinterpret_cast<int64_t *>(rowsAddress),
               rowsSize,
               rowsStartOffset);
+#else
+    return 0;
+#endif
 }

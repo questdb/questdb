@@ -24,8 +24,34 @@
 
 package io.questdb.jit;
 
+import io.questdb.std.str.StringSink;
+
 public class FiltersCompiler {
-    public static native long compileFunction(long filterAddress, long filterSize, int options);
+    public static final JitError jitError = new JitError();
+
+    public static class JitError {
+        private final StringSink message = new StringSink();
+        private int msgLength = 0;
+        public int errorCode;
+
+        public void reset() {
+            msgLength = 0;
+            message.clear();
+        }
+
+        // we are not going to allocate and convert strings
+        // fill it char by char (ascii char)
+        public void put(byte b) {
+            msgLength += 1;
+            message.put((char)b);
+        }
+
+        public CharSequence message() {
+            return message.subSequence(0, msgLength);
+        }
+    }
+
+    public static native long compileFunction(long filterAddress, long filterSize, int options, JitError error);
 
     public static native long freeFunction(long fnAddress);
 

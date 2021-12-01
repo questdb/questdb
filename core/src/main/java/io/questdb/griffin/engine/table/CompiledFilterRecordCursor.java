@@ -33,6 +33,7 @@ import io.questdb.jit.FiltersCompiler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.Rows;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.function.BooleanSupplier;
@@ -80,9 +81,14 @@ class CompiledFilterRecordCursor implements RecordCursor {
         final long filterSize = filter.getAppendOffset();
         filter.jumpTo(0);
         final long filterAddress = filter.getPageAddress(0);
-        // TODO: error reporting
-        // TODO: how not to recompile it?
-        this.filterFnAddress = FiltersCompiler.compileFunction(filterAddress, filterSize, options);
+
+        FiltersCompiler.jitError.reset();
+        this.filterFnAddress = FiltersCompiler.compileFunction(filterAddress, filterSize, options, FiltersCompiler.jitError);
+        if(FiltersCompiler.jitError.errorCode != 0) {
+            //TODO: process error. rethrow SqlException/ add to log?
+//            System.out.println("jit error code: " + FiltersCompiler.jitError.errorCode);
+//            System.out.println("jit error mesg: " + FiltersCompiler.jitError.message());
+        }
     }
 
     @Override
