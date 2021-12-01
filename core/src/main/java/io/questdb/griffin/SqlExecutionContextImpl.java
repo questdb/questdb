@@ -50,7 +50,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final AnalyticContextImpl analyticContext = new AnalyticContextImpl();
     private final RingQueue<TelemetryTask> telemetryQueue;
     private Sequence telemetryPubSeq;
-    private TelemetryMethod telemetryMethod = this::storeTelemetryNoop;
+    private TelemetryTask.TelemetryMethod telemetryMethod = this::storeTelemetryNoop;
     private BindVariableService bindVariableService;
     private CairoSecurityContext cairoSecurityContext;
     private Rnd random;
@@ -200,26 +200,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     private void doStoreTelemetry(short event, short origin) {
-        long cursor = telemetryPubSeq.next();
-        while (cursor == -2) {
-            cursor = telemetryPubSeq.next();
-        }
-
-        if (cursor > -1) {
-            TelemetryTask row = telemetryQueue.get(cursor);
-
-            row.created = clock.getTicks();
-            row.event = event;
-            row.origin = origin;
-            telemetryPubSeq.done(cursor);
-        }
+        TelemetryTask.store(telemetryQueue, telemetryPubSeq, event, origin, clock);
     }
 
     private void storeTelemetryNoop(short event, short origin) {
-    }
-
-    @FunctionalInterface
-    private interface TelemetryMethod {
-        void store(short event, short origin);
     }
 }

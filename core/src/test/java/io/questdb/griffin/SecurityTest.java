@@ -105,7 +105,7 @@ public class SecurityTest extends AbstractGriffinTest {
 
             @Override
             public void powerUp() {
-                deadline = MicrosecondClockImpl.INSTANCE.getTicks() + circuitBreakerTimeoutDeadline;
+                deadline = circuitBreakerTimeoutDeadline;
             }
         };
 
@@ -650,7 +650,7 @@ public class SecurityTest extends AbstractGriffinTest {
                     " from long_sequence(10000000))", sqlExecutionContext);
             try {
                 setMaxCircuitBreakerChecks(Long.MAX_VALUE);
-                circuitBreakerTimeoutDeadline = Timestamps.SECOND_MICROS;
+                circuitBreakerTimeoutDeadline = MicrosecondClockImpl.INSTANCE.getTicks() + Timestamps.SECOND_MICROS;
                 TestUtils.printSql(
                         compiler,
                         readOnlyExecutionContext,

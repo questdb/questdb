@@ -30,29 +30,44 @@ import io.questdb.mp.Sequence;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 
 public final class TelemetryTask {
+    public long created;
+    public CharSequence id;
+    public short event;
+    public short origin;
+
     public static void doStoreTelemetry(CairoEngine engine, short event, short origin) {
         Sequence telemetryPubSeq = engine.getTelemetryPubSequence();
         if (null != telemetryPubSeq) {
             MicrosecondClock clock = engine.getConfiguration().getMicrosecondClock();
             RingQueue<TelemetryTask> telemetryQueue = engine.getTelemetryQueue();
-            long cursor = telemetryPubSeq.next();
-            while (cursor == -2) {
-                cursor = telemetryPubSeq.next();
-            }
-
-            if (cursor > -1) {
-                TelemetryTask row = telemetryQueue.get(cursor);
-
-                row.created = clock.getTicks();
-                row.event = event;
-                row.origin = origin;
-                telemetryPubSeq.done(cursor);
-            }
+            store(telemetryQueue, telemetryPubSeq, event, origin, clock);
         }
     }
 
-    public long created;
-    public CharSequence id;
-    public short event;
-    public short origin;
+    public static void store(
+            RingQueue<TelemetryTask> telemetryQueue,
+            Sequence telemetryPubSeq,
+            short event,
+            short origin,
+            MicrosecondClock clock
+    ) {
+        long cursor = telemetryPubSeq.next();
+        while (cursor == -2) {
+            cursor = telemetryPubSeq.next();
+        }
+
+        if (cursor > -1) {
+            TelemetryTask row = telemetryQueue.get(cursor);
+
+            row.created = clock.getTicks();
+            row.event = event;
+            row.origin = origin;
+            telemetryPubSeq.done(cursor);
+        }
+    }
+
+    @FunctionalInterface
+    public interface TelemetryMethod {
+        void store(short event, short origin);
+    }
 }
