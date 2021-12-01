@@ -100,6 +100,10 @@ public class BytecodeAssembler {
         putShort(offset);
     }
 
+    public void athrow() {
+        putByte(0xbf);
+    }
+
     public void d2f() {
         putShort(0x90);
     }
@@ -110,6 +114,10 @@ public class BytecodeAssembler {
 
     public void d2l() {
         putShort(0x8F);
+    }
+
+    public void dcmpg() {
+        putByte(0x98);
     }
 
     public void defineClass(int thisClassIndex) {
@@ -164,6 +172,14 @@ public class BytecodeAssembler {
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    public void dup() {
+        putByte(0x59);
+    }
+
+    public void dup2() {
+        putByte(0x5c);
     }
 
     public void endMethod() {
@@ -270,6 +286,14 @@ public class BytecodeAssembler {
         return genericGoto(0xa0);
     }
 
+    public int ifle() {
+        return genericGoto(0x9e);
+    }
+
+    public int iflt() {
+        return genericGoto(0x9b);
+    }
+
     public int ifne() {
         return genericGoto(0x9a);
     }
@@ -372,6 +396,11 @@ public class BytecodeAssembler {
         putShort(index);
     }
 
+    public void ldc_w(int index) {
+        putByte(0x13);
+        putShort(index);
+    }
+
     public void lload(int value) {
         optimisedIO(lload_0, lload_1, lload_2, lload_3, lload, value);
     }
@@ -447,6 +476,14 @@ public class BytecodeAssembler {
 
     public int poolInterfaceMethod(int classIndex, String name, String sig) {
         return poolInterfaceMethod(classIndex, poolNameAndType(poolUtf8(name), poolUtf8(sig)));
+    }
+
+    public int poolDoubleConst(double value) {
+        putByte(0x06);
+        putDouble(value);
+        int index = poolCount;
+        poolCount += 2;
+        return index;
     }
 
     public int poolLongConst(long value) {
@@ -549,6 +586,13 @@ public class BytecodeAssembler {
 
     public void putITEM_Top() {
         putByte(0);
+    }
+
+    public void putDouble(double value) {
+        if (buf.remaining() < 4) {
+            resize();
+        }
+        buf.putDouble(value);
     }
 
     public void putLong(long value) {
