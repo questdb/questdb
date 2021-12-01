@@ -56,6 +56,30 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
                 .put(", to=").put(toName).put(']');
     }
 
+    public static SqlException inconvertibleValue(int columnNumber, double value, int fromType, int toType) {
+        return $(-1, "inconvertible value: ")
+                .put(value)
+                .put(" [")
+                .put(ColumnType.nameOf(fromType))
+                .put(" -> ")
+                .put(ColumnType.nameOf(toType))
+                .put(']')
+                .put(" in target column number: ")
+                .put(columnNumber);
+    }
+
+    public static SqlException inconvertibleValue(int columnNumber, long value, int fromType, int toType) {
+        return $(-1, "inconvertible value: ")
+                .put(value)
+                .put(" [")
+                .put(ColumnType.nameOf(fromType))
+                .put(" -> ")
+                .put(ColumnType.nameOf(toType))
+                .put(']')
+                .put(" in target column number: ")
+                .put(columnNumber);
+    }
+
     public static SqlException invalidColumn(int position, CharSequence column) {
         return position(position).put("Invalid column: ").put(column);
     }
@@ -105,6 +129,11 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     }
 
     public SqlException put(long value) {
+        message.put(value);
+        return this;
+    }
+
+    public SqlException put(double value) {
         message.put(value);
         return this;
     }

@@ -27,25 +27,9 @@ package io.questdb.griffin.engine.functions.math;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import io.questdb.std.Numbers;
 import org.junit.Test;
 
 public class AddByteFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    @Test
-    public void testLeftNan() throws SqlException {
-        call(Numbers.BYTE_NaN, 5).andAssert(Numbers.BYTE_NaN);
-    }
-
-    @Test
-    public void testNegative() throws SqlException {
-        call(3, -4).andAssert(-1);
-    }
-
-    @Test
-    public void testRightNan() throws SqlException {
-        call(123, Numbers.BYTE_NaN).andAssert(Numbers.BYTE_NaN);
-    }
-
     @Test
     public void testSimple() throws SqlException {
         call(2, 5).andAssert((byte) 7);

@@ -35,4 +35,8 @@ public interface MetricsRegistry extends Scrapable {
                                     CharSequence labelName1, CharSequence[] labelValues1);
 
     Gauge newGauge(CharSequence name);
+
+    Gauge newGauge(int memoryTag);
+
+    Gauge newVirtualGauge(CharSequence name, VirtualGauge.StatProvider provider);
 }

@@ -87,8 +87,6 @@ io.questdb.griffin.engine.functions.math.NegShortFunctionFactory
 io.questdb.griffin.engine.functions.math.NegByteFunctionFactory
 
 io.questdb.griffin.engine.functions.math.SubDoubleFunctionFactory
-io.questdb.griffin.engine.functions.math.SubByteFunctionFactory
-io.questdb.griffin.engine.functions.math.SubShortFunctionFactory
 io.questdb.griffin.engine.functions.math.SubIntFunctionFactory
 io.questdb.griffin.engine.functions.math.SubLongFunctionFactory
 io.questdb.griffin.engine.functions.math.SubTimestampFunctionFactory
@@ -97,8 +95,6 @@ io.questdb.griffin.engine.functions.math.SubTimestampFunctionFactory
 io.questdb.griffin.engine.functions.math.DivDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.DivLongFunctionFactory
 io.questdb.griffin.engine.functions.math.DivIntFunctionFactory
-io.questdb.griffin.engine.functions.math.DivShortFunctionFactory
-io.questdb.griffin.engine.functions.math.DivByteFunctionFactory
 
 # '%' operator
 io.questdb.griffin.engine.functions.math.RemIntFunctionFactory
@@ -111,8 +107,6 @@ io.questdb.griffin.engine.functions.math.MulFloatFunctionFactory
 io.questdb.griffin.engine.functions.math.MulDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.MulLongFunctionFactory
 io.questdb.griffin.engine.functions.math.MulIntFunctionFactory
-io.questdb.griffin.engine.functions.math.MulShortFunctionFactory
-io.questdb.griffin.engine.functions.math.MulByteFunctionFactory
 
 # 'abs'
 io.questdb.griffin.engine.functions.math.AbsIntFunctionFactory

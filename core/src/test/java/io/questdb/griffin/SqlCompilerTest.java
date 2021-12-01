@@ -831,25 +831,25 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCastIntByte() throws SqlException {
         assertCastInt("a\n" +
                 "1\n" +
-                "0\n" +
-                "22\n" +
-                "22\n" +
-                "0\n" +
+                "19\n" +
+                "30\n" +
+                "16\n" +
                 "7\n" +
                 "26\n" +
                 "26\n" +
+                "15\n" +
+                "14\n" +
                 "0\n" +
-                "13\n" +
-                "0\n" +
-                "0\n" +
-                "0\n" +
-                "25\n" +
                 "21\n" +
-                "23\n" +
-                "0\n" +
+                "15\n" +
+                "3\n" +
+                "4\n" +
                 "6\n" +
                 "19\n" +
-                "7\n", ColumnType.BYTE);
+                "7\n" +
+                "13\n" +
+                "17\n" +
+                "25\n", ColumnType.BYTE, 0);
     }
 
     @Test
@@ -959,26 +959,26 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCastIntShort() throws SqlException {
         assertCastInt("a\n" +
                         "1\n" +
-                        "0\n" +
-                        "22\n" +
-                        "22\n" +
-                        "0\n" +
+                        "19\n" +
+                        "30\n" +
+                        "16\n" +
                         "7\n" +
                         "26\n" +
                         "26\n" +
+                        "15\n" +
+                        "14\n" +
                         "0\n" +
-                        "13\n" +
-                        "0\n" +
-                        "0\n" +
-                        "0\n" +
-                        "25\n" +
                         "21\n" +
-                        "23\n" +
-                        "0\n" +
+                        "15\n" +
+                        "3\n" +
+                        "4\n" +
                         "6\n" +
                         "19\n" +
-                        "7\n",
-                ColumnType.SHORT);
+                        "7\n" +
+                        "13\n" +
+                        "17\n" +
+                        "25\n",
+                ColumnType.SHORT, 0);
     }
 
     @Test
@@ -1011,26 +1011,26 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCastLongByte() throws SqlException {
         assertCastLong("a\n" +
                         "22\n" +
-                        "0\n" +
-                        "17\n" +
-                        "2\n" +
-                        "0\n" +
+                        "11\n" +
+                        "6\n" +
+                        "26\n" +
                         "21\n" +
                         "1\n" +
                         "20\n" +
-                        "0\n" +
-                        "14\n" +
-                        "0\n" +
+                        "15\n" +
+                        "9\n" +
                         "26\n" +
+                        "30\n" +
+                        "8\n" +
                         "0\n" +
-                        "23\n" +
-                        "2\n" +
-                        "24\n" +
-                        "0\n" +
+                        "4\n" +
                         "16\n" +
                         "10\n" +
-                        "6\n",
-                ColumnType.BYTE);
+                        "6\n" +
+                        "3\n" +
+                        "8\n" +
+                        "12\n",
+                ColumnType.BYTE, 0);
     }
 
     @Test
@@ -1115,52 +1115,52 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCastLongInt() throws SqlException {
         assertCastLong("a\n" +
                         "22\n" +
-                        "0\n" +
-                        "17\n" +
-                        "2\n" +
-                        "0\n" +
+                        "11\n" +
+                        "6\n" +
+                        "26\n" +
                         "21\n" +
                         "1\n" +
                         "20\n" +
-                        "0\n" +
-                        "14\n" +
-                        "0\n" +
+                        "15\n" +
+                        "9\n" +
                         "26\n" +
+                        "30\n" +
+                        "8\n" +
                         "0\n" +
-                        "23\n" +
-                        "2\n" +
-                        "24\n" +
-                        "0\n" +
+                        "4\n" +
                         "16\n" +
                         "10\n" +
-                        "6\n",
-                ColumnType.INT);
+                        "6\n" +
+                        "3\n" +
+                        "8\n" +
+                        "12\n",
+                ColumnType.INT, 0);
     }
 
     @Test
     public void testCastLongShort() throws SqlException {
         assertCastLong("a\n" +
                         "22\n" +
-                        "0\n" +
-                        "17\n" +
-                        "2\n" +
-                        "0\n" +
+                        "11\n" +
+                        "6\n" +
+                        "26\n" +
                         "21\n" +
                         "1\n" +
                         "20\n" +
-                        "0\n" +
-                        "14\n" +
-                        "0\n" +
+                        "15\n" +
+                        "9\n" +
                         "26\n" +
+                        "30\n" +
+                        "8\n" +
                         "0\n" +
-                        "23\n" +
-                        "2\n" +
-                        "24\n" +
-                        "0\n" +
+                        "4\n" +
                         "16\n" +
                         "10\n" +
-                        "6\n",
-                ColumnType.SHORT);
+                        "6\n" +
+                        "3\n" +
+                        "8\n" +
+                        "12\n",
+                ColumnType.SHORT, 0);
     }
 
     @Test
@@ -1241,27 +1241,27 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     @Test
     public void testCastShortByte() throws SqlException {
         assertCastShort("a\n" +
-                        "-106\n" +
-                        "-42\n" +
+                        "48\n" +
+                        "110\n" +
+                        "63\n" +
+                        "99\n" +
+                        "107\n" +
+                        "43\n" +
+                        "-10\n" +
+                        "-105\n" +
+                        "122\n" +
+                        "-88\n" +
                         "-76\n" +
-                        "-41\n" +
-                        "-41\n" +
-                        "-107\n" +
-                        "117\n" +
-                        "3\n" +
-                        "-35\n" +
-                        "21\n" +
-                        "38\n" +
-                        "-25\n" +
-                        "46\n" +
+                        "108\n" +
+                        "-78\n" +
+                        "-113\n" +
+                        "39\n" +
                         "-8\n" +
-                        "-120\n" +
-                        "101\n" +
-                        "30\n" +
-                        "-122\n" +
-                        "52\n" +
-                        "91\n",
-                ColumnType.BYTE);
+                        "-68\n" +
+                        "17\n" +
+                        "-69\n" +
+                        "-14\n",
+                ColumnType.BYTE, -128, 127);
     }
 
     @Test
@@ -3138,7 +3138,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "insert into x " +
                         "select" +
                         " rnd_int()," +
-                        " rnd_long()" +
+                        " rnd_date( to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 0)" +
                         " from long_sequence(30)", 32, "inconvertible types");
     }
 
@@ -3148,7 +3148,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "insert into x " +
                         "select" +
                         " rnd_int()," +
-                        " rnd_long()" +
+                        " rnd_char()" +
                         " from long_sequence(30)", 32, "inconvertible types");
     }
 
@@ -3158,7 +3158,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
-                        " rnd_long()" +
+                        " rnd_date( to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 0)" +
                         " from long_sequence(30)", 17, "inconvertible types");
     }
 
@@ -3168,7 +3168,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
-                        " rnd_long()" +
+                        " rnd_char()" +
                         " from long_sequence(30)", 17, "inconvertible types");
     }
 
@@ -3178,13 +3178,13 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
-                        " rnd_long()" +
+                        " rnd_char()" +
                         " from long_sequence(30)", 17, "inconvertible types");
     }
 
     @Test
     public void testInsertAsSelectInconvertibleList4() throws Exception {
-        testInsertAsSelectError("create table x (a FLOAT, b INT, n TIMESTAMP)",
+        testInsertAsSelectError("create table x (a DATE, b INT, n TIMESTAMP)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
@@ -3832,10 +3832,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     private void assertCastInt(String expectedData, int castTo) throws SqlException {
+        assertCastInt(expectedData, castTo, 2);
+    }
+
+    private void assertCastInt(String expectedData, int castTo, int nanRate) throws SqlException {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
-                "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
+                "select * from (select rnd_int(0, 30, " + nanRate + ") a from long_sequence(20))" +
                 "), cast(a as " + ColumnType.nameOf(castTo) + ")";
 
         assertCast(expectedData, expectedMeta, sql);
@@ -3857,10 +3861,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     private void assertCastLong(String expectedData, int castTo) throws SqlException {
+        assertCastLong(expectedData, castTo, 2);
+    }
+
+    private void assertCastLong(String expectedData, int castTo, int nanRate) throws SqlException {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
-                "select * from (select rnd_long(0, 30, 2) a from long_sequence(20))" +
+                "select * from (select rnd_long(0, 30, " + nanRate + ") a from long_sequence(20))" +
                 "), cast(a as " + ColumnType.nameOf(castTo) + ")";
 
         assertCast(expectedData, expectedMeta, sql);
@@ -3882,10 +3890,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     private void assertCastShort(String expectedData, int castTo) throws SqlException {
+        assertCastShort(expectedData, castTo, 1024, 2048);
+    }
+
+    private void assertCastShort(String expectedData, int castTo, int min, int max) throws SqlException {
         String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
 
         String sql = "create table y as (" +
-                "select * from (select rnd_short(1024, 2048) a from long_sequence(20))), cast(a as " + ColumnType.nameOf(castTo) + ")";
+                "select * from (select rnd_short(" + min + ", " + max + ") a from long_sequence(20))), cast(a as " + ColumnType.nameOf(castTo) + ")";
 
         assertCast(expectedData, expectedMeta, sql);
     }

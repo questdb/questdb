@@ -37,6 +37,8 @@ import io.questdb.std.ObjList;
 
 public class LtCharFunctionFactory implements FunctionFactory {
 
+    private static final char CHAR_NULL = CharConstant.ZERO.getChar(null);
+
     @Override
     public String getSignature() {
         return "<(AA)";
@@ -71,11 +73,9 @@ public class LtCharFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             char left = this.left.getChar(rec);
-            if (left == CharConstant.ZERO.getChar(null)) {
-                return false;
-            }
             char right = this.right.getChar(rec);
-            if (right == CharConstant.ZERO.getChar(null)) {
+
+            if (left == CHAR_NULL || right == CHAR_NULL) {
                 return false;
             }
             return negated == (left >= right);
