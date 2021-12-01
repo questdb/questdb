@@ -31,14 +31,6 @@ import org.junit.Test;
 
 public class SqlParserUpdateTest extends AbstractSqlParserTest {
     @Test
-    public void testSelectSingleTableWithJoinInFrom() throws Exception {
-        assertQuery("select-virtual rowid() rowid, 1 tt from (select [x] from tblx x join select [y] from tbly y on y.y = x.x where x > 10) x",
-                "select rowid(), 1 as tt from tblx x, tbly y where x.x = y.y and x > 10",
-                partitionedModelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
-                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
-    }
-
-    @Test
     public void testUpdateAmbiguousColumnFails() throws Exception {
         assertSyntaxError(
                 "update tblx set y = y from tbly y where tblx.x = tbly.y and tblx.x > 10",
@@ -149,8 +141,8 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
 
     @Test
     public void testUpdateSingleTableWithJoinInFrom() throws Exception {
-        assertUpdate("update tblx set tt = 1 from (select-virtual 1 tt from (select [x] from tblx timestamp (timestamp) join select [y] from tbly y on y = x where x > 10))",
-                "update tblx set tt = 1 from tbly y where x = y and x > 10",
+        assertUpdate("update tblx set tt = tt + 1 from (select-virtual tt + 1 tt from (select [tt, x] from tblx timestamp (timestamp) join select [y] from tbly y on y = x where x > 10))",
+                "update tblx set tt = tt + 1 from tbly y where x = y and x > 10",
                 partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)

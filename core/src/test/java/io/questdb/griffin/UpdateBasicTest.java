@@ -107,31 +107,49 @@ public class UpdateBasicTest extends AbstractGriffinTest {
 
             executeUpdate("UPDATE up SET xint=xshort");
             assertSql("up", expected);
+            executeUpdate("UPDATE up SET xint=xshort WHERE ts='1970-01-01'");
+            assertSql("up", expected);
 
             executeUpdate("UPDATE up SET xfloat=xint");
+            assertSql("up", expected);
+            executeUpdate("UPDATE up SET xfloat=xint WHERE ts='1970-01-01'");
             assertSql("up", expected);
 
             executeUpdate("UPDATE up SET xdouble=xfloat");
             assertSql("up", expected);
+            executeUpdate("UPDATE up SET xdouble=xfloat WHERE ts='1970-01-01'");
+            assertSql("up", expected);
 
             executeUpdate("UPDATE up SET xdouble=xlong");
+            assertSql("up", expected);
+            executeUpdate("UPDATE up SET xdouble=xlong WHERE ts='1970-01-01'");
             assertSql("up", expected);
 
             executeUpdate("UPDATE up SET xshort=xbyte");
             assertSql("up", expected);
+            executeUpdate("UPDATE up SET xshort=xbyte WHERE ts='1970-01-01'");
+            assertSql("up", expected);
 
             executeUpdate("UPDATE up SET xshort=xchar");
+            assertSql("up", expected);
+            executeUpdate("UPDATE up SET xshort=xchar WHERE ts='1970-01-01'");
             assertSql("up", expected);
 
             executeUpdate("UPDATE up SET xdouble=xlong");
             assertSql("up", expected);
+            executeUpdate("UPDATE up SET xdouble=xlong WHERE ts='1970-01-01'");
+            assertSql("up", expected);
 
             executeUpdate("UPDATE up SET xlong=xts");
+            assertSql("up", expected);
+            executeUpdate("UPDATE up SET xlong=xts WHERE ts='1970-01-01'");
             assertSql("up", expected);
 
             executeUpdate("UPDATE up SET xts=xdate");
             // above call modified data from micro to milli. Revert the data back
             executeUpdate("UPDATE up SET xts=xlong");
+            assertSql("up", expected);
+            executeUpdate("UPDATE up SET xts=xlong WHERE ts='1970-01-01'");
             assertSql("up", expected);
 
             // Update all at once
@@ -149,7 +167,8 @@ public class UpdateBasicTest extends AbstractGriffinTest {
                     " xchar=up2.xchar, " +
                     " xbool=up2.xbool, " +
                     " xbyte=up2.xbyte " +
-                    " FROM up up2 WHERE up.ts = up2.ts");
+                    " FROM up up2 " +
+                    " WHERE up.ts = up2.ts AND up.ts = '1970-01-01'");
             assertSql("up", expected);
         });
     }
@@ -262,19 +281,17 @@ public class UpdateBasicTest extends AbstractGriffinTest {
                     " timestamp(ts) partition by DAY", sqlExecutionContext);
 
             CompiledQuery cc = compiler.compile("UPDATE up SET x = 1", sqlExecutionContext);
-
-            // Bump table version
-            try (SqlCompiler compiler2 = new SqlCompiler(engine)) {
-                compiler2.compile("alter table up add column y long", sqlExecutionContext);
-                compiler2.compile("alter table up drop column y", sqlExecutionContext);
-            }
-
             Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
+
             try (UpdateStatement updateStatement = cc.getUpdateStatement()) {
+                // Bump table version
+                compiler.compile("alter table up add column y long", sqlExecutionContext);
+                compiler.compile("alter table up drop column y", sqlExecutionContext);
+
                 applyUpdate(updateStatement);
                 Assert.fail();
             } catch (ReaderOutOfDateException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "up");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "table='up'");
             }
         });
     }

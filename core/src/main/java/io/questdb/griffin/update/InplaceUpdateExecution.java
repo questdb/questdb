@@ -212,7 +212,7 @@ public class InplaceUpdateExecution implements Closeable {
                     break;
                 case ColumnType.BYTE:
                 case ColumnType.BOOLEAN:
-                    primaryColMem.putLong(rowId, columnMapper.getByte(record, columnIndex));
+                    primaryColMem.putByte(rowId, columnMapper.getByte(record, columnIndex));
                     break;
                 default:
                     throw SqlException.$(0, "Column type ")

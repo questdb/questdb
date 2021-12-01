@@ -32,7 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import java.io.Closeable;
 
 public interface RecordColumnMapper extends Closeable {
-    long getByte(Record record, int columnIndex);
+    byte getByte(Record record, int columnIndex);
 
     char getChar(Record record, int columnIndex);
 

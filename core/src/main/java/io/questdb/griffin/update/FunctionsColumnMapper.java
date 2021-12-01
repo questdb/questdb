@@ -49,8 +49,8 @@ class FunctionsColumnMapper implements RecordColumnMapper, Mutable {
     }
 
     @Override
-    public long getByte(Record record, int columnIndex) {
-        return valuesFunctions.getQuick(columnIndex).getInt(record);
+    public byte getByte(Record record, int columnIndex) {
+        return valuesFunctions.getQuick(columnIndex).getByte(record);
     }
 
     @Override

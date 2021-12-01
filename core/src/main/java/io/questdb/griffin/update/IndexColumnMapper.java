@@ -48,7 +48,7 @@ class IndexColumnMapper implements RecordColumnMapper, Mutable {
     }
 
     @Override
-    public long getByte(Record record, int columnIndex) {
+    public byte getByte(Record record, int columnIndex) {
         return record.getByte(selectChooseColumnMaps.get(columnIndex));
     }
 
