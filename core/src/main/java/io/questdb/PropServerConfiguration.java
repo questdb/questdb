@@ -37,7 +37,7 @@ import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
-import io.questdb.griffin.SqlInterruptorConfiguration;
+import io.questdb.griffin.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -46,10 +46,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.datetime.microtime.TimestampFormatFactory;
+import io.questdb.std.datetime.microtime.*;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
@@ -176,7 +173,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PropHttpContextConfiguration httpContextConfiguration = new PropHttpContextConfiguration();
     private final boolean httpMinServerEnabled;
     private final PropHttpMinIODispatcherConfiguration httpMinIODispatcherConfiguration = new PropHttpMinIODispatcherConfiguration();
-    private final PropSqlInterruptorConfiguration interruptorConfiguration = new PropSqlInterruptorConfiguration();
+    private final PropSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new PropSqlExecutionCircuitBreakerConfiguration();
     private final int tableBlockWriterQueueCapacity;
     private final int sqlAnalyticStorePageSize;
     private final int sqlAnalyticStoreMaxPages;
@@ -212,6 +209,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean metricsEnabled;
     private final int sqlDistinctTimestampKeyCapacity;
     private final double sqlDistinctTimestampLoadFactor;
+    private final int circuitBreakerThrottle;
+    private final int circuitBreakerBufferSize;
+    private final long circuitBreakerMaxTime;
+    private final int latestByQueueCapacity;
+    private final int sampleByIndexSearchPageSize;
+    private final int binaryEncodingMaxLength;
+    private final long writerDataIndexKeyAppendPageSize;
+    private final long writerDataIndexValueAppendPageSize;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int[] httpMinWorkerAffinity;
@@ -263,8 +268,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean readOnlySecurityContext;
     private long maxHttpQueryResponseRowLimit;
     private boolean interruptOnClosedConnection;
-    private int interruptorNIterationsPerCheck;
-    private int interruptorBufferSize;
     private int pgNetActiveConnectionLimit;
     private int pgNetBindIPv4Address;
     private int pgNetBindPort;
@@ -349,11 +352,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinListenBacklog;
     private int httpMinRcvBufSize;
     private int httpMinSndBufSize;
-    private final int latestByQueueCapacity;
-    private final int sampleByIndexSearchPageSize;
-    private final int binaryEncodingMaxLength;
-    private final long writerDataIndexKeyAppendPageSize;
-    private final long writerDataIndexValueAppendPageSize;
     private long symbolCacheWaitUsBeforeReload;
 
     public PropServerConfiguration(
@@ -497,8 +495,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.readOnlySecurityContext = getBoolean(properties, env, "http.security.readonly", false);
                 this.maxHttpQueryResponseRowLimit = getLong(properties, env, "http.security.max.response.rows", Long.MAX_VALUE);
                 this.interruptOnClosedConnection = getBoolean(properties, env, "http.security.interrupt.on.closed.connection", true);
-                this.interruptorNIterationsPerCheck = getInt(properties, env, "http.security.interruptor.iterations.per.check", 2_000_000);
-                this.interruptorBufferSize = getInt(properties, env, "http.security.interruptor.buffer.size", 64);
 
                 parseBindTo(properties, env, "http.bind.to", "0.0.0.0:9000", (a, p) -> {
                     httpBindIPv4Address = a;
@@ -514,6 +510,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.rerunExponentialWaitMultiplier = getDouble(properties, env, "http.busy.retry.exponential.wait.multiplier", 2.0);
             this.rerunInitialWaitQueueSize = getIntSize(properties, env, "http.busy.retry.initialWaitQueueSize", 64);
             this.rerunMaxProcessingQueueSize = getIntSize(properties, env, "http.busy.retry.maxProcessingQueueSize", 4096);
+
+            this.circuitBreakerThrottle = getInt(properties, env, "circuit.breaker.throttle", 2_000_000);
+            this.circuitBreakerBufferSize = getInt(properties, env, "circuit.breaker.buffer.size", 64);
+            this.circuitBreakerMaxTime = getInt(properties, env, "circuit.breaker.max.time", 60) * Timestamps.SECOND_MICROS;
 
             this.pgEnabled = getBoolean(properties, env, "pg.enabled", true);
             if (pgEnabled) {
@@ -1304,15 +1304,25 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropSqlInterruptorConfiguration implements SqlInterruptorConfiguration {
+    private class PropSqlExecutionCircuitBreakerConfiguration implements SqlExecutionCircuitBreakerConfiguration {
         @Override
-        public int getBufferSize() {
-            return interruptorBufferSize;
+        public MicrosecondClock getClock() {
+            return MicrosecondClockImpl.INSTANCE;
         }
 
         @Override
-        public int getCountOfIterationsPerCheck() {
-            return interruptorNIterationsPerCheck;
+        public long getMaxTime() {
+            return circuitBreakerMaxTime;
+        }
+
+        @Override
+        public int getBufferSize() {
+            return circuitBreakerBufferSize;
+        }
+
+        @Override
+        public int getCircuitBreakerThrottle() {
+            return circuitBreakerThrottle;
         }
 
         @Override
@@ -1470,13 +1480,43 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropCairoConfiguration implements CairoConfiguration {
 
         @Override
-        public long getDataIndexKeyAppendPageSize() {
-            return writerDataIndexKeyAppendPageSize;
+        public boolean enableTestFactories() {
+            return false;
         }
 
         @Override
-        public long getDataIndexValueAppendPageSize() {
-            return writerDataIndexValueAppendPageSize;
+        public int getAnalyticColumnPoolCapacity() {
+            return sqlAnalyticColumnPoolCapacity;
+        }
+
+        @Override
+        public long getDataAppendPageSize() {
+            return writerDataAppendPageSize;
+        }
+
+        @Override
+        public DateFormat getBackupDirTimestampFormat() {
+            return backupDirTimestampFormat;
+        }
+
+        @Override
+        public int getBackupMkDirMode() {
+            return backupMkdirMode;
+        }
+
+        @Override
+        public CharSequence getBackupRoot() {
+            return backupRoot;
+        }
+
+        @Override
+        public CharSequence getBackupTempDirName() {
+            return backupTempDirName;
+        }
+
+        @Override
+        public int getBinaryEncodingMaxLength() {
+            return binaryEncodingMaxLength;
         }
 
         @Override
@@ -1485,23 +1525,33 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getO3PurgeDiscoveryQueueCapacity() {
-            return o3PurgeDiscoveryQueueCapacity;
+        public BuildInformation getBuildInformation() {
+            return buildInformation;
         }
 
         @Override
-        public int getO3PurgeQueueCapacity() {
-            return o3PurgeQueueCapacity;
+        public int getColumnCastModelPoolCapacity() {
+            return sqlColumnCastModelPoolCapacity;
         }
 
         @Override
-        public int getSampleByIndexSearchPageSize() {
-            return sampleByIndexSearchPageSize;
+        public int getColumnIndexerQueueCapacity() {
+            return columnIndexerQueueCapacity;
         }
 
         @Override
-        public int getSqlCopyBufferSize() {
-            return sqlCopyBufferSize;
+        public long getCommitLag() {
+            return commitLag;
+        }
+
+        @Override
+        public int getCommitMode() {
+            return commitMode;
+        }
+
+        @Override
+        public CharSequence getConfRoot() {
+            return confRoot;
         }
 
         @Override
@@ -1512,6 +1562,41 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getCreateAsSelectRetryCount() {
             return createAsSelectRetryCount;
+        }
+
+        @Override
+        public int getCreateTableModelPoolCapacity() {
+            return sqlCreateTableModelPoolCapacity;
+        }
+
+        @Override
+        public long getDataIndexKeyAppendPageSize() {
+            return writerDataIndexKeyAppendPageSize;
+        }
+
+        @Override
+        public long getDataIndexValueAppendPageSize() {
+            return writerDataIndexValueAppendPageSize;
+        }
+
+        @Override
+        public long getDatabaseIdHi() {
+            return instanceHashHi;
+        }
+
+        @Override
+        public long getDatabaseIdLo() {
+            return instanceHashLo;
+        }
+
+        @Override
+        public CharSequence getDbDirectory() {
+            return dbDirectory;
+        }
+
+        @Override
+        public DateLocale getDefaultDateLocale() {
+            return locale;
         }
 
         @Override
@@ -1530,6 +1615,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getDoubleToStrCastScale() {
+            return sqlDoubleToStrCastScale;
+        }
+
+        @Override
         public int getFileOperationRetryCount() {
             return fileOperationRetryCount;
         }
@@ -1537,6 +1627,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public FilesFacade getFilesFacade() {
             return FilesFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getFloatToStrCastScale() {
+            return sqlFloatToStrCastScale;
+        }
+
+        @Override
+        public int getGroupByMapCapacity() {
+            return sqlGroupByMapCapacity;
+        }
+
+        @Override
+        public int getGroupByPoolCapacity() {
+            return sqlGroupByPoolCapacity;
         }
 
         @Override
@@ -1560,18 +1665,33 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getDoubleToStrCastScale() {
-            return sqlDoubleToStrCastScale;
+        public CharSequence getInputRoot() {
+            return inputRoot;
         }
 
         @Override
-        public int getFloatToStrCastScale() {
-            return sqlFloatToStrCastScale;
+        public int getInsertPoolCapacity() {
+            return sqlInsertModelPoolCapacity;
+        }
+
+        @Override
+        public int getLatestByQueueCapacity() {
+            return latestByQueueCapacity;
         }
 
         @Override
         public int getMaxSwapFileCount() {
             return maxSwapFileCount;
+        }
+
+        @Override
+        public int getMaxSymbolNotEqualsCount() {
+            return sqlMaxSymbolNotEqualsCount;
+        }
+
+        @Override
+        public int getMaxUncommittedRows() {
+            return maxUncommittedRows;
         }
 
         @Override
@@ -1590,6 +1710,46 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getO3CallbackQueueCapacity() {
+            return o3CallbackQueueCapacity;
+        }
+
+        @Override
+        public int getO3ColumnMemorySize() {
+            return o3ColumnMemorySize;
+        }
+
+        @Override
+        public int getO3CopyQueueCapacity() {
+            return o3CopyQueueCapacity;
+        }
+
+        @Override
+        public int getO3OpenColumnQueueCapacity() {
+            return o3OpenColumnQueueCapacity;
+        }
+
+        @Override
+        public int getO3PartitionQueueCapacity() {
+            return o3PartitionQueueCapacity;
+        }
+
+        @Override
+        public int getO3PartitionUpdateQueueCapacity() {
+            return o3UpdPartitionSizeQueueCapacity;
+        }
+
+        @Override
+        public int getO3PurgeDiscoveryQueueCapacity() {
+            return o3PurgeDiscoveryQueueCapacity;
+        }
+
+        @Override
+        public int getO3PurgeQueueCapacity() {
+            return o3PurgeQueueCapacity;
+        }
+
+        @Override
         public int getParallelIndexThreshold() {
             return parallelIndexThreshold;
         }
@@ -1600,48 +1760,58 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getRenameTableModelPoolCapacity() {
+            return sqlRenameTableModelPoolCapacity;
+        }
+
+        @Override
         public CharSequence getRoot() {
             return root;
         }
 
         @Override
-        public CharSequence getDbDirectory() {
-            return dbDirectory;
+        public int getSampleByIndexSearchPageSize() {
+            return sampleByIndexSearchPageSize;
         }
 
         @Override
-        public CharSequence getConfRoot() {
-            return confRoot;
-        }
-
-        @Override
-        public CharSequence getInputRoot() {
-            return inputRoot;
-        }
-
-        @Override
-        public CharSequence getBackupRoot() {
-            return backupRoot;
-        }
-
-        @Override
-        public DateFormat getBackupDirTimestampFormat() {
-            return backupDirTimestampFormat;
-        }
-
-        @Override
-        public CharSequence getBackupTempDirName() {
-            return backupTempDirName;
-        }
-
-        @Override
-        public int getBackupMkDirMode() {
-            return backupMkdirMode;
+        public long getMiscAppendPageSize() {
+            return writerMiscAppendPageSize;
         }
 
         @Override
         public long getSpinLockTimeoutUs() {
             return spinLockTimeoutUs;
+        }
+
+        @Override
+        public int getSqlAnalyticRowIdMaxPages() {
+            return sqlAnalyticRowIdMaxPages;
+        }
+
+        @Override
+        public int getSqlAnalyticRowIdPageSize() {
+            return sqlAnalyticRowIdPageSize;
+        }
+
+        @Override
+        public int getSqlAnalyticStoreMaxPages() {
+            return sqlAnalyticStoreMaxPages;
+        }
+
+        @Override
+        public int getSqlAnalyticStorePageSize() {
+            return sqlAnalyticStorePageSize;
+        }
+
+        @Override
+        public int getSqlAnalyticTreeKeyMaxPages() {
+            return sqlAnalyticTreeKeyMaxPages;
+        }
+
+        @Override
+        public int getSqlAnalyticTreeKeyPageSize() {
+            return sqlAnalyticTreeKeyPageSize;
         }
 
         @Override
@@ -1665,33 +1835,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlExpressionPoolCapacity() {
-            return sqlExpressionPoolCapacity;
-        }
-
-        @Override
-        public double getSqlFastMapLoadFactor() {
-            return sqlFastMapLoadFactor;
-        }
-
-        @Override
-        public int getSqlJoinContextPoolCapacity() {
-            return sqlJoinContextPoolCapacity;
-        }
-
-        @Override
-        public int getSqlLexerPoolCapacity() {
-            return sqlLexerPoolCapacity;
-        }
-
-        @Override
-        public int getSqlMapKeyCapacity() {
-            return sqlMapKeyCapacity;
-        }
-
-        @Override
-        public int getSqlMapPageSize() {
-            return sqlMapPageSize;
+        public int getSqlCopyBufferSize() {
+            return sqlCopyBufferSize;
         }
 
         @Override
@@ -1705,6 +1850,66 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlExpressionPoolCapacity() {
+            return sqlExpressionPoolCapacity;
+        }
+
+        @Override
+        public double getSqlFastMapLoadFactor() {
+            return sqlFastMapLoadFactor;
+        }
+
+        @Override
+        public int getSqlHashJoinLightValueMaxPages() {
+            return sqlHashJoinLightValueMaxPages;
+        }
+
+        @Override
+        public int getSqlHashJoinLightValuePageSize() {
+            return sqlHashJoinLightValuePageSize;
+        }
+
+        @Override
+        public int getSqlHashJoinValueMaxPages() {
+            return sqlHashJoinValueMaxPages;
+        }
+
+        @Override
+        public int getSqlHashJoinValuePageSize() {
+            return sqlHashJoinValuePageSize;
+        }
+
+        @Override
+        public int getSqlJoinContextPoolCapacity() {
+            return sqlJoinContextPoolCapacity;
+        }
+
+        @Override
+        public int getSqlJoinMetadataMaxResizes() {
+            return sqlJoinMetadataMaxResizes;
+        }
+
+        @Override
+        public int getSqlJoinMetadataPageSize() {
+            return sqlJoinMetadataPageSize;
+        }
+
+        @Override
+        public long getSqlLatestByRowCount() {
+            return sqlLatestByRowCount;
+        }
+
+        @Override
+        public int getSqlLexerPoolCapacity() {
+            return sqlLexerPoolCapacity;
+        }
+
+        @Override
+        public int getSqlMapKeyCapacity() {
+            return sqlMapKeyCapacity;
+        }
+
+        @Override
         public int getSqlMapMaxPages() {
             return sqlMapMaxPages;
         }
@@ -1715,13 +1920,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlModelPoolCapacity() {
-            return sqlModelPoolCapacity;
+        public int getSqlMapPageSize() {
+            return sqlMapPageSize;
         }
 
         @Override
-        public long getSqlSortKeyPageSize() {
-            return sqlSortKeyPageSize;
+        public int getSqlModelPoolCapacity() {
+            return sqlModelPoolCapacity;
         }
 
         @Override
@@ -1730,8 +1935,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getSqlSortLightValuePageSize() {
-            return sqlSortLightValuePageSize;
+        public long getSqlSortKeyPageSize() {
+            return sqlSortKeyPageSize;
         }
 
         @Override
@@ -1740,63 +1945,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlHashJoinValuePageSize() {
-            return sqlHashJoinValuePageSize;
-        }
-
-        @Override
-        public int getSqlHashJoinValueMaxPages() {
-            return sqlHashJoinValueMaxPages;
-        }
-
-        @Override
-        public int getSqlAnalyticStorePageSize() {
-            return sqlAnalyticStorePageSize;
-        }
-
-        @Override
-        public int getSqlAnalyticStoreMaxPages() {
-            return sqlAnalyticStoreMaxPages;
-        }
-
-        @Override
-        public int getSqlAnalyticRowIdPageSize() {
-            return sqlAnalyticRowIdPageSize;
-        }
-
-        @Override
-        public int getSqlAnalyticRowIdMaxPages() {
-            return sqlAnalyticRowIdMaxPages;
-        }
-
-        @Override
-        public int getSqlAnalyticTreeKeyPageSize() {
-            return sqlAnalyticTreeKeyPageSize;
-        }
-
-        @Override
-        public int getSqlAnalyticTreeKeyMaxPages() {
-            return sqlAnalyticTreeKeyMaxPages;
-        }
-
-        @Override
-        public long getSqlLatestByRowCount() {
-            return sqlLatestByRowCount;
-        }
-
-        @Override
-        public int getSqlHashJoinLightValuePageSize() {
-            return sqlHashJoinLightValuePageSize;
-        }
-
-        @Override
-        public int getSqlHashJoinLightValueMaxPages() {
-            return sqlHashJoinLightValueMaxPages;
-        }
-
-        @Override
-        public int getSqlSortValuePageSize() {
-            return sqlSortValuePageSize;
+        public long getSqlSortLightValuePageSize() {
+            return sqlSortLightValuePageSize;
         }
 
         @Override
@@ -1805,103 +1955,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public TextConfiguration getTextConfiguration() {
-            return textConfiguration;
-        }
-
-        @Override
-        public long getWorkStealTimeoutNanos() {
-            return workStealTimeoutNanos;
-        }
-
-        @Override
-        public boolean isParallelIndexingEnabled() {
-            return parallelIndexingEnabled;
-        }
-
-        @Override
-        public int getSqlJoinMetadataPageSize() {
-            return sqlJoinMetadataPageSize;
-        }
-
-        @Override
-        public int getSqlJoinMetadataMaxResizes() {
-            return sqlJoinMetadataMaxResizes;
-        }
-
-        @Override
-        public int getAnalyticColumnPoolCapacity() {
-            return sqlAnalyticColumnPoolCapacity;
-        }
-
-        @Override
-        public int getCreateTableModelPoolCapacity() {
-            return sqlCreateTableModelPoolCapacity;
-        }
-
-        @Override
-        public int getColumnCastModelPoolCapacity() {
-            return sqlColumnCastModelPoolCapacity;
-        }
-
-        @Override
-        public int getRenameTableModelPoolCapacity() {
-            return sqlRenameTableModelPoolCapacity;
-        }
-
-        @Override
-        public int getWithClauseModelPoolCapacity() {
-            return sqlWithClauseModelPoolCapacity;
-        }
-
-        @Override
-        public int getInsertPoolCapacity() {
-            return sqlInsertModelPoolCapacity;
-        }
-
-        @Override
-        public int getCommitMode() {
-            return commitMode;
-        }
-
-        @Override
-        public DateLocale getDefaultDateLocale() {
-            return locale;
-        }
-
-        @Override
-        public int getGroupByPoolCapacity() {
-            return sqlGroupByPoolCapacity;
-        }
-
-        @Override
-        public int getMaxSymbolNotEqualsCount() {
-            return sqlMaxSymbolNotEqualsCount;
-        }
-
-        @Override
-        public int getGroupByMapCapacity() {
-            return sqlGroupByMapCapacity;
-        }
-
-        @Override
-        public boolean enableTestFactories() {
-            return false;
-        }
-
-        @Override
-        public TelemetryConfiguration getTelemetryConfiguration() {
-            return telemetryConfiguration;
-        }
-
-        @Override
-        public long getDataAppendPageSize() {
-            return writerDataAppendPageSize;
-        }
-
-        @Override
-        public long getMiscAppendPageSize() {
-            return writerMiscAppendPageSize;
+        public int getSqlSortValuePageSize() {
+            return sqlSortValuePageSize;
         }
 
         @Override
@@ -1910,53 +1965,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getColumnIndexerQueueCapacity() {
-            return columnIndexerQueueCapacity;
+        public TelemetryConfiguration getTelemetryConfiguration() {
+            return telemetryConfiguration;
         }
 
         @Override
-        public int getVectorAggregateQueueCapacity() {
-            return vectorAggregateQueueCapacity;
-        }
-
-        @Override
-        public int getO3CallbackQueueCapacity() {
-            return o3CallbackQueueCapacity;
-        }
-
-        @Override
-        public int getO3PartitionQueueCapacity() {
-            return o3PartitionQueueCapacity;
-        }
-
-        @Override
-        public int getO3OpenColumnQueueCapacity() {
-            return o3OpenColumnQueueCapacity;
-        }
-
-        @Override
-        public int getO3CopyQueueCapacity() {
-            return o3CopyQueueCapacity;
-        }
-
-        @Override
-        public int getO3PartitionUpdateQueueCapacity() {
-            return o3UpdPartitionSizeQueueCapacity;
-        }
-
-        @Override
-        public BuildInformation getBuildInformation() {
-            return buildInformation;
-        }
-
-        @Override
-        public long getDatabaseIdHi() {
-            return instanceHashHi;
-        }
-
-        @Override
-        public long getDatabaseIdLo() {
-            return instanceHashLo;
+        public TextConfiguration getTextConfiguration() {
+            return textConfiguration;
         }
 
         @Override
@@ -1965,13 +1980,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getMaxUncommittedRows() {
-            return maxUncommittedRows;
+        public int getVectorAggregateQueueCapacity() {
+            return vectorAggregateQueueCapacity;
         }
 
         @Override
-        public long getCommitLag() {
-            return commitLag;
+        public int getWithClauseModelPoolCapacity() {
+            return sqlWithClauseModelPoolCapacity;
+        }
+
+        @Override
+        public long getWorkStealTimeoutNanos() {
+            return workStealTimeoutNanos;
         }
 
         @Override
@@ -1980,18 +2000,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getLatestByQueueCapacity() {
-            return latestByQueueCapacity;
-        }
-
-        @Override
-        public int getBinaryEncodingMaxLength() {
-            return binaryEncodingMaxLength;
-        }
-
-        @Override
-        public int getO3ColumnMemorySize() {
-            return o3ColumnMemorySize;
+        public boolean isParallelIndexingEnabled() {
+            return parallelIndexingEnabled;
         }
     }
 
@@ -2237,11 +2247,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
 
         @Override
-        public long getSymbolCacheWaitUsBeforeReload() {
-            return symbolCacheWaitUsBeforeReload;
-        }
-
-        @Override
         public String getAuthDbPath() {
             return lineTcpAuthDbPath;
         }
@@ -2340,6 +2345,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public int getAggressiveReadRetryCount() {
             return lineTcpAggressiveReadRetryCount;
         }
+
+        @Override
+        public long getSymbolCacheWaitUsBeforeReload() {
+            return symbolCacheWaitUsBeforeReload;
+        }
     }
 
     private class PropJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
@@ -2379,8 +2389,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public SqlInterruptorConfiguration getInterruptorConfiguration() {
-            return interruptorConfiguration;
+        public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+            return circuitBreakerConfiguration;
         }
     }
 
@@ -2528,7 +2538,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropPGWireConfiguration implements PGWireConfiguration {
-
         @Override
         public int getBinParamCountCapacity() {
             return pgBinaryParamsCapacity;
@@ -2642,6 +2651,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public DateLocale getDefaultDateLocale() {
             return pgDefaultLocale;
+        }
+
+        @Override
+        public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+            return circuitBreakerConfiguration;
         }
 
         @Override

@@ -26,8 +26,8 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.griffin.DefaultSqlInterruptorConfiguration;
-import io.questdb.griffin.SqlInterruptorConfiguration;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.FilesFacade;
@@ -42,7 +42,7 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     protected final MimeTypesCache mimeTypesCache;
     private final IODispatcherConfiguration dispatcherConfiguration;
     private final HttpContextConfiguration httpContextConfiguration;
-    private final SqlInterruptorConfiguration interruptorConfiguration;
+    private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
 
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
         @Override
@@ -107,8 +107,8 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         }
 
         @Override
-        public SqlInterruptorConfiguration getInterruptorConfiguration() {
-            return interruptorConfiguration;
+        public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+            return circuitBreakerConfiguration;
         }
     };
 
@@ -131,10 +131,9 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
             this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
         }
         this.httpContextConfiguration = httpContextConfiguration;
-        this.interruptorConfiguration = new DefaultSqlInterruptorConfiguration();
+        this.circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
         this.dispatcherConfiguration = ioDispatcherConfiguration;
     }
-
 
     @Override
     public IODispatcherConfiguration getDispatcherConfiguration() {

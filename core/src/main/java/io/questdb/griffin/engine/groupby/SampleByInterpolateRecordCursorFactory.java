@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionInterruptor;
+import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
@@ -205,7 +205,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         dataMap.clear();
         final RecordCursor baseCursor = base.getCursor(executionContext);
         final Record baseRecord = baseCursor.getRecord();
-        final SqlExecutionInterruptor interruptor = executionContext.getSqlExecutionInterruptor();
+        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         try {
             // init all record function for this cursor, in case functions require metadata and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext);
@@ -218,7 +218,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             //
             // At the same time check if cursor has data
             while (baseCursor.hasNext()) {
-                interruptor.checkInterrupted();
+                circuitBreaker.test();
                 final MapKey key = recordKeyMap.withKey();
                 mapSink.copy(baseRecord, key);
                 key.createValue();
@@ -260,7 +260,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                     // we will go over unique keys and attempt to
                     // find them in data map with current timestamp
 
-                    fillGaps(prevSample, sample);
+                    fillGaps(prevSample, sample, circuitBreaker);
                     prevSample = sample;
                     GroupByUtils.toTop(groupByFunctions);
                 }
@@ -286,16 +286,17 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                     hiSample = sampler.nextTimestamp(prevSample);
                     break;
                 }
-                interruptor.checkInterrupted();
+                circuitBreaker.test();
             } while (true);
 
             // fill gaps if any at end of base cursor
-            fillGaps(prevSample, hiSample);
+            fillGaps(prevSample, hiSample, circuitBreaker);
 
             if (groupByTwoPointFunctionCount > 0) {
                 final RecordCursor mapCursor = recordKeyMap.getCursor();
                 final Record mapRecord = mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
+                    circuitBreaker.test();
                     MapValue value = findDataMapValue(mapRecord, loSample);
                     if (value.getByte(0) == 0) { //we have at least 1 data point
                         long x1 = loSample;
@@ -323,6 +324,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 final RecordCursor mapCursor = recordKeyMap.getCursor();
                 final Record mapRecord = mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
+                    circuitBreaker.test();
                     // locate first gap
                     MapValue value = findDataMapValue(mapRecord, sample);
                     if (value.getByte(0) == 1) {
@@ -435,18 +437,19 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         }
     }
 
-    private void fillGaps(long lo, long hi) {
+    private void fillGaps(long lo, long hi, SqlExecutionCircuitBreaker circuitBreaker) {
         final RecordCursor keyCursor = recordKeyMap.getCursor();
         final Record record = keyCursor.getRecord();
         long timestamp = lo;
         while (timestamp < hi) {
             while (keyCursor.hasNext()) {
+                circuitBreaker.test();
                 MapKey key = dataMap.withKey();
                 mapSink2.copy(record, key);
                 key.putLong(timestamp);
                 MapValue value = key.createValue();
                 if (value.isNew()) {
-                    value.putByte(0, (byte) 1); // this is gap
+                    value.putByte(0, (byte) 1); // this is a gap
                 }
             }
             timestamp = sampler.nextTimestamp(timestamp);

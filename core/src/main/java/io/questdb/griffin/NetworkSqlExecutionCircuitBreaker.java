@@ -28,42 +28,66 @@ import io.questdb.cairo.CairoException;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 
 import java.io.Closeable;
 
-public class HttpSqlExecutionInterruptor implements SqlExecutionInterruptor, Closeable {
+public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBreaker, Closeable {
     private final NetworkFacade nf;
-    private final int nIterationsPerCheck;
+    private final int throttle;
     private final int bufferSize;
     private long buffer;
-    private int nIterationsSinceCheck;
+    private int testCount;
     private long fd = -1;
+    private long powerDownDeadline;
+    private final MicrosecondClock clock;
+    private final long maxTime;
 
-    public HttpSqlExecutionInterruptor(SqlInterruptorConfiguration configuration) {
+    public NetworkSqlExecutionCircuitBreaker(SqlExecutionCircuitBreakerConfiguration configuration) {
         this.nf = configuration.getNetworkFacade();
-        this.nIterationsPerCheck = configuration.getCountOfIterationsPerCheck();
+        this.throttle = configuration.getCircuitBreakerThrottle();
         this.bufferSize = configuration.getBufferSize();
-        buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
+        this.buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        this.clock = configuration.getClock();
+        this.maxTime = configuration.getMaxTime();
     }
 
     @Override
-    public void checkInterrupted() {
-        assert fd != -1;
-        if (nIterationsSinceCheck == nIterationsPerCheck) {
-            nIterationsSinceCheck = 0;
-            checkConnection();
+    public void powerUp() {
+        final long ticks = clock.getTicks();
+        // test for overflow
+        if ((maxTime > 0) && (ticks > Long.MAX_VALUE - maxTime)) {
+            powerDownDeadline = Long.MAX_VALUE;
         } else {
-            nIterationsSinceCheck++;
+            powerDownDeadline = ticks + maxTime;
         }
     }
 
-    private void checkConnection() {
+    private void testTimeout() {
+        if (powerDownDeadline < clock.getTicks()) {
+            powerDownDeadline = Long.MIN_VALUE;
+            throw CairoException.instance(0).put("timeout, query aborted [fd=").put(fd).put(']').setInterruption(true);
+        }
+    }
+    @Override
+    public void test() {
+        if (testCount < throttle) {
+            testCount++;
+        } else {
+            testCount = 0;
+            testTimeout();
+            testConnection();
+        }
+    }
+
+    private void testConnection() {
+        assert fd != -1;
         int nRead = nf.peek(fd, buffer, bufferSize);
         if (nRead == 0) {
             return;
         }
         if (nRead < 0) {
-            throw CairoException.instance(0).put("client fd ").put(fd).put(" is closed").setInterruption(true);
+            throw CairoException.instance(0).put("remote disconnected, query aborted [fd=").put(fd).put(']').setInterruption(true);
         }
 
         int index = 0;
@@ -81,16 +105,16 @@ public class HttpSqlExecutionInterruptor implements SqlExecutionInterruptor, Clo
         }
     }
 
-    public HttpSqlExecutionInterruptor of(long fd) {
+    public NetworkSqlExecutionCircuitBreaker of(long fd) {
         assert buffer != 0;
-        nIterationsSinceCheck = 0;
+        testCount = 0;
         this.fd = fd;
         return this;
     }
 
     @Override
     public void close() {
-        Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_HTTP_CONN);
+        Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
         buffer = 0;
         fd = -1;
     }
