@@ -334,7 +334,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestamp() throws Exception {
+    public void testTimestampComparison() throws Exception {
         final String query = "select * from x where t1 != t2";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -351,6 +351,15 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_timestamp(to_timestamp('2020', 'yyyy'), to_timestamp('2021', 'yyyy'), 5) t" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
+        assertQuery(query, ddl);
+    }
+
+    @Test
+    public void testTimestampNullComparison() throws Exception {
+        final String query = "select * from x where ts >= 0";
+        final String ddl = "create table x as " +
+                "(select case when x < 10 then cast(NULL as TIMESTAMP) else cast(x as TIMESTAMP) end ts" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + "))";
         assertQuery(query, ddl);
     }
 
