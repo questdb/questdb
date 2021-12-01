@@ -81,14 +81,14 @@ public class TemplateParser implements Sinkable {
                 case '$':
                     if (dollarStart != NIL) { // already found a $
                         if (i - dollarStart > 1) {
-                            addEnvComponent(dollarStart, dollarStart + 1, i);
+                            addEnvTemplateNode(dollarStart, dollarStart + 1, i);
                             lastExprEnd = i + 1;
                         } else {
                             throw new LogError("Unexpected '$' at position " + i);
                         }
                     } else {
                         if (i - lastExprEnd > 0) {
-                            addStaticComponent(lastExprEnd, i);
+                            addStaticTemplateNode(lastExprEnd, i);
                             lastExprEnd = i + 1;
                         }
                     }
@@ -107,7 +107,7 @@ public class TemplateParser implements Sinkable {
                         continue;
                     }
                     if (keyStart == NIL) {
-                        addEnvComponent(dollarStart, dollarStart + 1, i);
+                        addEnvTemplateNode(dollarStart, dollarStart + 1, i);
                         lastExprEnd = i;
                     } else {
                         int exprLen = i - keyStart;
@@ -116,9 +116,9 @@ public class TemplateParser implements Sinkable {
                         }
                         int formatStart = keyStart + DATE_FORMAT_KEY.length();
                         if (Chars.startsWith(originalTxt, keyStart, formatStart, DATE_FORMAT_KEY)) {
-                            addDateComponent(formatStart, i);
+                            addDateTemplateNode(formatStart, i);
                         } else {
-                            addEnvComponent(dollarStart, dollarStart + 2, i);
+                            addEnvTemplateNode(dollarStart, dollarStart + 2, i);
                         }
                         lastExprEnd = i + 1;
                     }
@@ -131,14 +131,14 @@ public class TemplateParser implements Sinkable {
                 throw new LogError("Mismatched '{}' at position " + lastExprEnd);
             }
             if (locationLen - lastExprEnd > 0) {
-                addStaticComponent(lastExprEnd, locationLen);
+                addStaticTemplateNode(lastExprEnd, locationLen);
             }
         } else {
             if (keyStart != NIL) {
                 throw new LogError("Missing '}' at position " + locationLen);
             }
             if (locationLen - dollarStart > 1) {
-                addEnvComponent(dollarStart, dollarStart + 1, locationLen);
+                addEnvTemplateNode(dollarStart, dollarStart + 1, locationLen);
             } else {
                 throw new LogError("Unexpected '$' at position " + dollarStart);
             }
@@ -192,7 +192,7 @@ public class TemplateParser implements Sinkable {
         }
     }
 
-    private void addEnvComponent(int dollarOffset, int envStart, int envEnd) {
+    private void addEnvTemplateNode(int dollarOffset, int envStart, int envEnd) {
         final String envKey = originalTxt.subSequence(envStart, envEnd).toString();
         final CharSequence envVal = props.get(envKey);
         if (envVal == null) {
@@ -207,7 +207,7 @@ public class TemplateParser implements Sinkable {
         });
     }
 
-    private void addDateComponent(int start, int end) {
+    private void addDateTemplateNode(int start, int end) {
         if (end - start < 1) {
             throw new LogError("Missing expression at position " + start);
         }
@@ -231,7 +231,7 @@ public class TemplateParser implements Sinkable {
         });
     }
 
-    private void addStaticComponent(int start, int end) {
+    private void addStaticTemplateNode(int start, int end) {
         templateNodes.add(new TemplateNode(TemplateNode.TYPE_STATIC, null) {
             @Override
             public void toSink(CharSink sink) {

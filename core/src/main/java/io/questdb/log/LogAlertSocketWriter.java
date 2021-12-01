@@ -200,19 +200,19 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         location = alertTemplate.parseEnv(location, now).toString(); // location may contain dollar expressions
 
         // read template, resolve env vars within (except $ALERT_MESSAGE)
-        boolean wasRead = false;
+        boolean needsReading = true;
         try (InputStream is = LogAlertSocketWriter.class.getResourceAsStream(location)) {
             if (is != null) {
                 byte[] buff = new byte[LogAlertSocket.IN_BUFFER_SIZE];
                 int len = is.read(buff, 0, buff.length);
                 String template = new String(buff, 0, len, Files.UTF_8);
                 alertTemplate.parse(template, now, ALERT_PROPS);
-                wasRead = true;
+                needsReading = false;
             }
         } catch (IOException e) {
             // it was not a resource ("/resource_name")
         }
-        if (!wasRead) {
+        if (needsReading) {
             alertTemplate.parse(
                     readFile(
                             location,
