@@ -110,6 +110,16 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testUpdateSingleTableToBindVariable() throws Exception {
+        assertUpdate("update x set tt = $1 from (select-virtual $1 tt from (x timestamp (timestamp)))",
+                "update x set tt = $1",
+                partitionedModelOf("x")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("tt", ColumnType.TIMESTAMP)
+                        .timestamp());
+    }
+
+    @Test
     public void testUpdateSingleTableToConst() throws Exception {
         assertUpdate("update x set tt = 1 from (select-virtual 1 tt from (x timestamp (timestamp)))",
                 "update x set tt = 1",

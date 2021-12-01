@@ -926,6 +926,11 @@ public final class SqlParser {
     }
 
     private QueryModel parseDmlUpdate(GenericLexer lexer) throws SqlException {
+        // Update QueryModel structure is
+        // QueryModel with SET column expressions (updateQueryModel)
+        // |-- nested QueryModel of select-virtual or select-choose of data selected for update (fromModel)
+        //     |-- nested QueryModel with selected data (nestedModel)
+        //         |-- join QueryModels to represent FROM clause
         CharSequence tok;
         final int modelPosition = lexer.getPosition();
 
@@ -940,13 +945,20 @@ public final class SqlParser {
 
         // [update]
         if (isUpdateKeyword(tok)) {
+            // parse SET statements into updateQueryModel and rhs of SETs into fromModel to select
             parseUpdateClause(lexer, updateQueryModel, fromModel);
+
+            // create nestedModel QueryModel to source rowids for the update
             QueryModel nestedModel = queryModelPool.next();
             nestedModel.setTableName(fromModel.getTableName());
             nestedModel.setAlias(updateQueryModel.getAlias());
             nestedModel.setIsUpdate(true);
+
+            // nest nestedModel inside fromModel
             fromModel.setTableName(null);
             fromModel.setNestedModel(nestedModel);
+
+            // Add WITH clauses if they exist into fromModel
             fromModel.getWithClauses().addWithClauses(topLevelWithModel);
 
             tok = optTok(lexer);
@@ -961,14 +973,14 @@ public final class SqlParser {
                         throw SqlException.$(lexer.lastTokenPosition(), "JOIN is not supported on UPDATE statement");
                     }
                     // expect multiple [[inner | outer | cross] join]
-                    nestedModel.addJoinModel(parseJoin(lexer, tok, joinType, fromModel.getWithClauses()));
+                    nestedModel.addJoinModel(parseJoin(lexer, tok, joinType, topLevelWithModel));
                     tok = optTok(lexer);
                 }
             } else if (tok != null && !isWhereKeyword(tok)) {
                 throw SqlException.$(lexer.lastTokenPosition(), "FROM, WHERE or EOF expected");
             }
 
-            // expect [where]
+            // [where]
             if (tok != null && isWhereKeyword(tok)) {
                 ExpressionNode expr = expr(lexer, fromModel);
                 if (expr != null) {
@@ -985,12 +997,12 @@ public final class SqlParser {
         return updateQueryModel;
     }
 
-    private void parseUpdateClause(GenericLexer lexer, QueryModel updateQueryModel, QueryModel nestedModel) throws SqlException {
+    private void parseUpdateClause(GenericLexer lexer, QueryModel updateQueryModel, QueryModel fromModel) throws SqlException {
         CharSequence tok = tok(lexer, "table name or alias");
         CharSequence tableName = GenericLexer.immutableOf(tok);
         ExpressionNode tableNameExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableName, 0, 0);
         updateQueryModel.setTableName(tableNameExpr);
-        nestedModel.setTableName(tableNameExpr);
+        fromModel.setTableName(tableNameExpr);
 
         tok = tok(lexer, "AS, SET or table alias expected");
         if (isAsKeyword(tok)) {
@@ -1026,7 +1038,7 @@ public final class SqlParser {
             updateQueryModel.getUpdateExpressions().add(setColumnExpression);
 
             QueryColumn valueColumn = queryColumnPool.next().of(col, expr);
-            nestedModel.addBottomUpColumn(valueColumn);
+            fromModel.addBottomUpColumn(valueColumn);
 
             tok = optTok(lexer);
             if (tok == null) {

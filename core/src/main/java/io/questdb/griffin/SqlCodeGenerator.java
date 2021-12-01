@@ -2387,8 +2387,8 @@ public class SqlCodeGenerator implements Mutable {
                         metadata,
                         executionContext
                 );
-                // define "undefined" functions as string
-                if (function.isUndefined()) {
+                // define "undefined" functions as string unless it's update. Leave Undefined if update
+                if (function.isUndefined() && !model.isUpdate()) {
                     function.assignType(ColumnType.STRING, executionContext.getBindVariableService());
                 }
                 functions.add(function);

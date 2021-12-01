@@ -1801,7 +1801,7 @@ public class SqlCompiler implements Closeable {
         // QueryModel with SET column expressions
         // |-- QueryModel of select-virtual or select-choose of data selected for update
         //     |-- QueryModel with selected data
-        //         |-- QueryModel to represent FROM clause for JOINs in UPDATE
+        //         |-- Join QueryModel to represent FROM clause
         final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
         final QueryModel tableQueryModel = selectQueryModel.getNestedModel();
 

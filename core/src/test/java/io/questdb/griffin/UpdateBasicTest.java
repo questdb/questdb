@@ -194,6 +194,56 @@ public class UpdateBasicTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUpdateToBindVar() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x as int) x" +
+                    " from long_sequence(2))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            CompiledQuery cc = compiler.compile("UPDATE up SET x = $1 WHERE x > 1 and x < 4", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
+            Assert.assertEquals(ColumnType.INT, sqlExecutionContext.getBindVariableService().getFunction(0).getType());
+
+            sqlExecutionContext.getBindVariableService().setInt(0, 100);
+
+            try (UpdateStatement updateStatement = cc.getUpdateStatement()) {
+                applyUpdate(updateStatement);
+            }
+
+            assertSql("up", "ts\tx\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\n" +
+                    "1970-01-01T00:00:01.000000Z\t100\n");
+        });
+    }
+
+    @Test
+    public void testUpdateWithBindVarInWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x as int) x" +
+                    " from long_sequence(2))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            CompiledQuery cc = compiler.compile("UPDATE up SET x = 100 WHERE x < $1", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
+            Assert.assertEquals(ColumnType.INT, sqlExecutionContext.getBindVariableService().getFunction(0).getType());
+
+            sqlExecutionContext.getBindVariableService().setInt(0, 2);
+
+            try (UpdateStatement updateStatement = cc.getUpdateStatement()) {
+                applyUpdate(updateStatement);
+            }
+
+            assertSql("up", "ts\tx\n" +
+                    "1970-01-01T00:00:00.000000Z\t100\n" +
+                    "1970-01-01T00:00:01.000000Z\t2\n");
+        });
+    }
+
+    @Test
     public void testUpdateMultipartitionedTable() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel tml = new TableModel(configuration, "up", PartitionBy.DAY)) {
