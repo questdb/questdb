@@ -179,8 +179,6 @@ public class TemplateParser implements Sinkable {
     }
 
     public static abstract class Component implements Sinkable {
-
-
         private final ComponentType type;
         private final CharSequence key;
 
