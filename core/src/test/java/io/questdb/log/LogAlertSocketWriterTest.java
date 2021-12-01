@@ -29,8 +29,8 @@ import io.questdb.network.NetworkError;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -44,10 +44,12 @@ public class LogAlertSocketWriterTest {
     private static final FilesFacade ff = FilesFacadeImpl.INSTANCE;
 
     private Rnd rand;
+    private StringSink sink;
 
     @Before
     public void setUp() {
         rand = new Rnd();
+        sink = new StringSink();
     }
 
     @Test
@@ -75,7 +77,7 @@ public class LogAlertSocketWriterTest {
                         recordSink.put("A \"simple\" $message$\n");
 
                         writer.onLogRecord(recordSink);
-                        Assert.assertEquals(
+                        TestUtils.assertEquals(
                                 "POST /api/v1/alerts HTTP/1.1\r\n" +
                                         "Host: " + LogAlertSocket.localHostIp + "\r\n" +
                                         "User-Agent: QuestDB/LogAlert\r\n" +
@@ -104,13 +106,13 @@ public class LogAlertSocketWriterTest {
                                         "    }\n" +
                                         "  }\n" +
                                         "]\n",
-                                writer.getAlertSink().toString()
+                                writer.getAlertSink()
                         );
 
                         recordSink.clear();
                         recordSink.put("A second log message");
                         writer.onLogRecord(recordSink);
-                        Assert.assertEquals(
+                        TestUtils.assertEquals(
                                 "POST /api/v1/alerts HTTP/1.1\r\n" +
                                         "Host: " + LogAlertSocket.localHostIp + "\r\n" +
                                         "User-Agent: QuestDB/LogAlert\r\n" +
@@ -139,12 +141,74 @@ public class LogAlertSocketWriterTest {
                                         "    }\n" +
                                         "  }\n" +
                                         "]\n",
-                                writer.getAlertSink().toString()
+                                writer.getAlertSink()
                         );
 
                         Assert.assertTrue(haltLatch.await(10_000_000_000L));
                         Assert.assertFalse(alertsTarget[0].isRunning());
                         Assert.assertFalse(alertsTarget[1].isRunning());
+                    } finally {
+                        Unsafe.free(logRecordBuffPtr, logRecordBuffSize, MemoryTag.NATIVE_DEFAULT);
+                    }
+                });
+    }
+
+    @Test
+    public void testOnLogRecordInternationalTemplate() throws Exception {
+        withLogAlertSocketWriter(
+                () -> 1637091363010000L,
+                writer -> {
+
+                    final int logRecordBuffSize = 1024; // plenty, to allow for encoding/escaping
+                    final long logRecordBuffPtr = Unsafe.malloc(logRecordBuffSize, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        // create mock alert target servers
+                        final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
+                        final MockAlertTarget alertTarget = new MockAlertTarget(1234, haltLatch::countDown);
+                        alertTarget.start();
+
+                        writer.setLocation("/alert-manager-tpt-international.json");
+                        writer.setAlertTargets("localhost:1234");
+                        writer.bindProperties();
+
+                        LogRecordSink recordSink = new LogRecordSink(logRecordBuffPtr, logRecordBuffSize);
+                        recordSink.setLevel(LogLevel.ERROR);
+                        recordSink.put("A \"simple\" $message$\n");
+
+                        writer.onLogRecord(recordSink);
+                        TestUtils.assertEquals(
+                                "POST /api/v1/alerts HTTP/1.1\r\n" +
+                                        "Host: 192.168.1.58\r\n" +
+                                        "User-Agent: QuestDB/LogAlert\r\n" +
+                                        "Accept: */*\r\n" +
+                                        "Content-Type: application/json\r\n" +
+                                        "Content-Length:      559\r\n" +
+                                        "\r\n" +
+                                        "[\n" +
+                                        "  {\n" +
+                                        "    \"Status\": \"firing\",\n" +
+                                        "    \"Labels\": {\n" +
+                                        "      \"alertname\": \"உலகனைத்தும்\",\n" +
+                                        "      \"category\": \"воно мені не\",\n" +
+                                        "      \"severity\": \"łódź jeża lub osiem\",\n" +
+                                        "      \"orgid\": \"GLOBAL\",\n" +
+                                        "      \"service\": \"QuestDB\",\n" +
+                                        "      \"namespace\": \"GLOBAL\",\n" +
+                                        "      \"cluster\": \"GLOBAL\",\n" +
+                                        "      \"instance\": \"GLOBAL\",\n" +
+                                        "      \"我能吞下玻璃而不傷身體\": \"ππππππππππππππππππππ 11\"\n" +
+                                        "    },\n" +
+                                        "    \"Annotations\": {\n" +
+                                        "      \"description\": \"ERROR/GLOBAL/GLOBAL/GLOBAL/GLOBAL\",\n" +
+                                        "      \"message\": \"A \\\"simple\\\" \\$message\\$\"\n" +
+                                        "    }\n" +
+                                        "  }\n" +
+                                        "]\n",
+                                writer.getAlertSink()
+                        );
+
+                        Assert.assertTrue(haltLatch.await(10_000_000_000L));
+                        Assert.assertFalse(alertTarget.isRunning());
                     } finally {
                         Unsafe.free(logRecordBuffPtr, logRecordBuffSize, MemoryTag.NATIVE_DEFAULT);
                     }
@@ -375,10 +439,8 @@ public class LogAlertSocketWriterTest {
                 for (int i = 0; i < bytes.length; i++) {
                     Unsafe.getUnsafe().putByte(p++, (byte) 0);
                 }
-
-                DirectByteCharSequence file = LogAlertSocketWriter.readFile(fileName, buffPtr, buffSize, ff);
-                Assert.assertEquals(bytes.length, file.length());
-                Assert.assertEquals(fileContent, Chars.stringFromUtf8Bytes(buffPtr, buffPtr + file.length()));
+                LogAlertSocketWriter.readFile(fileName, buffPtr, buffSize, ff, sink);
+                TestUtils.assertEquals(fileContent, sink);
                 ff.remove(path);
             } finally {
                 Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
@@ -393,7 +455,7 @@ public class LogAlertSocketWriterTest {
             try (Path path = new Path()) {
                 path.put(fileName).$();
                 try {
-                    LogAlertSocketWriter.readFile(fileName, 0, 0, ff);
+                    LogAlertSocketWriter.readFile(fileName, 0, 0, ff, sink);
                 } catch (LogError e) {
                     String message = e.getMessage();
                     Assert.assertTrue(
@@ -426,7 +488,7 @@ public class LogAlertSocketWriterTest {
                 fd = ff.openCleanRW(path, buffSize);
                 ff.append(fd, buffPtr, len);
                 try {
-                    LogAlertSocketWriter.readFile(fileName, buffPtr, 17, ff);
+                    LogAlertSocketWriter.readFile(fileName, buffPtr, 17, ff, sink);
                 } catch (LogError e) {
                     String message = e.getMessage();
                     Assert.assertTrue(

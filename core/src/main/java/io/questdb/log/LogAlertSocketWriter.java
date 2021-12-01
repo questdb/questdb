@@ -32,8 +32,9 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 import java.io.*;
 
@@ -272,16 +273,15 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
             // it was not a resource ("/resource_name")
         }
         if (needsReading) {
-            alertTemplate.parse(
-                    readFile(
-                            location,
-                            socket.getInBufferPtr(),
-                            socket.getInBufferSize(),
-                            ff
-                    ),
-                    now,
-                    ALERT_PROPS
+            StringSink sink = new StringSink();
+            readFile(
+                    location,
+                    socket.getInBufferPtr(),
+                    socket.getInBufferSize(),
+                    ff,
+                    sink
             );
+            alertTemplate.parse(sink, now, ALERT_PROPS);
         }
         if (alertTemplate.getKeyOffset(MESSAGE_ENV) < 0) {
             throw new LogError(String.format(
@@ -312,7 +312,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     }
 
     @VisibleForTesting
-    static DirectByteCharSequence readFile(String location, long address, long addressSize, FilesFacade ff) {
+    static void readFile(String location, long address, long addressSize, FilesFacade ff, CharSink sink) {
         long fdTemplate = -1;
         try (Path path = new Path()) {
             path.of(location);
@@ -336,9 +336,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                         size
                 ));
             }
-            DirectByteCharSequence template = new DirectByteCharSequence();
-            template.of(address, address + size);
-            return template;
+            Chars.utf8Decode(address, address + size, sink);
         } finally {
             if (fdTemplate != -1) {
                 ff.close(fdTemplate);
