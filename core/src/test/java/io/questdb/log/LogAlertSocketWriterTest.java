@@ -221,7 +221,7 @@ public class LogAlertSocketWriterTest {
     @Test
     public void test_BindProperties_ReconnectDelay() throws Exception {
         withLogAlertSocketWriter(writer -> {
-            writer.setReconnectDelay(String.valueOf(50_000_000));
+            writer.setReconnectDelay(String.valueOf(50));
             writer.setAlertTargets("\"\"");
             writer.bindProperties();
             Assert.assertNotNull(LogAlertSocket.localHostIp);

@@ -78,8 +78,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
 
     private HttpLogRecordSink alertSink;
     private LogAlertSocket socket;
-    private ObjList<TemplateNode> alertTemplateComponents;
-    private int alertTemplateComponentsLen;
+    private ObjList<TemplateNode> alertTemplateNodes;
+    private int alertTemplateNodesLen;
     // changed by introspection
     private String location;
     private String bufferSize;
@@ -124,7 +124,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         long nReconnectDelay = LogAlertSocket.RECONNECT_DELAY_NANO;
         if (reconnectDelay != null) {
             try {
-                nReconnectDelay = Numbers.parseLong(reconnectDelay);
+                nReconnectDelay = Numbers.parseLong(reconnectDelay) * 1000000; // config is in milli
             } catch (NumericException e) {
                 throw new LogError("Invalid value for reconnectDelay: " + reconnectDelay);
             }
@@ -230,8 +230,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                     MESSAGE_ENV_VALUE,
                     location));
         }
-        alertTemplateComponents = alertTemplate.getTemplateNodes();
-        alertTemplateComponentsLen = alertTemplateComponents.size();
+        alertTemplateNodes = alertTemplate.getTemplateNodes();
+        alertTemplateNodesLen = alertTemplateNodes.size();
     }
 
     @VisibleForTesting
@@ -240,8 +240,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         if ((logRecord.getLevel() & level) != 0 && len > 0) {
             alertTemplate.setDateValue(clock.getTicks());
             alertSink.rewindToMark();
-            for (int i = 0; i < alertTemplateComponentsLen; i++) {
-                TemplateNode comp = alertTemplateComponents.getQuick(i);
+            for (int i = 0; i < alertTemplateNodesLen; i++) {
+                TemplateNode comp = alertTemplateNodes.getQuick(i);
                 if (comp.isEnv(MESSAGE_ENV)) {
                     alertSink.put(logRecord);
                 } else {
