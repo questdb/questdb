@@ -162,11 +162,10 @@ public class LogAlertSocketWriterTest {
                     final int logRecordBuffSize = 1024; // plenty, to allow for encoding/escaping
                     final long logRecordBuffPtr = Unsafe.malloc(logRecordBuffSize, MemoryTag.NATIVE_DEFAULT);
                     try {
-                        // create mock alert target servers
+                        // create mock alert target server
                         final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
                         final MockAlertTarget alertTarget = new MockAlertTarget(1234, haltLatch::countDown);
                         alertTarget.start();
-
                         writer.setLocation("/alert-manager-tpt-international.json");
                         writer.setAlertTargets("localhost:1234");
                         writer.bindProperties();
@@ -175,7 +174,9 @@ public class LogAlertSocketWriterTest {
                         recordSink.setLevel(LogLevel.ERROR);
                         recordSink.put("A \"simple\" $message$\n");
 
+                        System.out.printf("#2%n");
                         writer.onLogRecord(recordSink);
+                        System.out.printf("#3%n");
                         TestUtils.assertEquals(
                                 "POST /api/v1/alerts HTTP/1.1\r\n" +
                                         "Host: 192.168.1.58\r\n" +

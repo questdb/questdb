@@ -24,11 +24,14 @@
 
 package io.questdb.log;
 
+import io.questdb.std.Files;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -179,6 +182,39 @@ public class TemplateParserTest {
         parser.setDateValue(1637091363010000L); // time always in micros
         String str = parser.toString();
         TestUtils.assertEquals("calendar:2021!", str);
+    }
+
+    @Test
+    public void testParseTemplate() throws IOException {
+        try (InputStream is = LogAlertSocketWriter.class.getResourceAsStream("/alert-manager-tpt-international.json")) {
+            byte[] buff = new byte[1024];
+            int len = is.read(buff, 0, buff.length);
+            String template = new String(buff, 0, len, Files.UTF_8);
+            parser.parse(template, 0, LogAlertSocketWriter.ALERT_PROPS);
+            TestUtils.assertEquals(
+                    "[\n" +
+                            "  {\n" +
+                            "    \"Status\": \"firing\",\n" +
+                            "    \"Labels\": {\n" +
+                            "      \"alertname\": \"உலகனைத்தும்\",\n" +
+                            "      \"category\": \"воно мені не\",\n" +
+                            "      \"severity\": \"łódź jeża lub osiem\",\n" +
+                            "      \"orgid\": \"GLOBAL\",\n" +
+                            "      \"service\": \"QuestDB\",\n" +
+                            "      \"namespace\": \"GLOBAL\",\n" +
+                            "      \"cluster\": \"GLOBAL\",\n" +
+                            "      \"instance\": \"GLOBAL\",\n" +
+                            "      \"我能吞下玻璃而不傷身體\": \"ππππππππππππππππππππ 01\"\n" +
+                            "    },\n" +
+                            "    \"Annotations\": {\n" +
+                            "      \"description\": \"ERROR/GLOBAL/GLOBAL/GLOBAL/GLOBAL\",\n" +
+                            "      \"message\": \"${ALERT_MESSAGE}\"\n" +
+                            "    }\n" +
+                            "  }\n" +
+                            "]\n",
+                    parser
+            );
+        }
     }
 
     private void assertParseEquals(String location, String expected, String expectedLocation) {
