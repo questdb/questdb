@@ -1250,8 +1250,11 @@ namespace questdb::avx2 {
             case f32:
             case f64:
                 return cmp_le(c, type, rhs, lhs, null_check);
-            default:
-                return mask_not(c, cmp_lt(c, type, lhs, rhs, null_check));
+            default: {
+                Ymm mask = mask_not(c, cmp_lt(c, type, lhs, rhs));
+                Ymm not_nulls = mask_not(c, cmp_eq_null(c, type, lhs));
+                return mask_and(c, mask, not_nulls);
+            }
         }
     }
 
