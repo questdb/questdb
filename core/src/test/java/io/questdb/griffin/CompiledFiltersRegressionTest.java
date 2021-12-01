@@ -355,7 +355,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampNullComparison() throws Exception {
+    public void testTimestampNullValueComparison() throws Exception {
         final String query = "select * from x where ts >= 0";
         final String ddl = "create table x as " +
                 "(select case when x < 10 then cast(NULL as TIMESTAMP) else cast(x as TIMESTAMP) end ts" +
