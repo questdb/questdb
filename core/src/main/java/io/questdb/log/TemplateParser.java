@@ -49,7 +49,7 @@ public class TemplateParser implements Sinkable {
 
     private final TimestampFormatCompiler dateCompiler = new TimestampFormatCompiler();
     private final StringSink resolveSink = new StringSink();
-    private final ObjList<Component> txtComponents = new ObjList<>();
+    private final ObjList<TemplateNode> templateNodes = new ObjList<>();
     private final CharSequenceIntHashMap envStartIdxs = new CharSequenceIntHashMap();
     private final AtomicLong dateValue = new AtomicLong();
     private CharSequenceObjHashMap<CharSequence> props;
@@ -68,7 +68,7 @@ public class TemplateParser implements Sinkable {
         originalTxt = txt;
         this.dateValue.set(dateValue);
         this.props = props;
-        txtComponents.clear();
+        templateNodes.clear();
         envStartIdxs.clear();
         int dollarStart = NIL; // points at $
         int keyStart = NIL;   // points at the first char after {
@@ -154,41 +154,41 @@ public class TemplateParser implements Sinkable {
         return envStartIdxs.get(key); // relative to originalTxt
     }
 
-    public ObjList<Component> getComponents() {
-        return txtComponents;
+    public ObjList<TemplateNode> getTemplateNodes() {
+        return templateNodes;
     }
 
     @Override
     public void toSink(CharSink sink) {
-        for (int i = 0, n = txtComponents.size(); i < n; i++) {
-            sink.put(txtComponents.getQuick(i));
+        for (int i = 0, n = templateNodes.size(); i < n; i++) {
+            sink.put(templateNodes.getQuick(i));
         }
     }
 
     @Override
     public String toString() {
         resolveSink.clear();
-        for (int i = 0, n = txtComponents.size(); i < n; i++) {
-            resolveSink.put(txtComponents.getQuick(i));
+        for (int i = 0, n = templateNodes.size(); i < n; i++) {
+            resolveSink.put(templateNodes.getQuick(i));
         }
         return resolveSink.toString();
     }
 
-    private enum ComponentType {
-        STATIC, ENV, DATE
-    }
+    public static abstract class TemplateNode implements Sinkable {
+        private final static int TYPE_STATIC = 0;
+        private final static int TYPE_ENV = 1;
+        private final static int TYPE_DATE = 2;
 
-    public static abstract class Component implements Sinkable {
-        private final ComponentType type;
+        private final int type;
         private final CharSequence key;
 
-        private Component(ComponentType type, CharSequence key) {
+        private TemplateNode(int type, CharSequence key) {
             this.type = type;
             this.key = key;
         }
 
         public boolean isEnv(CharSequence key) {
-            return type == ComponentType.ENV && this.key.equals(key);
+            return type == TYPE_ENV && this.key.equals(key);
         }
     }
 
@@ -199,7 +199,7 @@ public class TemplateParser implements Sinkable {
             throw new LogError("Undefined property: " + envKey);
         }
         envStartIdxs.put(envKey, dollarOffset);
-        txtComponents.add(new Component(ComponentType.ENV, envKey) {
+        templateNodes.add(new TemplateNode(TemplateNode.TYPE_ENV, envKey) {
             @Override
             public void toSink(CharSink sink) {
                 sink.put(envVal);
@@ -223,7 +223,7 @@ public class TemplateParser implements Sinkable {
             throw new LogError("Missing expression at position " + actualStart);
         }
         final DateFormat dateFormat = dateCompiler.compile(originalTxt, actualStart, actualEnd, false);
-        txtComponents.add(new Component(ComponentType.DATE, DATE_FORMAT_KEY) {
+        templateNodes.add(new TemplateNode(TemplateNode.TYPE_DATE, DATE_FORMAT_KEY) {
             @Override
             public void toSink(CharSink sink) {
                 dateFormat.format(dateValue.get(), TimestampFormatUtils.enLocale, null, sink);
@@ -232,7 +232,7 @@ public class TemplateParser implements Sinkable {
     }
 
     private void addStaticComponent(int start, int end) {
-        txtComponents.add(new Component(ComponentType.STATIC, null) {
+        templateNodes.add(new TemplateNode(TemplateNode.TYPE_STATIC, null) {
             @Override
             public void toSink(CharSink sink) {
                 sink.put(originalTxt, start, end);

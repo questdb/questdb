@@ -37,7 +37,7 @@ import io.questdb.std.str.Path;
 
 import java.io.*;
 
-import static io.questdb.log.TemplateParser.Component;
+import static io.questdb.log.TemplateParser.TemplateNode;
 
 public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, LogWriter {
 
@@ -78,7 +78,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
 
     private HttpLogRecordSink alertSink;
     private LogAlertSocket socket;
-    private ObjList<TemplateParser.Component> alertTemplateComponents;
+    private ObjList<TemplateNode> alertTemplateComponents;
     private int alertTemplateComponentsLen;
     // changed by introspection
     private String location;
@@ -230,7 +230,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                     MESSAGE_ENV_VALUE,
                     location));
         }
-        alertTemplateComponents = alertTemplate.getComponents();
+        alertTemplateComponents = alertTemplate.getTemplateNodes();
         alertTemplateComponentsLen = alertTemplateComponents.size();
     }
 
@@ -241,7 +241,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
             alertTemplate.setDateValue(clock.getTicks());
             alertSink.rewindToMark();
             for (int i = 0; i < alertTemplateComponentsLen; i++) {
-                Component comp = alertTemplateComponents.getQuick(i);
+                TemplateNode comp = alertTemplateComponents.getQuick(i);
                 if (comp.isEnv(MESSAGE_ENV)) {
                     alertSink.put(logRecord);
                 } else {
