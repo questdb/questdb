@@ -23,31 +23,40 @@
  ******************************************************************************/
 
 import { useContext } from "react"
-import * as ace from "ace-builds"
 import { StoreKey } from "utils/localStorage/types"
 import { LocalStorageContext } from "providers/LocalStorageProvider"
+import { editor } from "monaco-editor"
+
+type IStandaloneCodeEditor = editor.IStandaloneCodeEditor
 
 export const usePreferences = () => {
   const { queryText, editorCol, editorLine, updateSettings } = useContext(
     LocalStorageContext,
   )
 
-  const loadPreferences = (editor: ace.Ace.Editor) => {
+  const loadPreferences = (editor: IStandaloneCodeEditor) => {
     if (queryText) {
       editor.setValue(queryText)
     }
 
     if (editorLine && editorCol) {
-      setTimeout(() => {
-        editor.gotoLine(editorLine, editorCol, false)
-      }, 1000)
+      editor.setPosition({ column: editorCol, lineNumber: editorLine })
     }
   }
 
-  const savePreferences = (editor: ace.Ace.Editor) => {
+  const savePreferences = (editor: IStandaloneCodeEditor) => {
     updateSettings(StoreKey.QUERY_TEXT, editor.getValue())
-    updateSettings(StoreKey.EDITOR_COL, editor.getCursorPosition().column)
-    updateSettings(StoreKey.EDITOR_LINE, editor.getCursorPosition().row + 1)
+
+    if (editor.getPosition()) {
+      const lineNumber = editor?.getPosition()?.lineNumber
+      const columnNumber = editor?.getPosition()?.column
+      if (lineNumber) {
+        updateSettings(StoreKey.EDITOR_LINE, lineNumber)
+      }
+      if (columnNumber) {
+        updateSettings(StoreKey.EDITOR_COL, columnNumber)
+      }
+    }
   }
 
   return {

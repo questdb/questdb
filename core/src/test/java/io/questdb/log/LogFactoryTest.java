@@ -31,8 +31,8 @@ import io.questdb.mp.SPSequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -544,20 +544,21 @@ public class LogFactoryTest {
 
         int fileCount = 0;
         try (Path path = new Path()) {
-            NativeLPSZ lpsz = new NativeLPSZ();
+            StringSink fileNameSink = new StringSink();
             path.of(base).$();
             long pFind = Files.findFirst(path);
             try {
                 Assert.assertTrue(pFind != 0);
                 do {
-                    lpsz.of(Files.findName(pFind));
-                    if (Files.isDots(lpsz)) {
+                    fileNameSink.clear();
+                    Chars.utf8DecodeZ(Files.findName(pFind), fileNameSink);
+                    if (Files.isDots(fileNameSink)) {
                         continue;
                     }
                     // don't hardcode hour, it is liable to vary
                     // because of different default timezones
-                    TestUtils.assertContains(lpsz, mustContain);
-                    Assert.assertFalse(Chars.contains(lpsz, ".1"));
+                    TestUtils.assertContains(fileNameSink, mustContain);
+                    Assert.assertFalse(Chars.contains(fileNameSink, ".1"));
                     fileCount++;
                 } while (Files.findNext(pFind) > 0);
 
