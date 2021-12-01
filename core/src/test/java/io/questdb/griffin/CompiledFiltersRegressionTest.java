@@ -42,6 +42,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+@Ignore
 @RunWith(Parameterized.class)
 public class CompiledFiltersRegressionTest extends AbstractCairoTest {
 

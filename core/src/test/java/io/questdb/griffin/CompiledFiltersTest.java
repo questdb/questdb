@@ -24,8 +24,10 @@
 
 package io.questdb.griffin;
 
+import org.junit.Ignore;
 import org.junit.Test;
 
+@Ignore
 public class CompiledFiltersTest extends AbstractGriffinTest {
 
     // TODO: keep this test for advanced features such as:

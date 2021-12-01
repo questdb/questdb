@@ -41,7 +41,7 @@ import java.util.Arrays;
  *
  * TODO:
  *  - i32 * 3 + 42.5 + f64 > 1 => 3 should be i32, 42.5 should be f32 (check Java???), 1 should be f64
- *  - i8 + i8 = null and i16 + i8 = null => revert new SQL functions?
+ *  - i8 + i8 = null and i16 + i8 = null => there are no nulls for byte, char and short
  *  - i64 > 50.5 => unlock these cases
  */
 public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {

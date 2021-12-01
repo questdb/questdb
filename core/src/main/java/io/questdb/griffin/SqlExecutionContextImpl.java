@@ -57,7 +57,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long requestFd = -1;
     private SqlExecutionInterruptor interruptor = SqlExecutionInterruptor.NOP_INTERRUPTOR;
     private long now;
-    private int jitMode = JIT_MODE_ENABLED;
+    private int jitMode = JIT_MODE_DISABLED;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
         this.cairoConfiguration = cairoEngine.getConfiguration();
