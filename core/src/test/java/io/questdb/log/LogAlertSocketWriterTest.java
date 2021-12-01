@@ -38,9 +38,7 @@ import org.junit.Test;
 
 import java.util.function.Consumer;
 
-
 public class LogAlertSocketWriterTest {
-
     private static final FilesFacade ff = FilesFacadeImpl.INSTANCE;
 
     private Rnd rand;
@@ -177,7 +175,7 @@ public class LogAlertSocketWriterTest {
                         writer.onLogRecord(recordSink);
                         TestUtils.assertEquals(
                                 "POST /api/v1/alerts HTTP/1.1\r\n" +
-                                        "Host: 192.168.1.58\r\n" +
+                                        "Host: " + LogAlertSocket.localHostIp + "\r\n" +
                                         "User-Agent: QuestDB/LogAlert\r\n" +
                                         "Accept: */*\r\n" +
                                         "Content-Type: application/json\r\n" +
