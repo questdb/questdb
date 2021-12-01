@@ -65,6 +65,8 @@ public class LogAlertSocket implements Closeable {
     private final int outBufferSize;
     private final int inBufferSize;
     private final long reconnectDelay;
+    private final String defaultHost;
+    private final int defaultPort;
     private long outBufferPtr;
     private long inBufferPtr;
     private int alertHostsCount;
@@ -74,23 +76,50 @@ public class LogAlertSocket implements Closeable {
     private String alertTargets; // host[:port](,host[:port])*
 
     public LogAlertSocket(String alertTargets) {
-        this(NetworkFacadeImpl.INSTANCE, alertTargets, IN_BUFFER_SIZE, OUT_BUFFER_SIZE, RECONNECT_DELAY_NANO);
-    }
-
-    public LogAlertSocket(String alertTargets, int outBufferSize, long reconnectDelay) {
-        this(NetworkFacadeImpl.INSTANCE, alertTargets, IN_BUFFER_SIZE, outBufferSize, reconnectDelay);
+        this(
+                NetworkFacadeImpl.INSTANCE,
+                alertTargets,
+                IN_BUFFER_SIZE,
+                OUT_BUFFER_SIZE,
+                RECONNECT_DELAY_NANO,
+                DEFAULT_HOST,
+                DEFAULT_PORT
+        );
     }
 
     public LogAlertSocket(
+            String alertTargets,
+            int inBufferSize,
+            int outBufferSize,
+            long reconnectDelay,
+            String defaultHost,
+            int defaultPort
+    ) {
+        this(
+                NetworkFacadeImpl.INSTANCE,
+                alertTargets,
+                inBufferSize,
+                outBufferSize,
+                reconnectDelay,
+                defaultHost,
+                defaultPort
+        );
+    }
+
+    private LogAlertSocket(
             NetworkFacade nf,
             String alertTargets,
             int inBufferSize,
             int outBufferSize,
-            long reconnectDelay
+            long reconnectDelay,
+            String defaultHost,
+            int defaultPort
     ) {
         this.nf = nf;
         this.rand = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.alertTargets = alertTargets;
+        this.defaultHost = defaultHost;
+        this.defaultPort = defaultPort;
         parseAlertTargets();
         this.inBufferSize = inBufferSize;
         this.inBufferPtr = Unsafe.malloc(inBufferSize, MemoryTag.NATIVE_DEFAULT);
@@ -227,7 +256,7 @@ public class LogAlertSocket implements Closeable {
         return inBufferPtr;
     }
 
-    public long getInBufferSize() {
+    public int getInBufferSize() {
         return inBufferSize;
     }
 
@@ -256,6 +285,16 @@ public class LogAlertSocket implements Closeable {
         return reconnectDelay;
     }
 
+    @VisibleForTesting
+    String getDefaultAlertHost() {
+        return defaultHost;
+    }
+
+    @VisibleForTesting
+    int getDefaultAlertPort() {
+        return defaultPort;
+    }
+
     private void freeSocketAndAddress() {
         if (fdSocketAddress != -1) {
             Net.freeSockAddr(fdSocketAddress);
@@ -268,7 +307,7 @@ public class LogAlertSocket implements Closeable {
     }
 
     private void parseAlertTargets() {
-        if (alertTargets == null) {
+        if (alertTargets == null || alertTargets.isEmpty()) {
             setDefaultHostPort();
             return;
         }
@@ -323,9 +362,9 @@ public class LogAlertSocket implements Closeable {
     }
 
     private void setDefaultHostPort() {
-        alertHosts[alertHostIdx] = DEFAULT_HOST;
-        alertPorts[alertHostIdx] = DEFAULT_PORT;
-        alertTargets = DEFAULT_HOST + ":" + DEFAULT_PORT;
+        alertHosts[alertHostIdx] = defaultHost;
+        alertPorts[alertHostIdx] = defaultPort;
+        alertTargets = defaultHost + ":" + defaultPort;
         alertHostIdx = 0;
         alertHostsCount = 1;
     }
@@ -341,19 +380,19 @@ public class LogAlertSocket implements Closeable {
         int hostEnd = hostLimit;
         if (portLimit == -1) { // no ':' was found
             if (hostIdx + 1 > hostLimit) {
-                alertHosts[alertHostsCount] = DEFAULT_HOST;
+                alertHosts[alertHostsCount] = defaultHost;
                 hostResolved = true;
             }
-            alertPorts[alertHostsCount] = DEFAULT_PORT;
+            alertPorts[alertHostsCount] = defaultPort;
         } else {
             if (hostIdx + 1 > portLimit) {
-                alertHosts[alertHostsCount] = DEFAULT_HOST;
+                alertHosts[alertHostsCount] = defaultHost;
                 hostResolved = true;
             } else {
                 hostEnd = portLimit;
             }
             if (portLimit + 2 > hostLimit) {
-                alertPorts[alertHostsCount] = DEFAULT_PORT;
+                alertPorts[alertHostsCount] = defaultPort;
             } else {
                 int port = 0;
                 int scale = 1;

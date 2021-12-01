@@ -180,7 +180,7 @@ public class LogAlertSocketTest {
 
     private void assertLogError(String socketAddress, String expected) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LogAlertSocket ignored = new LogAlertSocket(socketAddress, 1024, 50_000_000)) {
+            try (LogAlertSocket ignored = new LogAlertSocket(socketAddress)) {
                 Assert.fail();
             } catch (LogError logError) {
                 Assert.assertEquals(expected, logError.getMessage());
@@ -189,12 +189,12 @@ public class LogAlertSocketTest {
     }
 
     public void assertAlertTargets(
-            String socketAddress,
+            String alertTargets,
             String[] expectedHosts,
             int[] expectedPorts
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LogAlertSocket socket = new LogAlertSocket(socketAddress, 1024, 50_000_000)) {
+            try (LogAlertSocket socket = new LogAlertSocket(alertTargets)) {
                 Assert.assertEquals(expectedHosts.length, socket.getAlertHostsCount());
                 Assert.assertEquals(expectedPorts.length, socket.getAlertHostsCount());
                 for (int i = 0; i < expectedHosts.length; i++) {

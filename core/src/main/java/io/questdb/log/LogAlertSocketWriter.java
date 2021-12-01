@@ -81,8 +81,11 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private ObjList<TemplateNode> alertTemplateNodes;
     private int alertTemplateNodesLen;
     // changed by introspection
+    private String defaultAlertHost;
+    private String defaultAlertPort;
     private String location;
-    private String bufferSize;
+    private String inBufferSize;
+    private String outBufferSize;
     private String alertTargets;
     private String reconnectDelay;
 
@@ -113,12 +116,20 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
 
     @Override
     public void bindProperties() {
-        int nBufferSize = LogAlertSocket.OUT_BUFFER_SIZE;
-        if (bufferSize != null) {
+        int nInBufferSize = LogAlertSocket.IN_BUFFER_SIZE;
+        if (inBufferSize != null) {
             try {
-                nBufferSize = Numbers.parseIntSize(bufferSize);
+                nInBufferSize = Numbers.parseIntSize(inBufferSize);
             } catch (NumericException e) {
-                throw new LogError("Invalid value for bufferSize: " + bufferSize);
+                throw new LogError("Invalid value for inBufferSize: " + inBufferSize);
+            }
+        }
+        int nOutBufferSize = LogAlertSocket.OUT_BUFFER_SIZE;
+        if (outBufferSize != null) {
+            try {
+                nOutBufferSize = Numbers.parseIntSize(outBufferSize);
+            } catch (NumericException e) {
+                throw new LogError("Invalid value for outBufferSize: " + outBufferSize);
             }
         }
         long nReconnectDelay = LogAlertSocket.RECONNECT_DELAY_NANO;
@@ -129,7 +140,25 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                 throw new LogError("Invalid value for reconnectDelay: " + reconnectDelay);
             }
         }
-        socket = new LogAlertSocket(alertTargets, nBufferSize, nReconnectDelay);
+        if (defaultAlertHost == null) {
+            defaultAlertHost = LogAlertSocket.DEFAULT_HOST;
+        }
+        int nDefaultPort = LogAlertSocket.DEFAULT_PORT;
+        if (defaultAlertPort != null) {
+            try {
+                nDefaultPort = Numbers.parseInt(defaultAlertPort);
+            } catch (NumericException e) {
+                throw new LogError("Invalid value for defaultAlertPort: " + defaultAlertPort);
+            }
+        }
+        socket = new LogAlertSocket(
+                alertTargets,
+                nInBufferSize,
+                nOutBufferSize,
+                nReconnectDelay,
+                defaultAlertHost,
+                nDefaultPort
+        );
         alertSink = new HttpLogRecordSink(socket)
                 .putHeader(LogAlertSocket.localHostIp)
                 .setMark();
@@ -148,12 +177,22 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     }
 
     @VisibleForTesting
-    void setBufferSize(String bufferSize) {
-        this.bufferSize = bufferSize;
+    void setInBufferSize(String inBufferSize) {
+        this.inBufferSize = inBufferSize;
     }
 
     @VisibleForTesting
-    int getBufferSize() {
+    int getInBufferSize() {
+        return socket.getInBufferSize();
+    }
+
+    @VisibleForTesting
+    void setOutBufferSize(String outBufferSize) {
+        this.outBufferSize = outBufferSize;
+    }
+
+    @VisibleForTesting
+    int getOutBufferSize() {
         return socket.getOutBufferSize();
     }
 
@@ -190,6 +229,26 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     @VisibleForTesting
     void setReconnectDelay(String reconnectDelay) {
         this.reconnectDelay = reconnectDelay;
+    }
+
+    @VisibleForTesting
+    void setDefaultAlertHost(String defaultAlertHost) {
+        this.defaultAlertHost = defaultAlertHost;
+    }
+
+    @VisibleForTesting
+    String getDefaultAlertHost() {
+        return socket.getDefaultAlertHost();
+    }
+
+    @VisibleForTesting
+    void setDefaultAlertPort(String defaultAlertPort) {
+        this.defaultAlertPort = defaultAlertPort;
+    }
+
+    @VisibleForTesting
+    int getDefaultAlertPort() {
+        return socket.getDefaultAlertPort();
     }
 
     private void loadLogAlertTemplate() {
