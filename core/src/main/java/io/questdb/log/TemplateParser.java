@@ -187,7 +187,7 @@ public class TemplateParser implements Sinkable {
         }
 
         public boolean isEnv(CharSequence key) {
-            return type == TYPE_ENV && this.key.equals(key);
+            return type == TYPE_ENV && Chars.equals(this.key, key);
         }
     }
 
