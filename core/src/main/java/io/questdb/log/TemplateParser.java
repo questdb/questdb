@@ -167,9 +167,7 @@ public class TemplateParser implements Sinkable {
     @Override
     public String toString() {
         resolveSink.clear();
-        for (int i = 0, n = templateNodes.size(); i < n; i++) {
-            resolveSink.put(templateNodes.getQuick(i));
-        }
+        toSink(resolveSink);
         return resolveSink.toString();
     }
 
