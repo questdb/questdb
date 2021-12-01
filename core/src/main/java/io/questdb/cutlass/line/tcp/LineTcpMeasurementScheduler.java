@@ -85,8 +85,6 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final Path path = new Path();
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final LineTcpReceiverConfiguration configuration;
-    private final BitSet processedCols = new BitSet();
-    private final ObjHashSet<CharSequence> addedCols = new ObjHashSet<>();
     private Sequence pubSeq;
     private int loadCheckCycles = 0;
     private int reshuffleCount = 0;
@@ -195,8 +193,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     @NotNull
-    private TableUpdateDetails assignTableToWriterThread(String tableName) {
-        TableUpdateDetails tableUpdateDetails;
+    private TableUpdateDetails assignTableToWriterThread(CharSequence tableName) {
         calcThreadLoad();
         int leastLoad = Integer.MAX_VALUE;
         int threadId = 0;
@@ -206,8 +203,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                 threadId = n;
             }
         }
-        tableUpdateDetails = new TableUpdateDetails(tableName, threadId, netIoJobs);
-        tableUpdateDetailsByTableName.put(tableName, tableUpdateDetails);
+        TableUpdateDetails tableUpdateDetails = new TableUpdateDetails(tableName, threadId, netIoJobs);
+        tableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
         LOG.info().$("assigned ").$(tableName).$(" to thread ").$(threadId).$();
         return tableUpdateDetails;
     }
@@ -360,14 +357,14 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     private TableUpdateDetails startNewMeasurementEvent0(NetworkIOJob netIoJob, LineTcpParser protoParser) {
-        TableUpdateDetails tableUpdateDetails;
         tableUpdateDetailsLock.writeLock().lock();
         try {
+            TableUpdateDetails tableUpdateDetails;
             int keyIndex = tableUpdateDetailsByTableName.keyIndex(protoParser.getMeasurementName());
             if (keyIndex < 0) {
                 tableUpdateDetails = tableUpdateDetailsByTableName.valueAt(keyIndex);
             } else {
-                String tableName = protoParser.getMeasurementName().toString();
+                String tableName = protoParser.getMeasurementName().toString(); //toString() is called to do utf8 to utf16 conversion
                 int status = engine.getStatus(securityContext, path, tableName, 0, tableName.length());
                 if (status != TableUtils.TABLE_EXISTS) {
                     LOG.info().$("creating table [tableName=").$(tableName).$(']').$();
@@ -378,8 +375,14 @@ class LineTcpMeasurementScheduler implements Closeable {
                 if (keyIndex < 0) {
                     LOG.info().$("idle table going active [tableName=").$(tableName).I$();
                     tableUpdateDetails = idleTableUpdateDetailsByTableName.valueAt(keyIndex);
-                    idleTableUpdateDetailsByTableName.removeAt(keyIndex);
-                    tableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
+                    if (tableUpdateDetails.getWriter() == null) {
+                        tableUpdateDetails.closeLocals();
+                        tableUpdateDetails.closeNoLock();
+                        tableUpdateDetails = assignTableToWriterThread(tableName);
+                    } else {
+                        idleTableUpdateDetailsByTableName.removeAt(keyIndex);
+                        tableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
+                    }
                 } else {
                     TelemetryTask.doStoreTelemetry(engine, Telemetry.SYSTEM_ILP_RESERVE_WRITER, Telemetry.ORIGIN_ILP_TCP);
                     tableUpdateDetails = assignTableToWriterThread(tableName);
@@ -486,16 +489,16 @@ class LineTcpMeasurementScheduler implements Closeable {
                 LineTcpParser protoParser,
                 FloatingDirectCharSink floatingCharSink
         ) {
+            final BitSet processedCols = tableUpdateDetails.getProcessedCols();
+            final ObjHashSet<CharSequence> addedCols = tableUpdateDetails.getAddedCols();
             processedCols.clear();
             addedCols.clear();
             threadId = INCOMPLETE_EVENT_ID;
             this.tableUpdateDetails = tableUpdateDetails;
-            TableWriter writer = tableUpdateDetails.getWriter();
-            final int timestampIndex = writer.getMetadata().getTimestampIndex();
             long timestamp = protoParser.getTimestamp();
             if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
                 timestamp = timestampAdapter.getMicros(timestamp);
-                processedCols.set(timestampIndex);
+                processedCols.set(tableUpdateDetails.getTimestampIndex());
             }
             long bufPos = bufLo;
             long bufMax = bufLo + bufSize;
@@ -529,7 +532,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         }
                         bufPos += colNameLen;
                     } else {
-                        if (colIndex == timestampIndex) {
+                        if (colIndex == tableUpdateDetails.getTimestampIndex()) {
                             timestamp = timestampAdapter.getMicros(entity.getLongValue());
                             continue;
                         }
@@ -1036,9 +1039,11 @@ class LineTcpMeasurementScheduler implements Closeable {
         private long lastMeasurementMillis = Long.MAX_VALUE;
         private long lastCommitMillis;
         private int networkIOOwnerCount = 0;
+        private final int timestampIndex;
+        private final BitSet processedCols = new BitSet();
+        private final ObjHashSet<CharSequence> addedCols = new ObjHashSet<>();
 
-        private TableUpdateDetails(String tableName, int writerThreadId, NetworkIOJob[] netIoJobs) {
-            this.tableName = tableName;
+        private TableUpdateDetails(CharSequence tableName, int writerThreadId, NetworkIOJob[] netIoJobs) {
             this.writerThreadId = writerThreadId;
             final int n = netIoJobs.length;
             localDetailsArray = new ThreadLocalDetails[n];
@@ -1046,6 +1051,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                 localDetailsArray[i] = new ThreadLocalDetails(netIoJobs[i].getUnusedSymbolCaches());
             }
             lastCommitMillis = milliClock.getTicks();
+            writer = engine.getWriter(securityContext, tableName, "ilpTcp");
+            timestampIndex = writer.getMetadata().getTimestampIndex();
+            this.tableName = writer.getTableName();
         }
 
         @Override
@@ -1090,10 +1098,19 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         TableWriter getWriter() {
-            if (null != writer) {
-                return writer;
-            }
-            return writer = engine.getWriter(securityContext, tableName, "ilpTcp");
+            return writer;
+        }
+
+        int getTimestampIndex() {
+            return timestampIndex;
+        }
+
+        BitSet getProcessedCols() {
+            return processedCols;
+        }
+
+        ObjHashSet<CharSequence> getAddedCols() {
+            return addedCols;
         }
 
         void handleRowAppended() {
@@ -1144,7 +1161,6 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         void switchThreads() {
             assignedToJob = false;
-            handleWriterRelease(true);
         }
 
         private class ThreadLocalDetails implements Closeable {
