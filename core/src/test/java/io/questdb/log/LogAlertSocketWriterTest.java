@@ -174,9 +174,7 @@ public class LogAlertSocketWriterTest {
                         recordSink.setLevel(LogLevel.ERROR);
                         recordSink.put("A \"simple\" $message$\n");
 
-                        System.out.printf("#2%n");
                         writer.onLogRecord(recordSink);
-                        System.out.printf("#3%n");
                         TestUtils.assertEquals(
                                 "POST /api/v1/alerts HTTP/1.1\r\n" +
                                         "Host: 192.168.1.58\r\n" +
