@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
@@ -65,7 +66,7 @@ public class TextUtilTest {
     }
 
     private void copyToSinkWithTextUtil(StringSink query, String text, boolean doubleQuoteParse) throws Utf8Exception {
-        byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+        byte[] bytes = text.getBytes(Files.UTF_8);
         long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < bytes.length; i++) {
             Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);

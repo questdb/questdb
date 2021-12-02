@@ -28,6 +28,7 @@ io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.test.TestSumTDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.test.TestSumStringGroupByFunctionFactory
 io.questdb.griffin.engine.functions.test.TestNPEFactory
+io.questdb.griffin.engine.functions.rnd.RndLogFunctionFactory
 
 # logical operations
 io.questdb.griffin.engine.functions.bool.OrFunctionFactory

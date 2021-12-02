@@ -24,15 +24,19 @@
 
 package io.questdb.log;
 
+import io.questdb.VisibleForTesting;
 import io.questdb.std.Chars;
+import io.questdb.std.Sinkable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 
-public class LogRecordSink extends AbstractCharSink {
-    private final long address;
-    private final long lim;
-    private long _wptr;
+public class LogRecordSink extends AbstractCharSink implements Sinkable {
+    private final CharSequenceOf charSeq = new CharSequenceOf();
+    protected final long address;
+    protected final long lim;
+    protected long _wptr;
     private int level;
 
     LogRecordSink(long address, long addressSize) {
@@ -40,10 +44,9 @@ public class LogRecordSink extends AbstractCharSink {
         this.lim = address + addressSize;
     }
 
-    public void clear(int len) {
-        _wptr = address + len;
+    public void clear() {
+        _wptr = address;
     }
-
 
     public long getAddress() {
         return address;
@@ -63,21 +66,19 @@ public class LogRecordSink extends AbstractCharSink {
 
     @Override
     public CharSink put(CharSequence cs) {
-        int rem = (int) (lim - _wptr);
-        int len = cs.length();
-        int n = Math.min(rem, len);
-        Chars.asciiStrCpy(cs, n, _wptr);
-        _wptr += n;
+        encodeUtf8(cs);
         return this;
     }
 
     @Override
     public CharSink put(CharSequence cs, int lo, int hi) {
-        int rem = (int) (lim - _wptr);
-        int len = hi - lo;
-        int n = Math.min(rem, len);
-        Chars.asciiStrCpy(cs, lo, n, _wptr);
-        _wptr += n;
+        encodeUtf8(cs, lo, hi);
+        return this;
+    }
+
+    @Override
+    public CharSink put(char[] chars, int lo, int hi) {
+        encodeUtf8(charSeq.of(chars, lo, hi));
         return this;
     }
 
@@ -90,20 +91,40 @@ public class LogRecordSink extends AbstractCharSink {
     }
 
     @Override
-    public CharSink put(char[] chars, int start, int len) {
-        if (_wptr + len < lim) {
-            Chars.asciiCopyTo(chars, start, len, _wptr);
-            _wptr += len;
-        }
-        return this;
+    public void toSink(CharSink sink) {
+        Chars.utf8Decode(address, _wptr, sink);
     }
 
-    @Override
-    public String toString() {
-        StringBuilder b = new StringBuilder();
-        for (long p = address, hi = _wptr; p < hi; p++) {
-            b.append((char) Unsafe.getUnsafe().getByte(p));
+    @VisibleForTesting
+    static class CharSequenceOf implements CharSequence {
+        private char[] chars;
+        private int lo;
+        private int len;
+
+        CharSequenceOf of(char[] chars, int lo, int hi) {
+            this.chars = chars;
+            this.lo = lo;
+            this.len = hi - lo;
+            return this;
         }
-        return b.toString();
+
+        @Override
+        public int length() {
+            return len;
+        }
+
+        @Override
+        public char charAt(int index) {
+            if (index > -1 && index < len) {
+                return chars[lo + index];
+            }
+            throw new IndexOutOfBoundsException("Index out of range: " + index);
+        }
+
+        @NotNull
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            throw new UnsupportedOperationException();
+        }
     }
 }

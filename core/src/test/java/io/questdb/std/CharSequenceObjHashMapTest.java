@@ -30,6 +30,14 @@ import org.junit.Test;
 public class CharSequenceObjHashMapTest {
 
     @Test
+    public void testContains() {
+        CharSequenceObjHashMap<CharSequence> map = new CharSequenceObjHashMap<>();
+        map.put("EGG", "CHICKEN");
+        Assert.assertTrue(map.contains("EGG"));
+        Assert.assertFalse(map.contains("CHICKEN"));
+    }
+
+    @Test
     public void testRemove() {
         // these are specific keys that have the same hash code value when map capacity is 8
         String[] collisionKeys = {
