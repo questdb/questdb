@@ -100,10 +100,10 @@ public class LogAlertSocketTest {
     @Test
     public void testParseAlertTargetsBad() throws Exception {
         assertLogError("::", "Unexpected ':' found at position 1: ::");
-        assertLogError("does not exist", "Invalid host value [does not exist] at position 0 for socketAddress: does not exist");
-        assertLogError("localhost:banana", "Invalid port value [banana] at position 10 for socketAddress: localhost:banana");
-        assertLogError(",:si", "Invalid port value [si] at position 2 for socketAddress: ,:si");
-        assertLogError("  :  ,", "Invalid port value [  ] at position 3 for socketAddress:   :  ,");
+        assertLogError("does not exist", "Invalid host value [does not exist] at position 0 for alertTargets: does not exist");
+        assertLogError("localhost:banana", "Invalid port value [banana] at position 10 for alertTargets: localhost:banana");
+        assertLogError(",:si", "Invalid port value [si] at position 2 for alertTargets: ,:si");
+        assertLogError("  :  ,", "Invalid port value [  ] at position 3 for alertTargets:   :  ,");
     }
 
     @Test

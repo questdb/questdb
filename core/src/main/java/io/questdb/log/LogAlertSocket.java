@@ -58,6 +58,7 @@ public class LogAlertSocket implements Closeable {
     public static final long RECONNECT_DELAY_NANO = 250_000_000; // 1/4th sec
     private static final int HOSTS_LIMIT = 12;
 
+    private final Log log;
     private final Rnd rand;
     private final NetworkFacade nf;
     private final String[] alertHosts = new String[HOSTS_LIMIT]; // indexed by alertHostIdx < alertHostsCount
@@ -74,7 +75,6 @@ public class LogAlertSocket implements Closeable {
     private long fdSocketAddress = -1; // tcp/ip host:port address
     private long fdSocket = -1;
     private String alertTargets; // host[:port](,host[:port])*
-    private final Log log;
 
     public LogAlertSocket(String alertTargets, Log log) {
         this(
@@ -121,6 +121,7 @@ public class LogAlertSocket implements Closeable {
             Log log
     ) {
         this.nf = nf;
+        this.log = log;
         this.rand = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.alertTargets = alertTargets;
         this.defaultHost = defaultHost;
@@ -131,28 +132,18 @@ public class LogAlertSocket implements Closeable {
         this.outBufferSize = outBufferSize;
         this.outBufferPtr = Unsafe.malloc(outBufferSize, MemoryTag.NATIVE_DEFAULT);
         this.reconnectDelay = reconnectDelay;
-        this.log = log;
     }
 
     public void connect() {
         fdSocketAddress = nf.sockaddr(alertHosts[alertHostIdx], alertPorts[alertHostIdx]);
         fdSocket = nf.socketTcp(true);
-        log.info().$("connecting [to=").$(alertHosts[alertHostIdx]).$(':').$(alertPorts[alertHostIdx]).I$();
         if (fdSocket > -1) {
             if (nf.connect(fdSocket, fdSocketAddress) != 0) {
-                System.err.printf(
-                        "%sCould not connect [errno=%d]%n",
-                        LogLevel.ERROR_HEADER,
-                        nf.errno()
-                );
+                logNetworkConnectError("Could not connect with");
                 freeSocketAndAddress();
             }
         } else {
-            System.out.printf(
-                    "%sCould not create TCP socket [errno=%d]",
-                    LogLevel.ERROR_HEADER,
-                    nf.errno()
-            );
+            logNetworkConnectError("Could create TCP socket with");
             freeSocketAndAddress();
         }
     }
@@ -166,7 +157,8 @@ public class LogAlertSocket implements Closeable {
             return false;
         }
 
-        int sendAttempts = 2 * alertHostsCount; // empirical, say twice per host at most
+        final int maxSendAttempts = 2 * alertHostsCount;
+        int sendAttempts = maxSendAttempts; // empirical, say twice per host at most
         while (sendAttempts > 0) {
             if (fdSocket > 0) {
                 int remaining = len;
@@ -178,12 +170,14 @@ public class LogAlertSocket implements Closeable {
                         remaining -= n;
                         p += n;
                     } else {
-                        System.err.printf(
-                                "%sCould not send [errno=%d, n=%d]%n",
-                                LogLevel.ERROR_HEADER,
-                                nf.errno(),
-                                n
-                        );
+                        $currentAlertHost(log.info().$("Could not send"))
+                                .$(" [errno=")
+                                .$(nf.errno())
+                                .$(", size=")
+                                .$(n)
+                                .$(", log=")
+                                .$(Chars.stringFromUtf8Bytes(outBufferPtr, len))
+                                .I$();
                         sendFail = true;
                         // do fail over, could not send
                         break;
@@ -197,10 +191,10 @@ public class LogAlertSocket implements Closeable {
                         if (ackReceiver != null) {
                             ackReceiver.accept(Chars.stringFromUtf8Bytes(inBufferPtr, inBufferPtr + n));
                         } else {
-                            System.out.printf("%sReceived:%s%n",
-                                    LogLevel.INFO_HEADER,
-                                    Chars.stringFromUtf8Bytes(inBufferPtr, inBufferPtr + n)
-                            );
+                            $currentAlertHost(log.info().$("Received"))
+                                    .$(": ")
+                                    .$(Chars.stringFromUtf8Bytes(inBufferPtr, inBufferPtr + n))
+                                    .$();
                         }
                         break;
                     }
@@ -212,21 +206,33 @@ public class LogAlertSocket implements Closeable {
             freeSocketAndAddress();
             int alertHostIdx = this.alertHostIdx;
             this.alertHostIdx = (this.alertHostIdx + 1) % alertHostsCount;
+            LogRecord logRecord = $alertHost(
+                    this.alertHostIdx,
+                    $alertHost(
+                            alertHostIdx,
+                            log.info().$("Failing over from")
+                    ).$(" to"));
             if (alertHostIdx == this.alertHostIdx) {
+                logRecord.$(" with a delay of ")
+                        .$(reconnectDelay / 1000000)
+                        .$(" millis (as it is the same alert manager)")
+                        .$();
                 LockSupport.parkNanos(reconnectDelay);
+            } else {
+                logRecord.$();
             }
             connect();
             sendAttempts--;
         }
-
         boolean success = sendAttempts > 0;
         if (!success) {
-            log.error().$("could not send").$();
-            System.err.printf(
-                    "%sNo alert hosts are available after %d attempts, giving up sending alert.%n",
-                    LogLevel.ERROR_HEADER,
-                    alertHostsCount
-            );
+            log.info()
+                    .$("None of the configured alert managers are accepting alerts.\n")
+                    .$("Giving up sending after ")
+                    .$(maxSendAttempts)
+                    .$(" attempts: ")
+                    .$(Chars.stringFromUtf8Bytes(outBufferPtr, len))
+                    .$();
             if (ackReceiver != null) {
                 ackReceiver.accept(NACK);
             }
@@ -366,6 +372,7 @@ public class LogAlertSocket implements Closeable {
         alertTargets = defaultHost + ":" + defaultPort;
         alertHostIdx = 0;
         alertHostsCount = 1;
+        $currentAlertHost(log.info().$("Added default alert manager")).$();
     }
 
     private void setHostPort(int hostIdx, int portLimit, int hostLimit) {
@@ -402,7 +409,7 @@ public class LogAlertSocket implements Closeable {
                         scale *= 10;
                     } else {
                         throw new LogError(String.format(
-                                "Invalid port value [%s] at position %d for socketAddress: %s",
+                                "Invalid port value [%s] at position %d for alertTargets: %s",
                                 alertTargets.substring(portLimit + 1, hostLimit),
                                 portLimit + 1,
                                 alertTargets
@@ -412,19 +419,39 @@ public class LogAlertSocket implements Closeable {
                 alertPorts[alertHostsCount] = port;
             }
         }
+        LogRecord logRecord = log.info()
+                .$("Added alert manager [")
+                .$(alertHostsCount)
+                .$("]: ");
         if (!hostResolved) {
             String host = alertTargets.substring(hostIdx, hostEnd).trim();
             try {
                 alertHosts[alertHostsCount] = InetAddress.getByName(host).getHostAddress();
+                logRecord.$(host).$(" (").$(alertHosts[alertHostsCount]).$(')');
             } catch (UnknownHostException e) {
                 throw new LogError(String.format(
-                        "Invalid host value [%s] at position %d for socketAddress: %s",
+                        "Invalid host value [%s] at position %d for alertTargets: %s",
                         host,
                         hostIdx,
                         alertTargets
                 ));
             }
+        } else {
+            logRecord.$(alertHosts[alertHostsCount]);
         }
+        logRecord.$(':').$(alertPorts[alertHostsCount]).$();
         alertHostsCount++;
+    }
+
+    private void logNetworkConnectError(String message) {
+        $currentAlertHost(log.info().$(message)).$(" [errno=").$(nf.errno()).I$();
+    }
+
+    private LogRecord $currentAlertHost(LogRecord logRecord) {
+        return $alertHost(alertHostIdx, logRecord);
+    }
+
+    private LogRecord $alertHost(int idx, LogRecord logRecord) {
+        return logRecord.$(" [").$(idx).$("] ").$(alertHosts[idx]).$(':').$(alertPorts[idx]);
     }
 }
