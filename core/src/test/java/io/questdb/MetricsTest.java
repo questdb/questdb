@@ -25,13 +25,17 @@
 package io.questdb;
 
 import io.questdb.metrics.*;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.str.CharSink;
+import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static org.hamcrest.CoreMatchers.*;
 
 public class MetricsTest {
 
@@ -44,6 +48,21 @@ public class MetricsTest {
             Matcher matcher = metricNamePattern.matcher(name);
             Assert.assertTrue("Invalid metric name: " + name, matcher.matches());
         }
+    }
+
+    @Test
+    public void testMetricNamesContainAllMemoryTags() {
+
+        SpyingMetricsRegistry metricsRegistry = new SpyingMetricsRegistry();
+        new Metrics(true, metricsRegistry);
+
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_tag_" + MemoryTag.nameOf(i)));
+        }
+
+        MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_free_count"));
+        MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_mem_used"));
+        MatcherAssert.assertThat(metricsRegistry.getMetricNames(), hasItem("memory_malloc_count"));
     }
 
     @Test
@@ -106,6 +125,19 @@ public class MetricsTest {
         public Gauge newGauge(CharSequence name) {
             addMetricName(name);
             return delegate.newGauge(name);
+        }
+
+        @Override
+        public Gauge newGauge(int memoryTag) {
+            addMetricName("memory_tag_" + MemoryTag.nameOf(memoryTag));
+            Gauge gauge = delegate.newGauge(memoryTag);
+            return gauge;
+        }
+
+        @Override
+        public Gauge newVirtualGauge(CharSequence name, VirtualGauge.StatProvider provider) {
+            addMetricName(name);
+            return delegate.newVirtualGauge(name, provider);
         }
 
         @Override

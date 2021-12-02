@@ -29,7 +29,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionInterruptor;
+import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.std.Misc;
 
 class UnionRecordCursor implements NoRandomAccessRecordCursor {
@@ -44,7 +44,7 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
     private NextMethod nextMethod;
     private RecordCursor symbolCursor;
     private final NextMethod nextMaster = this::nextMaster;
-    private SqlExecutionInterruptor interruptor;
+    private SqlExecutionCircuitBreaker circuitBreaker;
 
     public UnionRecordCursor(Map map, RecordSink recordSink) {
         this.map = map;
@@ -56,7 +56,7 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
         this.slaveCursor = slaveCursor;
         this.masterRecord = masterCursor.getRecord();
         this.slaveRecord = slaveCursor.getRecord();
-        interruptor = executionContext.getSqlExecutionInterruptor();
+        circuitBreaker = executionContext.getCircuitBreaker();
         toTop();
     }
 
@@ -64,7 +64,7 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
     public void close() {
         Misc.free(this.masterCursor);
         Misc.free(this.slaveCursor);
-        interruptor = null;
+        circuitBreaker = null;
     }
 
     @Override
@@ -86,7 +86,7 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
                 if (key.create()) {
                     return true;
                 }
-                interruptor.checkInterrupted();
+                circuitBreaker.test();
             } else {
                 return false;
             }

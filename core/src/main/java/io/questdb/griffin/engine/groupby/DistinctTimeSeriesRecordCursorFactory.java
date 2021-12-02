@@ -34,7 +34,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionInterruptor;
+import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
@@ -109,7 +109,7 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
         private long prevTimestamp;
         private long prevRowId;
         private byte state = 0;
-        private SqlExecutionInterruptor interruptor;
+        private SqlExecutionCircuitBreaker circuitBreaker;
 
         public DistinctTimeSeriesRecordCursor(int timestampIndex, Map dataMap, RecordSink recordSink) {
             this.timestampIndex = timestampIndex;
@@ -137,7 +137,7 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
         public boolean hasNext() {
             if (state == COMPUTE_NEXT) {
                 while (baseCursor.hasNext()) {
-                    interruptor.checkInterrupted();
+                    circuitBreaker.test();
                     final long timestamp = record.getTimestamp(timestampIndex);
                     if (timestamp != prevTimestamp) {
                         prevTimestamp = timestamp;
@@ -179,7 +179,7 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
 
         public RecordCursor of(RecordCursor baseCursor, SqlExecutionContext sqlExecutionContext) {
             this.baseCursor = baseCursor;
-            this.interruptor = sqlExecutionContext.getSqlExecutionInterruptor();
+            this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
             this.record = baseCursor.getRecord();
             this.recordB = baseCursor.getRecordB();
             this.dataMap.clear();

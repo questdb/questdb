@@ -32,7 +32,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionInterruptor;
+import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.EmptyTableNoSizeRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.*;
@@ -72,7 +72,7 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        final SqlExecutionInterruptor interruptor = executionContext.getSqlExecutionInterruptor();
+        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         try {
             map.clear();
 
@@ -84,7 +84,7 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             int n = groupByFunctions.size();
             final Record baseCursorRecord = baseCursor.getRecord();
             while (baseCursor.hasNext()) {
-                interruptor.checkInterrupted();
+                circuitBreaker.test();
                 MapKey key = map.withKey();
                 mapSink.copy(baseCursorRecord, key);
                 MapValue value = key.createValue();

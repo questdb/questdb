@@ -50,12 +50,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final AnalyticContextImpl analyticContext = new AnalyticContextImpl();
     private final RingQueue<TelemetryTask> telemetryQueue;
     private Sequence telemetryPubSeq;
-    private TelemetryMethod telemetryMethod = this::storeTelemetryNoop;
+    private TelemetryTask.TelemetryMethod telemetryMethod = this::storeTelemetryNoop;
     private BindVariableService bindVariableService;
     private CairoSecurityContext cairoSecurityContext;
     private Rnd random;
     private long requestFd = -1;
-    private SqlExecutionInterruptor interruptor = SqlExecutionInterruptor.NOP_INTERRUPTOR;
+    private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private long now;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
@@ -124,8 +124,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public SqlExecutionInterruptor getSqlExecutionInterruptor() {
-        return interruptor;
+    public SqlExecutionCircuitBreaker getCircuitBreaker() {
+        circuitBreaker.powerUp();
+        return circuitBreaker;
     }
 
     @Override
@@ -188,37 +189,20 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             @Nullable BindVariableService bindVariableService,
             @Nullable Rnd rnd,
             long requestFd,
-            @Nullable SqlExecutionInterruptor interruptor
+            @Nullable SqlExecutionCircuitBreaker circuitBreaker
     ) {
         this.cairoSecurityContext = cairoSecurityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
         this.requestFd = requestFd;
-        this.interruptor = null == interruptor ? SqlExecutionInterruptor.NOP_INTERRUPTOR : interruptor;
+        this.circuitBreaker = null == circuitBreaker ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
         return this;
     }
 
     private void doStoreTelemetry(short event, short origin) {
-        long cursor = telemetryPubSeq.next();
-        while (cursor == -2) {
-            cursor = telemetryPubSeq.next();
-        }
-
-        if (cursor > -1) {
-            TelemetryTask row = telemetryQueue.get(cursor);
-
-            row.created = clock.getTicks();
-            row.event = event;
-            row.origin = origin;
-            telemetryPubSeq.done(cursor);
-        }
+        TelemetryTask.store(telemetryQueue, telemetryPubSeq, event, origin, clock);
     }
 
     private void storeTelemetryNoop(short event, short origin) {
-    }
-
-    @FunctionalInterface
-    private interface TelemetryMethod {
-        void store(short event, short origin);
     }
 }
