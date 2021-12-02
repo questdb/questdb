@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.MessageBus;
 import io.questdb.Telemetry;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
@@ -66,7 +65,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final MillisecondClock clock;
     private final int doubleScale;
-    private final HttpSqlExecutionInterruptor interruptor;
+    private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
 
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
@@ -88,13 +87,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.clock = configuration.getClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
         this.doubleScale = configuration.getDoubleScale();
-        this.interruptor = new HttpSqlExecutionInterruptor(configuration.getInterruptorConfiguration());
+        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration());
     }
 
     @Override
     public void close() {
         Misc.free(compiler);
-        Misc.free(interruptor);
+        Misc.free(circuitBreaker);
     }
 
     public void execute(
@@ -104,7 +103,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         try {
             state.recordCursorFactory = QueryCache.getInstance().poll(state.query);
             state.setQueryCacheable(true);
-            sqlExecutionContext.with(context.getCairoSecurityContext(), null, null, context.getFd(), interruptor.of(context.getFd()));
+            sqlExecutionContext.with(
+                    context.getCairoSecurityContext(),
+                    null,
+                    null,
+                    context.getFd(),
+                    circuitBreaker.of(context.getFd())
+            );
             if (state.recordCursorFactory == null) {
                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
                 if (cc.getType() == CompiledQuery.SELECT) {
@@ -189,7 +194,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
 
         // copy random during query resume
-        sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd, context.getFd(), interruptor.of(context.getFd()));
+        sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd, context.getFd(), circuitBreaker.of(context.getFd()));
         LOG.debug().$("resume [fd=").$(context.getFd()).$(']').$();
 
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();

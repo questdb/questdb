@@ -122,7 +122,7 @@ public abstract class AbstractSampleByFillValueRecordCursor extends AbstractSpli
 
                 // carry on with the loop if we still have data
                 if (base.hasNext()) {
-                    interruptor.checkInterrupted();
+                    circuitBreaker.test();
                     continue;
                 }
 
