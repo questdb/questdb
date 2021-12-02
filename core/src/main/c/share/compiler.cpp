@@ -345,7 +345,6 @@ namespace questdb::x86 {
 
     inline std::pair<jit_value_t, jit_value_t>
     convert(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
-        c.comment("convert");
         switch (lhs.dtype()) {
             case i8:
             case i16:
@@ -977,21 +976,12 @@ struct JitCompiler {
     }
 
     void scalar_loop(const uint8_t *filter_expr, size_t filter_size, bool null_check) {
-        if (filter_expr == nullptr || filter_size <= 0) {
-            return; //todo: report error
-        }
-
         scalar_tail2(filter_expr, filter_size, null_check, rows_size);
         c.ret(output_index);
     }
 
     void avx2_loop2(const uint8_t *filter_expr, size_t filter_size, uint32_t step, bool null_check) {
         using namespace asmjit::x86;
-
-        //todo: move to compile fn
-        if (filter_expr == nullptr || filter_size <= 0) {
-            return; //todo: report error
-        }
 
         Label l_loop = c.newLabel();
         Label l_exit = c.newLabel();
@@ -1091,6 +1081,12 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
                                                     jint options,
                                                     jobject error) {
 #ifndef __aarch64__
+
+    if (filterAddress <= 0 || filterSize <= 0) {
+        fillJitErrorObject(e, error, ErrorCode::kErrorInvalidArgument, "Invalid argument passed");
+        return 0;
+    }
+
     CodeHolder code;
     code.init(gGlobalContext.rt.environment());
     FileLogger logger(stdout);

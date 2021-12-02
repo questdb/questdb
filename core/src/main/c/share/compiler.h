@@ -102,49 +102,12 @@ T read(const uint8_t *buf, size_t size, uint32_t &pos) {
 
 struct jit_value_t {
 
-    inline jit_value_t() noexcept
-            : op_(), type_(), kind_() {}
-
-    inline explicit jit_value_t(asmjit::Operand op) noexcept
-            : op_(op), type_(), kind_() {}
-
-    inline jit_value_t(asmjit::Operand op, data_type_t type) noexcept
-            : op_(op), type_(type), kind_() {}
-
     inline jit_value_t(asmjit::Operand op, data_type_t type, data_kind_t kind) noexcept
             : op_(op), type_(type), kind_(kind) {}
 
     inline jit_value_t(const jit_value_t &other) noexcept = default;
 
     inline jit_value_t &operator=(const jit_value_t &other) noexcept = default;
-
-    inline void reset() noexcept {
-        op_.reset();
-    }
-
-    inline void swap(jit_value_t &other) noexcept {
-        jit_value_t t(*this);
-        *this = other;
-        other = t;
-    }
-
-    inline bool isNone() const noexcept { return op_.isNone(); }
-
-    inline bool isMem() const noexcept { return op_.isMem(); }
-
-    inline bool isZmm() const noexcept { return op_.isReg(asmjit::x86::Reg::kTypeZmm); }
-
-    inline bool isYmm() const noexcept { return op_.isReg(asmjit::x86::Reg::kTypeYmm); }
-
-    inline bool isXmm() const noexcept { return op_.isReg(asmjit::x86::Reg::kTypeXmm); }
-
-    inline bool isGpq() const noexcept { return op_.isReg(asmjit::x86::Reg::kTypeGpq); }
-
-    inline const asmjit::Operand &op() const noexcept { return op_; }
-
-    inline const asmjit::x86::Mem &mem() const noexcept { return op_.as<asmjit::x86::Mem>(); }
-
-    inline const asmjit::x86::Zmm &zmm() const noexcept { return op_.as<asmjit::x86::Zmm>(); }
 
     inline const asmjit::x86::Ymm &ymm() const noexcept { return op_.as<asmjit::x86::Ymm>(); }
 
@@ -274,6 +237,7 @@ namespace questdb::x86 {
         return r;
     }
 
+    //coverage: we don't have int64 to float conversion for now
     inline Xmm int64_to_float(Compiler &c, const Gpq &rhs, bool check_null) {
         c.comment("int64_to_float");
         Xmm r = c.newXmmSs();
@@ -774,21 +738,22 @@ namespace questdb::x86 {
         }
     }
 
-    inline Gpd double_eq(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Gp r = c.newInt32();
-        c.cmpsd(lhs, rhs, Predicate::kCmpEQ);
-        c.vmovd(r, lhs);
-        c.neg(r);
-        return r.as<Gpd>();
-    }
-
-    inline Gpd double_ne(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Gp r = c.newInt32();
-        c.cmpsd(lhs, rhs, Predicate::kCmpNEQ);
-        c.vmovd(r, lhs);
-        c.neg(r);
-        return r.as<Gpd>();
-    }
+//coverage: double_cmp_delta used instead
+//    inline Gpd double_eq(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
+//        Gp r = c.newInt32();
+//        c.cmpsd(lhs, rhs, Predicate::kCmpEQ);
+//        c.vmovd(r, lhs);
+//        c.neg(r);
+//        return r.as<Gpd>();
+//    }
+//
+//    inline Gpd double_ne(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
+//        Gp r = c.newInt32();
+//        c.cmpsd(lhs, rhs, Predicate::kCmpNEQ);
+//        c.vmovd(r, lhs);
+//        c.neg(r);
+//        return r.as<Gpd>();
+//    }
 
     inline Gpd double_lt(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
         Gp r = c.newInt32();
@@ -822,21 +787,22 @@ namespace questdb::x86 {
         return r.as<Gpd>();
     }
 
-    inline Gpd float_eq(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Gp r = c.newInt32();
-        c.cmpss(lhs, rhs, Predicate::kCmpEQ);
-        c.vmovd(r, lhs);
-        c.neg(r);
-        return r.as<Gpd>();
-    }
-
-    inline Gpd float_ne(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Gp r = c.newInt32();
-        c.cmpss(lhs, rhs, Predicate::kCmpNEQ);
-        c.vmovd(r, lhs);
-        c.neg(r);
-        return r.as<Gpd>();
-    }
+//coverage: float_cmp_delta used instead
+//    inline Gpd float_eq(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
+//        Gp r = c.newInt32();
+//        c.cmpss(lhs, rhs, Predicate::kCmpEQ);
+//        c.vmovd(r, lhs);
+//        c.neg(r);
+//        return r.as<Gpd>();
+//    }
+//
+//    inline Gpd float_ne(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
+//        Gp r = c.newInt32();
+//        c.cmpss(lhs, rhs, Predicate::kCmpNEQ);
+//        c.vmovd(r, lhs);
+//        c.neg(r);
+//        return r.as<Gpd>();
+//    }
 
     inline Gpd float_lt(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
         Gp r = c.newInt32();
@@ -1089,16 +1055,6 @@ namespace questdb::avx2 {
             case f32:
             case f64:
                 return is_nan(c, type, x);
-        }
-        return dst;
-    }
-
-    inline Ymm select_byte(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &mask) {
-        Ymm dst = c.newYmm();
-        if (type == i32) {
-            c.vpblendvb(dst, lhs, vec_int_null(c), mask);
-        } else {
-            c.vpblendvb(dst, lhs, vec_long_null(c), mask);
         }
         return dst;
     }
