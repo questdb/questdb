@@ -148,14 +148,12 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testNullConstantValues() throws Exception {
         String[][] columns = new String[][]{
-                {"abyte", "i8", "0L"},
-                {"ashort", "i16", "0L"},
                 {"anint", "i32", Numbers.INT_NaN + "L"},
                 {"along", "i64", Numbers.LONG_NaN + "L"},
-                {"ageobyte", "i8", "-1L"},
-                {"ageoshort", "i16", "-1L"},
-                {"ageoint", "i32", "-1L"},
-                {"ageolong", "i64", "-1L"},
+                {"ageobyte", "i8", GeoHashes.BYTE_NULL + "L"},
+                {"ageoshort", "i16", GeoHashes.SHORT_NULL + "L"},
+                {"ageoint", "i32", GeoHashes.INT_NULL + "L"},
+                {"ageolong", "i64", GeoHashes.NULL + "L"},
                 {"afloat", "f32", "NaND"},
                 {"adouble", "f64", "NaND"},
         };
@@ -194,8 +192,8 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testNullConstantMultipleExpressions() throws Exception {
-        serialize("ageoint <> null and abyte <> null");
-        assertIR("(i8 0L)(i8 abyte)(<>)(i32 -1L)(i32 ageoint)(<>)(&&)(ret)");
+        serialize("ageoint <> null and along <> null");
+        assertIR("(i64 -9223372036854775808L)(i64 along)(<>)(i32 -1L)(i32 ageoint)(<>)(&&)(ret)");
     }
 
     @Test
@@ -411,6 +409,16 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     @Test(expected = SqlException.class)
     public void testUnsupportedMixedGeoHashAndNumericColumns() throws Exception {
         serialize("ageoint = along");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedByteNullConstant() throws Exception {
+        serialize("abyte = null");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedShortNullConstant() throws Exception {
+        serialize("ashort = null");
     }
 
     @Test(expected = SqlException.class)
