@@ -27,28 +27,26 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.vm.api.MemoryAR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
 public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
     private final RecordCursorFactory factory;
+    private final CompiledFilter filter;
     private final CompiledFilterRecordCursor cursor;
-    private final int options;
-    private final MemoryAR filter;
     private final DirectLongList rows;
     private final DirectLongList columns;
 
-    public CompiledFilterRecordCursorFactory(RecordCursorFactory factory, @NotNull IntList columnIndexes, MemoryAR filter, int options) {
+    public CompiledFilterRecordCursorFactory(@NotNull RecordCursorFactory factory, @NotNull IntList columnIndexes, @NotNull CompiledFilter filter) {
         assert !(factory instanceof FilteredRecordCursorFactory);
         assert !(factory instanceof CompiledFilterRecordCursorFactory);
         this.factory = factory;
-        this.cursor = new CompiledFilterRecordCursor(columnIndexes);
         this.filter = filter;
-        this.options = options;
+        this.cursor = new CompiledFilterRecordCursor(columnIndexes);
         this.rows = new DirectLongList(1024);
         this.columns = new DirectLongList(16);
     }
@@ -56,13 +54,14 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
     @Override
     public void close() {
         factory.close();
+        filter.close();
         rows.close();
         columns.close();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        this.cursor.of(factory, filter, rows, columns, executionContext, options);
+        this.cursor.of(factory, filter, rows, columns, executionContext);
         return this.cursor;
     }
 

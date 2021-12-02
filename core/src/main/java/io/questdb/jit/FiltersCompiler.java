@@ -26,29 +26,9 @@ package io.questdb.jit;
 
 import io.questdb.std.str.StringSink;
 
-public class FiltersCompiler {
-    public static final JitError jitError = new JitError();
+final class FiltersCompiler {
 
-    public static class JitError {
-        private final StringSink message = new StringSink();
-        private int msgLength = 0;
-        public int errorCode;
-
-        public void reset() {
-            msgLength = 0;
-            message.clear();
-        }
-
-        // we are not going to allocate and convert strings
-        // fill it char by char (ascii char)
-        public void put(byte b) {
-            msgLength += 1;
-            message.put((char)b);
-        }
-
-        public CharSequence message() {
-            return message.subSequence(0, msgLength);
-        }
+    private FiltersCompiler() {
     }
 
     public static native long compileFunction(long filterAddress, long filterSize, int options, JitError error);
@@ -61,5 +41,33 @@ public class FiltersCompiler {
                                            long rowsAddress,
                                            long rowsSize,
                                            long rowsStartOffset);
+
+    static class JitError {
+
+        private final StringSink message = new StringSink();
+        private int msgLength = 0;
+        private int errorCode;
+
+        public void reset() {
+            errorCode = 0;
+            msgLength = 0;
+            message.clear();
+        }
+
+        // We are not going to allocate and convert strings,
+        // so instead we fill it char by char (ASCII char).
+        public void put(byte b) {
+            msgLength += 1;
+            message.put((char) b);
+        }
+
+        public CharSequence message() {
+            return message.subSequence(0, msgLength);
+        }
+
+        public int errorCode() {
+            return errorCode;
+        }
+    }
 
 }

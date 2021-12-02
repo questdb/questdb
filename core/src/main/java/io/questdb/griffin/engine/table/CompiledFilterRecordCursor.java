@@ -26,14 +26,12 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableReaderSelectedColumnRecord;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.vm.api.MemoryAR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.jit.FiltersCompiler;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.Rows;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.function.BooleanSupplier;
@@ -46,6 +44,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private PageFrameCursor pageFrameCursor;
     private RecordMetadata metadata;
 
+    private CompiledFilter filter;
     private DirectLongList rows;
     private DirectLongList columns;
 
@@ -56,21 +55,20 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private BooleanSupplier next;
     private final BooleanSupplier nextRow = this::nextRow;
     private final BooleanSupplier nextPage = this::nextPage;
-    private long filterFnAddress;
 
     public CompiledFilterRecordCursor(@NotNull IntList columnIndexes) {
         this.recordA = new TableReaderSelectedColumnRecord(columnIndexes);
         this.recordB = new TableReaderSelectedColumnRecord(columnIndexes);
     }
 
-    void of(
+    public void of(
             RecordCursorFactory factory,
-            MemoryAR filter,
+            CompiledFilter filter,
             DirectLongList rows,
             DirectLongList columns,
-            SqlExecutionContext executionContext,
-            int options
+            SqlExecutionContext executionContext
     ) throws SqlException {
+        this.filter = filter;
         this.rows = rows;
         this.columns = columns;
         this.pageFrameCursor = factory.getPageFrameCursor(executionContext);
@@ -78,23 +76,11 @@ class CompiledFilterRecordCursor implements RecordCursor {
         this.recordB.of(pageFrameCursor.getTableReader());
         this.metadata = factory.getMetadata();
         this.next = nextPage;
-        final long filterSize = filter.getAppendOffset();
-        filter.jumpTo(0);
-        final long filterAddress = filter.getPageAddress(0);
-
-        FiltersCompiler.jitError.reset();
-        this.filterFnAddress = FiltersCompiler.compileFunction(filterAddress, filterSize, options, FiltersCompiler.jitError);
-        if(FiltersCompiler.jitError.errorCode != 0) {
-            //TODO: process error. rethrow SqlException/ add to log?
-//            System.out.println("jit error code: " + FiltersCompiler.jitError.errorCode);
-//            System.out.println("jit error mesg: " + FiltersCompiler.jitError.message());
-        }
     }
 
     @Override
     public void close() {
         pageFrameCursor.close();
-        FiltersCompiler.freeFunction(filterFnAddress);
     }
 
     @Override
@@ -156,13 +142,13 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
             partitionIndex = frame.getPartitionIndex();
             current = 0;
-            hi = FiltersCompiler.callFunction(
-                    filterFnAddress,
+            hi = filter.call(
                     columns.getAddress(),
                     columns.size(),
                     rows.getAddress(),
                     rowCount,
-                    frame.getPartitionLo());
+                    frame.getPartitionLo()
+            );
 
             if (current < hi) {
                 recordA.jumpTo(partitionIndex, rows.get(current));

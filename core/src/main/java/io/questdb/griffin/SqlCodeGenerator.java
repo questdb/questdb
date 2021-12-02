@@ -49,7 +49,10 @@ import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.griffin.engine.table.*;
 import io.questdb.griffin.engine.union.*;
 import io.questdb.griffin.model.*;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.jit.FilterExprIRSerializer;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -62,6 +65,7 @@ import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
+    private static final Log LOG = LogFactory.getLog(SqlCodeGenerator.class);
     public static final int GKK_VANILLA_INT = 0;
     public static final int GKK_HOUR_INT = 1;
     private static final IntHashSet limitTypes = new IntHashSet();
@@ -731,9 +735,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         int columnIndex = factory.getMetadata().getColumnIndexQuiet(topDownColumns.getQuick(i).getName());
                         columnIndexes.add(columnIndex);
                     }
-                    return new CompiledFilterRecordCursorFactory(factory, columnIndexes, jitIRMem, jitOptions);
-                } catch (SqlException ignored) {
-                    // JIT can't be applied to the filter.
+                    final CompiledFilter jitFilter = new CompiledFilter();
+                    jitFilter.compile(jitIRMem, jitOptions);
+                    return new CompiledFilterRecordCursorFactory(factory, columnIndexes, jitFilter);
+                } catch (SqlException ex) {
+                    LOG.debug()
+                            .$("JIT cannot be applied to query [tableName=").utf8(model.getName())
+                            .$(", ex=").$(ex.getFlyweightMessage())
+                            .$(']').$();
                 } finally {
                     jitIRSerializer.clear();
                     jitIRMem.truncate();
