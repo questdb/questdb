@@ -179,18 +179,19 @@ If you're familiar with the terminal, you can do the following:
 Squashing commits can be a tricky process but once you figure it out, it is
 really helpful and keeps our repository concise and clean.
 
-# FAQ
+## FAQ
 
-#### Everything works fine, but I get a `404` on [localhost:9000](http://localhost:9000)
+### Why does the server work, but the UI returns a `404` on [localhost:9000](http://localhost:9000)?
 
 This means that the web console artifacts are not present in
-`core/src/main/resources/io/questdb/site/public.zip`. To fix this, you can simply run: 
+`core/src/main/resources/io/questdb/site/public.zip`. To fix this, you can
+simply run:
 
 ```bash
 mvn clean package -DskipTests -P build-web-console
 ```
 
-#### I do not want to install `Node.js` and/or it is clashing with my system installation of `Node.js`
+### How can I easily manage the `Node.js` installation?
 
 You can use [nvm](https://github.com/nvm-sh/nvm) for OSX/Linux/windows WSL, and
 [nvm-windows](https://github.com/coreybutler/nvm-windows) for Windows. To have
@@ -205,15 +206,20 @@ mvn clean package -DskipTests -P build-web-console,build-binaries,use-built-in-n
 That way, `maven` will install `node` on the fly in `ui/node` so you don't have
 to install it locally.
 
-#### Some tests fail on a clean branch in Windows   
+### Why do some tests fail on Windows?
 
-If tests are green in CI but tests fail on:
-- http chunk size assertion (missing initial zeroes in e.g. IODispatcherTest )
-- timeout
-- jvm crash   
-then it may be caused by your antivirus .
-In case of ESET products you've to :
-- disable "application protocol content filtering" explicitly or 
-- add 127.0.0.1 to "Excluded IP addresses" list deep in advanced settings menus 
-because disabling all top-level mechanisms doesn't turn protocol filtering off. 
-  
+Some antivirus software may cause tests to fail. Typical indicators that
+antivirus is interfering with tests are that tests
+[pass on CI](https://github.com/questdb/questdb/blob/master/ci/new-pull-request.yml)
+but are failing in the following cases:
+
+- HTTP chunk size assertion (missing initial zeroes in e.g. `IODispatcherTest`)
+- Test timeout
+- JVM crash
+
+In case of ESET products, the following steps may resolve the issue:
+
+- Disable "application protocol content filtering" explicitly **or**
+- Add `127.0.0.1` to "Excluded IP addresses" list in the **advanced settings**
+  menu because disabling all top-level mechanisms doesn't turn protocol
+  filtering off.
