@@ -92,7 +92,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntegerColumnConstantComparison() throws Exception {
+    public void testColumnIntConstantComparison() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_byte() i8," +
@@ -108,21 +108,23 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFloatColumnConstantComparison() throws Exception {
+    public void testColumnFloatConstantComparison() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int() i32," +
+                " rnd_long() i64," +
                 " rnd_float() f32," +
                 " rnd_double() f64 " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
         FilterGenerator gen = new FilterGenerator()
-                .withOptionalNegation().withAnyOf("f32", "f64")
+                .withOptionalNegation().withAnyOf("i32", "i64", "f32", "f64")
                 .withComparisonOperator()
                 .withAnyOf("-50", "-25.5", "0", "0.0", "0.000", "25.5", "50");
         assertGeneratedQuery("select * from x", ddl, gen);
     }
 
     @Test
-    public void testIntFloatColumnComparison() throws Exception {
+    public void testIntFloatColumnsComparison() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_byte() i8," +
@@ -259,7 +261,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntFloatColumnComparisonIgnoreNull() throws Exception {
+    public void testIntFloatColumnsComparisonIgnoreNull() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_byte(-10, 10) i8," +

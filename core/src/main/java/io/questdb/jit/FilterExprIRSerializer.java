@@ -42,7 +42,6 @@ import java.util.Arrays;
  * TODO:
  *  - i32 * 3 + 42.5 + f64 > 1 => 3 should be i32, 42.5 should be f32 (check Java???), 1 should be f64
  *  - i8 + i8 = null and i16 + i8 = null => there are no nulls for byte, char and short
- *  - i64 > 50.5 => unlock these cases
  */
 public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
 
@@ -375,29 +374,31 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                     memory.putLong(sign * s);
                     break;
                 case IMM_I4:
-                    final int i = Numbers.parseInt(token);
-                    memory.putByte(IMM_I4);
-                    memory.putLong(sign * i);
-                    break;
-                case IMM_I8:
-                    final long l = Numbers.parseLong(token);
-                    memory.putByte(IMM_I8);
-                    memory.putLong(sign * l);
-                    break;
                 case IMM_F4:
                     try {
-                        final int fi = Numbers.parseInt(token);
+                        final int i = Numbers.parseInt(token);
                         memory.putByte(IMM_I4);
-                        memory.putLong(sign * fi);
+                        memory.putLong(sign * i);
                     } catch (NumericException e) {
-                        final float f = Numbers.parseFloat(token);
+                        final float fi = Numbers.parseFloat(token);
                         memory.putByte(IMM_F4);
-                        memory.putDouble(sign * f);
+                        memory.putDouble(sign * fi);
+                    }
+                    break;
+                case IMM_I8:
+                    try {
+                        final long l = Numbers.parseLong(token);
+                        memory.putByte(IMM_I8);
+                        memory.putLong(sign * l);
+                    } catch (NumericException e) {
+                        final double dl = Numbers.parseDouble(token);
+                        memory.putByte(IMM_F8);
+                        memory.putDouble(sign * dl);
                     }
                     break;
                 case IMM_F8:
-                    // Unlike with f32, we always parse 64-bit constants as f64. That's because
-                    // AVX-2 does not have an instruction to convert longs to doubles.
+                    // Unlike with f32, we always parse 64-bit constants as doubles. That's
+                    // because AVX-2 does not have an instruction to convert longs to doubles.
                     final double d = Numbers.parseDouble(token);
                     memory.putByte(IMM_F8);
                     memory.putDouble(sign * d);

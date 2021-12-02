@@ -26,7 +26,8 @@ package io.questdb.jit;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.BaseFunctionFactoryTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExpressionNode;
@@ -45,7 +46,7 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
 
     private static TableReader reader;
     private static RecordMetadata metadata;
-    private static MemoryCARWImpl irMem;
+    private static MemoryCARW irMem;
     private static FilterExprIRSerializer serializer;
 
     @BeforeClass
@@ -73,7 +74,7 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
 
         reader = new TableReader(configuration, "x");
         metadata = reader.getMetadata();
-        irMem = new MemoryCARWImpl(1024, 1, MemoryTag.NATIVE_DEFAULT);
+        irMem = Vm.getCARWInstance(1024, 1, MemoryTag.NATIVE_DEFAULT);
         serializer = new FilterExprIRSerializer();
     }
 
@@ -205,8 +206,10 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
                 {"ashort", "i16", "1", "1L", "i16"},
                 {"ashort", "i16", "-1", "-1L", "i16"},
                 {"anint", "i32", "1", "1L", "i32"},
+                {"anint", "i32", "1.5", "1.5D", "f32"},
                 {"anint", "i32", "-1", "-1L", "i32"},
                 {"along", "i64", "1", "1L", "i64"},
+                {"along", "i64", "1.5", "1.5D", "f64"},
                 {"along", "i64", "-1", "-1L", "i64"},
                 {"afloat", "f32", "1", "1L", "i32"},
                 {"afloat", "f32", "-1", "-1L", "i32"},
@@ -416,8 +419,13 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedFloatConstantInIntegerContext() throws Exception {
-        serialize("anint > 1.5");
+    public void testUnsupportedFloatConstantInByteContext() throws Exception {
+        serialize("abyte > 1.5");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedFloatConstantInShortContext() throws Exception {
+        serialize("ashort > 1.5");
     }
 
     @Test(expected = SqlException.class)
@@ -467,12 +475,12 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
 
     private static class IRToStringSerializer {
 
-        private final MemoryCARWImpl irMem;
+        private final MemoryCARW irMem;
         private final RecordMetadata metadata;
         private long offset;
         private StringBuilder sb;
 
-        public IRToStringSerializer(MemoryCARWImpl irMem, RecordMetadata metadata) {
+        public IRToStringSerializer(MemoryCARW irMem, RecordMetadata metadata) {
             this.irMem = irMem;
             this.metadata = metadata;
         }

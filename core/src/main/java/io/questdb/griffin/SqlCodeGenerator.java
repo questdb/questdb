@@ -28,7 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
@@ -84,7 +84,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
     private final FilterExprIRSerializer jitIRSerializer = new FilterExprIRSerializer();
-    private final MemoryCARW jitIRMem = new MemoryCARWImpl(1024, 1, MemoryTag.NATIVE_DEFAULT);
+    private final MemoryCARW jitIRMem;
     private final FunctionParser functionParser;
     private final CairoEngine engine;
     private final BytecodeAssembler asm = new BytecodeAssembler();
@@ -132,6 +132,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         this.configuration = configuration;
         this.functionParser = functionParser;
         this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
+        this.jitIRMem = Vm.getCARWInstance(1024, 1, MemoryTag.NATIVE_DEFAULT);
+        // Pre-touch JIT IR memory to avoid false positive memleak detections.
+        jitIRMem.putByte((byte) 0);
+        jitIRMem.truncate();
     }
 
     @Override
