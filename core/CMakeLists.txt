@@ -150,6 +150,16 @@ endif()
 include("${asmjit_SOURCE_DIR}/CMakeLists.txt")
 include_directories(${asmjit_SOURCE_DIR}/src SYSTEM)
 
+if (NOT DEFINED JIT_TEST)
+    set(JIT_TEST FALSE)
+endif()
+
+if(JIT_TEST)
+    include_directories(${asmjit_SOURCE_DIR}/test SYSTEM)
+    add_executable(jittests src/test/c/jittests/test_app.cpp)
+    target_link_libraries(jittests questdb)
+endif()
+
 #zlib
 set(ZLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/zlib-1.2.8)
 
