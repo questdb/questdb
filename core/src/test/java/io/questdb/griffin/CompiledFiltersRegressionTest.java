@@ -189,12 +189,21 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_byte() i8," +
                 " rnd_short() i16," +
+                " rnd_int() i32," +
+                " rnd_long() i64," +
+                " rnd_float() f32," +
                 " rnd_double() f64 " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
         FilterGenerator gen = new FilterGenerator()
                 .withOptionalNot().withAnyOf("i8 / 2 = 4")
                 .withBooleanOperator()
                 .withOptionalNot().withAnyOf("i16 < 0")
+                .withBooleanOperator()
+                .withOptionalNot().withAnyOf("i32 > 0")
+                .withBooleanOperator()
+                .withOptionalNot().withAnyOf("i64 <= 0")
+                .withBooleanOperator()
+                .withOptionalNot().withAnyOf("f32 <= 0.34")
                 .withBooleanOperator()
                 .withOptionalNot().withAnyOf("f64 > 7.5");
         assertGeneratedQuery("select * from x", ddl, gen);
