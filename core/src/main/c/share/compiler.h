@@ -126,17 +126,8 @@ private:
 };
 
 extern "C" {
-JNIEXPORT long JNICALL Java_io_questdb_jit_FiltersCompiler_compile(JNIEnv *e,
-                                                                   jclass cl,
-                                                                   jlong colsAddress,
-                                                                   jlong colsSize,
-                                                                   jlong filterAddress,
-                                                                   jlong filterSize,
-                                                                   jlong rowsAddress,
-                                                                   jlong rowsSize,
-                                                                   jlong rowsStartOffset);
 
-JNIEXPORT long JNICALL Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
+JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
                                                                            jclass cl,
                                                                            jlong filterAddress,
                                                                            jlong filterSize,
@@ -145,7 +136,7 @@ JNIEXPORT long JNICALL Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEn
 
 JNIEXPORT void JNICALL Java_io_questdb_jit_FiltersCompiler_freeFunction(JNIEnv *e, jclass cl, jlong fnAddress);
 
-JNIEXPORT long JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv *e,
+JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv *e,
                                                                         jclass cl,
                                                                         jlong fnAddress,
                                                                         jlong colsAddress,
