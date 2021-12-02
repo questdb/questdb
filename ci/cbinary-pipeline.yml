@@ -80,9 +80,7 @@ stages:
             displayName: "Build source-code $(Agent.OS) for ARM Linux"
             condition: eq(variables['Agent.OS'], 'Linux')
 
-
-          - bash: |
-            curl https://raw.githubusercontent.com/AdoptOpenJDK/openjdk-jdk11/master/src/java.base/windows/native/include/jni_md.h > $JAVA_HOME/include/jni_md.h
+          - bash: curl https://raw.githubusercontent.com/AdoptOpenJDK/openjdk-jdk11/master/src/java.base/windows/native/include/jni_md.h > $JAVA_HOME/include/jni_md.h
             condition: eq(variables['Agent.OS'], 'Linux')
             displayName: "Download windows jni_md.h from JDK 11"
 
