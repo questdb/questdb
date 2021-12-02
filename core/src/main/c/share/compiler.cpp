@@ -1072,7 +1072,7 @@ void fillJitErrorObject(JNIEnv *e, jobject error, uint32_t code, const char * ms
     if(errorClass) {
         jfieldID fieldError = e->GetFieldID(errorClass, "errorCode", "I");
         if(fieldError) {
-            e->SetLongField(error, fieldError, static_cast<jlong>(code));
+            e->SetIntField(error, fieldError, static_cast<jint>(code));
         }
         jmethodID methodPut = e->GetMethodID(errorClass, "put", "(B)V");
         if(methodPut) {

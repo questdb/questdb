@@ -45,24 +45,21 @@ final class FiltersCompiler {
     static class JitError {
 
         private final StringSink message = new StringSink();
-        private int msgLength = 0;
-        private int errorCode;
+        private int errorCode = 0;
 
         public void reset() {
             errorCode = 0;
-            msgLength = 0;
             message.clear();
         }
 
         // We are not going to allocate and convert strings,
         // so instead we fill it char by char (ASCII char).
         public void put(byte b) {
-            msgLength += 1;
             message.put((char) b);
         }
 
         public CharSequence message() {
-            return message.subSequence(0, msgLength);
+            return message.subSequence(0, message.length());
         }
 
         public int errorCode() {
