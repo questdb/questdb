@@ -69,6 +69,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
             throw CairoException.instance(0).put("timeout, query aborted [fd=").put(fd).put(']').setInterruption(true);
         }
     }
+
     @Override
     public void test() {
         if (testCount < throttle) {
