@@ -513,7 +513,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.circuitBreakerThrottle = getInt(properties, env, "circuit.breaker.throttle", 2_000_000);
             this.circuitBreakerBufferSize = getInt(properties, env, "circuit.breaker.buffer.size", 64);
-            this.circuitBreakerMaxTime = getInt(properties, env, "circuit.breaker.max.time", 60) * Timestamps.SECOND_MICROS;
+            this.circuitBreakerMaxTime = (long) (getDouble(properties, env, "query.timeout.sec", 60) * Timestamps.SECOND_MICROS);
 
             this.pgEnabled = getBoolean(properties, env, "pg.enabled", true);
             if (pgEnabled) {
