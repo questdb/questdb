@@ -24,9 +24,18 @@
 
 package io.questdb.griffin;
 
-public interface SqlExecutionInterruptor {
-    SqlExecutionInterruptor NOP_INTERRUPTOR = () -> {
+public interface SqlExecutionCircuitBreaker {
+    SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {
+        @Override
+        public void test() {
+        }
+
+        @Override
+        public void powerUp() {
+        }
     };
 
-    void checkInterrupted();
+    void test();
+
+    void powerUp();
 }
