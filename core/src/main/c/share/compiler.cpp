@@ -68,69 +68,73 @@ namespace questdb::x86 {
         c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
 
         switch (type) {
-            case i8: {
-                Gp row_data = c.newGpd("i8_mem");
+            case data_type_t::i8: {
+                Gp row_data = c.newGpd("data_type_t::i8_mem");
                 c.movsx(row_data, Mem(column_address, input_index, 0, 0, 1));
-                return {row_data, type, kMemory};
+                return {row_data, type, data_kind_t::kMemory};
             }
-            case i16: {
-                Gp row_data = c.newGpd("i16_mem");
+            case data_type_t::i16: {
+                Gp row_data = c.newGpd("data_type_t::i16_mem");
                 c.movsx(row_data, Mem(column_address, input_index, 1, 0, 2));
-                return {row_data, type, kMemory};
+                return {row_data, type, data_kind_t::kMemory};
             }
-            case i32: {
-                Gp row_data = c.newGpd("i32_mem");
+            case data_type_t::i32: {
+                Gp row_data = c.newGpd("data_type_t::i32_mem");
                 c.mov(row_data, Mem(column_address, input_index, 2, 0, 4));
-                return {row_data, type, kMemory};
+                return {row_data, type, data_kind_t::kMemory};
             }
-            case i64: {
-                Gp row_data = c.newGpq("i64_mem");
+            case data_type_t::i64: {
+                Gp row_data = c.newGpq("data_type_t::i64_mem");
                 c.mov(row_data, Mem(column_address, input_index, 3, 0, 8));
-                return {row_data, type, kMemory};
+                return {row_data, type, data_kind_t::kMemory};
             }
-            case f32: {
-                Xmm row_data = c.newXmmSs("f32_mem");
+            case data_type_t::f32: {
+                Xmm row_data = c.newXmmSs("data_type_t::f32_mem");
                 c.vmovss(row_data, Mem(column_address, input_index, 2, 0, 4));
-                return {row_data, type, kMemory};
+                return {row_data, type, data_kind_t::kMemory};
             }
-            case f64: {
-                Xmm row_data = c.newXmmSd("f64_mem");
+            case data_type_t::f64: {
+                Xmm row_data = c.newXmmSd("data_type_t::f64_mem");
                 c.vmovsd(row_data, Mem(column_address, input_index, 3, 0, 8));
-                return {row_data, type, kMemory};
+                return {row_data, type, data_kind_t::kMemory};
             }
+            default:
+                assert(false);
         }
     }
 
     jit_value_t read_imm(Compiler &c, data_type_t type, const uint8_t *istream, size_t size, uint32_t &pos) {
         switch (type) {
-            case i8:
-            case i16:
-            case i32: {
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32: {
                 auto value = read<int64_t>(istream, size, pos);
-                Gp reg = c.newGpd("i32_imm %d", value);
+                Gp reg = c.newGpd("data_type_t::i32_imm %d", value);
                 c.mov(reg, value); //todo: check & cast value ?
-                return {reg, type, kConst};
+                return {reg, type, data_kind_t::kConst};
             }
-            case i64: {
+            case data_type_t::i64: {
                 auto value = read<int64_t>(istream, size, pos);
-                Gp reg = c.newGpq("i64_imm %d", value);
+                Gp reg = c.newGpq("data_type_t::i64_imm %d", value);
                 c.movabs(reg, value); //todo: check & cast value ?
-                return {reg, type, kConst};
+                return {reg, type, data_kind_t::kConst};
             }
-            case f32: {
+            case data_type_t::f32: {
                 auto value = read<double>(istream, size, pos);
-                Xmm reg = c.newXmmSs("f32_imm %f", value);
+                Xmm reg = c.newXmmSs("data_type_t::f32_imm %f", value);
                 Mem mem = c.newFloatConst(ConstPool::kScopeLocal, (float) value);
                 c.movss(reg, mem);
-                return {reg, type, kConst};
+                return {reg, type, data_kind_t::kConst};
             }
-            case f64: {
+            case data_type_t::f64: {
                 auto value = read<double>(istream, size, pos);
-                Xmm reg = c.newXmmSd("f64_imm %f", value);
+                Xmm reg = c.newXmmSd("data_type_t::f64_imm %f", value);
                 Mem mem = c.newDoubleConst(ConstPool::kScopeLocal, value);
                 c.movsd(reg, mem);
-                return {reg, type, kConst};
+                return {reg, type, data_kind_t::kConst};
             }
+            default:
+                assert(false);
         }
     }
 
@@ -138,16 +142,18 @@ namespace questdb::x86 {
         auto dt = lhs.dtype();
         auto dk = lhs.dkind();
         switch (dt) {
-            case i8:
-            case i16:
-            case i32:
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
                 return {int32_neg(c, lhs.gp().r32(), null_check), dt, dk};
-            case i64:
+            case data_type_t::i64:
                 return {int64_neg(c, lhs.gp(), null_check), dt, dk};
-            case f32:
+            case data_type_t::f32:
                 return {float_neg(c, lhs.xmm()), dt, dk};
-            case f64:
+            case data_type_t::f64:
                 return {double_neg(c, lhs.xmm()), dt, dk};
+            default:
+                assert(false);
         }
     }
 
@@ -159,276 +165,306 @@ namespace questdb::x86 {
 
     jit_value_t bin_and(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         return {int32_and(c, lhs.gp().r32(), rhs.gp().r32()), dt, dk};
     }
 
     jit_value_t bin_or(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         return {int32_or(c, lhs.gp().r32(), rhs.gp().r32()), dt, dk};
     }
 
     jit_value_t cmp_eq(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         switch (dt) {
-            case i8:
-            case i16:
-            case i32:
-                return {int32_eq(c, lhs.gp().r32(), rhs.gp().r32()), i32, dk};
-            case i64:
-                return {int64_eq(c, lhs.gp(), rhs.gp()), i32, dk};
-            case f32:
-                return {float_eq_delta(c, lhs.xmm(), rhs.xmm(), FLOAT_DELTA), i32, dk};
-            case f64:
-                return {double_eq_delta(c, lhs.xmm(), rhs.xmm(), DOUBLE_DELTA), i32, dk};
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
+                return {int32_eq(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
+            case data_type_t::i64:
+                return {int64_eq(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
+            case data_type_t::f32:
+                return {float_eq_delta(c, lhs.xmm(), rhs.xmm(), FLOAT_DELTA), data_type_t::i32, dk};
+            case data_type_t::f64:
+                return {double_eq_delta(c, lhs.xmm(), rhs.xmm(), DOUBLE_DELTA), data_type_t::i32, dk};
+            default:
+                assert(false);
         }
     }
 
     jit_value_t cmp_ne(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         switch (dt) {
-            case i8:
-            case i16:
-            case i32:
-                return {int32_ne(c, lhs.gp().r32(), rhs.gp().r32()), i32, dk};
-            case i64:
-                return {int64_ne(c, lhs.gp(), rhs.gp()), i32, dk};
-            case f32:
-                return {float_ne_delta(c, lhs.xmm(), rhs.xmm(), FLOAT_DELTA), i32, dk};
-            case f64:
-                return {double_ne_delta(c, lhs.xmm(), rhs.xmm(), DOUBLE_DELTA), i32, dk};
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
+                return {int32_ne(c, lhs.gp().r32(), rhs.gp().r32()), data_type_t::i32, dk};
+            case data_type_t::i64:
+                return {int64_ne(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
+            case data_type_t::f32:
+                return {float_ne_delta(c, lhs.xmm(), rhs.xmm(), FLOAT_DELTA), data_type_t::i32, dk};
+            case data_type_t::f64:
+                return {double_ne_delta(c, lhs.xmm(), rhs.xmm(), DOUBLE_DELTA), data_type_t::i32, dk};
+            default:
+                assert(false);
         }
     }
 
     jit_value_t cmp_gt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         switch (dt) {
-            case i8:
-            case i16:
-            case i32:
-                return {int32_gt(c, lhs.gp().r32(), rhs.gp().r32(), null_check), i32, dk};
-            case i64:
-                return {int64_gt(c, lhs.gp(), rhs.gp(), null_check), i32, dk};
-            case f32:
-                return {float_gt(c, lhs.xmm(), rhs.xmm()), i32, dk};
-            case f64:
-                return {double_gt(c, lhs.xmm(), rhs.xmm()), i32, dk};
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
+                return {int32_gt(c, lhs.gp().r32(), rhs.gp().r32(), null_check), data_type_t::i32, dk};
+            case data_type_t::i64:
+                return {int64_gt(c, lhs.gp(), rhs.gp(), null_check), data_type_t::i32, dk};
+            case data_type_t::f32:
+                return {float_gt(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
+            case data_type_t::f64:
+                return {double_gt(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
+            default:
+                assert(false);
         }
     }
 
     jit_value_t cmp_ge(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         switch (dt) {
-            case i8:
-            case i16:
-            case i32:
-                return {int32_ge(c, lhs.gp().r32(), rhs.gp().r32(), null_check), i32, dk};
-            case i64:
-                return {int64_ge(c, lhs.gp(), rhs.gp(), null_check), i32, dk};
-            case f32:
-                return {float_ge(c, lhs.xmm(), rhs.xmm()), i32, dk};
-            case f64:
-                return {double_ge(c, lhs.xmm(), rhs.xmm()), i32, dk};
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
+                return {int32_ge(c, lhs.gp().r32(), rhs.gp().r32(), null_check), data_type_t::i32, dk};
+            case data_type_t::i64:
+                return {int64_ge(c, lhs.gp(), rhs.gp(), null_check), data_type_t::i32, dk};
+            case data_type_t::f32:
+                return {float_ge(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
+            case data_type_t::f64:
+                return {double_ge(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
+            default:
+                assert(false);
         }
     }
 
     jit_value_t cmp_lt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         switch (dt) {
-            case i8:
-            case i16:
-            case i32:
-                return {int32_lt(c, lhs.gp().r32(), rhs.gp().r32(), null_check), i32, dk};
-            case i64:
-                return {int64_lt(c, lhs.gp(), rhs.gp(), null_check), i32, dk};
-            case f32:
-                return {float_lt(c, lhs.xmm(), rhs.xmm()), i32, dk};
-            case f64:
-                return {double_lt(c, lhs.xmm(), rhs.xmm()), i32, dk};
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
+                return {int32_lt(c, lhs.gp().r32(), rhs.gp().r32(), null_check), data_type_t::i32, dk};
+            case data_type_t::i64:
+                return {int64_lt(c, lhs.gp(), rhs.gp(), null_check), data_type_t::i32, dk};
+            case data_type_t::f32:
+                return {float_lt(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
+            case data_type_t::f64:
+                return {double_lt(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
+            default:
+                assert(false);
         }
     }
 
     jit_value_t cmp_le(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         switch (dt) {
-            case i8:
-            case i16:
-            case i32:
-                return {int32_le(c, lhs.gp().r32(), rhs.gp().r32(), null_check), i32, dk};
-            case i64:
-                return {int64_le(c, lhs.gp(), rhs.gp(), null_check), i32, dk};
-            case f32:
-                return {float_le(c, lhs.xmm(), rhs.xmm()), i32, dk};
-            case f64:
-                return {double_le(c, lhs.xmm(), rhs.xmm()), i32, dk};
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
+                return {int32_le(c, lhs.gp().r32(), rhs.gp().r32(), null_check), data_type_t::i32, dk};
+            case data_type_t::i64:
+                return {int64_le(c, lhs.gp(), rhs.gp(), null_check), data_type_t::i32, dk};
+            case data_type_t::f32:
+                return {float_le(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
+            case data_type_t::f64:
+                return {double_le(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
+            default:
+                assert(false);
         }
     }
 
     jit_value_t add(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         switch (dt) {
-            case i8:
-            case i16:
-            case i32:
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
                 return {int32_add(c, lhs.gp().r32(), rhs.gp().r32(), null_check), dt, dk};
-            case i64:
+            case data_type_t::i64:
                 return {int64_add(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
-            case f32:
+            case data_type_t::f32:
                 return {float_add(c, lhs.xmm(), rhs.xmm()), dt, dk};
-            case f64:
+            case data_type_t::f64:
                 return {double_add(c, lhs.xmm(), rhs.xmm()), dt, dk};
+            default:
+                assert(false);
         }
     }
 
     jit_value_t sub(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         switch (dt) {
-            case i8:
-            case i16:
-            case i32:
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
                 return {int32_sub(c, lhs.gp().r32(), rhs.gp().r32(), null_check), dt, dk};
-            case i64:
+            case data_type_t::i64:
                 return {int64_sub(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
-            case f32:
+            case data_type_t::f32:
                 return {float_sub(c, lhs.xmm(), rhs.xmm()), dt, dk};
-            case f64:
+            case data_type_t::f64:
                 return {double_sub(c, lhs.xmm(), rhs.xmm()), dt, dk};
+            default:
+                assert(false);
         }
     }
 
     jit_value_t mul(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         switch (dt) {
-            case i8:
-            case i16:
-            case i32:
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
                 return {int32_mul(c, lhs.gp().r32(), rhs.gp().r32(), null_check), dt, dk};
-            case i64:
+            case data_type_t::i64:
                 return {int64_mul(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
-            case f32:
+            case data_type_t::f32:
                 return {float_mul(c, lhs.xmm(), rhs.xmm()), dt, dk};
-            case f64:
+            case data_type_t::f64:
                 return {double_mul(c, lhs.xmm(), rhs.xmm()), dt, dk};
+            default:
+                assert(false);
         }
     }
 
     jit_value_t div(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         switch (dt) {
-            case i8:
-            case i16:
-            case i32:
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
                 return {int32_div(c, lhs.gp().r32(), rhs.gp().r32(), null_check), dt, dk};
-            case i64:
+            case data_type_t::i64:
                 return {int64_div(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
-            case f32:
+            case data_type_t::f32:
                 return {float_div(c, lhs.xmm(), rhs.xmm()), dt, dk};
-            case f64:
+            case data_type_t::f64:
                 return {double_div(c, lhs.xmm(), rhs.xmm()), dt, dk};
+            default:
+                assert(false);
         }
     }
 
     inline bool cvt_null_check(data_type_t type) {
-        return !(type == i8 || type == i16);
+        return !(type == data_type_t::i8 || type == data_type_t::i16);
     }
 
     inline std::pair<jit_value_t, jit_value_t>
     convert(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         switch (lhs.dtype()) {
-            case i8:
-            case i16:
-            case i32:
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
                 switch (rhs.dtype()) {
-                    case i8:
-                    case i16:
-                    case i32:
+                    case data_type_t::i8:
+                    case data_type_t::i16:
+                    case data_type_t::i32:
                         return std::make_pair(lhs, rhs);
-                    case i64:
+                    case data_type_t::i64:
                         return std::make_pair(
-                                jit_value_t(int32_to_int64(c, lhs.gp().r32(), null_check && cvt_null_check(lhs.dtype())), i64,
+                                jit_value_t(int32_to_int64(c, lhs.gp().r32(), null_check && cvt_null_check(lhs.dtype())), data_type_t::i64,
                                             lhs.dkind()), rhs);
-                    case f32:
+                    case data_type_t::f32:
                         return std::make_pair(
-                                jit_value_t(int32_to_float(c, lhs.gp().r32(), null_check && cvt_null_check(lhs.dtype())), f32,
+                                jit_value_t(int32_to_float(c, lhs.gp().r32(), null_check && cvt_null_check(lhs.dtype())), data_type_t::f32,
                                             lhs.dkind()), rhs);
-                    case f64:
+                    case data_type_t::f64:
                         return std::make_pair(
-                                jit_value_t(int32_to_double(c, lhs.gp().r32(), null_check && cvt_null_check(lhs.dtype())), f64,
+                                jit_value_t(int32_to_double(c, lhs.gp().r32(), null_check && cvt_null_check(lhs.dtype())), data_type_t::f64,
                                             lhs.dkind()), rhs);
+                    default:
+                        assert(false);
                 }
                 break;
-            case i64:
+            case data_type_t::i64:
                 switch (rhs.dtype()) {
-                    case i8:
-                    case i16:
-                    case i32:
+                    case data_type_t::i8:
+                    case data_type_t::i16:
+                    case data_type_t::i32:
                         return std::make_pair(lhs,
                                               jit_value_t(
                                                       int32_to_int64(c, rhs.gp().r32(), null_check && cvt_null_check(rhs.dtype())),
-                                                      i64, rhs.dkind()));
-                    case i64:
+                                                      data_type_t::i64, rhs.dkind()));
+                    case data_type_t::i64:
                         return std::make_pair(lhs, rhs);
-                    case f32:
+                    case data_type_t::f32:
                         return std::make_pair(
-                                jit_value_t(int64_to_double(c, lhs.gp().r64(), null_check), f64, lhs.dkind()),
-                                jit_value_t(float_to_double(c, rhs.xmm()), f64, rhs.dkind()));
-                    case f64:
+                                jit_value_t(int64_to_double(c, lhs.gp().r64(), null_check), data_type_t::f64, lhs.dkind()),
+                                jit_value_t(float_to_double(c, rhs.xmm()), data_type_t::f64, rhs.dkind()));
+                    case data_type_t::f64:
                         return std::make_pair(
-                                jit_value_t(int64_to_double(c, lhs.gp(), null_check), f64, lhs.dkind()),
+                                jit_value_t(int64_to_double(c, lhs.gp(), null_check), data_type_t::f64, lhs.dkind()),
                                 rhs);
+                    default:
+                        assert(false);
                 }
                 break;
-            case f32:
+            case data_type_t::f32:
                 switch (rhs.dtype()) {
-                    case i8:
-                    case i16:
-                    case i32:
+                    case data_type_t::i8:
+                    case data_type_t::i16:
+                    case data_type_t::i32:
                         return std::make_pair(lhs,
                                               jit_value_t(
                                                       int32_to_float(c, rhs.gp().r32(), null_check && cvt_null_check(rhs.dtype())),
-                                                      f32, rhs.dkind()));
-                    case i64:
-                        return std::make_pair(jit_value_t(float_to_double(c, lhs.xmm()), f64, lhs.dkind()),
-                                              jit_value_t(int64_to_double(c, rhs.gp(), null_check), f64,
+                                                      data_type_t::f32, rhs.dkind()));
+                    case data_type_t::i64:
+                        return std::make_pair(jit_value_t(float_to_double(c, lhs.xmm()), data_type_t::f64, lhs.dkind()),
+                                              jit_value_t(int64_to_double(c, rhs.gp(), null_check), data_type_t::f64,
                                                           rhs.dkind()));
-                    case f32:
+                    case data_type_t::f32:
                         return std::make_pair(lhs, rhs);
-                    case f64:
-                        return std::make_pair(jit_value_t(float_to_double(c, lhs.xmm()), f64, lhs.dkind()), rhs);
+                    case data_type_t::f64:
+                        return std::make_pair(jit_value_t(float_to_double(c, lhs.xmm()), data_type_t::f64, lhs.dkind()), rhs);
+                    default:
+                        assert(false);
                 }
                 break;
-            case f64:
+            case data_type_t::f64:
                 switch (rhs.dtype()) {
-                    case i8:
-                    case i16:
-                    case i32:
+                    case data_type_t::i8:
+                    case data_type_t::i16:
+                    case data_type_t::i32:
                         return std::make_pair(lhs,
                                               jit_value_t(
                                                       int32_to_double(c, rhs.gp().r32(), null_check && cvt_null_check(rhs.dtype())),
-                                                      f64, rhs.dkind()));
-                    case i64:
-                        return std::make_pair(lhs, jit_value_t(int64_to_double(c, rhs.gp(), null_check), f64,
+                                                      data_type_t::f64, rhs.dkind()));
+                    case data_type_t::i64:
+                        return std::make_pair(lhs, jit_value_t(int64_to_double(c, rhs.gp(), null_check), data_type_t::f64,
                                                                rhs.dkind()));
-                    case f32:
+                    case data_type_t::f32:
                         return std::make_pair(lhs,
                                               jit_value_t(float_to_double(c, rhs.xmm()),
-                                                          f64,
+                                                          data_type_t::f64,
                                                           rhs.dkind()));
-                    case f64:
+                    case data_type_t::f64:
                         return std::make_pair(lhs, rhs);
+                    default:
+                        assert(false);
                 }
                 break;
+            default:
+                assert(false);
         }
     }
 
@@ -450,45 +486,44 @@ namespace questdb::x86 {
     void emit_bin_op(Compiler &c, instruction_t ic, std::stack<jit_value_t> &values, bool null_check) {
         auto args = get_arguments(c, values, null_check);
         switch (ic) {
-            case AND:
+            case instruction_t::AND:
                 values.push(bin_and(c, args.first, args.second));
                 break;
-            case OR:
+            case instruction_t::OR:
                 values.push(bin_or(c, args.first, args.second));
                 break;
-            case EQ:
+            case instruction_t::EQ:
                 values.push(cmp_eq(c, args.first, args.second));
                 break;
-            case NE:
+            case instruction_t::NE:
                 values.push(cmp_ne(c, args.first, args.second));
                 break;
-            case GT:
+            case instruction_t::GT:
                 values.push(cmp_gt(c, args.first, args.second, null_check));
                 break;
-            case GE:
+            case instruction_t::GE:
                 values.push(cmp_ge(c, args.first, args.second, null_check));
                 break;
-            case LT:
+            case instruction_t::LT:
                 values.push(cmp_lt(c, args.first, args.second, null_check));
                 break;
-            case LE:
+            case instruction_t::LE:
                 values.push(cmp_le(c, args.first, args.second, null_check));
                 break;
-            case ADD:
+            case instruction_t::ADD:
                 values.push(add(c, args.first, args.second, null_check));
                 break;
-            case SUB:
+            case instruction_t::SUB:
                 values.push(sub(c, args.first, args.second, null_check));
                 break;
-            case MUL:
+            case instruction_t::MUL:
                 values.push(mul(c, args.first, args.second, null_check));
                 break;
-            case DIV:
+            case instruction_t::DIV:
                 values.push(div(c, args.first, args.second, null_check));
                 break;
             default:
                 assert(false);
-                break;
         }
     }
 
@@ -500,48 +535,48 @@ namespace questdb::x86 {
         while (read_pos < filter_size) {
             auto ic = static_cast<instruction_t>(read<uint8_t>(filter_expr, filter_size, read_pos));
             switch (ic) {
-                case RET:
+                case instruction_t::RET:
                     break;
-                case MEM_I1:
-                    values.push(read_mem(c, i8, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                case instruction_t::MEM_I1:
+                    values.push(read_mem(c, data_type_t::i8, filter_expr, filter_size, read_pos, cols_ptr, input_index));
                     break;
-                case MEM_I2:
-                    values.push(read_mem(c, i16, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                case instruction_t::MEM_I2:
+                    values.push(read_mem(c, data_type_t::i16, filter_expr, filter_size, read_pos, cols_ptr, input_index));
                     break;
-                case MEM_I4:
-                    values.push(read_mem(c, i32, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                case instruction_t::MEM_I4:
+                    values.push(read_mem(c, data_type_t::i32, filter_expr, filter_size, read_pos, cols_ptr, input_index));
                     break;
-                case MEM_I8:
-                    values.push(read_mem(c, i64, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                case instruction_t::MEM_I8:
+                    values.push(read_mem(c, data_type_t::i64, filter_expr, filter_size, read_pos, cols_ptr, input_index));
                     break;
-                case MEM_F4:
-                    values.push(read_mem(c, f32, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                case instruction_t::MEM_F4:
+                    values.push(read_mem(c, data_type_t::f32, filter_expr, filter_size, read_pos, cols_ptr, input_index));
                     break;
-                case MEM_F8:
-                    values.push(read_mem(c, f64, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                case instruction_t::MEM_F8:
+                    values.push(read_mem(c, data_type_t::f64, filter_expr, filter_size, read_pos, cols_ptr, input_index));
                     break;
-                case IMM_I1:
-                    values.push(read_imm(c, i8, filter_expr, filter_size, read_pos));
+                case instruction_t::IMM_I1:
+                    values.push(read_imm(c, data_type_t::i8, filter_expr, filter_size, read_pos));
                     break;
-                case IMM_I2:
-                    values.push(read_imm(c, i16, filter_expr, filter_size, read_pos));
+                case instruction_t::IMM_I2:
+                    values.push(read_imm(c, data_type_t::i16, filter_expr, filter_size, read_pos));
                     break;
-                case IMM_I4:
-                    values.push(read_imm(c, i32, filter_expr, filter_size, read_pos));
+                case instruction_t::IMM_I4:
+                    values.push(read_imm(c, data_type_t::i32, filter_expr, filter_size, read_pos));
                     break;
-                case IMM_I8:
-                    values.push(read_imm(c, i64, filter_expr, filter_size, read_pos));
+                case instruction_t::IMM_I8:
+                    values.push(read_imm(c, data_type_t::i64, filter_expr, filter_size, read_pos));
                     break;
-                case IMM_F4:
-                    values.push(read_imm(c, f32, filter_expr, filter_size, read_pos));
+                case instruction_t::IMM_F4:
+                    values.push(read_imm(c, data_type_t::f32, filter_expr, filter_size, read_pos));
                     break;
-                case IMM_F8:
-                    values.push(read_imm(c, f64, filter_expr, filter_size, read_pos));
+                case instruction_t::IMM_F8:
+                    values.push(read_imm(c, data_type_t::f64, filter_expr, filter_size, read_pos));
                     break;
-                case NEG:
+                case instruction_t::NEG:
                     values.push(neg(c, get_argument(values), null_check));
                     break;
-                case NOT:
+                case instruction_t::NOT:
                     values.push(bin_not(c, get_argument(values)));
                     break;
                 default:
@@ -557,25 +592,27 @@ namespace questdb::avx2 {
 
     uint32_t type_shift(data_type_t type) {
         switch (type) {
-            case i8:
+            case data_type_t::i8:
                 return 0;
-            case i16:
+            case data_type_t::i16:
                 return 1;
-            case i32:
-            case f32:
+            case data_type_t::i32:
+            case data_type_t::f32:
                 return 2;
-            case i64:
-            case f64:
+            case data_type_t::i64:
+            case data_type_t::f64:
                 return 3;
+            default:
+                assert(false);
         }
     }
 
     data_type_t mask_type(data_type_t type) {
         switch (type) {
-            case f32:
-                return i32;
-            case f64:
-                return i64;
+            case data_type_t::f32:
+                return data_type_t::i32;
+            case data_type_t::f64:
+                return data_type_t::i64;
             default:
                 return type;
         }
@@ -610,64 +647,68 @@ namespace questdb::avx2 {
         Mem m = ymmword_ptr(column_address, input_index, shift);
         Ymm row_data = c.newYmm();
         switch (type) {
-            case i8:
-            case i16:
-            case i32:
-            case i64:
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
+            case data_type_t::i64:
                 c.vmovdqu(row_data, m);
                 break;
-            case f32:
+            case data_type_t::f32:
                 c.vmovups(row_data, m);
                 break;
-            case f64:
+            case data_type_t::f64:
                 c.vmovupd(row_data, m);
                 break;
+            default:
+                assert(false);
         }
-        return {row_data, type, kMemory};
+        return {row_data, type, data_kind_t::kMemory};
     }
 
     jit_value_t read_imm(Compiler &c, data_type_t type, const uint8_t *istream, size_t size, uint32_t &pos) {
         const auto scope = ConstPool::kScopeLocal;
         Ymm val = c.newYmm("imm_value");
         switch (type) {
-            case i8: {
+            case data_type_t::i8: {
                 auto value = static_cast<int8_t>(read<int64_t>(istream, size, pos));
                 Mem mem = c.newConst(scope, &value, 1);
                 c.vpbroadcastb(val, mem);
             }
                 break;
-            case i16: {
+            case data_type_t::i16: {
                 auto value = static_cast<int16_t>(read<int64_t>(istream, size, pos));
                 Mem mem = c.newConst(scope, &value, 2);
                 c.vpbroadcastw(val, mem);
             }
                 break;
-            case i32: {
+            case data_type_t::i32: {
                 auto value = static_cast<int32_t>(read<int64_t>(istream, size, pos));
                 Mem mem = c.newConst(scope, &value, 4);
                 c.vpbroadcastd(val, mem);
             }
                 break;
-            case i64: {
+            case data_type_t::i64: {
                 auto value = read<int64_t>(istream, size, pos);
                 Mem mem = c.newConst(scope, &value, 8);
                 c.vpbroadcastq(val, mem);
             }
                 break;
-            case f32: {
+            case data_type_t::f32: {
                 auto value = read<double>(istream, size, pos);
                 Mem mem = c.newFloatConst(scope, static_cast<float>(value));
                 c.vbroadcastss(val, mem);
             }
                 break;
-            case f64: {
+            case data_type_t::f64: {
                 auto value = read<double>(istream, size, pos);
                 Mem mem = c.newDoubleConst(scope, value);
                 c.vbroadcastsd(val, mem);
             }
                 break;
+            default:
+                assert(false);
         }
-        return {val, type, kConst};
+        return {val, type, data_kind_t::kConst};
     }
 
     jit_value_t neg(Compiler &c, const jit_value_t &lhs, bool null_check) {
@@ -684,114 +725,114 @@ namespace questdb::avx2 {
 
     jit_value_t bin_and(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         return {mask_and(c, lhs.ymm(), rhs.ymm()), dt, dk};
     }
 
     jit_value_t bin_or(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         return {mask_or(c, lhs.ymm(), rhs.ymm()), dt, dk};
     }
 
     jit_value_t cmp_eq(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
-        return {cmp_eq(c, dt, lhs.ymm(), rhs.ymm()), i32, dk};
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
+        return {cmp_eq(c, dt, lhs.ymm(), rhs.ymm()), data_type_t::i32, dk};
     }
 
     jit_value_t cmp_ne(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         auto mt = mask_type(dt);
         return {cmp_ne(c, dt, lhs.ymm(), rhs.ymm()), mt, dk};
     }
 
     jit_value_t cmp_gt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         auto mt = mask_type(dt);
         return {cmp_gt(c, dt, lhs.ymm(), rhs.ymm(), null_check), mt, dk};
     }
 
     jit_value_t cmp_ge(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         auto mt = mask_type(dt);
         return {cmp_ge(c, dt, lhs.ymm(), rhs.ymm(), null_check), mt, dk};
     }
 
     jit_value_t cmp_lt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         auto mt = mask_type(dt);
         return {cmp_lt(c, dt, lhs.ymm(), rhs.ymm(), null_check), mt, dk};
     }
 
     jit_value_t cmp_le(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         auto mt = mask_type(dt);
         return {cmp_le(c, dt, lhs.ymm(), rhs.ymm(), null_check), mt, dk};
     }
 
     jit_value_t add(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         return {add(c, dt, lhs.ymm(), rhs.ymm(), null_check), dt, dk};
     }
 
     jit_value_t sub(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         return {sub(c, dt, lhs.ymm(), rhs.ymm(), null_check), dt, dk};
     }
 
     jit_value_t mul(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         return {mul(c, dt, lhs.ymm(), rhs.ymm(), null_check), dt, dk};
     }
 
     jit_value_t div(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == kConst && rhs.dkind() == kConst) ? kConst : kMemory;
+        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst : data_kind_t::kMemory;
         return {div(c, dt, lhs.ymm(), rhs.ymm(), null_check), dt, dk};
     }
 
     inline std::pair<jit_value_t, jit_value_t>
     convert(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
-        // i32 -> f32
-        // i64 -> f64
+        // data_type_t::i32 -> data_type_t::f32
+        // data_type_t::i64 -> data_type_t::f64
         switch (lhs.dtype()) {
-            case i32:
+            case data_type_t::i32:
                 switch (rhs.dtype()) {
-                    case f32:
-                        return std::make_pair(jit_value_t(cvt_itof(c, lhs.ymm(), null_check), f32, lhs.dkind()), rhs);
+                    case data_type_t::f32:
+                        return std::make_pair(jit_value_t(cvt_itof(c, lhs.ymm(), null_check), data_type_t::f32, lhs.dkind()), rhs);
                     default:
                         break;
                 }
                 break;
-            case i64:
+            case data_type_t::i64:
                 switch (rhs.dtype()) {
-                    case f64:
-                        return std::make_pair(jit_value_t(cvt_ltod(c, lhs.ymm(), null_check), f64, lhs.dkind()), rhs);
+                    case data_type_t::f64:
+                        return std::make_pair(jit_value_t(cvt_ltod(c, lhs.ymm(), null_check), data_type_t::f64, lhs.dkind()), rhs);
                     default:
                         break;
                 }
                 break;
-            case f32:
+            case data_type_t::f32:
                 switch (rhs.dtype()) {
-                    case i32:
-                        return std::make_pair(lhs, jit_value_t(cvt_itof(c, rhs.ymm(), null_check), f32, rhs.dkind()));
+                    case data_type_t::i32:
+                        return std::make_pair(lhs, jit_value_t(cvt_itof(c, rhs.ymm(), null_check), data_type_t::f32, rhs.dkind()));
                     default:
                         break;
                 }
                 break;
-            case f64:
+            case data_type_t::f64:
                 switch (rhs.dtype()) {
-                    case i64:
-                        return std::make_pair(lhs, jit_value_t(cvt_ltod(c, rhs.ymm(), null_check), f64, rhs.dkind()));
+                    case data_type_t::i64:
+                        return std::make_pair(lhs, jit_value_t(cvt_ltod(c, rhs.ymm(), null_check), data_type_t::f64, rhs.dkind()));
                     default:
                         break;
                 }
@@ -820,45 +861,44 @@ namespace questdb::avx2 {
     void emit_bin_op(Compiler &c, instruction_t ic, std::stack<jit_value_t> &values, bool ncheck) {
         auto args = get_arguments(c, values, ncheck);
         switch (ic) {
-            case AND:
+            case instruction_t::AND:
                 values.push(bin_and(c, args.first, args.second));
                 break;
-            case OR:
+            case instruction_t::OR:
                 values.push(bin_or(c, args.first, args.second));
                 break;
-            case EQ:
+            case instruction_t::EQ:
                 values.push(cmp_eq(c, args.first, args.second));
                 break;
-            case NE:
+            case instruction_t::NE:
                 values.push(cmp_ne(c, args.first, args.second));
                 break;
-            case GT:
+            case instruction_t::GT:
                 values.push(cmp_gt(c, args.first, args.second, ncheck));
                 break;
-            case GE:
+            case instruction_t::GE:
                 values.push(cmp_ge(c, args.first, args.second, ncheck));
                 break;
-            case LT:
+            case instruction_t::LT:
                 values.push(cmp_lt(c, args.first, args.second, ncheck));
                 break;
-            case LE:
+            case instruction_t::LE:
                 values.push(cmp_le(c, args.first, args.second, ncheck));
                 break;
-            case ADD:
+            case instruction_t::ADD:
                 values.push(add(c, args.first, args.second, ncheck));
                 break;
-            case SUB:
+            case instruction_t::SUB:
                 values.push(sub(c, args.first, args.second, ncheck));
                 break;
-            case MUL:
+            case instruction_t::MUL:
                 values.push(mul(c, args.first, args.second, ncheck));
                 break;
-            case DIV:
+            case instruction_t::DIV:
                 values.push(div(c, args.first, args.second, ncheck));
                 break;
             default:
                 assert(false);
-                break;
         }
     }
 
@@ -869,48 +909,48 @@ namespace questdb::avx2 {
         while (read_pos < filter_size) {
             auto ic = static_cast<instruction_t>(read<uint8_t>(filter_expr, filter_size, read_pos));
             switch (ic) {
-                case RET:
+                case instruction_t::RET:
                     break;
-                case MEM_I1:
-                    values.push(read_mem(c, i8, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                case instruction_t::MEM_I1:
+                    values.push(read_mem(c, data_type_t::i8, filter_expr, filter_size, read_pos, cols_ptr, input_index));
                     break;
-                case MEM_I2:
-                    values.push(read_mem(c, i16, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                case instruction_t::MEM_I2:
+                    values.push(read_mem(c, data_type_t::i16, filter_expr, filter_size, read_pos, cols_ptr, input_index));
                     break;
-                case MEM_I4:
-                    values.push(read_mem(c, i32, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                case instruction_t::MEM_I4:
+                    values.push(read_mem(c, data_type_t::i32, filter_expr, filter_size, read_pos, cols_ptr, input_index));
                     break;
-                case MEM_I8:
-                    values.push(read_mem(c, i64, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                case instruction_t::MEM_I8:
+                    values.push(read_mem(c, data_type_t::i64, filter_expr, filter_size, read_pos, cols_ptr, input_index));
                     break;
-                case MEM_F4:
-                    values.push(read_mem(c, f32, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                case instruction_t::MEM_F4:
+                    values.push(read_mem(c, data_type_t::f32, filter_expr, filter_size, read_pos, cols_ptr, input_index));
                     break;
-                case MEM_F8:
-                    values.push(read_mem(c, f64, filter_expr, filter_size, read_pos, cols_ptr, input_index));
+                case instruction_t::MEM_F8:
+                    values.push(read_mem(c, data_type_t::f64, filter_expr, filter_size, read_pos, cols_ptr, input_index));
                     break;
-                case IMM_I1:
-                    values.push(read_imm(c, i8, filter_expr, filter_size, read_pos));
+                case instruction_t::IMM_I1:
+                    values.push(read_imm(c, data_type_t::i8, filter_expr, filter_size, read_pos));
                     break;
-                case IMM_I2:
-                    values.push(read_imm(c, i16, filter_expr, filter_size, read_pos));
+                case instruction_t::IMM_I2:
+                    values.push(read_imm(c, data_type_t::i16, filter_expr, filter_size, read_pos));
                     break;
-                case IMM_I4:
-                    values.push(read_imm(c, i32, filter_expr, filter_size, read_pos));
+                case instruction_t::IMM_I4:
+                    values.push(read_imm(c, data_type_t::i32, filter_expr, filter_size, read_pos));
                     break;
-                case IMM_I8:
-                    values.push(read_imm(c, i64, filter_expr, filter_size, read_pos));
+                case instruction_t::IMM_I8:
+                    values.push(read_imm(c, data_type_t::i64, filter_expr, filter_size, read_pos));
                     break;
-                case IMM_F4:
-                    values.push(read_imm(c, f32, filter_expr, filter_size, read_pos));
+                case instruction_t::IMM_F4:
+                    values.push(read_imm(c, data_type_t::f32, filter_expr, filter_size, read_pos));
                     break;
-                case IMM_F8:
-                    values.push(read_imm(c, f64, filter_expr, filter_size, read_pos));
+                case instruction_t::IMM_F8:
+                    values.push(read_imm(c, data_type_t::f64, filter_expr, filter_size, read_pos));
                     break;
-                case NEG:
+                case instruction_t::NEG:
                     values.push(neg(c, get_argument(values), ncheck));
                     break;
-                case NOT:
+                case instruction_t::NOT:
                     values.push(bin_not(c, get_argument(values)));
                     break;
                 default:

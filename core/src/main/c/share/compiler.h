@@ -28,8 +28,9 @@
 #include <jni.h>
 #include <asmjit/asmjit.h>
 #include <limits>
+#include <cassert>
 
-enum data_type_t : uint8_t {
+enum class data_type_t : uint8_t {
     i8,
     i16,
     i32,
@@ -38,12 +39,12 @@ enum data_type_t : uint8_t {
     f64,
 };
 
-enum data_kind_t : uint8_t {
+enum class data_kind_t : uint8_t {
     kMemory,
     kConst,
 };
 
-enum instruction_t : uint8_t {
+enum class instruction_t : uint8_t {
     MEM_I1 = 0,
     MEM_I2 = 1,
     MEM_I4 = 2,
@@ -1014,13 +1015,13 @@ namespace questdb::avx2 {
     }
 
     inline bool is_check_for_null(data_type_t t, bool null_check) {
-        return null_check && (t == i32 || t == i64);
+        return null_check && (t == data_type_t::i32 || t == data_type_t::i64);
     }
 
     inline Ymm is_nan(Compiler &c, data_type_t type, const Ymm &x) {
         Ymm dst = c.newYmm();
         switch (type) {
-            case f32:
+            case data_type_t::f32:
                 c.vcmpps(dst, x, x, Predicate::kCmpUNORD);
                 break;
             default:
@@ -1033,19 +1034,21 @@ namespace questdb::avx2 {
     inline Ymm cmp_eq_null(Compiler &c, data_type_t type, const Ymm &x) {
         Ymm dst = c.newYmm();
         switch (type) {
-            case i8:
-            case i16:
+            case data_type_t::i8:
+            case data_type_t::i16:
                 c.vpxor(dst, dst, dst);
                 break;
-            case i32:
+            case data_type_t::i32:
                 c.vpcmpeqd(dst, x, vec_int_null(c));
                 break;
-            case i64:
+            case data_type_t::i64:
                 c.vpcmpeqq(dst, x, vec_long_null(c));
                 break;
-            case f32:
-            case f64:
+            case data_type_t::f32:
+            case data_type_t::f64:
                 return is_nan(c, type, x);
+            default:
+                assert(false);
         }
         return dst;
     }
@@ -1095,29 +1098,36 @@ namespace questdb::avx2 {
     inline Ymm cmp_eq(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
         Ymm dst = c.newYmm();
         switch (type) {
-            case i8:
+            case data_type_t::i8: {
                 c.vpcmpeqb(dst, lhs, rhs);
+            }
                 break;
-            case i16:
+            case data_type_t::i16: {
                 c.vpcmpeqw(dst, lhs, rhs);
+            }
                 break;
-            case i32:
+            case data_type_t::i32: {
                 c.vpcmpeqd(dst, lhs, rhs);
+            }
                 break;
-            case i64:
+            case data_type_t::i64: {
                 c.vpcmpeqq(dst, lhs, rhs);
+            }
                 break;
-                case f32: {
-                    Ymm nans = mask_and(c, is_nan(c, f32, lhs), is_nan(c, f32, rhs));
-                    c.vcmpps(dst, lhs, rhs, Predicate::kCmpEQ);
-                    c.vpor(dst, dst, nans);
-                }
+            case data_type_t::f32: {
+                Ymm nans = mask_and(c, is_nan(c, data_type_t::f32, lhs), is_nan(c, data_type_t::f32, rhs));
+                c.vcmpps(dst, lhs, rhs, Predicate::kCmpEQ);
+                c.vpor(dst, dst, nans);
+            }
                 break;
-            case f64:
-                Ymm nans = mask_and(c, is_nan(c, f64, lhs), is_nan(c, f64, rhs));
+            case data_type_t::f64: {
+                Ymm nans = mask_and(c, is_nan(c, data_type_t::f64, lhs), is_nan(c, data_type_t::f64, rhs));
                 c.vcmppd(dst, lhs, rhs, Predicate::kCmpEQ);
                 c.vpor(dst, dst, nans);
+            }
                 break;
+            default:
+                assert(false);
         }
         return dst;
     }
@@ -1125,14 +1135,14 @@ namespace questdb::avx2 {
     inline Ymm cmp_ne(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
         Ymm dst = c.newYmm();
         switch (type) {
-            case f32: {
-                Ymm nans = mask_and(c, is_nan(c, f32, lhs), is_nan(c, f32, rhs));
+            case data_type_t::f32: {
+                Ymm nans = mask_and(c, is_nan(c, data_type_t::f32, lhs), is_nan(c, data_type_t::f32, rhs));
                 c.vcmpps(dst, lhs, rhs, Predicate::kCmpNEQ);
                 c.vpand(dst, dst, mask_not(c,nans));
             }
                 break;
-            case f64: {
-                Ymm nans = mask_and(c, is_nan(c, f64, lhs), is_nan(c, f64, rhs));
+            case data_type_t::f64: {
+                Ymm nans = mask_and(c, is_nan(c, data_type_t::f64, lhs), is_nan(c, data_type_t::f64, rhs));
                 c.vcmppd(dst, lhs, rhs, Predicate::kCmpNEQ);
                 c.vpand(dst, dst, mask_not(c,nans));
             }
@@ -1146,24 +1156,26 @@ namespace questdb::avx2 {
     inline Ymm cmp_lt(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
         Ymm dst = c.newYmm();
         switch (type) {
-            case i8:
+            case data_type_t::i8:
                 c.vpcmpgtb(dst, rhs, lhs);
                 break;
-            case i16:
+            case data_type_t::i16:
                 c.vpcmpgtw(dst, rhs, lhs);
                 break;
-            case i32:
+            case data_type_t::i32:
                 c.vpcmpgtd(dst, rhs, lhs);
                 break;
-            case i64:
+            case data_type_t::i64:
                 c.vpcmpgtq(dst, rhs, lhs);
                 break;
-            case f32:
+            case data_type_t::f32:
                 c.vcmpps(dst, lhs, rhs, Predicate::kCmpLT);
                 break;
-            case f64:
+            case data_type_t::f64:
                 c.vcmppd(dst, lhs, rhs, Predicate::kCmpLT);
                 break;
+            default:
+                assert(false);
         }
         return dst;
     }
@@ -1196,8 +1208,8 @@ namespace questdb::avx2 {
 
     inline Ymm cmp_ge(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs, bool null_check) {
         switch (type) {
-            case f32:
-            case f64:
+            case data_type_t::f32:
+            case data_type_t::f64:
                 return cmp_le(c, type, rhs, lhs, null_check);
             default: {
                 Ymm mask = mask_not(c, cmp_lt(c, type, lhs, rhs));
@@ -1210,12 +1222,12 @@ namespace questdb::avx2 {
 
     inline Ymm cmp_le(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs, bool null_check) {
         switch (type) {
-            case f32: {
+            case data_type_t::f32: {
                 Ymm dst = c.newYmm();
                 c.vcmpps(dst.ymm(), lhs.ymm(), rhs.ymm(), Predicate::kCmpLE);
                 return dst;
             }
-            case f64: {
+            case data_type_t::f64: {
                 Ymm dst = c.newYmm();
                 c.vcmppd(dst.ymm(), lhs.ymm(), rhs.ymm(), Predicate::kCmpLE);
                 return dst;
@@ -1228,31 +1240,33 @@ namespace questdb::avx2 {
     inline Ymm add(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
         Ymm dst = c.newYmm();
         switch (type) {
-            case i8:
+            case data_type_t::i8:
                 c.vpaddb(dst, lhs, rhs);
                 break;
-            case i16:
+            case data_type_t::i16:
                 c.vpaddw(dst, lhs, rhs);
                 break;
-            case i32:
+            case data_type_t::i32:
                 c.vpaddd(dst, lhs, rhs);
                 break;
-            case i64:
+            case data_type_t::i64:
                 c.vpaddq(dst, lhs, rhs);
                 break;
-            case f32:
+            case data_type_t::f32:
                 c.vaddps(dst, lhs, rhs);
                 break;
-            case f64:
+            case data_type_t::f64:
                 c.vaddpd(dst, lhs, rhs);
                 break;
+            default:
+                assert(false);
         }
         return dst;
     }
 
     inline Ymm blend_with_nulls(Compiler &c, data_type_t &type, const Ymm &t, const Ymm &lhs, const Ymm &rhs) {
         Ymm nulls_msk = nulls_mask(c, type, lhs, rhs);
-        Mem nulls_const =  (type == i32) ? vec_int_null(c) : vec_long_null(c);
+        Mem nulls_const =  (type == data_type_t::i32) ? vec_int_null(c) : vec_long_null(c);
         return select_bytes(c, nulls_msk, t, nulls_const);
     }
 
@@ -1268,24 +1282,26 @@ namespace questdb::avx2 {
     inline Ymm sub(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
         Ymm dst = c.newYmm();
         switch (type) {
-            case i8:
+            case data_type_t::i8:
                 c.vpsubb(dst, lhs, rhs);
                 break;
-            case i16:
+            case data_type_t::i16:
                 c.vpsubw(dst, lhs, rhs);
                 break;
-            case i32:
+            case data_type_t::i32:
                 c.vpsubd(dst, lhs, rhs);
                 break;
-            case i64:
+            case data_type_t::i64:
                 c.vpsubq(dst, lhs, rhs);
                 break;
-            case f32:
+            case data_type_t::f32:
                 c.vsubps(dst, lhs, rhs);
                 break;
-            case f64:
+            case data_type_t::f64:
                 c.vsubpd(dst, lhs, rhs);
                 break;
+            default:
+                assert(false);
         }
         return dst;
     }
@@ -1302,15 +1318,15 @@ namespace questdb::avx2 {
     inline Ymm mul(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
         Ymm dst = c.newYmm();
         switch (type) {
-            case i8:
+            case data_type_t::i8:
                 // There is no 8-bit multiply in AVX2. Split into two 16-bit multiplications
-                //            __m256i aodd    = _mm256_srli_epi16(a,8);              // odd numbered elements of a
-                //            __m256i bodd    = _mm256_srli_epi16(b,8);              // odd numbered elements of b
-                //            __m256i muleven = _mm256_mullo_epi16(a,b);             // product of even numbered elements
-                //            __m256i mulodd  = _mm256_mullo_epi16(aodd,bodd);       // product of odd  numbered elements
-                //            mulodd  = _mm256_slli_epi16(mulodd,8);         // put odd numbered elements back in place
-                //            __m256i mask    = _mm256_set1_epi32(0x00FF00FF);       // mask for even positions
-                //            __m256i product = _mm256_blendv_epi8(mask,muleven,mulodd);        // interleave even and odd
+                //            __m256i aodd    = _mm256_srli_epdata_type_t::i16(a,8);              // odd numbered elements of a
+                //            __m256i bodd    = _mm256_srli_epdata_type_t::i16(b,8);              // odd numbered elements of b
+                //            __m256i muleven = _mm256_mullo_epdata_type_t::i16(a,b);             // product of even numbered elements
+                //            __m256i mulodd  = _mm256_mullo_epdata_type_t::i16(aodd,bodd);       // product of odd  numbered elements
+                //            mulodd  = _mm256_slli_epdata_type_t::i16(mulodd,8);         // put odd numbered elements back in place
+                //            __m256i mask    = _mm256_set1_epdata_type_t::i32(0x00FF00FF);       // mask for even positions
+                //            __m256i product = _mm256_blendv_epdata_type_t::i8(mask,muleven,mulodd);        // interleave even and odd
                 //            return product
             {
                 Ymm aodd = c.newYmm();
@@ -1329,20 +1345,20 @@ namespace questdb::avx2 {
                 c.vpblendvb(dst, aodd, lhs, mask);
             }
                 break;
-            case i16:
+            case data_type_t::i16:
                 c.vpmullw(dst, lhs, rhs);
                 break;
-            case i32:
+            case data_type_t::i32:
                 c.vpmulld(dst, lhs, rhs);
                 break;
-            case i64:
-                //            __m256i bswap   = _mm256_shuffle_epi32(b,0xB1);        // swap H<->L
-                //            __m256i prodlh  = _mm256_mullo_epi32(a,bswap);         // 32 bit L*H products
+            case data_type_t::i64:
+                //            __m256i bswap   = _mm256_shuffle_epdata_type_t::i32(b,0xB1);        // swap H<->L
+                //            __m256i prodlh  = _mm256_mullo_epdata_type_t::i32(a,bswap);         // 32 bit L*H products
                 //            __m256i zero    = _mm256_setzero_si256();              // 0
-                //            __m256i prodlh2 = _mm256_hadd_epi32(prodlh,zero);      // a0Lb0H+a0Hb0L,a1Lb1H+a1Hb1L,0,0
-                //            __m256i prodlh3 = _mm256_shuffle_epi32(prodlh2,0x73);  // 0, a0Lb0H+a0Hb0L, 0, a1Lb1H+a1Hb1L
+                //            __m256i prodlh2 = _mm256_hadd_epdata_type_t::i32(prodlh,zero);      // a0Lb0H+a0Hb0L,a1Lb1H+a1Hb1L,0,0
+                //            __m256i prodlh3 = _mm256_shuffle_epdata_type_t::i32(prodlh2,0x73);  // 0, a0Lb0H+a0Hb0L, 0, a1Lb1H+a1Hb1L
                 //            __m256i prodll  = _mm256_mul_epu32(a,b);               // a0Lb0L,a1Lb1L, 64 bit unsigned products
-                //            __m256i prod    = _mm256_add_epi64(prodll,prodlh3);    // a0Lb0L+(a0Lb0H+a0Hb0L)<<32, a1Lb1L+(a1Lb1H+a1Hb1L)<<32
+                //            __m256i prod    = _mm256_add_epdata_type_t::i64(prodll,prodlh3);    // a0Lb0L+(a0Lb0H+a0Hb0L)<<32, a1Lb1L+(a1Lb1H+a1Hb1L)<<32
                 //            return  prod;
             {
                 Ymm t = c.newYmm();
@@ -1356,12 +1372,14 @@ namespace questdb::avx2 {
                 c.vpaddq(dst, t, lhs);
             }
                 break;
-            case f32:
+            case data_type_t::f32:
                 c.vmulps(dst, lhs, rhs);
                 break;
-            case f64:
+            case data_type_t::f64:
                 c.vsubpd(dst, lhs, rhs);
                 break;
+            default:
+                assert(false);
         }
         return dst;
     }
@@ -1378,10 +1396,10 @@ namespace questdb::avx2 {
     inline Ymm div_unrolled(Compiler &c, data_type_t type, const Ymm &lhs, const Ymm &rhs) {
         Ymm dst = c.newYmm();
         switch (type) {
-            case i8:
-            case i16:
-            case i32:
-            case i64: {
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
+            case data_type_t::i64: {
                 Mem lhs_m = c.newStack(32, 32);
                 Mem rhs_m = c.newStack(32, 32);
 
@@ -1392,7 +1410,7 @@ namespace questdb::avx2 {
                 c.vmovdqu(rhs_m, rhs);
 
                 switch (type) {
-                    case i8: {
+                    case data_type_t::i8: {
                         auto size = 1;
                         auto step = 32;
 
@@ -1412,7 +1430,7 @@ namespace questdb::avx2 {
 
                     }
                         break;
-                    case i16: {
+                    case data_type_t::i16: {
                         auto size = 2;
                         auto step = 16;
 
@@ -1433,7 +1451,7 @@ namespace questdb::avx2 {
                         }
                     }
                         break;
-                    case i32: {
+                    case data_type_t::i32: {
                         auto size = 4;
                         auto step = 8;
 
@@ -1480,12 +1498,14 @@ namespace questdb::avx2 {
                 c.vmovdqu(dst, lhs_m);
             }
                 break;
-            case f32:
+            case data_type_t::f32:
                 c.vdivps(dst, lhs, rhs);
                 break;
-            case f64:
+            case data_type_t::f64:
                 c.vdivpd(dst, lhs, rhs);
                 break;
+            default:
+                assert(false);
         }
         return dst;
     }
@@ -1519,7 +1539,7 @@ namespace questdb::avx2 {
         Ymm dst = c.newYmm();
         c.vcvtdq2ps(dst, rhs);
         if(null_check) {
-            Ymm int_nulls_mask = cmp_eq_null(c, i32, rhs);
+            Ymm int_nulls_mask = cmp_eq_null(c, data_type_t::i32, rhs);
             Ymm nans = c.newYmm();
             c.vmovups(nans, vec_float_null(c));
             return select_bytes(c, int_nulls_mask, dst, nans);
@@ -1559,7 +1579,7 @@ namespace questdb::avx2 {
         c.vinsertf128( dst, xmm5.ymm(), xmm6, 1);
         //c.vzeroupper();
         if(null_check) {
-            Ymm int_nulls_mask = cmp_eq_null(c, i64, rhs);
+            Ymm int_nulls_mask = cmp_eq_null(c, data_type_t::i64, rhs);
             Ymm nans = c.newYmm();
             c.vmovups(nans, vec_double_null(c));
             return select_bytes(c, int_nulls_mask, dst, nans);
