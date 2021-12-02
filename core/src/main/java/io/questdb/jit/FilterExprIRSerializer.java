@@ -26,7 +26,7 @@ package io.questdb.jit;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PostOrderTreeTraversalAlgo;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
@@ -89,10 +89,10 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
 
-    private MemoryA memory;
+    private MemoryCARW memory;
     private RecordMetadata metadata;
 
-    public FilterExprIRSerializer of(MemoryA memory, RecordMetadata metadata) {
+    public FilterExprIRSerializer of(MemoryCARW memory, RecordMetadata metadata) {
         this.memory = memory;
         this.metadata = metadata;
         return this;

@@ -24,7 +24,7 @@
 
 package io.questdb.jit;
 
-import io.questdb.cairo.vm.api.MemoryAR;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.ThreadLocal;
 
@@ -36,9 +36,8 @@ public class CompiledFilter implements Closeable {
 
     private long fnAddress;
 
-    public void compile(MemoryAR filter, int options) throws SqlException {
+    public void compile(MemoryCARW filter, int options) throws SqlException {
         final long filterSize = filter.getAppendOffset();
-        filter.jumpTo(0);
         final long filterAddress = filter.getPageAddress(0);
 
         FiltersCompiler.JitError error = tlJitError.get();

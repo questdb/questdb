@@ -29,7 +29,7 @@ import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.MemoryCARWImpl;
-import io.questdb.cairo.vm.api.MemoryAR;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
@@ -84,7 +84,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
     private final FilterExprIRSerializer jitIRSerializer = new FilterExprIRSerializer();
-    private final MemoryAR jitIRMem = new MemoryCARWImpl(1024, 1, MemoryTag.NATIVE_DEFAULT);
+    private final MemoryCARW jitIRMem = new MemoryCARWImpl(1024, 1, MemoryTag.NATIVE_DEFAULT);
     private final FunctionParser functionParser;
     private final CairoEngine engine;
     private final BytecodeAssembler asm = new BytecodeAssembler();
