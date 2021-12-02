@@ -226,6 +226,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.rnd.RndDateFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.ListFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndGeoHashFunctionFactory,
+            io.questdb.griffin.engine.functions.rnd.RndLogFunctionFactory,
 //                  date conversion functions,
             io.questdb.griffin.engine.functions.date.SysdateFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToTimestampVCFunctionFactory,

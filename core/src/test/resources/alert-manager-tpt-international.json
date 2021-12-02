@@ -1,0 +1,21 @@
+[
+  {
+    "Status": "firing",
+    "Labels": {
+      "alertname": "உலகனைத்தும்",
+      "category": "воно мені не",
+      "severity": "łódź jeża lub osiem",
+      "orgid": "${ORGID}",
+      "service": "QuestDB",
+      "namespace": "${NAMESPACE}",
+      "cluster": "${CLUSTER_NAME}",
+      "instance": "${INSTANCE_NAME}",
+      "我能吞下玻璃而不傷身體": "ππππππππππππππππππππ ${date:MM}"
+    },
+    "Annotations": {
+      "description": "ERROR/${ORGID}/${NAMESPACE}/${CLUSTER_NAME}/${INSTANCE_NAME}",
+      "message": "${ALERT_MESSAGE}"
+    }
+  }
+]
+

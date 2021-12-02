@@ -27,7 +27,6 @@ package io.questdb.std;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -53,7 +52,7 @@ public final class Chars {
             } else {
                 pad++;
             }
-            if (i + 2 <len) {
+            if (i + 2 < len) {
                 b |= (sequence.byteAt(i + 2) & 0xFF);
             } else {
                 pad++;
@@ -402,11 +401,12 @@ public final class Chars {
     }
 
     public static boolean isQuoted(CharSequence s) {
-        if (s == null || s.length() == 0) {
+        if (s == null || s.length() < 2) {
             return false;
         }
 
-        return isQuote(s.charAt(0));
+        char open = s.charAt(0);
+        return isQuote(open) && open == s.charAt(s.length() - 1);
     }
 
     public static int lastIndexOf(CharSequence s, char c) {

@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -60,7 +61,7 @@ public class MangledUtf8SinkTest {
     }
 
     private void testEquals(String testVal) {
-        byte[] utf8 = testVal.getBytes(StandardCharsets.UTF_8);
+        byte[] utf8 = testVal.getBytes(Files.UTF_8);
 
         int bufSize = utf8.length;
         long buffer = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);

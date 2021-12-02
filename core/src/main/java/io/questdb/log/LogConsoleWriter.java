@@ -46,7 +46,7 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
     }
 
     @Override
-    public void bindProperties() {
+    public void bindProperties(LogFactory factory) {
     }
 
     @Override
