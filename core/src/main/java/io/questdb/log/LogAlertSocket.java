@@ -74,8 +74,9 @@ public class LogAlertSocket implements Closeable {
     private long fdSocketAddress = -1; // tcp/ip host:port address
     private long fdSocket = -1;
     private String alertTargets; // host[:port](,host[:port])*
+    private final Log log;
 
-    public LogAlertSocket(String alertTargets) {
+    public LogAlertSocket(String alertTargets, Log log) {
         this(
                 NetworkFacadeImpl.INSTANCE,
                 alertTargets,
@@ -83,7 +84,8 @@ public class LogAlertSocket implements Closeable {
                 OUT_BUFFER_SIZE,
                 RECONNECT_DELAY_NANO,
                 DEFAULT_HOST,
-                DEFAULT_PORT
+                DEFAULT_PORT,
+                log
         );
     }
 
@@ -93,7 +95,8 @@ public class LogAlertSocket implements Closeable {
             int outBufferSize,
             long reconnectDelay,
             String defaultHost,
-            int defaultPort
+            int defaultPort,
+            Log log
     ) {
         this(
                 NetworkFacadeImpl.INSTANCE,
@@ -102,7 +105,8 @@ public class LogAlertSocket implements Closeable {
                 outBufferSize,
                 reconnectDelay,
                 defaultHost,
-                defaultPort
+                defaultPort,
+                log
         );
     }
 
@@ -113,7 +117,8 @@ public class LogAlertSocket implements Closeable {
             int outBufferSize,
             long reconnectDelay,
             String defaultHost,
-            int defaultPort
+            int defaultPort,
+            Log log
     ) {
         this.nf = nf;
         this.rand = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
@@ -126,16 +131,13 @@ public class LogAlertSocket implements Closeable {
         this.outBufferSize = outBufferSize;
         this.outBufferPtr = Unsafe.malloc(outBufferSize, MemoryTag.NATIVE_DEFAULT);
         this.reconnectDelay = reconnectDelay;
+        this.log = log;
     }
 
     public void connect() {
         fdSocketAddress = nf.sockaddr(alertHosts[alertHostIdx], alertPorts[alertHostIdx]);
         fdSocket = nf.socketTcp(true);
-        System.out.printf(
-                "Connecting with: %s:%d%n",
-                alertHosts[alertHostIdx],
-                alertPorts[alertHostIdx]
-        );
+        log.info().$("connecting [to=").$(alertHosts[alertHostIdx]).$(':').$(alertPorts[alertHostIdx]).I$();
         if (fdSocket > -1) {
             if (nf.connect(fdSocket, fdSocketAddress) != 0) {
                 System.err.printf(
@@ -219,6 +221,7 @@ public class LogAlertSocket implements Closeable {
 
         boolean success = sendAttempts > 0;
         if (!success) {
+            log.error().$("could not send").$();
             System.err.printf(
                     "%sNo alert hosts are available after %d attempts, giving up sending alert.%n",
                     LogLevel.ERROR_HEADER,
@@ -313,10 +316,6 @@ public class LogAlertSocket implements Closeable {
         }
         int startIdx = 0;
         int endIdx = alertTargets.length();
-        if (endIdx == 0) {
-            setDefaultHostPort();
-            return;
-        }
 
         if (Chars.isQuoted(alertTargets)) {
             startIdx++;

@@ -84,7 +84,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     @Override
-    public void bindProperties() {
+    public void bindProperties(LogFactory factory) {
         locationParser.parseEnv(location, clock.getTicks());
         if (this.bufferSize != null) {
             try {

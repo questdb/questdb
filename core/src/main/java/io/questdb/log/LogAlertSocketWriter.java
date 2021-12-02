@@ -43,7 +43,7 @@ import static io.questdb.log.TemplateParser.TemplateNode;
 public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, LogWriter {
 
     static final String DEFAULT_ALERT_TPT_FILE = "/alert-manager-tpt.json";
-
+    static final CharSequenceObjHashMap<CharSequence> ALERT_PROPS = TemplateParser.adaptMap(System.getenv());
     private static final String DEFAULT_ENV_VALUE = "GLOBAL";
     private static final String ORG_ID_ENV = "ORGID";
     private static final String NAMESPACE_ENV = "NAMESPACE";
@@ -51,36 +51,17 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private static final String INSTANCE_ENV = "INSTANCE_NAME";
     private static final String MESSAGE_ENV = "ALERT_MESSAGE";
     private static final String MESSAGE_ENV_VALUE = "${" + MESSAGE_ENV + "}";
-    static final CharSequenceObjHashMap<CharSequence> ALERT_PROPS = TemplateParser.adaptMap(System.getenv());
-
-    static {
-        if (!ALERT_PROPS.contains(ORG_ID_ENV)) {
-            ALERT_PROPS.put(ORG_ID_ENV, DEFAULT_ENV_VALUE);
-        }
-        if (!ALERT_PROPS.contains(NAMESPACE_ENV)) {
-            ALERT_PROPS.put(NAMESPACE_ENV, DEFAULT_ENV_VALUE);
-        }
-        if (!ALERT_PROPS.contains(CLUSTER_ENV)) {
-            ALERT_PROPS.put(CLUSTER_ENV, DEFAULT_ENV_VALUE);
-        }
-        if (!ALERT_PROPS.contains(INSTANCE_ENV)) {
-            ALERT_PROPS.put(INSTANCE_ENV, DEFAULT_ENV_VALUE);
-        }
-        ALERT_PROPS.put(MESSAGE_ENV, MESSAGE_ENV_VALUE);
-    }
-
     private final int level;
     private final MicrosecondClock clock;
     private final FilesFacade ff;
     private final SCSequence writeSequence;
     private final RingQueue<LogRecordSink> alertsSourceQueue;
-    private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
     private final TemplateParser alertTemplate = new TemplateParser();
-
     private HttpLogRecordSink alertSink;
     private LogAlertSocket socket;
     private ObjList<TemplateNode> alertTemplateNodes;
     private int alertTemplateNodesLen;
+    private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
     // changed by introspection
     private String defaultAlertHost;
     private String defaultAlertPort;
@@ -89,7 +70,6 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private String outBufferSize;
     private String alertTargets;
     private String reconnectDelay;
-
 
     public LogAlertSocketWriter(RingQueue<LogRecordSink> alertsSrc, SCSequence writeSequence, int level) {
         this(
@@ -116,7 +96,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     }
 
     @Override
-    public void bindProperties() {
+    public void bindProperties(LogFactory factory) {
+        final Log log = factory.create(LogAlertSocketWriter.class.getName());
         int nInBufferSize = LogAlertSocket.IN_BUFFER_SIZE;
         if (inBufferSize != null) {
             try {
@@ -158,7 +139,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                 nOutBufferSize,
                 nReconnectDelay,
                 defaultAlertHost,
-                nDefaultPort
+                nDefaultPort,
+                log
         );
         alertSink = new HttpLogRecordSink(socket)
                 .putHeader(LogAlertSocket.localHostIp)
@@ -178,38 +160,41 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     }
 
     @VisibleForTesting
-    void setInBufferSize(String inBufferSize) {
-        this.inBufferSize = inBufferSize;
+    static void readFile(String location, long address, long addressSize, FilesFacade ff, CharSink sink) {
+        long fdTemplate = -1;
+        try (Path path = new Path()) {
+            path.of(location);
+            fdTemplate = ff.openRO(path.$());
+            if (fdTemplate == -1) {
+                throw new LogError(String.format(
+                        "Cannot read %s [errno=%d]",
+                        location,
+                        ff.errno()
+                ));
+            }
+            long size = ff.length(fdTemplate);
+            if (size > addressSize) {
+                throw new LogError("Template file is too big");
+            }
+            if (size < 0 || size != ff.read(fdTemplate, address, size, 0)) {
+                throw new LogError(String.format(
+                        "Cannot read %s [errno=%d, size=%d]",
+                        location,
+                        ff.errno(),
+                        size
+                ));
+            }
+            Chars.utf8Decode(address, address + size, sink);
+        } finally {
+            if (fdTemplate != -1) {
+                ff.close(fdTemplate);
+            }
+        }
     }
 
     @VisibleForTesting
-    int getInBufferSize() {
-        return socket.getInBufferSize();
-    }
-
-    @VisibleForTesting
-    void setOutBufferSize(String outBufferSize) {
-        this.outBufferSize = outBufferSize;
-    }
-
-    @VisibleForTesting
-    int getOutBufferSize() {
-        return socket.getOutBufferSize();
-    }
-
-    @VisibleForTesting
-    void setLocation(String location) {
-        this.location = location;
-    }
-
-    @VisibleForTesting
-    String getLocation() {
-        return location;
-    }
-
-    @VisibleForTesting
-    void setAlertTargets(String alertTargets) {
-        this.alertTargets = alertTargets;
+    HttpLogRecordSink getAlertSink() {
+        return alertSink;
     }
 
     @VisibleForTesting
@@ -218,8 +203,58 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     }
 
     @VisibleForTesting
-    HttpLogRecordSink getAlertSink() {
-        return alertSink;
+    void setAlertTargets(String alertTargets) {
+        this.alertTargets = alertTargets;
+    }
+
+    @VisibleForTesting
+    String getDefaultAlertHost() {
+        return socket.getDefaultAlertHost();
+    }
+
+    @VisibleForTesting
+    void setDefaultAlertHost(String defaultAlertHost) {
+        this.defaultAlertHost = defaultAlertHost;
+    }
+
+    @VisibleForTesting
+    int getDefaultAlertPort() {
+        return socket.getDefaultAlertPort();
+    }
+
+    @VisibleForTesting
+    void setDefaultAlertPort(String defaultAlertPort) {
+        this.defaultAlertPort = defaultAlertPort;
+    }
+
+    @VisibleForTesting
+    int getInBufferSize() {
+        return socket.getInBufferSize();
+    }
+
+    @VisibleForTesting
+    void setInBufferSize(String inBufferSize) {
+        this.inBufferSize = inBufferSize;
+    }
+
+    @VisibleForTesting
+    String getLocation() {
+        return location;
+    }
+
+    @VisibleForTesting
+    void setLocation(String location) {
+        this.location = location;
+    }
+
+    @VisibleForTesting
+    int getOutBufferSize() {
+        return socket.getOutBufferSize();
+    }
+
+    @VisibleForTesting
+    void setOutBufferSize(String outBufferSize) {
+        this.outBufferSize = outBufferSize;
     }
 
     @VisibleForTesting
@@ -230,26 +265,6 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     @VisibleForTesting
     void setReconnectDelay(String reconnectDelay) {
         this.reconnectDelay = reconnectDelay;
-    }
-
-    @VisibleForTesting
-    void setDefaultAlertHost(String defaultAlertHost) {
-        this.defaultAlertHost = defaultAlertHost;
-    }
-
-    @VisibleForTesting
-    String getDefaultAlertHost() {
-        return socket.getDefaultAlertHost();
-    }
-
-    @VisibleForTesting
-    void setDefaultAlertPort(String defaultAlertPort) {
-        this.defaultAlertPort = defaultAlertPort;
-    }
-
-    @VisibleForTesting
-    int getDefaultAlertPort() {
-        return socket.getDefaultAlertPort();
     }
 
     private void loadLogAlertTemplate() {
@@ -311,36 +326,19 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         }
     }
 
-    @VisibleForTesting
-    static void readFile(String location, long address, long addressSize, FilesFacade ff, CharSink sink) {
-        long fdTemplate = -1;
-        try (Path path = new Path()) {
-            path.of(location);
-            fdTemplate = ff.openRO(path.$());
-            if (fdTemplate == -1) {
-                throw new LogError(String.format(
-                        "Cannot read %s [errno=%d]",
-                        location,
-                        ff.errno()
-                ));
-            }
-            long size = ff.length(fdTemplate);
-            if (size > addressSize) {
-                throw new LogError("Template file is too big");
-            }
-            if (size < 0 || size != ff.read(fdTemplate, address, size, 0)) {
-                throw new LogError(String.format(
-                        "Cannot read %s [errno=%d, size=%d]",
-                        location,
-                        ff.errno(),
-                        size
-                ));
-            }
-            Chars.utf8Decode(address, address + size, sink);
-        } finally {
-            if (fdTemplate != -1) {
-                ff.close(fdTemplate);
-            }
+    static {
+        if (!ALERT_PROPS.contains(ORG_ID_ENV)) {
+            ALERT_PROPS.put(ORG_ID_ENV, DEFAULT_ENV_VALUE);
         }
+        if (!ALERT_PROPS.contains(NAMESPACE_ENV)) {
+            ALERT_PROPS.put(NAMESPACE_ENV, DEFAULT_ENV_VALUE);
+        }
+        if (!ALERT_PROPS.contains(CLUSTER_ENV)) {
+            ALERT_PROPS.put(CLUSTER_ENV, DEFAULT_ENV_VALUE);
+        }
+        if (!ALERT_PROPS.contains(INSTANCE_ENV)) {
+            ALERT_PROPS.put(INSTANCE_ENV, DEFAULT_ENV_VALUE);
+        }
+        ALERT_PROPS.put(MESSAGE_ENV, MESSAGE_ENV_VALUE);
     }
 }

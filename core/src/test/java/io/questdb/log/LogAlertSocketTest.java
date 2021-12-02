@@ -35,6 +35,8 @@ import static io.questdb.log.HttpLogRecordSink.CRLF;
 
 public class LogAlertSocketTest {
 
+    private static final Log LOG = LogFactory.getLog(LogAlertSocketTest.class);
+
     @Test
     public void testParseAlertTargetsEmpty() throws Exception {
         String[] expectedHosts = {LogAlertSocket.DEFAULT_HOST};
@@ -107,7 +109,7 @@ public class LogAlertSocketTest {
     @Test
     public void testFailOver() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1242")) {
+            try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1242", LOG)) {
                 final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
                         .putHeader("localhost")
                         .setMark();
@@ -154,7 +156,7 @@ public class LogAlertSocketTest {
     @Test
     public void testFailOverNoServers() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1243")) {
+            try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1243", LOG)) {
                 final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
                         .putHeader("localhost")
                         .setMark();
@@ -180,7 +182,7 @@ public class LogAlertSocketTest {
 
     private void assertLogError(String socketAddress, String expected) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LogAlertSocket ignored = new LogAlertSocket(socketAddress)) {
+            try (LogAlertSocket ignored = new LogAlertSocket(socketAddress, LOG)) {
                 Assert.fail();
             } catch (LogError logError) {
                 Assert.assertEquals(expected, logError.getMessage());
@@ -194,7 +196,7 @@ public class LogAlertSocketTest {
             int[] expectedPorts
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LogAlertSocket socket = new LogAlertSocket(alertTargets)) {
+            try (LogAlertSocket socket = new LogAlertSocket(alertTargets, LOG)) {
                 Assert.assertEquals(expectedHosts.length, socket.getAlertHostsCount());
                 Assert.assertEquals(expectedPorts.length, socket.getAlertHostsCount());
                 for (int i = 0; i < expectedHosts.length; i++) {

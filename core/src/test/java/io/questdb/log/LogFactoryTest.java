@@ -303,7 +303,7 @@ public class LogFactoryTest {
             writer.setLocation(logFile);
             writer.setRollSize("1m");
             writer.setBufferSize("64k");
-            writer.bindProperties();
+            writer.bindProperties(LogFactory.INSTANCE);
 
             AtomicBoolean running = new AtomicBoolean(true);
             SOCountDownLatch halted = new SOCountDownLatch();

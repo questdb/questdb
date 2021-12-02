@@ -197,7 +197,7 @@ public class LogFactory implements Closeable {
         scopeConfigMap.sortKeys(LDC);
 
         for (int i = 0, n = jobs.size(); i < n; i++) {
-            jobs.get(i).bindProperties();
+            jobs.get(i).bindProperties(this);
         }
 
         if (workerPool != null) {
