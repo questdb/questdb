@@ -204,3 +204,16 @@ mvn clean package -DskipTests -P build-web-console,build-binaries,use-built-in-n
 
 That way, `maven` will install `node` on the fly in `ui/node` so you don't have
 to install it locally.
+
+#### Some tests fail on a clean branch in Windows   
+
+If tests are green in CI but tests fail on:
+- http chunk size assertion (missing initial zeroes in e.g. IODispatcherTest )
+- timeout
+- jvm crash   
+then it may be caused by your antivirus .
+In case of ESET products you've to :
+- disable "application protocol content filtering" explicitly or 
+- add 127.0.0.1 to "Excluded IP addresses" list deep in advanced settings menus 
+because disabling all top-level mechanisms doesn't turn protocol filtering off. 
+  
