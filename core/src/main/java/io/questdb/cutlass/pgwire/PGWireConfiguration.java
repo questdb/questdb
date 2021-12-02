@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.WorkerPoolAwareConfiguration;
+import io.questdb.griffin.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Rnd;
@@ -85,4 +86,6 @@ public interface PGWireConfiguration extends WorkerPoolAwareConfiguration {
     default Rnd getRandom() {
         return null;
     }
+
+    SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 }

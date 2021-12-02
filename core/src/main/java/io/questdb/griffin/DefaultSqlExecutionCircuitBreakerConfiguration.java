@@ -25,13 +25,38 @@
 package io.questdb.griffin;
 
 import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
-public interface SqlInterruptorConfiguration {
-    int getBufferSize();
+public class DefaultSqlExecutionCircuitBreakerConfiguration implements SqlExecutionCircuitBreakerConfiguration {
+    @Override
+    public int getBufferSize() {
+        return 64;
+    }
 
-    int getCountOfIterationsPerCheck();
+    @Override
+    public int getCircuitBreakerThrottle() {
+        return 5;
+    }
 
-    NetworkFacade getNetworkFacade();
+    @Override
+    public NetworkFacade getNetworkFacade() {
+        return NetworkFacadeImpl.INSTANCE;
+    }
 
-    boolean isEnabled();
+    @Override
+    public boolean isEnabled() {
+        return true;
+    }
+
+    @Override
+    public MicrosecondClock getClock() {
+        return MicrosecondClockImpl.INSTANCE;
+    }
+
+    @Override
+    public long getMaxTime() {
+        return Long.MAX_VALUE;
+    }
 }
