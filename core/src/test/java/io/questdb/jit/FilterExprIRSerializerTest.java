@@ -210,11 +210,11 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
                 {"along", "i64", "1.5", "1.5D", "f64"},
                 {"along", "i64", "-1", "-1L", "i64"},
                 {"afloat", "f32", "1", "1L", "i32"},
-                {"afloat", "f32", "-1", "-1L", "i32"},
-                {"adouble", "f64", "1", "1.0D", "f64"},
-                {"adouble", "f64", "-1", "-1.0D", "f64"},
                 {"afloat", "f32", "1.5", "1.5D", "f32"},
+                {"afloat", "f32", "-1", "-1L", "i32"},
+                {"adouble", "f64", "1", "1L", "i64"},
                 {"adouble", "f64", "1.5", "1.5D", "f64"},
+                {"adouble", "f64", "-1", "-1L", "i64"},
         };
 
         for (String[] col : columns) {
@@ -296,25 +296,20 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
         filterToOptions.put("afloat = 0", 0b00001100);
         filterToOptions.put("asymbol <> null", 0b00001100);
         filterToOptions.put("anint / anint = 0", 0b00001100);
+        filterToOptions.put("afloat = 0 or anint = 0", 0b00001100);
         // 8B
         filterToOptions.put("along = 0", 0b00001110);
         filterToOptions.put("ageolong <> null", 0b00001110);
         filterToOptions.put("adate <> null", 0b00001110);
         filterToOptions.put("atimestamp <> null", 0b00001110);
         filterToOptions.put("adouble = 0", 0b00001110);
-        filterToOptions.put("afloat = 0 or anint = 0", 0b00001100);
+        filterToOptions.put("adouble = 0 and along = 0", 0b00001110);
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
             setUp1();
             int options = serialize(entry.getKey(), false, false);
             Assert.assertEquals("options mismatch for filter: " + entry.getKey(), (int) entry.getValue(), options);
         }
-    }
-
-    @Test
-    public void testOptionsScalarModeForcedForLongDouble() throws Exception {
-        int options = serialize("adouble = 0 and along = 0", false, false);
-        Assert.assertEquals(0b00000110, options);
     }
 
     @Test

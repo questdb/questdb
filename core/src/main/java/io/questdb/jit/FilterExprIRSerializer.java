@@ -128,7 +128,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
             int log2 = Integer.numberOfTrailingZeros(typeSize);
             options = options | (log2 << 1);
         }
-        if (!scalar && !typesObserver.forceScalarMode()) {
+        if (!scalar) {
             int executionHint = typesObserver.hasMixedSizes() ? 2 : 1;
             options = options | (executionHint << 3);
         }
@@ -392,6 +392,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                     }
                     break;
                 case IMM_I8:
+                case IMM_F8:
                     try {
                         final long l = Numbers.parseLong(token);
                         memory.putByte(IMM_I8);
@@ -401,13 +402,6 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                         memory.putByte(IMM_F8);
                         memory.putDouble(sign * dl);
                     }
-                    break;
-                case IMM_F8:
-                    // Unlike with f32, we always parse 64-bit constants as doubles. That's
-                    // because AVX-2 does not have an instruction to convert longs to doubles.
-                    final double d = Numbers.parseDouble(token);
-                    memory.putByte(IMM_F8);
-                    memory.putDouble(sign * d);
                     break;
                 default:
                     throw SqlException.position(position)
@@ -782,15 +776,6 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                 }
             }
             return false;
-        }
-
-        /**
-         * For now, we force scalar mode of JIT compiler for double + long
-         * combinations. That's because AVX-2 does not have an instruction to
-         * convert longs to doubles. We may want to revisit this in the future.
-         */
-        public boolean forceScalarMode() {
-            return types[I8_INDEX] > 0 && types[F8_INDEX] > 0 && !hasMixedSizes();
         }
 
         @Override
