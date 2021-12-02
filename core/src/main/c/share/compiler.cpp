@@ -25,7 +25,6 @@
 #include "compiler.h"
 #include <stack>
 #include <iostream>
-#include <cassert>
 
 using namespace asmjit;
 
@@ -99,7 +98,7 @@ namespace questdb::x86 {
                 return {row_data, type, data_kind_t::kMemory};
             }
             default:
-                assert(false);
+                __builtin_unreachable();
         }
     }
 
@@ -134,7 +133,7 @@ namespace questdb::x86 {
                 return {reg, type, data_kind_t::kConst};
             }
             default:
-                assert(false);
+                __builtin_unreachable();
         }
     }
 
@@ -153,7 +152,7 @@ namespace questdb::x86 {
             case data_type_t::f64:
                 return {double_neg(c, lhs.xmm()), dt, dk};
             default:
-                assert(false);
+                __builtin_unreachable();
         }
     }
 
@@ -190,7 +189,7 @@ namespace questdb::x86 {
             case data_type_t::f64:
                 return {double_eq_delta(c, lhs.xmm(), rhs.xmm(), DOUBLE_DELTA), data_type_t::i32, dk};
             default:
-                assert(false);
+                __builtin_unreachable();
         }
     }
 
@@ -209,7 +208,7 @@ namespace questdb::x86 {
             case data_type_t::f64:
                 return {double_ne_delta(c, lhs.xmm(), rhs.xmm(), DOUBLE_DELTA), data_type_t::i32, dk};
             default:
-                assert(false);
+                __builtin_unreachable();
         }
     }
 
@@ -228,7 +227,7 @@ namespace questdb::x86 {
             case data_type_t::f64:
                 return {double_gt(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
             default:
-                assert(false);
+                __builtin_unreachable();
         }
     }
 
@@ -247,7 +246,7 @@ namespace questdb::x86 {
             case data_type_t::f64:
                 return {double_ge(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
             default:
-                assert(false);
+                __builtin_unreachable();
         }
     }
 
@@ -266,7 +265,7 @@ namespace questdb::x86 {
             case data_type_t::f64:
                 return {double_lt(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
             default:
-                assert(false);
+                __builtin_unreachable();
         }
     }
 
@@ -285,7 +284,7 @@ namespace questdb::x86 {
             case data_type_t::f64:
                 return {double_le(c, lhs.xmm(), rhs.xmm()), data_type_t::i32, dk};
             default:
-                assert(false);
+                __builtin_unreachable();
         }
     }
 
@@ -304,7 +303,7 @@ namespace questdb::x86 {
             case data_type_t::f64:
                 return {double_add(c, lhs.xmm(), rhs.xmm()), dt, dk};
             default:
-                assert(false);
+                __builtin_unreachable();
         }
     }
 
@@ -323,7 +322,7 @@ namespace questdb::x86 {
             case data_type_t::f64:
                 return {double_sub(c, lhs.xmm(), rhs.xmm()), dt, dk};
             default:
-                assert(false);
+                __builtin_unreachable();
         }
     }
 
@@ -342,7 +341,7 @@ namespace questdb::x86 {
             case data_type_t::f64:
                 return {double_mul(c, lhs.xmm(), rhs.xmm()), dt, dk};
             default:
-                assert(false);
+                __builtin_unreachable();
         }
     }
 
@@ -361,7 +360,7 @@ namespace questdb::x86 {
             case data_type_t::f64:
                 return {double_div(c, lhs.xmm(), rhs.xmm()), dt, dk};
             default:
-                assert(false);
+                __builtin_unreachable();
         }
     }
 
@@ -393,7 +392,7 @@ namespace questdb::x86 {
                                 jit_value_t(int32_to_double(c, lhs.gp().r32(), null_check && cvt_null_check(lhs.dtype())), data_type_t::f64,
                                             lhs.dkind()), rhs);
                     default:
-                        assert(false);
+                        __builtin_unreachable();
                 }
                 break;
             case data_type_t::i64:
@@ -416,7 +415,7 @@ namespace questdb::x86 {
                                 jit_value_t(int64_to_double(c, lhs.gp(), null_check), data_type_t::f64, lhs.dkind()),
                                 rhs);
                     default:
-                        assert(false);
+                        __builtin_unreachable();
                 }
                 break;
             case data_type_t::f32:
@@ -437,7 +436,7 @@ namespace questdb::x86 {
                     case data_type_t::f64:
                         return std::make_pair(jit_value_t(float_to_double(c, lhs.xmm()), data_type_t::f64, lhs.dkind()), rhs);
                     default:
-                        assert(false);
+                        __builtin_unreachable();
                 }
                 break;
             case data_type_t::f64:
@@ -460,11 +459,11 @@ namespace questdb::x86 {
                     case data_type_t::f64:
                         return std::make_pair(lhs, rhs);
                     default:
-                        assert(false);
+                        __builtin_unreachable();
                 }
                 break;
             default:
-                assert(false);
+                __builtin_unreachable();
         }
     }
 
@@ -523,7 +522,7 @@ namespace questdb::x86 {
                 values.push(div(c, args.first, args.second, null_check));
                 break;
             default:
-                assert(false);
+                __builtin_unreachable();
         }
     }
 
@@ -603,7 +602,7 @@ namespace questdb::avx2 {
             case data_type_t::f64:
                 return 3;
             default:
-                assert(false);
+                __builtin_unreachable();
         }
     }
 
@@ -660,7 +659,7 @@ namespace questdb::avx2 {
                 c.vmovupd(row_data, m);
                 break;
             default:
-                assert(false);
+                __builtin_unreachable();
         }
         return {row_data, type, data_kind_t::kMemory};
     }
@@ -706,7 +705,7 @@ namespace questdb::avx2 {
             }
                 break;
             default:
-                assert(false);
+                __builtin_unreachable();
         }
         return {val, type, data_kind_t::kConst};
     }
@@ -898,7 +897,7 @@ namespace questdb::avx2 {
                 values.push(div(c, args.first, args.second, ncheck));
                 break;
             default:
-                assert(false);
+                __builtin_unreachable();
         }
     }
 

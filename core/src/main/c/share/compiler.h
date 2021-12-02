@@ -1048,7 +1048,7 @@ namespace questdb::avx2 {
             case data_type_t::f64:
                 return is_nan(c, type, x);
             default:
-                assert(false);
+                __builtin_unreachable();
         }
         return dst;
     }
@@ -1127,7 +1127,7 @@ namespace questdb::avx2 {
             }
                 break;
             default:
-                assert(false);
+                __builtin_unreachable();
         }
         return dst;
     }
@@ -1175,7 +1175,7 @@ namespace questdb::avx2 {
                 c.vcmppd(dst, lhs, rhs, Predicate::kCmpLT);
                 break;
             default:
-                assert(false);
+                __builtin_unreachable();
         }
         return dst;
     }
@@ -1259,7 +1259,7 @@ namespace questdb::avx2 {
                 c.vaddpd(dst, lhs, rhs);
                 break;
             default:
-                assert(false);
+                __builtin_unreachable();
         }
         return dst;
     }
@@ -1301,7 +1301,7 @@ namespace questdb::avx2 {
                 c.vsubpd(dst, lhs, rhs);
                 break;
             default:
-                assert(false);
+                __builtin_unreachable();
         }
         return dst;
     }
@@ -1379,7 +1379,7 @@ namespace questdb::avx2 {
                 c.vsubpd(dst, lhs, rhs);
                 break;
             default:
-                assert(false);
+                __builtin_unreachable();
         }
         return dst;
     }
@@ -1505,7 +1505,7 @@ namespace questdb::avx2 {
                 c.vdivpd(dst, lhs, rhs);
                 break;
             default:
-                assert(false);
+                __builtin_unreachable();
         }
         return dst;
     }
