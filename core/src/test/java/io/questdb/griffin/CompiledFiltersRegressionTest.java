@@ -204,15 +204,13 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     public void testNullComparison() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_byte(-10, 10) i8," +
-                " rnd_short(-10, 10) i16," +
                 " rnd_int(-10, 10, 10) i32," +
                 " rnd_long(-10, 10, 10) i64," +
                 " rnd_float(10) f32," +
                 " rnd_double(10) f64 " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
         FilterGenerator gen = new FilterGenerator()
-                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
+                .withOptionalNegation().withAnyOf("i32", "i64")
                 .withAnyOf(" = ", " <> ")
                 .withAnyOf("null")
                 .withBooleanOperator()
@@ -226,15 +224,13 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     public void testNullValueComparison() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_byte(-10, 10) i8," +
-                " rnd_short(-10, 10) i16," +
                 " rnd_int(-10, 10, 10) i32," +
                 " rnd_long(-10, 10, 10) i64," +
                 " rnd_float(10) f32," +
                 " rnd_double(10) f64 " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
         FilterGenerator gen = new FilterGenerator()
-                .withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
+                .withAnyOf("i32", "i64", "f32", "f64")
                 .withComparisonOperator()
                 .withAnyOf("1");
         assertGeneratedQuery("select * from x", ddl, gen);
@@ -244,35 +240,31 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     public void testColumnArithmeticsNullComparison() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_byte(-10, 10) i8," +
-                " rnd_short(-10, 10) i16," +
                 " rnd_int(-10, 10, 10) i32," +
                 " rnd_long(-10, 10, 10) i64," +
                 " rnd_float(10) f32," +
                 " rnd_double(10) f64 " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
         FilterGenerator gen = new FilterGenerator()
-                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
+                .withOptionalNegation().withAnyOf("i32", "i64", "f32", "f64")
                 .withArithmeticOperator()
-                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
+                .withOptionalNegation().withAnyOf("i32", "i64", "f32", "f64")
                 .withAnyOf(" = ", " <> ")
                 .withAnyOf("null");
         assertGeneratedQuery("select * from x", ddl, gen);
     }
 
     @Test
-    public void testIntFloatColumnsComparisonIgnoreNull() throws Exception {
+    public void testIntFloatColumnsComparisonFilterOutNulls() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_byte(-10, 10) i8," +
-                " rnd_short(-10, 10) i16," +
                 " rnd_int(-10, 10, 10) i32," +
                 " rnd_long(-10, 10, 10) i64," +
                 " rnd_float(10) f32," +
                 " rnd_double(10) f64 " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
         FilterGenerator gen = new FilterGenerator()
-                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
+                .withOptionalNegation().withAnyOf("i32", "i64")
                 .withComparisonOperator()
                 .withOptionalNegation().withAnyOf("f32", "f64");
         assertGeneratedQuery("select * from x", ddl, gen);

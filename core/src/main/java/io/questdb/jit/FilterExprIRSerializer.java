@@ -41,7 +41,6 @@ import java.util.Arrays;
  *
  * TODO:
  *  - i32 * 3 + 42.5 + f64 > 1 => 3 should be i32, 42.5 should be f32 (check Java???), 1 should be f64
- *  - i8 + i8 = null and i16 + i8 = null => there are no nulls for byte, char and short
  */
 public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
 
@@ -129,7 +128,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
             int log2 = Integer.numberOfTrailingZeros(typeSize);
             options = options | (log2 << 1);
         }
-        if (!scalar && !typesObserver.forceScalarMode()) {
+        if (!scalar) {
             int executionHint = typesObserver.hasMixedSizes() ? 2 : 1;
             options = options | (executionHint << 3);
         }
@@ -220,18 +219,19 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
             throw SqlException.invalidColumn(position, token);
         }
 
-        int columnType = metadata.getColumnType(index);
-        byte typeCode = columnTypeCode(columnType);
+        final int columnType = metadata.getColumnType(index);
+        final int columnTypeTag = ColumnType.tagOf(columnType);
+        byte typeCode = columnTypeCode(columnTypeTag);
         if (typeCode == UNDEFINED_CODE) {
             throw SqlException.position(position)
                     .put("unsupported column type: ")
-                    .put(ColumnType.nameOf(columnType));
+                    .put(ColumnType.nameOf(columnTypeTag));
         }
 
         index = metadata.isColumnNullable(index) ? index : index | NOT_NULL_COLUMN_MASK;
 
         // In case of a top level boolean column, expand it to "boolean_column = true" expression.
-        if (arithmeticContext.singleBooleanColumn && columnType == ColumnType.BOOLEAN) {
+        if (arithmeticContext.singleBooleanColumn && columnTypeTag == ColumnType.BOOLEAN) {
             // "true" constant
             memory.putByte(IMM_I1);
             memory.putLong(1);
@@ -337,10 +337,16 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         memory.putByte(typeCode);
         switch (typeCode) {
             case IMM_I1:
-                memory.putLong(geoHashExpression ? GeoHashes.BYTE_NULL : Numbers.BYTE_NaN);
+                if (!geoHashExpression) {
+                    throw SqlException.position(position).put("byte type is not nullable");
+                }
+                memory.putLong(GeoHashes.BYTE_NULL);
                 break;
             case IMM_I2:
-                memory.putLong(geoHashExpression ? GeoHashes.SHORT_NULL : Numbers.SHORT_NaN);
+                if (!geoHashExpression) {
+                    throw SqlException.position(position).put("short type is not nullable");
+                }
+                memory.putLong(GeoHashes.SHORT_NULL);
                 break;
             case IMM_I4:
                 memory.putLong(geoHashExpression ? GeoHashes.INT_NULL : Numbers.INT_NaN);
@@ -386,6 +392,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                     }
                     break;
                 case IMM_I8:
+                case IMM_F8:
                     try {
                         final long l = Numbers.parseLong(token);
                         memory.putByte(IMM_I8);
@@ -395,13 +402,6 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                         memory.putByte(IMM_F8);
                         memory.putDouble(sign * dl);
                     }
-                    break;
-                case IMM_F8:
-                    // Unlike with f32, we always parse 64-bit constants as doubles. That's
-                    // because AVX-2 does not have an instruction to convert longs to doubles.
-                    final double d = Numbers.parseDouble(token);
-                    memory.putByte(IMM_F8);
-                    memory.putDouble(sign * d);
                     break;
                 default:
                     throw SqlException.position(position)
@@ -477,8 +477,8 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         throw SqlException.position(position).put("invalid operator: ").put(token);
     }
 
-    private static byte columnTypeCode(int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
+    private static byte columnTypeCode(int columnTypeTag) {
+        switch (columnTypeTag) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
             case ColumnType.GEOBYTE:
@@ -552,8 +552,9 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         if (index == -1) {
             return false;
         }
-        int columnType = metadata.getColumnType(index);
-        return columnType == ColumnType.BOOLEAN;
+        final int columnType = metadata.getColumnType(index);
+        final int columnTypeTag = ColumnType.tagOf(columnType);
+        return columnTypeTag == ColumnType.BOOLEAN;
     }
 
     private class ArithmeticExpressionContext implements Mutable {
@@ -608,27 +609,28 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
             }
 
             if (node.type == ExpressionNode.LITERAL) {
-                int index = metadata.getColumnIndexQuiet(node.token);
+                final int index = metadata.getColumnIndexQuiet(node.token);
                 if (index == -1) {
                     throw SqlException.invalidColumn(node.position, node.token);
                 }
 
-                int columnType = metadata.getColumnType(index);
+                final int columnType = metadata.getColumnType(index);
+                final int columnTypeTag = ColumnType.tagOf(columnType);
 
-                updateExpressionType(node.position, columnType);
-                updateTypeCode(node.position, columnType);
+                updateExpressionType(node.position, columnTypeTag);
+                updateTypeCode(node.position, columnTypeTag);
             }
 
             return contextLeft;
         }
 
-        private void updateExpressionType(int position, int columnType) throws SqlException {
-            switch (columnType) {
+        private void updateExpressionType(int position, int columnTypeTag) throws SqlException {
+            switch (columnTypeTag) {
                 case ColumnType.BOOLEAN:
                     if (expressionType != null && expressionType != ExpressionType.BOOLEAN) {
                         throw SqlException.position(position)
                                 .put("non-boolean column in boolean expression: ")
-                                .put(ColumnType.nameOf(columnType));
+                                .put(ColumnType.nameOf(columnTypeTag));
                     }
                     expressionType = ExpressionType.BOOLEAN;
                     break;
@@ -639,7 +641,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                     if (expressionType != null && expressionType != ExpressionType.GEO_HASH) {
                         throw SqlException.position(position)
                                 .put("non-geohash column in geohash expression: ")
-                                .put(ColumnType.nameOf(columnType));
+                                .put(ColumnType.nameOf(columnTypeTag));
                     }
                     expressionType = ExpressionType.GEO_HASH;
                     break;
@@ -647,7 +649,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                     if (expressionType != null && expressionType != ExpressionType.CHAR) {
                         throw SqlException.position(position)
                                 .put("non-char column in char expression: ")
-                                .put(ColumnType.nameOf(columnType));
+                                .put(ColumnType.nameOf(columnTypeTag));
                     }
                     expressionType = ExpressionType.CHAR;
                     break;
@@ -655,7 +657,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                     if (expressionType != null && expressionType != ExpressionType.SYMBOL) {
                         throw SqlException.position(position)
                                 .put("non-symbol column in symbol expression: ")
-                                .put(ColumnType.nameOf(columnType));
+                                .put(ColumnType.nameOf(columnTypeTag));
                     }
                     expressionType = ExpressionType.SYMBOL;
                     break;
@@ -663,15 +665,15 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                     if (expressionType != null && expressionType != ExpressionType.NUMERIC) {
                         throw SqlException.position(position)
                                 .put("non-numeric column in numeric expression: ")
-                                .put(ColumnType.nameOf(columnType));
+                                .put(ColumnType.nameOf(columnTypeTag));
                     }
                     expressionType = ExpressionType.NUMERIC;
                     break;
             }
         }
 
-        private void updateTypeCode(int position, int columnType) throws SqlException {
-            byte code = columnTypeCode(columnType);
+        private void updateTypeCode(int position, int columnTypeTag) throws SqlException {
+            byte code = columnTypeCode(columnTypeTag);
             typesObserver.observe(code);
             switch (code) {
                 case MEM_I1:
@@ -711,7 +713,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                 default:
                     throw SqlException.position(position)
                             .put("expected numeric column type: ")
-                            .put(ColumnType.nameOf(columnType));
+                            .put(ColumnType.nameOf(columnTypeTag));
             }
         }
     }
@@ -774,15 +776,6 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                 }
             }
             return false;
-        }
-
-        /**
-         * For now, we force scalar mode of JIT compiler for double + long
-         * combinations. That's because AVX-2 does not have an instruction to
-         * convert longs to doubles. We may want to revisit this in the future.
-         */
-        public boolean forceScalarMode() {
-            return types[I8_INDEX] > 0 && types[F8_INDEX] > 0 && !hasMixedSizes();
         }
 
         @Override

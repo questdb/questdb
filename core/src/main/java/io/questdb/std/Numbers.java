@@ -24,8 +24,6 @@
 
 package io.questdb.std;
 
-import io.questdb.griffin.engine.functions.constants.ByteConstant;
-import io.questdb.griffin.engine.functions.constants.ShortConstant;
 import io.questdb.std.str.CharSink;
 //#if jdk.version==8
 //$import sun.misc.FDBigInteger;
@@ -37,8 +35,6 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Arrays;
 
 public final class Numbers {
-    public static final byte BYTE_NaN = ByteConstant.ZERO.getByte(null);
-    public static final short SHORT_NaN = ShortConstant.ZERO.getShort(null);
     public static final int INT_NaN = Integer.MIN_VALUE;
     public static final long LONG_NaN = Long.MIN_VALUE;
     public static final double TOLERANCE = 1E-15d;
