@@ -352,13 +352,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinListenBacklog;
     private int httpMinRcvBufSize;
     private int httpMinSndBufSize;
-    private final int latestByQueueCapacity;
-    private final int sampleByIndexSearchPageSize;
     private final long writerAsyncCommandBusyWaitTimeout;
     private final int writerAsyncCommandQueueCapcity;
-    private final int binaryEncodingMaxLength;
-    private final long writerDataIndexKeyAppendPageSize;
-    private final long writerDataIndexValueAppendPageSize;
     private long symbolCacheWaitUsBeforeReload;
     private final int writerTockRowsCountMod;
     private final long writerAsyncCommandMaxWaitTimeout;
@@ -1781,11 +1776,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getRenameTableModelPoolCapacity() {
-            return sqlRenameTableModelPoolCapacity;
-        }
-
-        @Override
         public CharSequence getRoot() {
             return root;
         }
@@ -1906,16 +1896,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlJoinMetadataMaxResizes() {
-            return sqlJoinMetadataMaxResizes;
-        }
-
-        @Override
-        public int getSqlJoinMetadataPageSize() {
-            return sqlJoinMetadataPageSize;
-        }
-
-        @Override
         public long getSqlLatestByRowCount() {
             return sqlLatestByRowCount;
         }
@@ -1971,11 +1951,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlSortValueMaxPages() {
-            return sqlSortValueMaxPages;
-        }
-
-        @Override
         public int getSqlSortValuePageSize() {
             return sqlSortValuePageSize;
         }
@@ -1983,16 +1958,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlSortValueMaxPages() {
             return sqlSortValueMaxPages;
-        }
-
-        @Override
-        public TextConfiguration getTextConfiguration() {
-            return textConfiguration;
-        }
-
-        @Override
-        public long getWorkStealTimeoutNanos() {
-            return workStealTimeoutNanos;
         }
 
         @Override
@@ -2016,11 +1981,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isParallelIndexingEnabled() {
-            return parallelIndexingEnabled;
-        }
-
-        @Override
         public int getSqlJoinMetadataPageSize() {
             return sqlJoinMetadataPageSize;
         }
@@ -2031,63 +1991,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getAnalyticColumnPoolCapacity() {
-            return sqlAnalyticColumnPoolCapacity;
-        }
-
-        @Override
-        public int getCreateTableModelPoolCapacity() {
-            return sqlCreateTableModelPoolCapacity;
-        }
-
-        @Override
-        public int getColumnCastModelPoolCapacity() {
-            return sqlColumnCastModelPoolCapacity;
-        }
-
-        @Override
         public int getRenameTableModelPoolCapacity() {
             return sqlRenameTableModelPoolCapacity;
         }
 
-        @Override
-        public int getWithClauseModelPoolCapacity() {
-            return sqlWithClauseModelPoolCapacity;
-        }
-
-        @Override
-        public int getInsertPoolCapacity() {
-            return sqlInsertModelPoolCapacity;
-        }
-
-        @Override
-        public int getCommitMode() {
-            return commitMode;
-        }
-
-        @Override
-        public DateLocale getDefaultDateLocale() {
-            return locale;
-        }
-
-        @Override
-        public int getGroupByPoolCapacity() {
-            return sqlGroupByPoolCapacity;
-        }
-
-        @Override
-        public int getMaxSymbolNotEqualsCount() {
-            return sqlMaxSymbolNotEqualsCount;
-        }
-
-        @Override
-        public int getGroupByMapCapacity() {
-            return sqlGroupByMapCapacity;
-        }
-
-        @Override
-        public boolean enableTestFactories() {
-            return false;
         public int getTableBlockWriterQueueCapacity() {
             return tableBlockWriterQueueCapacity;
         }

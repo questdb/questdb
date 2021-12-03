@@ -45,9 +45,9 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
                 () -> {
                     createX();
 
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x alter column ik add index capacity 1024", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, compile("alter table x alter column ik add index capacity 1024", sqlExecutionContext).getType());
 
-                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing");) {
+                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
                         int blockCapacity = writer.getMetadata().getIndexValueBlockCapacity("ik");
                         Assert.assertEquals(1024, blockCapacity);
                     }

@@ -1329,7 +1329,10 @@ public class SqlCompiler implements Closeable {
             );
 
             if (tok == null || Chars.equals(tok, ';')) {
-                break;
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null) {
+                    break;
+                }
             }
 
             semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
