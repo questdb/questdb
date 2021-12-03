@@ -38,6 +38,9 @@ import java.util.Arrays;
 /**
  * Intermediate representation (IR) serializer for filters (think, WHERE clause)
  * to be used in SQL JIT compiler.
+ *
+ * TODO:
+ *  * parse geohash constant literals
  */
 public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
 

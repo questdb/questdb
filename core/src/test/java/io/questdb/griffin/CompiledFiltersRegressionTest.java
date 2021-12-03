@@ -29,6 +29,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.table.CompiledFilterRecordCursorFactory;
+import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
@@ -42,7 +43,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-@Ignore
 @RunWith(Parameterized.class)
 public class CompiledFiltersRegressionTest extends AbstractCairoTest {
 
@@ -87,6 +87,9 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     @Override
     @Before
     public void setUp() {
+        // Disable the test suite on ARM64.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+
         super.setUp();
         bindVariableService.clear();
     }

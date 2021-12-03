@@ -51,6 +51,7 @@ import io.questdb.griffin.engine.union.*;
 import io.questdb.griffin.model.*;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.jit.CompiledFilterIRSerializer;
+import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -724,9 +725,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         boolean useJit = executionContext.getJitMode() != SqlExecutionContext.JIT_MODE_DISABLED;
         if (useJit) {
-            // TODO what about FREEBSD_ARM64?
-            final boolean arm = Os.type == Os.LINUX_ARM64 || Os.type == Os.OSX_ARM64;
-            final boolean optimize = factory.supportPageFrameCursor() && !arm;
+            final boolean optimize = factory.supportPageFrameCursor() && JitUtil.isJitSupported();
             if (optimize) {
                 try {
                     boolean scalarMode = executionContext.getJitMode() == SqlExecutionContext.JIT_MODE_FORCE_SCALAR;
