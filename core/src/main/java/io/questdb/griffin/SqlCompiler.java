@@ -1916,6 +1916,15 @@ public class SqlCompiler implements Closeable {
 
         // First generate plan for nested SELECT QueryModel
         final UpdateStatementBuilder updateStatementBuilder = codeGenerator.generateUpdate(selectQueryModel, executionContext);
+//
+//        tableQueryModel.setIsUpdate(false);
+//        final RecordCursorFactory f = codeGenerator.generate(tableQueryModel, executionContext);
+
+        // todo:
+        // join factory (f) has master with the rowids needed to update
+        // we cannot match the columns however as updateQueryModel lost the right-hand side of the SET clauses
+        // otherwise it would be possible to lookup matching column indexes via join metadata
+        // f is constructed here using regular optimiser
 
         // And then generate plan for UPDATE top level QueryModel
         final IntList tableColumnTypes = tableQueryModel.getTableColumnTypes();

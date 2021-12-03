@@ -143,12 +143,12 @@ public class InplaceUpdateExecution implements Closeable {
                 int partitionIndex = Rows.toPartitionIndex(rowId);
                 long partitionRowId = Rows.toLocalRowID(rowId);
                 if (partitionIndex != currentPartitionIndex) {
-                    // Map columns to be update for RW
+                    // Map columns to be updated for RW
                     openPartitionColumnsForUpdate(tableWriter, updateMemory, partitionIndex, updateToColumnMap);
                     currentPartitionIndex = partitionIndex;
                 }
 
-                // Update values inplace
+                // Update values in-place
                 updateColumnValues(
                         writerMetadata,
                         updateToColumnMap,
