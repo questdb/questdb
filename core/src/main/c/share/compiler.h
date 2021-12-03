@@ -84,8 +84,9 @@ enum class instruction_t : uint8_t {
 static const int64_t LONG_NULL = std::numeric_limits<int64_t>::min();
 static const int32_t INT_NULL = std::numeric_limits<int32_t>::min();
 
-static const double DOUBLE_DELTA = 0.0000000001;
-static const float FLOAT_DELTA = 0.0000000001;
+//std::numeric_limits<double>::epsilon();
+static const double DOUBLE_EPSILON = 0.0000000001;
+static const float FLOAT_EPSILON = 0.0000000001;
 
 template<typename T>
 T read_at(const uint8_t *buf, size_t size, uint32_t pos) {
@@ -730,7 +731,7 @@ namespace questdb::x86 {
         }
     }
 
-//coverage: double_cmp_delta used instead
+//coverage: double_cmp_epsilon used instead
 //    inline Gpd double_eq(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
 //        Gp r = c.newInt32();
 //        c.cmpsd(lhs, rhs, Predicate::kCmpEQ);
@@ -779,7 +780,7 @@ namespace questdb::x86 {
         return r.as<Gpd>();
     }
 
-//coverage: float_cmp_delta used instead
+//coverage: float_cmp_epsilon used instead
 //    inline Gpd float_eq(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
 //        Gp r = c.newInt32();
 //        c.cmpss(lhs, rhs, Predicate::kCmpEQ);
@@ -829,10 +830,10 @@ namespace questdb::x86 {
     }
 
     // (isnan(lhs) && isnan(rhs) || fabs(l - r) < 0.0000000001);
-    inline Gpd double_cmp_delta(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, double delta, bool eq) {
+    inline Gpd double_cmp_epsilon(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, double epsilon, bool eq) {
         int64_t nans[] = {0x7fffffffffffffff, 0x7fffffffffffffff}; // double NaN
         Mem nans_memory = c.newConst(ConstPool::kScopeLocal, &nans, 32);
-        Mem d = c.newDoubleConst(ConstPool::kScopeLocal, delta);
+        Mem d = c.newDoubleConst(ConstPool::kScopeLocal, epsilon);
         Label l_nan = c.newLabel();
         Label l_exit = c.newLabel();
         Gp r = c.newInt32();
@@ -861,18 +862,18 @@ namespace questdb::x86 {
         return r.as<Gpd>();
     }
 
-    inline Gpd double_eq_delta(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, double delta) {
-        return double_cmp_delta(c, xmm0, xmm1, delta, true);
+    inline Gpd double_eq_epsilon(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, double epsilon) {
+        return double_cmp_epsilon(c, xmm0, xmm1, epsilon, true);
     }
 
-    inline Gpd double_ne_delta(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, double delta) {
-        return double_cmp_delta(c, xmm0, xmm1, delta, false);
+    inline Gpd double_ne_epsilon(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, double epsilon) {
+        return double_cmp_epsilon(c, xmm0, xmm1, epsilon, false);
     }
 
-    inline Gpd float_cmp_delta(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, float delta, bool eq) {
+    inline Gpd float_cmp_epsilon(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, float epsilon, bool eq) {
         int32_t nans[] = {0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff}; // float NaN
         Mem nans_memory = c.newConst(ConstPool::kScopeLocal, &nans, 16);
-        Mem d = c.newFloatConst(ConstPool::kScopeLocal, delta);
+        Mem d = c.newFloatConst(ConstPool::kScopeLocal, epsilon);
         Label l_nan = c.newLabel();
         Label l_exit = c.newLabel();
         Gp r = c.newInt32();
@@ -901,12 +902,12 @@ namespace questdb::x86 {
         return r.as<Gpd>();
     }
 
-    inline Gpd float_eq_delta(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, float delta) {
-        return float_cmp_delta(c, xmm0, xmm1, delta, true);
+    inline Gpd float_eq_epsilon(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, float epsilon) {
+        return float_cmp_epsilon(c, xmm0, xmm1, epsilon, true);
     }
 
-    inline Gpd float_ne_delta(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, float delta) {
-        return float_cmp_delta(c, xmm0, xmm1, delta, false);
+    inline Gpd float_ne_epsilon(Compiler &c, const Xmm &xmm0, const Xmm &xmm1, float epsilon) {
+        return float_cmp_epsilon(c, xmm0, xmm1, epsilon, false);
     }
 }
 
@@ -1014,6 +1015,36 @@ namespace questdb::avx2 {
         return c.newConst(ConstPool::kScopeLocal, &nulls, 32);
     }
 
+    inline Mem vec_sign_mask(Compiler &c, data_type_t type) {
+        switch (type) {
+            case data_type_t::i8: {
+                uint8_t mask[32] = {};
+                memset(mask, 0x7fu, 32);
+                return c.newConst(ConstPool::kScopeLocal, &mask, 32);
+            }
+                break;
+            case data_type_t::i16: {
+                uint16_t mask[16] = {0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu, 0x7fffu };
+                return c.newConst(ConstPool::kScopeLocal, &mask, 32);
+            }
+                break;
+            case data_type_t::i32:
+            case data_type_t::f32: {
+                uint32_t mask[] = {0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu};
+                return c.newConst(ConstPool::kScopeLocal, &mask, 32);
+            }
+                break;
+            case data_type_t::i64:
+            case data_type_t::f64: {
+                uint64_t mask[] = {0x7fffffffffffffffu, 0x7fffffffffffffffu, 0x7fffffffffffffffu, 0x7fffffffffffffffu};
+                return c.newConst(ConstPool::kScopeLocal, &mask, 32);
+            }
+                break;
+            default:
+                __builtin_unreachable();
+        }
+    }
+
     inline bool is_check_for_null(data_type_t t, bool null_check) {
         return null_check && (t == data_type_t::i32 || t == data_type_t::i64);
     }
@@ -1079,6 +1110,12 @@ namespace questdb::avx2 {
         return dst;
     }
 
+    inline Ymm mask_and(Compiler &c, const Ymm &lhs, const Mem &rhs) {
+        Ymm dst = c.newYmm();
+        c.vpand(dst, lhs, rhs);
+        return dst;
+    }
+
     inline Ymm mask_or(Compiler &c, const Ymm &lhs, const Ymm &rhs) {
         Ymm dst = c.newYmm();
         c.vpor(dst, lhs, rhs);
@@ -1116,13 +1153,28 @@ namespace questdb::avx2 {
                 break;
             case data_type_t::f32: {
                 Ymm nans = mask_and(c, is_nan(c, data_type_t::f32, lhs), is_nan(c, data_type_t::f32, rhs));
-                c.vcmpps(dst, lhs, rhs, Predicate::kCmpEQ);
+//                c.vcmpps(dst, lhs, rhs, Predicate::kCmpEQ);
+//                c.vpor(dst, dst, nans);
+
+                Mem sign_mask = vec_sign_mask(c, type);
+                c.vsubps(lhs, lhs, rhs); //(lhs - rhs)
+                c.vpand(lhs, lhs, sign_mask); // abs(lhs - rhs)
+                float eps[8] = {FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON,FLOAT_EPSILON};
+                Mem epsilon = c.newConst(ConstPool::kScopeLocal, &eps, 32);
+                c.vcmpps(dst, lhs, epsilon, Predicate::kCmpLT);
                 c.vpor(dst, dst, nans);
             }
                 break;
             case data_type_t::f64: {
                 Ymm nans = mask_and(c, is_nan(c, data_type_t::f64, lhs), is_nan(c, data_type_t::f64, rhs));
-                c.vcmppd(dst, lhs, rhs, Predicate::kCmpEQ);
+//                c.vcmppd(dst, lhs, rhs, Predicate::kCmpEQ);
+//                c.vpor(dst, dst, nans);
+                Mem sign_mask = vec_sign_mask(c, type);
+                c.vsubpd(lhs, lhs, rhs); //(lhs - rhs)
+                c.vpand(lhs, lhs, sign_mask); // abs(lhs - rhs)
+                double eps[4] = {DOUBLE_EPSILON, DOUBLE_EPSILON, DOUBLE_EPSILON, DOUBLE_EPSILON};
+                Mem epsilon = c.newConst(ConstPool::kScopeLocal, &eps, 32);
+                c.vcmppd(dst, lhs, epsilon, Predicate::kCmpLT);
                 c.vpor(dst, dst, nans);
             }
                 break;
@@ -1533,6 +1585,10 @@ namespace questdb::avx2 {
             Ymm nulls = cmp_eq_null(c, type, rhs);
             return select_bytes(c, nulls, r, rhs);
         }
+    }
+
+    inline Ymm abs(Compiler &c, data_type_t type, const Ymm &rhs) {
+        return mask_and(c, rhs, vec_sign_mask(c, type));
     }
 
     inline Ymm cvt_itof(Compiler &c, const Ymm &rhs, bool null_check) {

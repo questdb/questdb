@@ -185,9 +185,9 @@ namespace questdb::x86 {
             case data_type_t::i64:
                 return {int64_eq(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
             case data_type_t::f32:
-                return {float_eq_delta(c, lhs.xmm(), rhs.xmm(), FLOAT_DELTA), data_type_t::i32, dk};
+                return {float_eq_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk};
             case data_type_t::f64:
-                return {double_eq_delta(c, lhs.xmm(), rhs.xmm(), DOUBLE_DELTA), data_type_t::i32, dk};
+                return {double_eq_epsilon(c, lhs.xmm(), rhs.xmm(), DOUBLE_EPSILON), data_type_t::i32, dk};
             default:
                 __builtin_unreachable();
         }
@@ -204,9 +204,9 @@ namespace questdb::x86 {
             case data_type_t::i64:
                 return {int64_ne(c, lhs.gp(), rhs.gp()), data_type_t::i32, dk};
             case data_type_t::f32:
-                return {float_ne_delta(c, lhs.xmm(), rhs.xmm(), FLOAT_DELTA), data_type_t::i32, dk};
+                return {float_ne_epsilon(c, lhs.xmm(), rhs.xmm(), FLOAT_EPSILON), data_type_t::i32, dk};
             case data_type_t::f64:
-                return {double_ne_delta(c, lhs.xmm(), rhs.xmm(), DOUBLE_DELTA), data_type_t::i32, dk};
+                return {double_ne_epsilon(c, lhs.xmm(), rhs.xmm(), DOUBLE_EPSILON), data_type_t::i32, dk};
             default:
                 __builtin_unreachable();
         }
