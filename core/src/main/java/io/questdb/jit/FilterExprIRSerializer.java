@@ -38,9 +38,6 @@ import java.util.Arrays;
 /**
  * Intermediate representation (IR) serializer for filters (think, WHERE clause)
  * to be used in SQL JIT compiler.
- *
- * TODO:
- *  - i32 * 3 + 42.5 + f64 > 1 => 3 should be i32, 42.5 should be f32 (check Java???), 1 should be f64
  */
 public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
 
@@ -284,7 +281,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
     }
 
     private void serializeConstant(int position, final CharSequence token, boolean negated) throws SqlException {
-        final byte typeCode = arithmeticContext.constantTypeCode;
+        final byte typeCode = arithmeticContext.localTypesObserver.constantTypeCode();
         if (typeCode == UNDEFINED_CODE) {
             throw SqlException.position(position).put("all constants expression: ").put(token);
         }
@@ -602,10 +599,6 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
     private class ArithmeticExpressionContext implements Mutable {
 
         private ExpressionNode rootNode;
-        // expected constant type; calculated based on the "widest" column type
-        // in the expression (contains IMM_* or UNDEFINED_CODE value)
-        // TODO replace with localTypesObserver
-        byte constantTypeCode;
         ExpressionType expressionType;
         boolean singleBooleanColumn;
 
@@ -620,7 +613,6 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
 
         private void reset() {
             rootNode = null;
-            constantTypeCode = UNDEFINED_CODE;
             expressionType = null;
             singleBooleanColumn = false;
             localTypesObserver.clear();
@@ -662,7 +654,10 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                 final int columnTypeTag = ColumnType.tagOf(columnType);
 
                 updateExpressionType(node.position, columnTypeTag);
-                updateTypeCode(node.position, columnTypeTag);
+
+                byte code = columnTypeCode(columnTypeTag);
+                localTypesObserver.observe(code);
+                globalTypesObserver.observe(code);
             }
 
             return contextLeft;
@@ -715,54 +710,11 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                     break;
             }
         }
-
-        private void updateTypeCode(int position, int columnTypeTag) throws SqlException {
-            byte code = columnTypeCode(columnTypeTag);
-            localTypesObserver.observe(code);
-            globalTypesObserver.observe(code);
-            switch (code) {
-                case MEM_I1:
-                    if (constantTypeCode == UNDEFINED_CODE) {
-                        constantTypeCode = IMM_I1;
-                    }
-                    break;
-                case MEM_I2:
-                    if (constantTypeCode < IMM_I2) {
-                        constantTypeCode = IMM_I2;
-                    }
-                    break;
-                case MEM_I4:
-                    if (constantTypeCode < IMM_I4) {
-                        constantTypeCode = IMM_I4;
-                    }
-                    break;
-                case MEM_I8:
-                    if (constantTypeCode < IMM_I8) {
-                        constantTypeCode = IMM_I8;
-                    }
-                    if (constantTypeCode == IMM_F4) {
-                        constantTypeCode = IMM_F8;
-                    }
-                    break;
-                case MEM_F4:
-                    if (constantTypeCode <= IMM_I4) {
-                        constantTypeCode = IMM_F4;
-                    }
-                    if (constantTypeCode == IMM_I8) {
-                        constantTypeCode = IMM_F8;
-                    }
-                    break;
-                case MEM_F8:
-                    constantTypeCode = IMM_F8;
-                    break;
-                default:
-                    throw SqlException.position(position)
-                            .put("expected numeric column type: ")
-                            .put(ColumnType.nameOf(columnTypeTag));
-            }
-        }
     }
 
+    /**
+     * Helper class for accumulating column types information.
+     */
     private static class TypesObserver implements Mutable {
 
         private static final int I1_INDEX = 0;
@@ -773,34 +725,73 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         private static final int F8_INDEX = 5;
         private static final int TYPES_COUNT = F8_INDEX + 1;
 
-        private final byte[] types = new byte[TYPES_COUNT];
+        private final byte[] sizes = new byte[TYPES_COUNT];
 
         public void observe(byte code) {
             switch (code) {
                 case MEM_I1:
-                    types[I1_INDEX] = 1;
+                    sizes[I1_INDEX] = 1;
                     break;
                 case MEM_I2:
-                    types[I2_INDEX] = 2;
+                    sizes[I2_INDEX] = 2;
                     break;
                 case MEM_I4:
-                    types[I4_INDEX] = 4;
+                    sizes[I4_INDEX] = 4;
                     break;
                 case MEM_F4:
-                    types[F4_INDEX] = 4;
+                    sizes[F4_INDEX] = 4;
                     break;
                 case MEM_I8:
-                    types[I8_INDEX] = 8;
+                    sizes[I8_INDEX] = 8;
                     break;
                 case MEM_F8:
-                    types[F8_INDEX] = 8;
+                    sizes[F8_INDEX] = 8;
                     break;
             }
         }
 
+        /**
+         * Returns the expected constant type calculated based on the "widest" observed column type.
+         * The result contains IMM_* value or UNDEFINED_CODE value.
+         */
+        public byte constantTypeCode() {
+            for (int i = sizes.length - 1; i > -1; i--) {
+                byte size = sizes[i];
+                if (size > 0) {
+                    // If floats are present, longs have to be cast to double.
+                    if (i == I8_INDEX && sizes[F4_INDEX] > 0) {
+                        return IMM_F8;
+                    }
+                    return indexToTypeCode(i);
+                }
+            }
+            return UNDEFINED_CODE;
+        }
+
+        private byte indexToTypeCode(int index) {
+            switch (index) {
+                case I1_INDEX:
+                    return IMM_I1;
+                case I2_INDEX:
+                    return IMM_I2;
+                case I4_INDEX:
+                    return IMM_I4;
+                case F4_INDEX:
+                    return IMM_F4;
+                case I8_INDEX:
+                    return IMM_I8;
+                case F8_INDEX:
+                    return IMM_F8;
+            }
+            return UNDEFINED_CODE;
+        }
+
+        /**
+         * Returns size in bytes of the "widest" observed column type.
+         */
         public int maxSize() {
-            for (int i = types.length - 1; i > -1; i--) {
-                byte size = types[i];
+            for (int i = sizes.length - 1; i > -1; i--) {
+                byte size = sizes[i];
                 if (size > 0) {
                     return size;
                 }
@@ -809,15 +800,15 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         }
 
         public boolean hasMixedSizes() {
-            byte size = 0;
-            for (byte s : types) {
-                size = size == 0 ? s : size;
-                if (size > 0) {
-                    if (s > 0 && s != size) {
+            byte prevSize = 0;
+            for (byte size : sizes) {
+                prevSize = prevSize == 0 ? size : prevSize;
+                if (prevSize > 0) {
+                    if (size > 0 && size != prevSize) {
                         return true;
                     }
                 } else {
-                    size = s;
+                    prevSize = size;
                 }
             }
             return false;
@@ -825,7 +816,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
 
         @Override
         public void clear() {
-            Arrays.fill(types, (byte) 0);
+            Arrays.fill(sizes, (byte) 0);
         }
     }
 
