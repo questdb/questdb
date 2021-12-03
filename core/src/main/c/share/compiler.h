@@ -1376,7 +1376,7 @@ namespace questdb::avx2 {
                 c.vmulps(dst, lhs, rhs);
                 break;
             case data_type_t::f64:
-                c.vsubpd(dst, lhs, rhs);
+                c.vmulpd(dst, lhs, rhs);
                 break;
             default:
                 __builtin_unreachable();
