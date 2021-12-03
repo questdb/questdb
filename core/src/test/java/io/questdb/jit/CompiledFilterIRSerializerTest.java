@@ -40,14 +40,14 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
-import static io.questdb.jit.FilterExprIRSerializer.*;
+import static io.questdb.jit.CompiledFilterIRSerializer.*;
 
-public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
+public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     private static TableReader reader;
     private static RecordMetadata metadata;
-    private static MemoryCARW irMem;
-    private static FilterExprIRSerializer serializer;
+    private static MemoryCARW irMemory;
+    private static CompiledFilterIRSerializer serializer;
 
     @BeforeClass
     public static void setUp2() {
@@ -74,19 +74,19 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
 
         reader = new TableReader(configuration, "x");
         metadata = reader.getMetadata();
-        irMem = Vm.getCARWInstance(1024, 1, MemoryTag.NATIVE_DEFAULT);
-        serializer = new FilterExprIRSerializer();
+        irMemory = Vm.getCARWInstance(1024, 1, MemoryTag.NATIVE_DEFAULT);
+        serializer = new CompiledFilterIRSerializer();
     }
 
     @AfterClass
     public static void tearDown2() {
         reader.close();
-        irMem.close();
+        irMemory.close();
     }
 
     @Before
     public void setUp1() {
-        irMem.truncate();
+        irMemory.truncate();
         serializer.clear();
     }
 
@@ -473,11 +473,11 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
 
     private int serialize(CharSequence seq, boolean scalar, boolean debug) throws SqlException {
         ExpressionNode node = expr(seq);
-        return serializer.of(irMem, metadata).serialize(node, scalar, debug);
+        return serializer.of(irMemory, metadata).serialize(node, scalar, debug);
     }
 
     private void assertIR(String expectedIR) {
-        IRToStringSerializer ser = new IRToStringSerializer(irMem, metadata);
+        IRToStringSerializer ser = new IRToStringSerializer(irMemory, metadata);
         String actualIR = ser.serialize();
         Assert.assertEquals(expectedIR, actualIR);
     }

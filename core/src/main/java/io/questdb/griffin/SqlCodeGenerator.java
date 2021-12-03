@@ -50,7 +50,7 @@ import io.questdb.griffin.engine.table.*;
 import io.questdb.griffin.engine.union.*;
 import io.questdb.griffin.model.*;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.jit.FilterExprIRSerializer;
+import io.questdb.jit.CompiledFilterIRSerializer;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -83,7 +83,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
-    private final FilterExprIRSerializer jitIRSerializer = new FilterExprIRSerializer();
+    private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
     private final MemoryCARW jitIRMem;
     private final FunctionParser functionParser;
     private final CairoEngine engine;

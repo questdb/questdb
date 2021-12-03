@@ -39,7 +39,7 @@ import java.util.Arrays;
  * Intermediate representation (IR) serializer for filters (think, WHERE clause)
  * to be used in SQL JIT compiler.
  */
-public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
+public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
 
     // Column type codes
     static final byte MEM_I1 = 0;
@@ -87,7 +87,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
     private MemoryCARW memory;
     private RecordMetadata metadata;
 
-    public FilterExprIRSerializer of(MemoryCARW memory, RecordMetadata metadata) {
+    public CompiledFilterIRSerializer of(MemoryCARW memory, RecordMetadata metadata) {
         this.memory = memory;
         this.metadata = metadata;
         return this;
