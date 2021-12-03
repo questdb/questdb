@@ -490,7 +490,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 FloatingDirectCharSink floatingCharSink
         ) {
             final BitSet processedCols = tableUpdateDetails.getProcessedCols();
-            final ObjHashSet<CharSequence> addedCols = tableUpdateDetails.getAddedCols();
+            final LowerCaseCharSequenceHashSet addedCols = tableUpdateDetails.getAddedCols();
             processedCols.clear();
             addedCols.clear();
             threadId = INCOMPLETE_EVENT_ID;
@@ -1041,7 +1041,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         private int networkIOOwnerCount = 0;
         private final int timestampIndex;
         private final BitSet processedCols = new BitSet();
-        private final ObjHashSet<CharSequence> addedCols = new ObjHashSet<>();
+        private final LowerCaseCharSequenceHashSet addedCols = new LowerCaseCharSequenceHashSet();
 
         private TableUpdateDetails(CharSequence tableName, int writerThreadId, NetworkIOJob[] netIoJobs) {
             this.writerThreadId = writerThreadId;
@@ -1109,7 +1109,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             return processedCols;
         }
 
-        ObjHashSet<CharSequence> getAddedCols() {
+        LowerCaseCharSequenceHashSet getAddedCols() {
             return addedCols;
         }
 
@@ -1611,7 +1611,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private class TableStructureAdapter implements TableStructure {
         private CharSequence tableName;
         private int timestampIndex = -1;
-        private final ObjHashSet<CharSequence> entityNames = new ObjHashSet<>();
+        private final LowerCaseCharSequenceHashSet entityNames = new LowerCaseCharSequenceHashSet();
         private final ObjList<ProtoEntity> entities = new ObjList<>();
 
         @Override
