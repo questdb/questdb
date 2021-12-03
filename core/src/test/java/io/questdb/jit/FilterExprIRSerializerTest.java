@@ -141,8 +141,8 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testMixedConstantColumn() throws Exception {
-        serialize("-3 + abyte + 42.5 + afloat = 0");
-        assertIR("(i32 0L)(f32 afloat)(f32 42.5D)(i8 abyte)(i32 -3L)(+)(+)(+)(=)(ret)");
+        serialize("anint * 3 + 42.5 + adouble > 1");
+        assertIR("(i32 1L)(f64 adouble)(f32 42.5D)(i32 3L)(i32 anint)(*)(+)(+)(>)(ret)");
     }
 
     @Test
@@ -248,6 +248,12 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testNegatedExpression() throws Exception {
+        serialize("-(anint + 42) = -10");
+        assertIR("(i32 -10L)(i32 42L)(i32 anint)(+)(neg)(=)(ret)");
+    }
+
+    @Test
     public void testNotNullColumns() throws Exception {
         RecordMetadata originalMetadata = metadata;
         TestRecordMetadata metadataWrapper = new TestRecordMetadata(metadata);
@@ -257,7 +263,7 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
 
         try {
             serialize("abyte + afloat = -1 or along - anint  = 1");
-            assertIR("(i64 1L)(i32 anint)(i64 not_null along)(-)(=)" +
+            assertIR("(i32 1L)(i32 anint)(i64 not_null along)(-)(=)" +
                     "(i32 -1L)(f32 not_null afloat)(i8 abyte)(+)(=)" +
                     "(||)(ret)");
         } finally {
