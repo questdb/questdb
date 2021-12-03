@@ -162,13 +162,11 @@ namespace questdb::x86 {
 
     inline Gpd int32_and(Compiler &c, const Gpd &b1, const Gpd &b2) {
         c.and_(b1, b2);
-        c.and_(b1, 1);
         return b1;
     }
 
     inline Gpd int32_or(Compiler &c, const Gpd &b1, const Gpd &b2) {
         c.or_(b1, b2);
-        c.and_(b1, 1);
         return b1;
     }
 
