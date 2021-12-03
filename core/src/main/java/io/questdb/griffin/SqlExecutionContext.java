@@ -69,7 +69,7 @@ public interface SqlExecutionContext extends Closeable {
 
     long getRequestFd();
 
-    SqlExecutionInterruptor getSqlExecutionInterruptor();
+    SqlExecutionCircuitBreaker getCircuitBreaker();
 
     void storeTelemetry(short event, short origin);
 

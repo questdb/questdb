@@ -40,6 +40,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 
@@ -49,6 +50,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class TestUtils {
 
     public static final RecordCursorPrinter printer = new RecordCursorPrinter();
+
+    private static final StringSink sink = new StringSink();
 
     private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
 
@@ -282,6 +285,12 @@ public final class TestUtils {
         }
     }
 
+    public static void assertEquals(CharSequence expected, Sinkable actual) {
+        sink.clear();
+        actual.toSink(sink);
+        assertEquals(null, expected, sink);
+    }
+
     public static void assertEquals(CharSequence expected, CharSequence actual) {
         assertEquals(null, expected, actual);
     }
@@ -409,7 +418,7 @@ public final class TestUtils {
 
         // Checks that the same tag used for allocation and freeing native memory
         for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
-            final long actualMemByTag = Unsafe.getMemUsedByTag(i);
+            long actualMemByTag = Unsafe.getMemUsedByTag(i);
             if (memoryUsageByTag[i] != actualMemByTag) {
                 Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i), memoryUsageByTag[i], actualMemByTag);
             }

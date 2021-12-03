@@ -176,7 +176,7 @@ public class SendAndReceiveRequestBuilder {
             receivedBytes[i] = (byte) receivedByteList.getQuick(i);
         }
 
-        String actual = new String(receivedBytes, StandardCharsets.UTF_8);
+        String actual = new String(receivedBytes, Files.UTF_8);
         if (!printOnly) {
             if (expectedResponse instanceof ByteSequence) {
                 Assert.assertEquals(expectedResponse.length(), receivedBytes.length);
@@ -289,7 +289,7 @@ public class SendAndReceiveRequestBuilder {
             receivedBytes[i] = (byte) receivedByteList.getQuick(i);
         }
 
-        String actual = new String(receivedBytes, StandardCharsets.UTF_8);
+        String actual = new String(receivedBytes, Files.UTF_8);
         if (printOnly) {
             System.out.println("actual");
             System.out.println(actual);

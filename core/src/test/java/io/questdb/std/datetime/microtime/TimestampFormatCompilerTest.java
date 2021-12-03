@@ -52,6 +52,11 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test(expected = NumericException.class)
+    public void testRandomFormat() throws Exception {
+        assertThat("Ketchup", "", "2021-11-19T14:00:00.000Z");
+    }
+
+    @Test(expected = NumericException.class)
     public void testBadAmPm() throws Exception {
         assertThat("KaMMy", "", "11 0910 am");
     }

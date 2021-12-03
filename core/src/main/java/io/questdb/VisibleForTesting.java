@@ -22,29 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb;
 
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
-
-public class DefaultSqlInterruptorConfiguration implements SqlInterruptorConfiguration {
-    @Override
-    public int getBufferSize() {
-        return 64;
-    }
-
-    @Override
-    public int getCountOfIterationsPerCheck() {
-        return 5;
-    }
-
-    @Override
-    public NetworkFacade getNetworkFacade() {
-        return NetworkFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return true;
-    }
+public @interface VisibleForTesting {
 }

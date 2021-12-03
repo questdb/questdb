@@ -48,19 +48,23 @@ public class LogFactoryTest {
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
 
-    @Test(expected = LogError.class)
+    @Test
     public void testBadWriter() {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log-bad-writer.conf");
-
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory, null);
+            try {
+                LogFactory.configureFromSystemProperties(factory, null);
+                Assert.fail();
+            } catch (LogError e) {
+                Assert.assertEquals("Class not found com.questdb.log.StdOutWriter2", e.getMessage());
+            }
         }
     }
 
     @Test
     public void testDefaultLevel() {
         try (LogFactory factory = new LogFactory()) {
-            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_ALL, LogConsoleWriter::new));
+            factory.add(new LogWriterConfig(LogLevel.ALL, LogConsoleWriter::new));
 
             factory.bind();
 
@@ -68,6 +72,7 @@ public class LogFactoryTest {
             assertEnabled(logger.info());
             assertEnabled(logger.error());
             assertEnabled(logger.debug());
+            assertEnabled(logger.advisory());
         }
     }
 
@@ -78,13 +83,13 @@ public class LogFactoryTest {
 
         try (LogFactory factory = new LogFactory()) {
 
-            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO, (ring, seq, level) -> {
+            factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);
                 w.setLocation(x.getAbsolutePath());
                 return w;
             }));
 
-            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO, (ring, seq, level) -> {
+            factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);
                 w.setLocation(y.getAbsolutePath());
                 return w;
@@ -119,6 +124,7 @@ public class LogFactoryTest {
             assertDisabled(logger.debug());
             assertEnabled(logger.info());
             assertEnabled(logger.error());
+            assertEnabled(logger.advisory());
         }
     }
 
@@ -133,6 +139,7 @@ public class LogFactoryTest {
             assertDisabled(logger.debug());
             assertDisabled(logger.info());
             assertDisabled(logger.error());
+            assertDisabled(logger.advisory());
 
             Log logger1 = factory.create("com.questdb.x.y");
             assertEnabled(logger1.debug());
@@ -149,13 +156,13 @@ public class LogFactoryTest {
 
         try (LogFactory factory = new LogFactory()) {
 
-            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO | LogLevel.LOG_LEVEL_DEBUG, (ring, seq, level) -> {
+            factory.add(new LogWriterConfig(LogLevel.INFO | LogLevel.DEBUG, (ring, seq, level) -> {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);
                 w.setLocation(x.getAbsolutePath());
                 return w;
             }));
 
-            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_DEBUG | LogLevel.LOG_LEVEL_ERROR, (ring, seq, level) -> {
+            factory.add(new LogWriterConfig(LogLevel.DEBUG | LogLevel.ERROR, (ring, seq, level) -> {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);
                 w.setLocation(y.getAbsolutePath());
                 return w;
@@ -196,13 +203,13 @@ public class LogFactoryTest {
         final File b = temp.newFile();
 
         try (LogFactory factory = new LogFactory()) {
-            factory.add(new LogWriterConfig("com.questdb", LogLevel.LOG_LEVEL_INFO, (ring, seq, level) -> {
+            factory.add(new LogWriterConfig("com.questdb", LogLevel.INFO, (ring, seq, level) -> {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);
                 w.setLocation(a.getAbsolutePath());
                 return w;
             }));
 
-            factory.add(new LogWriterConfig("com.questdb.std", LogLevel.LOG_LEVEL_INFO, (ring, seq, level) -> {
+            factory.add(new LogWriterConfig("com.questdb.std", LogLevel.INFO, (ring, seq, level) -> {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);
                 w.setLocation(b.getAbsolutePath());
                 return w;
@@ -228,7 +235,7 @@ public class LogFactoryTest {
     @Test
     public void testProgrammaticConfig() {
         try (LogFactory factory = new LogFactory()) {
-            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO | LogLevel.LOG_LEVEL_DEBUG, LogConsoleWriter::new));
+            factory.add(new LogWriterConfig(LogLevel.INFO | LogLevel.DEBUG, LogConsoleWriter::new));
 
             factory.bind();
 
@@ -236,10 +243,10 @@ public class LogFactoryTest {
             assertEnabled(logger.info());
             assertDisabled(logger.error());
             assertEnabled(logger.debug());
+            assertDisabled(logger.advisory());
         }
     }
 
-    // todo: this test flaps
     @Test
     public void testRollingFileWriterByDay() throws Exception {
         testRollOnDate("mylog-${date:yyyy-MM-dd}.log", 24 * 60000, "day", "mylog-2015-05");
@@ -290,13 +297,13 @@ public class LogFactoryTest {
                 clock,
                 queue,
                 subSeq,
-                LogLevel.LOG_LEVEL_INFO
+                LogLevel.INFO
         )) {
 
             writer.setLocation(logFile);
             writer.setRollSize("1m");
             writer.setBufferSize("64k");
-            writer.bindProperties();
+            writer.bindProperties(LogFactory.INSTANCE);
 
             AtomicBoolean running = new AtomicBoolean(true);
             SOCountDownLatch halted = new SOCountDownLatch();
@@ -329,7 +336,7 @@ public class LogFactoryTest {
 
                 while (cursor < available && published < toPublish) {
                     LogRecordSink sink = queue.get(cursor++);
-                    sink.setLevel(LogLevel.LOG_LEVEL_INFO);
+                    sink.setLevel(LogLevel.INFO);
                     sink.put("test");
                     published++;
                 }
@@ -357,7 +364,7 @@ public class LogFactoryTest {
         try (LogFactory factory = new LogFactory()) {
             final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T11:35:00.000Z"), 1);
 
-            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO, (ring, seq, level) -> {
+            factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
                 LogRollingFileWriter w = new LogRollingFileWriter(FilesFacadeImpl.INSTANCE, clock, ring, seq, level);
                 w.setLocation(logFile);
                 return w;
@@ -406,7 +413,7 @@ public class LogFactoryTest {
                 Assert.assertTrue(Files.touch(path.concat("mylog-2015-05-03.log.4").$()));
             }
 
-            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO, (ring, seq, level) -> {
+            factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
                 LogRollingFileWriter w = new LogRollingFileWriter(FilesFacadeImpl.INSTANCE, clock, ring, seq, level);
                 w.setLocation(logFile);
                 w.setSpinBeforeFlush("1000000");
@@ -481,11 +488,13 @@ public class LogFactoryTest {
             assertDisabled(logger.debug());
             assertDisabled(logger.info());
             assertDisabled(logger.error());
+            assertDisabled(logger.advisory());
 
             Log logger1 = factory.create("com.questdb.x.y");
             assertDisabled(logger1.debug());
             assertDisabled(logger1.info());
             assertDisabled(logger1.error());
+            assertDisabled(logger1.advisory());
         }
     }
 
@@ -520,7 +529,7 @@ public class LogFactoryTest {
         String logFile = base + fileTemplate;
 
         try (LogFactory factory = new LogFactory()) {
-            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO, (ring, seq, level) -> {
+            factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
                 LogRollingFileWriter w = new LogRollingFileWriter(FilesFacadeImpl.INSTANCE, clock, ring, seq, level);
                 w.setLocation(logFile);
                 // 1Mb log file limit, we will create 4 of them

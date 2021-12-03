@@ -155,12 +155,12 @@ public final class Net {
             }
 
             if (count != 3) {
-                throw NetworkError.instance(0, "invalid address [").put(ipv4Address);
+                throw NetworkError.instance(0, "invalid address [").put(ipv4Address).put(']');
             }
 
             return (ip << 8) | Numbers.parseInt(ipv4Address, lo, ipv4Address.length());
         } catch (NumericException e) {
-            throw NetworkError.instance(0, "invalid address [").put(ipv4Address);
+            throw NetworkError.instance(0, "invalid address [").put(ipv4Address).put(']');
         }
     }
 
