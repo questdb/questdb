@@ -32,7 +32,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionInterruptor;
+import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
@@ -81,7 +81,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
         try {
-            buildMapOfSlaveRecords(slaveCursor, executionContext.getSqlExecutionInterruptor());
+            buildMapOfSlaveRecords(slaveCursor, executionContext.getCircuitBreaker());
         } catch (Throwable e) {
             slaveCursor.close();
             throw e;
@@ -95,8 +95,8 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         return false;
     }
 
-    private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionInterruptor interruptor) {
-        HashOuterJoinRecordCursorFactory.buildMap(slaveCursor, slaveCursor.getRecord(), joinKeyMap, slaveKeySink, slaveChain, interruptor);
+    private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+        HashOuterJoinRecordCursorFactory.buildMap(slaveCursor, slaveCursor.getRecord(), joinKeyMap, slaveKeySink, slaveChain, circuitBreaker);
     }
 
     private class HashJoinRecordCursor implements NoRandomAccessRecordCursor {

@@ -22,34 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.str;
+package io.questdb.griffin;
 
-import io.questdb.std.Unsafe;
+import io.questdb.network.NetworkFacade;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 
-/**
- * Represents C LPSZ as Java' CharSequence. Bytes in native memory are
- * interpreted as ASCII characters. Multi-byte characters are NOT decoded.
- */
-public class NativeLPSZ extends AbstractCharSequence {
-    private long address;
-    private int len;
+public interface SqlExecutionCircuitBreakerConfiguration {
+    int getBufferSize();
 
-    @Override
-    public int length() {
-        return len;
-    }
+    int getCircuitBreakerThrottle();
 
-    @Override
-    public char charAt(int index) {
-        return (char) Unsafe.getUnsafe().getByte(address + index);
-    }
+    NetworkFacade getNetworkFacade();
 
-    @SuppressWarnings("StatementWithEmptyBody")
-    public NativeLPSZ of(long address) {
-        this.address = address;
-        long p = address;
-        while (Unsafe.getUnsafe().getByte(p++) != 0) ;
-        this.len = (int) (p - address - 1);
-        return this;
-    }
+    boolean isEnabled();
+
+    MicrosecondClock getClock();
+
+    // maximum SQL execution time in micros
+    long getMaxTime();
 }

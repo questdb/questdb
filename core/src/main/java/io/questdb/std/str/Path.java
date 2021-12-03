@@ -70,6 +70,17 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return PATH.get().of(root);
     }
 
+    /**
+     * Creates path from another instance of Path. The assumption is that
+     * the source path is already UTF8 encoded and does not require re-encoding.
+     *
+     * @param root path
+     * @return copy of root path
+     */
+    public static Path getThreadLocal(Path root) {
+        return PATH.get().of(root);
+    }
+
     public static Path getThreadLocal2(CharSequence root) {
         return PATH2.get().of(root);
     }
@@ -80,11 +91,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         }
         Unsafe.getUnsafe().putByte(wptr++, (byte) 0);
         return this;
-    }
-
-    public Path slash$() {
-        ensureSeparator();
-        return $();
     }
 
     @Override
@@ -114,11 +120,11 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return concat(str, 0, str.length());
     }
 
-    public Path concat(long lpsz) {
+    public Path concat(long pUtf8NameZ) {
 
         ensureSeparator();
 
-        long p = lpsz;
+        long p = pUtf8NameZ;
         while (true) {
 
             if (len + OVERHEAD >= capacity) {
@@ -184,6 +190,18 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     @Override
+    public Path put(int value) {
+        super.put(value);
+        return this;
+    }
+
+    @Override
+    public Path put(long value) {
+        super.put(value);
+        return this;
+    }
+
+    @Override
     public CharSink put(char[] chars, int start, int len) {
         if (len + this.len >= capacity) {
             extend(len);
@@ -191,6 +209,15 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         Chars.asciiCopyTo(chars, start, len, wptr);
         wptr += len;
         return this;
+    }
+
+    @Override
+    public void putUtf8Special(char c) {
+        if (c == '/' && Os.type == Os.WINDOWS) {
+            put('\\');
+        } else {
+            put(c);
+        }
     }
 
     @Override
@@ -245,12 +272,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return this;
     }
 
-    private void checkClosed() {
-        if (ptr == 0) {
-            this.ptr = this.wptr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
     public Path of(CharSequence str, int from, int to) {
         checkClosed();
         this.wptr = ptr;
@@ -258,42 +279,41 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return concat(str, from, to);
     }
 
-    @Override
-    public Path put(long value) {
-        super.put(value);
-        return this;
-    }
-
-    @Override
-    public Path put(int value) {
-        super.put(value);
-        return this;
-    }
-
-    @Override
-    public void putUtf8Special(char c) {
-        if (c == '/' && Os.type == Os.WINDOWS) {
-            put('\\');
-        } else {
-            put(c);
-        }
-    }
-
     public Path slash() {
         ensureSeparator();
         return this;
     }
 
+    public Path slash$() {
+        ensureSeparator();
+        return $();
+    }
+
     @Override
     @NotNull
     public String toString() {
-        return ptr == 0 ? "" : AbstractCharSequence.getString(this);
+        if (ptr != 0) {
+            final CharSink b = Misc.getThreadLocalBuilder();
+            if (Unsafe.getUnsafe().getByte(wptr - 1) == 0) {
+                Chars.utf8Decode(ptr, wptr - 1, b);
+            } else {
+                Chars.utf8Decode(ptr, wptr, b);
+            }
+            return b.toString();
+        }
+        return "";
     }
 
     public Path trimTo(int len) {
         this.len = len;
         wptr = ptr + len;
         return this;
+    }
+
+    private void checkClosed() {
+        if (ptr == 0) {
+            this.ptr = this.wptr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     private void copy(CharSequence str, int from, int to) {

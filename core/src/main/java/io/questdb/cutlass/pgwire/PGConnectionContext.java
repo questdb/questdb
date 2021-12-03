@@ -124,6 +124,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final CharSequenceObjHashMap<Portal> namedPortalMap;
     private final IntList syncActions = new IntList(4);
     private final CairoEngine engine;
+    private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
+    private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private IntList activeSelectColumnTypes;
     private int parsePhaseBindVariableCount;
     private long sendBufferPtr;
@@ -157,7 +159,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private NamedStatementWrapper wrapper;
     private AssociativeCache<TypesAndSelect> typesAndSelectCache;
     private WeakAutoClosableObjectPool<TypesAndSelect> typesAndSelectPool;
-    private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     // this is a reference to types either from the context or named statement, where it is provided
     private IntList activeBindVariableTypes;
     private boolean sendParameterDescription;
@@ -203,6 +204,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.pendingWriters = new CharSequenceObjHashMap<>(configuration.getPendingWritersCacheSize());
         this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
         this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
+        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration());
     }
 
     public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
@@ -293,6 +295,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     @Override
+
     public void close() {
         clear();
         this.fd = -1;
@@ -302,6 +305,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         Misc.free(typesAndSelectCache);
         Misc.free(path);
         Misc.free(utf8Sink);
+        Misc.free(circuitBreaker);
     }
 
     @Override
@@ -397,15 +401,15 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         return this;
     }
 
+    public void setBinBindVariable(int index, long address, int valueLen) throws SqlException {
+        bindVariableService.setBin(index, this.binarySequenceParamsPool.next().of(address, valueLen));
+    }
+
     public void setBooleanBindVariable(int index, int valueLen) throws SqlException {
         if (valueLen != 4 && valueLen != 5) {
             throw SqlException.$(0, "bad value for BOOLEAN parameter [index=").put(index).put(", valueLen=").put(valueLen).put(']');
         }
         bindVariableService.setBoolean(index, valueLen == 4);
-    }
-
-    public void setBinBindVariable(int index, long address, int valueLen) throws SqlException {
-        bindVariableService.setBin(index, this.binarySequenceParamsPool.next().of(address, valueLen));
     }
 
     public void setCharBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
@@ -805,40 +809,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         rowCount += 1;
     }
 
-    private void putGeoHashStringByteValue(Record rec, int col, int bitFlags) {
-        byte l = rec.getGeoByte(col);
-        putGeoHashStringValue(l, bitFlags);
-    }
-
-    private void putGeoHashStringShortValue(Record rec, int col, int bitFlags) {
-        short l = rec.getGeoShort(col);
-        putGeoHashStringValue(l, bitFlags);
-    }
-
-    private void putGeoHashStringIntValue(Record rec, int col, int bitFlags) {
-        int l = rec.getGeoInt(col);
-        putGeoHashStringValue(l, bitFlags);
-    }
-
-    private void putGeoHashStringLongValue(Record rec, int col, int bitFlags) {
-        long l = rec.getGeoLong(col);
-        putGeoHashStringValue(l, bitFlags);
-    }
-
-    private void putGeoHashStringValue(long value, int bitFlags) {
-        if (value == GeoHashes.NULL) {
-            responseAsciiSink.setNullValue();
-        } else {
-            final long a = responseAsciiSink.skip();
-            if (bitFlags < 0) {
-                GeoHashes.appendCharsUnsafe(value, -bitFlags, responseAsciiSink);
-            } else {
-                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, responseAsciiSink);
-            }
-            responseAsciiSink.putLenEx(a);
-        }
-    }
-
     private void appendShortColumn(Record record, int columnIndex) {
         final long a = responseAsciiSink.skip();
         responseAsciiSink.put(record.getShort(columnIndex));
@@ -1188,7 +1158,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void doAuthentication(long msgLo, long msgLimit) throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         final CairoSecurityContext cairoSecurityContext = authenticator.authenticate(username, msgLo, msgLimit);
         if (cairoSecurityContext != null) {
-            sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, null);
+            sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
             authenticationRequired = false;
             prepareLoginOk();
             sendAndReset();
@@ -2046,6 +2016,40 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
         } finally {
             syncActions.clear();
+        }
+    }
+
+    private void putGeoHashStringByteValue(Record rec, int col, int bitFlags) {
+        byte l = rec.getGeoByte(col);
+        putGeoHashStringValue(l, bitFlags);
+    }
+
+    private void putGeoHashStringIntValue(Record rec, int col, int bitFlags) {
+        int l = rec.getGeoInt(col);
+        putGeoHashStringValue(l, bitFlags);
+    }
+
+    private void putGeoHashStringLongValue(Record rec, int col, int bitFlags) {
+        long l = rec.getGeoLong(col);
+        putGeoHashStringValue(l, bitFlags);
+    }
+
+    private void putGeoHashStringShortValue(Record rec, int col, int bitFlags) {
+        short l = rec.getGeoShort(col);
+        putGeoHashStringValue(l, bitFlags);
+    }
+
+    private void putGeoHashStringValue(long value, int bitFlags) {
+        if (value == GeoHashes.NULL) {
+            responseAsciiSink.setNullValue();
+        } else {
+            final long a = responseAsciiSink.skip();
+            if (bitFlags < 0) {
+                GeoHashes.appendCharsUnsafe(value, -bitFlags, responseAsciiSink);
+            } else {
+                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, responseAsciiSink);
+            }
+            responseAsciiSink.putLenEx(a);
         }
     }
 

@@ -154,7 +154,7 @@ public class CharsTest {
         String in = expected.toString();
         long p = Unsafe.malloc(8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
         try {
-            byte[] bytes = in.getBytes(StandardCharsets.UTF_8);
+            byte[] bytes = in.getBytes(Files.UTF_8);
             for (int i = 0, n = bytes.length; i < n; i++) {
                 Unsafe.getUnsafe().putByte(p + i, bytes[i]);
             }
@@ -177,7 +177,7 @@ public class CharsTest {
         String in = expected.toString();
         long p = Unsafe.malloc(8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
         try {
-            byte[] bytes = in.getBytes(StandardCharsets.UTF_8);
+            byte[] bytes = in.getBytes(Files.UTF_8);
             for (int i = 0, n = bytes.length; i < n; i++) {
                 Unsafe.getUnsafe().putByte(p + i, bytes[i]);
             }
@@ -188,6 +188,25 @@ public class CharsTest {
         } finally {
             Unsafe.free(p, 8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    @Test
+    public void testIsQuoted() {
+        Assert.assertTrue(Chars.isQuoted("'banana'"));
+        Assert.assertTrue(Chars.isQuoted("''"));
+        Assert.assertTrue(Chars.isQuoted("\"banana\""));
+        Assert.assertTrue(Chars.isQuoted("\"\""));
+    }
+
+    @Test
+    public void testIsNotQuoted() {
+        Assert.assertFalse(Chars.isQuoted("'banana\""));
+        Assert.assertFalse(Chars.isQuoted("banana\""));
+        Assert.assertFalse(Chars.isQuoted("\"banana"));
+        Assert.assertFalse(Chars.isQuoted("\"banana'"));
+        Assert.assertFalse(Chars.isQuoted("'"));
+        Assert.assertFalse(Chars.isQuoted("\""));
+        Assert.assertFalse(Chars.isQuoted("banana"));
     }
 
     private void assertThat(String expected, ObjList<Path> list) {

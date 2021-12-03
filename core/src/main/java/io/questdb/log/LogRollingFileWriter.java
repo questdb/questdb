@@ -29,9 +29,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.*;
-import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.*;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -40,7 +38,6 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     public static final long DEFAULT_SPIN_BEFORE_FLUSH = 100_000;
     private static final int DEFAULT_BUFFER_SIZE = 4 * 1024 * 1024;
-    private final TimestampFormatCompiler compiler = new TimestampFormatCompiler();
     private final RingQueue<LogRecordSink> ring;
     private final SCSequence subSeq;
     private final int level;
@@ -48,16 +45,15 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private final Path renameToPath = new Path();
     private final FilesFacade ff;
     private final MicrosecondClock clock;
-    private final ObjList<Sinkable> locationComponents = new ObjList<>();
     private long fd = -1;
     private long lim;
     private long buf;
     private long _wptr;
     private int nBufferSize;
     private long nRollSize;
+    private final TemplateParser locationParser = new TemplateParser();
     // can be set via reflection
     private String location;
-    private long fileTimestamp = 0;
     private String bufferSize;
     private String rollSize;
     private String spinBeforeFlush;
@@ -88,8 +84,8 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     @Override
-    public void bindProperties() {
-        parseLocation();
+    public void bindProperties(LogFactory factory) {
+        locationParser.parseEnv(location, clock.getTicks());
         if (this.bufferSize != null) {
             try {
                 nBufferSize = Numbers.parseIntSize(this.bufferSize);
@@ -148,7 +144,6 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         this.rollDeadline = rollDeadlineFunction.getDeadline();
         this.buf = _wptr = Unsafe.malloc(nBufferSize, MemoryTag.NATIVE_DEFAULT);
         this.lim = buf + nBufferSize;
-        this.fileTimestamp = clock.getTicks();
         openFile();
     }
 
@@ -205,9 +200,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     private void buildFilePath(Path path) {
         path.of("");
-        for (int i = 0, n = locationComponents.size(); i < n; i++) {
-            locationComponents.getQuick(i).toSink(path);
-        }
+        locationParser.toSink(path);
     }
 
     private void buildUniquePath() {
@@ -237,7 +230,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             ff.close(fd);
             if (ticks > rollDeadline) {
                 rollDeadline = rollDeadlineFunction.getDeadline();
-                fileTimestamp = ticks;
+                locationParser.setDateValue(ticks);
             }
             openFile();
         }
@@ -281,63 +274,6 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             throw new LogError("[" + ff.errno() + "] Cannot open file for append: " + path);
         }
         this.currentSize = ff.length(fd);
-    }
-
-    private void parseLocation() {
-        locationComponents.clear();
-        // parse location into components
-        int start = 0;
-        boolean dollar = false;
-        boolean open = false;
-        for (int i = 0, n = location.length(); i < n; i++) {
-            char c = location.charAt(i);
-            switch (c) {
-                case '$':
-                    if (dollar) {
-                        locationComponents.add(new SubStrSinkable(i, i + 1));
-                        start = i;
-                    } else {
-                        locationComponents.add(new SubStrSinkable(start, i));
-                        start = i;
-                        dollar = true;
-                    }
-                    break;
-                case '{':
-                    if (dollar) {
-                        if (open) {
-                            throw new LogError("could not parse location");
-                        }
-                        open = true;
-                        start = i + 1;
-                    }
-                    break;
-                case '}':
-                    if (dollar) {
-                        if (open) {
-                            open = false;
-                            dollar = false;
-                            if (Chars.startsWith(location, start, i - 1, "date:")) {
-                                locationComponents.add(
-                                        new DateSinkable(
-                                                compiler.compile(location, start + 5, i, false)
-                                        )
-                                );
-                            } else {
-                                throw new LogError("unknown variable at " + start);
-                            }
-                            start = i + 1;
-                        } else {
-                            throw new LogError("could not parse location");
-                        }
-                    }
-                default:
-                    break;
-            }
-        }
-
-        if (start < location.length()) {
-            locationComponents.add(new SubStrSinkable(start, location.length()));
-        }
     }
 
     private void pushFileStackUp() {
@@ -390,38 +326,5 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     @FunctionalInterface
     private interface NextDeadline {
         long getDeadline();
-    }
-
-    private class SubStrSinkable implements Sinkable {
-        private final int start;
-        private final int end;
-
-        public SubStrSinkable(int start, int end) {
-            this.start = start;
-            this.end = end;
-        }
-
-        @Override
-        public void toSink(CharSink sink) {
-            sink.put(location, start, end);
-        }
-    }
-
-    private class DateSinkable implements Sinkable {
-        private final DateFormat format;
-
-        public DateSinkable(DateFormat format) {
-            this.format = format;
-        }
-
-        @Override
-        public void toSink(CharSink sink) {
-            format.format(
-                    fileTimestamp,
-                    TimestampFormatUtils.enLocale,
-                    null,
-                    sink
-            );
-        }
     }
 }

@@ -479,7 +479,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testUnicodeTableName() throws Exception {
-        byte[] utf8Bytes = "ल".getBytes(StandardCharsets.UTF_8);
+        byte[] utf8Bytes = "ल".getBytes(Files.UTF_8);
         Assert.assertEquals(3, utf8Bytes.length);
 
         try (TableModel m = new TableModel(configuration, "लаблअца", PartitionBy.DAY)) {

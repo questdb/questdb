@@ -25,8 +25,8 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.griffin.DefaultSqlInterruptorConfiguration;
-import io.questdb.griffin.SqlInterruptorConfiguration;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -94,7 +94,7 @@ public class HttpServerConfigurationBuilder {
             };
 
             private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
-                private final DefaultSqlInterruptorConfiguration sqlInterruptorConfiguration = new DefaultSqlInterruptorConfiguration();
+                private final DefaultSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
 
                 @Override
                 public MillisecondClock getClock() {
@@ -132,8 +132,8 @@ public class HttpServerConfigurationBuilder {
                 }
 
                 @Override
-                public SqlInterruptorConfiguration getInterruptorConfiguration() {
-                    return sqlInterruptorConfiguration;
+                public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+                    return circuitBreakerConfiguration;
                 }
             };
 

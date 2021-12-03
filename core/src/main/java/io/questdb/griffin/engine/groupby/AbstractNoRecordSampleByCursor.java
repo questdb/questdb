@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionInterruptor;
+import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.ObjList;
@@ -48,7 +48,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     // diverging values tell `filling` implementations not to fill this gap
     protected long nextSampleLocalEpoch;
     protected RecordCursor base;
-    protected SqlExecutionInterruptor interruptor;
+    protected SqlExecutionCircuitBreaker circuitBreaker;
     protected long topTzOffset;
     private long topNextDst;
     private long topLocalEpoch;
@@ -72,7 +72,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     @Override
     public void close() {
         base.close();
-        interruptor = null;
+        circuitBreaker = null;
     }
 
     @Override
@@ -120,7 +120,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         this.topNextDst = nextDstUTC;
         this.topLocalEpoch = this.localEpoch = timestampSampler.round(timestamp + tzOffset);
         this.sampleLocalEpoch = this.nextSampleLocalEpoch = localEpoch;
-        interruptor = executionContext.getSqlExecutionInterruptor();
+        circuitBreaker = executionContext.getCircuitBreaker();
     }
 
     protected long adjustDST(long timestamp, int n, @Nullable MapValue mapValue, long nextSampleTimestamp) {
@@ -194,7 +194,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             if (timestamp < next) {
                 adjustDSTInFlight(timestamp - tzOffset);
                 GroupByUtils.updateExisting(groupByFunctions, n, mapValue, baseRecord);
-                interruptor.checkInterrupted();
+                circuitBreaker.test();
             } else {
                 // timestamp changed, make sure we keep the value of 'lastTimestamp'
                 // unchanged. Timestamp columns uses this variable

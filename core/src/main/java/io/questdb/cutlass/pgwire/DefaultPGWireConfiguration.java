@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -44,6 +46,8 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
             return "pg-server";
         }
     };
+
+    private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
 
     private final int[] workerAffinity = new int[]{-1};
 
@@ -68,13 +72,18 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
-    public IODispatcherConfiguration getDispatcherConfiguration() {
-        return ioDispatcherConfiguration;
+    public String getDefaultPassword() {
+        return "quest";
     }
 
     @Override
-    public String getServerVersion() {
-        return "11.3";
+    public String getDefaultUsername() {
+        return "admin";
+    }
+
+    @Override
+    public IODispatcherConfiguration getDispatcherConfiguration() {
+        return ioDispatcherConfiguration;
     }
 
     @Override
@@ -93,8 +102,49 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
+    public int getIdleSendCountBeforeGivingUp() {
+        return 10_000;
+    }
+
+    @Override
+    public int getInsertCacheBlockCount() {
+        return 8;
+    }
+
+    @Override
+    public int getInsertCacheRowCount() {
+        return 8;
+    }
+
+    @Override
+    public int getInsertPoolCapacity() {
+        return 32;
+    }
+
+    @Override
+    public int getMaxBlobSizeOnQuery() {
+        // BLOBs must fit inside send buffer together with other column values
+        return 512 * 1024;
+    }
+
+    @Override
+    public int getNamedStatementCacheCapacity() {
+        return 32;
+    }
+
+    @Override
+    public int getNamesStatementPoolCapacity() {
+        return 32;
+    }
+
+    @Override
     public NetworkFacade getNetworkFacade() {
         return NetworkFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public int getPendingWritersCacheSize() {
+        return 16;
     }
 
     @Override
@@ -108,14 +158,18 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
-    public int getIdleSendCountBeforeGivingUp() {
-        return 10_000;
+    public String getServerVersion() {
+        return "11.3";
     }
 
     @Override
-    public int getMaxBlobSizeOnQuery() {
-        // BLOBs must fit inside send buffer together with other column values
-        return 512 * 1024;
+    public DateLocale getDefaultDateLocale() {
+        return DateFormatUtils.enLocale;
+    }
+
+    @Override
+    public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+        return circuitBreakerConfiguration;
     }
 
     @Override
@@ -136,50 +190,5 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public boolean isEnabled() {
         return true;
-    }
-
-    @Override
-    public String getDefaultPassword() {
-        return "quest";
-    }
-
-    @Override
-    public String getDefaultUsername() {
-        return "admin";
-    }
-
-    @Override
-    public DateLocale getDefaultDateLocale() {
-        return DateFormatUtils.enLocale;
-    }
-
-    @Override
-    public int getInsertCacheBlockCount() {
-        return 8;
-    }
-
-    @Override
-    public int getInsertCacheRowCount() {
-        return 8;
-    }
-
-    @Override
-    public int getInsertPoolCapacity() {
-        return 32;
-    }
-
-    @Override
-    public int getNamedStatementCacheCapacity() {
-        return 32;
-    }
-
-    @Override
-    public int getNamesStatementPoolCapacity() {
-        return 32;
-    }
-
-    @Override
-    public int getPendingWritersCacheSize() {
-        return 16;
     }
 }

@@ -226,7 +226,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 $("[compiler: ").$(compilerNanos).
                 $(", count: ").$(recordCountNanos).
                 $(", execute: ").$(nanosecondClock.getTicks() - executeStartNanos).
-                $(", q=`").$(query).
+                $(", q=`").utf8(query).
                 $("`]").$();
     }
 

@@ -32,7 +32,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.SqlException;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.DefaultIODispatcherConfiguration;
@@ -736,6 +737,25 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 ) {
                     sink.clear();
                     assertResultSet("a[INTEGER]\n", sink, rs);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQueryTimeout() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab as (select rnd_double() d from long_sequence(10000000))", sqlExecutionContext);
+            try (
+                    final PGWireServer ignored = createPGServer(1, Timestamps.SECOND_MICROS);
+                    final Connection connection = getConnection(false, true);
+                    final PreparedStatement statement = connection.prepareStatement("select * from tab order by d")
+            ) {
+                try {
+                    statement.execute();
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
                 }
             }
         });
@@ -1657,11 +1677,6 @@ nodejs code:
                 ">5800000004\n";
         assertHexScript(NetworkFacadeImpl.INSTANCE, script, new DefaultPGWireConfiguration() {
             @Override
-            public int getSendBufferSize() {
-                return 512;
-            }
-
-            @Override
             public String getDefaultPassword() {
                 return "oh";
             }
@@ -1669,6 +1684,11 @@ nodejs code:
             @Override
             public String getDefaultUsername() {
                 return "xyz";
+            }
+
+            @Override
+            public int getSendBufferSize() {
+                return 512;
             }
         });
     }
@@ -3047,6 +3067,44 @@ nodejs code:
     }
 
     @Test
+    public void testRowLimitNotResumed() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(1)) {
+                try (final Connection connection = getConnection(false
+                        , true)) {
+                    try (CallableStatement st1 = connection.prepareCall("create table y as (" +
+                            "select timestamp_sequence(0, 1000000000) timestamp," +
+                            " rnd_symbol('a','b',null) symbol1 " +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)")) {
+                        st1.execute();
+                    }
+                }
+            }
+
+            try (final PGWireServer ignored = createPGServer(1)) {
+                for (int i = 0; i < 3; i++) {
+                    try (final Connection connection = getConnection(false, true)) {
+                        try (PreparedStatement select1 = connection.prepareStatement("select version()")) {
+                            ResultSet rs0 = select1.executeQuery();
+                            sink.clear();
+                            assertResultSet("version[VARCHAR]\n" +
+                                    "PostgreSQL 12.3, compiled by Visual C++ build 1914, 64-bit\n", sink, rs0);
+                            rs0.close();
+                        }
+                        try (PreparedStatement select2 = connection.prepareStatement("select timestamp from y")) {
+                            select2.setMaxRows(1);
+                            ResultSet rs2 = select2.executeQuery();
+                            rs2.next();
+                            rs2.close();
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRunAlterWhenTableLockedWithInserts() throws Exception {
         assertMemoryLeak(() -> testAddColumnBusyWriter(true));
     }
@@ -3717,6 +3775,11 @@ nodejs code:
             PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
 
                 @Override
+                public int getIdleSendCountBeforeGivingUp() {
+                    return idleSendCountBeforeGivingUp;
+                }
+
+                @Override
                 public NetworkFacade getNetworkFacade() {
                     return nf;
                 }
@@ -3724,11 +3787,6 @@ nodejs code:
                 @Override
                 public int getSendBufferSize() {
                     return 1024;
-                }
-
-                @Override
-                public int getIdleSendCountBeforeGivingUp() {
-                    return idleSendCountBeforeGivingUp;
                 }
             };
 
@@ -3758,13 +3816,13 @@ nodejs code:
             PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
 
                 @Override
-                public NetworkFacade getNetworkFacade() {
-                    return nf;
+                public int getIdleSendCountBeforeGivingUp() {
+                    return idleSendCountBeforeGivingUp;
                 }
 
                 @Override
-                public int getIdleSendCountBeforeGivingUp() {
-                    return idleSendCountBeforeGivingUp;
+                public NetworkFacade getNetworkFacade() {
+                    return nf;
                 }
             };
 
@@ -4197,14 +4255,25 @@ nodejs code:
     }
 
     private PGWireServer createPGServer(int workerCount) {
+        return createPGServer(workerCount, Long.MAX_VALUE);
+    }
+
+    private PGWireServer createPGServer(int workerCount, long maxQueryTime) {
 
         final int[] affinity = new int[workerCount];
         Arrays.fill(affinity, -1);
 
+        final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            @Override
+            public long getMaxTime() {
+                return maxQueryTime;
+            }
+        };
+
         final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
             @Override
-            public Rnd getRandom() {
-                return new Rnd();
+            public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+                return circuitBreakerConfiguration;
             }
 
             @Override
@@ -4215,6 +4284,11 @@ nodejs code:
             @Override
             public int getWorkerCount() {
                 return workerCount;
+            }
+
+            @Override
+            public Rnd getRandom() {
+                return new Rnd();
             }
         };
 
@@ -4270,9 +4344,23 @@ nodejs code:
         return getHexPgWireConfig(true);
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @NotNull
     private DefaultPGWireConfiguration getHexPgWireConfig(boolean noLinger) {
         return new DefaultPGWireConfiguration() {
+            @Override
+            public String getDefaultPassword() {
+                return "oh";
+            }
+
+            @Override
+            public String getDefaultUsername() {
+                return "xyz";
+            }
+
             @Override
             public IODispatcherConfiguration getDispatcherConfiguration() {
                 return noLinger ?
@@ -4289,17 +4377,72 @@ nodejs code:
                             }
                         };
             }
-
-            @Override
-            public String getDefaultPassword() {
-                return "oh";
-            }
-
-            @Override
-            public String getDefaultUsername() {
-                return "xyz";
-            }
         };
+    }
+
+    private void insertAllGeoHashTypes(boolean binary) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table xyz (" +
+                            "a geohash(1b)," +
+                            "b geohash(2b)," +
+                            "c geohash(3b)," +
+                            "d geohash(1c)," +
+                            "e geohash(2c)," +
+                            "f geohash(4c)," +
+                            "g geohash(8c)" +
+                            ")",
+                    sqlExecutionContext
+            );
+
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, binary);
+                    final PreparedStatement insert = connection.prepareStatement(
+                            "insert into xyz values (" +
+                                    "cast(? as geohash(1b))," +
+                                    "cast(? as geohash(2b))," +
+                                    "cast(? as geohash(3b))," +
+                                    "cast(? as geohash(1c))," +
+                                    "cast(? as geohash(2c))," +
+                                    "cast(? as geohash(4c))," +
+                                    "cast(? as geohash(8c)))"
+                    )
+            ) {
+                connection.setAutoCommit(false);
+                for (int i = 0; i < 100; i++) {
+                    insert.setString(1, "0");
+                    insert.setString(2, "10");
+                    insert.setString(3, "010");
+                    insert.setString(4, "x");
+                    insert.setString(5, "xy");
+                    insert.setString(6, "xyzw");
+                    insert.setString(7, "xyzwzvxq");
+                    insert.execute();
+                    Assert.assertEquals(1, insert.getUpdateCount());
+                }
+                connection.commit();
+
+                try (RecordCursorFactory factory = compiler.compile("xyz", sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final Record record = cursor.getRecord();
+                        int count = 0;
+                        while (cursor.hasNext()) {
+                            //TODO: bits geohash lliteral
+//                            Assert.assertEquals((byte)GeoHashes.fromBitString("0"), record.getGeoHashByte(0));
+//                            Assert.assertEquals((byte)GeoHashes.fromBitString("01"), record.getGeoHashByte(1));
+//                            Assert.assertEquals((byte)GeoHashes.fromBitString("010"), record.getGeoHashByte(2));
+                            Assert.assertEquals(GeoHashes.fromString("x", 0, 1), record.getGeoByte(3));
+                            Assert.assertEquals(GeoHashes.fromString("xy", 0, 2), record.getGeoShort(4));
+                            Assert.assertEquals(GeoHashes.fromString("xyzw", 0, 4), record.getGeoInt(5));
+                            Assert.assertEquals(GeoHashes.fromString("xyzwzvxq", 0, 8), record.getGeoLong(6));
+                            count++;
+                        }
+
+                        Assert.assertEquals(100, count);
+                    }
+                }
+            }
+        });
     }
 
     private void insertAllGeoHashTypes(boolean binary) throws Exception {
@@ -4387,10 +4530,6 @@ nodejs code:
             rs.close();
         }
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     private void testAllTypesSelect(boolean simple) throws Exception {
         assertMemoryLeak(() -> {

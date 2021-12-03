@@ -65,7 +65,9 @@ public interface CharSink {
     default void flush() {
     }
 
-    char[] getDoubleDigitsBuffer();
+    default char[] getDoubleDigitsBuffer() {
+        throw new UnsupportedOperationException();
+    }
 
     default CharSink put(CharSequence cs) {
         throw new UnsupportedOperationException();
