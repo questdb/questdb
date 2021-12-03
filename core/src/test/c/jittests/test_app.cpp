@@ -1491,51 +1491,108 @@ public:
         x86::Gp b_ptr = cc.newInt64("b_ptr");
         cc.setArg(1, b_ptr);
 
+        x86::Gp c_ptr = cc.newInt64("c_ptr");
+        cc.setArg(2, c_ptr);
+
         x86::Mem am = ymmword_ptr(a_ptr);
         x86::Mem bm = ymmword_ptr(b_ptr);
+        x86::Mem cm = ymmword_ptr(c_ptr);
 
         x86::Ymm adata = cc.newYmm();
         x86::Ymm bdata = cc.newYmm();
 
-        cc.vmovdqu(adata, am);
-        //        cc.vmovdqu(bdata, bm);
-        //        cc.vmovups(adata, am);
-        cc.vmovups(bdata, bm);
+        cc.vmovupd(adata, am);
+        cc.vmovupd(bdata, bm);
+
+        x86::Ymm r = questdb::avx2::cmp_eq(cc, data_type_t::f32, adata, bdata);
+        cc.vmovdqu(cm, r);
+        cc.ret();
+
+        cc.endFunc();
+
+    }
+
+    bool run(void *_func, String &result, String &expect) override {
+        typedef void (*Func)(float *, float *, int32_t *);
+        Func func = ptr_as_func<Func>(_func);
+
+        float a[8] = {22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0, 22.0};
+        float b[8] = {22.0, 22.1, 22.01, 22.001, 22.0001, 22.00001, 22.00001, 22.0000000000001};
+
+        int32_t c[8] = {0};
+        int32_t e[8] = {-1, 0, 0, 0, 0, 0, 0, -1};
+
+        func(reinterpret_cast<float *>(&a), reinterpret_cast<float *>(&b), reinterpret_cast<int32_t *>(&c));
+
+        result.assignFormat("ret=[{%d}, {%d}, {%d}, {%d}]", c[0], c[1], c[2], c[3]);
+        expect.assignFormat("ret=[{%d}, {%d}, {%d}, {%d}]", e[0], e[1], e[2], e[3]);
+
+        for (int i = 0; i < 4; ++i) {
+            if (c[i] != e[i])
+                return false;
+        }
+        return true;
+
+    }
+};
+
+class Test_Float64CmpVec : public TestCase {
+public:
+    Test_Float64CmpVec() : TestCase("Float64CmpVec") {}
+
+    static void add(TestApp &app) {
+        app.add(new Test_Float64CmpVec());
+    }
+
+    void compile(BaseCompiler &c) override {
+        auto &cc = dynamic_cast<x86::Compiler &>(c);
+        cc.addFunc(FuncSignatureT<void, double *, double *, int64_t *>(CallConv::kIdHost));
+
+        x86::Gp a_ptr = cc.newInt64("a_ptr");
+        cc.setArg(0, a_ptr);
+        x86::Gp b_ptr = cc.newInt64("b_ptr");
+        cc.setArg(1, b_ptr);
+
+        x86::Gp c_ptr = cc.newInt64("c_ptr");
+        cc.setArg(2, c_ptr);
+
+        x86::Mem am = ymmword_ptr(a_ptr);
+        x86::Mem bm = ymmword_ptr(b_ptr);
+        x86::Mem cm = ymmword_ptr(c_ptr);
+
+        x86::Ymm adata = cc.newYmm();
+        x86::Ymm bdata = cc.newYmm();
+
+        cc.vmovupd(adata, am);
+        cc.vmovupd(bdata, bm);
 
 
-        //x86::Ymm r = questdb::avx2::cmp_eq(cc, f32, adata, bdata);
-        x86::Ymm f = questdb::avx2::cvt_itof(cc, adata, true);
-        x86::Ymm r = questdb::avx2::is_nan(cc, data_type_t::f32, f);
-        //        x86::Ymm r = questdb::avx2::cmp_eq(cc, f32, f, bdata);
-        x86::Gp bits = questdb::avx2::to_bits(cc, r, 8);
+        x86::Ymm r = questdb::avx2::cmp_eq(cc, data_type_t::f64, adata, bdata);
+        cc.vmovdqu(cm, r);
+        cc.ret();
 
-        cc.ret(bits);
         cc.endFunc();
     }
 
     bool run(void *_func, String &result, String &expect) override {
-        typedef int32_t (*Func)(int32_t *, float *);
+        typedef void (*Func)(double *, double *, int64_t *);
         Func func = ptr_as_func<Func>(_func);
-        uint8_t bytes1[32] = {0, 0, 0xff, 0xff, 0xff};
-        for (int i = 4; i < 32; ++i) {
-            bytes1[i] = 0xff;
+
+        double a[4] = {22.0, 22.0, 22.0, 22.0};
+        double b[4] = {22.0, 22.1, 22.01, 22.0000000000001};
+
+        int64_t c[4] = {0};
+        int64_t e[4] = {-1, 0, 0, -1};
+
+        func(reinterpret_cast<double *>(&a), reinterpret_cast<double *>(&b), reinterpret_cast<int64_t *>(&c));
+
+        result.assignFormat("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", c[0], c[1], c[2], c[3]);
+        expect.assignFormat("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", e[0], e[1], e[2], e[3]);
+
+        for (int i = 0; i < 4; ++i) {
+            if (c[i] != e[i])
+                return false;
         }
-
-        int32_t idata[8] = {1, INT_NULL, 2, INT_NULL, 3, INT_NULL, 4, INT_NULL};
-        float fdata[8] = {1.5, 0.0f / 0, 2, 0.0f / 0, 3, 0.0f / 0, 4, 0.0f / 0};
-
-
-        int32_t resultRet = 0;
-        int32_t expectRet = 0;
-
-        resultRet = func(reinterpret_cast<int32_t *>(&idata), reinterpret_cast<float *>(&fdata));
-        expectRet = 42;
-
-        result.assignFormat("ret={%d}", resultRet);
-        expect.assignFormat("ret={%d}", expectRet);
-        if (resultRet != expectRet)
-            return false;
-
         return true;
     }
 };
@@ -1835,6 +1892,8 @@ void compiler_add_x86_tests(TestApp &app) {
     app.addT<Test_CvtInt64ToFloat64>();
     app.addT<Test_VecInt64Add>();
     app.addT<Test_VecInt64GeZero>();
+    app.addT<Test_VecInt64LeZero>();
+    app.addT<Test_Float64CmpVec>();
 }
 
 int main(int argc, char *argv[]) {
