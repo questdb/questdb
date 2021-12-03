@@ -42,13 +42,35 @@ public final class Hash {
     }
 
     /**
-     * Calculates positive integer hash of memory pointer using Java hashcode() algorithm.
+     * Calculates positive integer hash of memory pointer using Java hashcode() algorithm using Ints
      *
      * @param p   memory pointer
      * @param len memory length in bytes
      * @return hash code
      */
     public static int hashMem(long p, int len) {
+        long hash = 0;
+        final long hi = p + len;
+        while (hi - p > 3) {
+            hash = (hash << 5) - hash + Unsafe.getUnsafe().getInt(p);
+            p += Integer.BYTES;
+        }
+
+        while (p < hi) {
+            hash = (hash << 5) - hash + Unsafe.getUnsafe().getByte(p++);
+        }
+
+        return spread((int) hash);
+    }
+
+    /**
+     * Calculates positive integer hash of memory pointer using Java hashcode() algorithm using Longs
+     *
+     * @param p   memory pointer
+     * @param len memory length in bytes
+     * @return hash code
+     */
+    public static int hashMemAlternative(long p, int len) {
         long hash = 0;
         final long hi = p + len;
         while (hi - p > 7) {
