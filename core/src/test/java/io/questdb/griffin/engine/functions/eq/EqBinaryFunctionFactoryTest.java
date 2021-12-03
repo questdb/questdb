@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.std.Files;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -35,12 +36,12 @@ public class EqBinaryFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testAll() throws SqlException {
-        byte [] bin1 = "dabale arroz a la zorra el abad".getBytes(StandardCharsets.UTF_8);
-        byte [] bin2 = "the lazy fox jumped over the brown dog".getBytes(StandardCharsets.UTF_8);
+        byte [] bin1 = "dabale arroz a la zorra el abad".getBytes(Files.UTF_8);
+        byte [] bin2 = "the lazy fox jumped over the brown dog".getBytes(Files.UTF_8);
         call(bin1, bin1).andAssert(true);
         call(bin1, bin2).andAssert(false);
         call(null, null).andAssert(true);
-        call(null, "".getBytes(StandardCharsets.UTF_8)).andAssert(false);
+        call(null, "".getBytes(Files.UTF_8)).andAssert(false);
     }
 
     @Override

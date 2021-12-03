@@ -25,13 +25,19 @@
 package io.questdb.griffin;
 
 import io.questdb.network.NetworkFacade;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 
-public interface SqlInterruptorConfiguration {
+public interface SqlExecutionCircuitBreakerConfiguration {
     int getBufferSize();
 
-    int getCountOfIterationsPerCheck();
+    int getCircuitBreakerThrottle();
 
     NetworkFacade getNetworkFacade();
 
     boolean isEnabled();
+
+    MicrosecondClock getClock();
+
+    // maximum SQL execution time in micros
+    long getMaxTime();
 }

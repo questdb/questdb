@@ -51,6 +51,16 @@ public class NullMetricsRegistry implements MetricsRegistry {
     }
 
     @Override
+    public Gauge newGauge(int memoryTag) {
+        return NullGauge.INSTANCE;
+    }
+
+    @Override
+    public Gauge newVirtualGauge(CharSequence name, VirtualGauge.StatProvider provider) {
+        return NullGauge.INSTANCE;
+    }
+
+    @Override
     public void scrapeIntoPrometheus(CharSink sink) {
     }
 }
