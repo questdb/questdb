@@ -483,6 +483,29 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDistinctWithOrderBy() throws Exception {
+        assertQuery("id\n1\n2\n3\n",
+                "select distinct id from x ORDER BY id ASC;",
+                "create table x as (" +
+                        "select" +
+                        " x id" +
+                        " from long_sequence(3)" +
+                        ")", null);
+    }
+
+    @Test
+    public void testDistinctOrderWithColumnDoesNotExistInSelectStatement() throws Exception {
+        assertFailure("select distinct id from x ORDER BY j;",
+                "create table x as (" +
+                        "select" +
+                        " 100 id," +
+                        " rnd_long() j" +
+                        " from long_sequence(5)" +
+                        ")"
+                , 35, "for SELECT DISTINCT, ORDER BY expressions must appear in select list");
+    }
+
+    @Test
     public void testSingleSymbolSearchOrderByAliasAndTimestampDescEmpty() throws Exception {
         TestMatchFunctionFactory.clear();
 
