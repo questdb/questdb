@@ -99,9 +99,9 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
     /**
      * Writes IR of the filter described by the given expression tree to memory.
      *
-     * @param node filter expression tree's root node.
+     * @param node   filter expression tree's root node.
      * @param scalar set use only scalar instruction set execution hint in the returned options.
-     * @param debug set enable debug flag in the returned options.
+     * @param debug  set enable debug flag in the returned options.
      * @return JIT compiler options stored in a single int in the following way:
      * <ul>
      *     <li>1 LSB - debug flag.</li>
@@ -120,7 +120,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         traverseAlgo.traverse(node, this);
         memory.putByte(RET);
 
-        TypesObserver typesObserver = arithmeticContext.typesObserver;
+        TypesObserver typesObserver = arithmeticContext.globalTypesObserver;
         int options = debug ? 1 : 0;
         int typeSize = typesObserver.maxSize();
         if (typeSize > 0) {
@@ -330,7 +330,11 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         if (ExpressionType.NUMERIC != arithmeticContext.expressionType) {
             throw SqlException.position(position).put("numeric constant in non-numeric expression: ").put(token);
         }
-        serializeNumber(position, token, typeCode, negated);
+        if (arithmeticContext.localTypesObserver.hasMixedSizes()) {
+            serializeUntypedNumber(position, token, negated);
+        } else {
+            serializeNumber(position, token, typeCode, negated);
+        }
     }
 
     private void serializeNull(int position, byte typeCode, boolean geoHashExpression) throws SqlException {
@@ -413,6 +417,44 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
                     .put("could not parse constant: ").put(token)
                     .put(", expected type: ").put(typeCode);
         }
+    }
+
+    private void serializeUntypedNumber(int position, final CharSequence token, boolean negated) throws SqlException {
+        long sign = negated ? -1 : 1;
+
+        try {
+            final int i = Numbers.parseInt(token);
+            memory.putByte(IMM_I4);
+            memory.putLong(sign * i);
+            return;
+        } catch (NumericException ignore) {
+        }
+
+        try {
+            final long l = Numbers.parseLong(token);
+            memory.putByte(IMM_I8);
+            memory.putLong(sign * l);
+            return;
+        } catch (NumericException ignore) {
+        }
+
+        try {
+            final float f = Numbers.parseFloat(token);
+            memory.putByte(IMM_F4);
+            memory.putDouble(sign * f);
+            return;
+        } catch (NumericException ignore) {
+        }
+
+        try {
+            final double d = Numbers.parseDouble(token);
+            memory.putByte(IMM_F8);
+            memory.putDouble(sign * d);
+            return;
+        } catch (NumericException ignore) {
+        }
+
+        throw SqlException.position(position).put("unexpected non-numeric constant: ").put(token);
     }
 
     private void serializeOperator(int position, final CharSequence token, int argCount) throws SqlException {
@@ -562,17 +604,18 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
         private ExpressionNode rootNode;
         // expected constant type; calculated based on the "widest" column type
         // in the expression (contains IMM_* or UNDEFINED_CODE value)
+        // TODO replace with localTypesObserver
         byte constantTypeCode;
         ExpressionType expressionType;
         boolean singleBooleanColumn;
 
-        // container for all observed types
-        final TypesObserver typesObserver = new TypesObserver();
+        final TypesObserver localTypesObserver = new TypesObserver();
+        final TypesObserver globalTypesObserver = new TypesObserver();
 
         @Override
         public void clear() {
             reset();
-            typesObserver.clear();
+            globalTypesObserver.clear();
         }
 
         private void reset() {
@@ -580,6 +623,7 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
             constantTypeCode = UNDEFINED_CODE;
             expressionType = null;
             singleBooleanColumn = false;
+            localTypesObserver.clear();
         }
 
         public boolean isActive() {
@@ -674,7 +718,8 @@ public class FilterExprIRSerializer implements PostOrderTreeTraversalAlgo.Visito
 
         private void updateTypeCode(int position, int columnTypeTag) throws SqlException {
             byte code = columnTypeCode(columnTypeTag);
-            typesObserver.observe(code);
+            localTypesObserver.observe(code);
+            globalTypesObserver.observe(code);
             switch (code) {
                 case MEM_I1:
                     if (constantTypeCode == UNDEFINED_CODE) {
