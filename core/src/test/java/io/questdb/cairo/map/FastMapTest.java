@@ -212,22 +212,16 @@ public class FastMapTest extends AbstractCairoTest {
         ArrayColumnTypes valueTypes = new ArrayColumnTypes();
 
         keyTypes.add(ColumnType.LONG);
-        keyTypes.add(ColumnType.LONG);
-        keyTypes.add(ColumnType.LONG);
         keyTypes.add(ColumnType.INT);
-        keyTypes.add(ColumnType.LONG);
 
         valueTypes.add(ColumnType.LONG);
 
         // These are default FastMap configuration for a join
-        try (FastMap map = new FastMap(4194304, keyTypes, valueTypes, 2097152, 0.5, Hash::hashMemAlternative, 10000)) {
+        try (FastMap map = new FastMap(4194304, keyTypes, valueTypes, 2097152, 0.5, 10000)) {
             for (int i = 0; i < 40_000_000; i++) {
                 MapKey key = map.withKey();
                 key.putLong(i / 151);
-                key.putLong((i + 3) / 151);
-                key.putLong((i + 15) / 151);
                 key.putInt((i + 15) % 269);
-                key.putLong((i + 85) / 151);
 
                 MapValue value = key.createValue();
                 value.putLong(0, i);
