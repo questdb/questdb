@@ -68,6 +68,20 @@ public class SqlUtil {
         return null;
     }
 
+    /**
+     * @return true if given `columnName` is either original name or alias of any column in `columns`
+     */
+    static boolean columnsContainsColumName(ObjList<QueryColumn> columns, CharSequence columnName) {
+        for (int i = 0, l = columns.size(); i < l; i++) {
+            QueryColumn column = columns.getQuick(i);
+            if (Chars.equals(column.getAst().token, columnName) ||
+                    (column.getAlias() != null && Chars.equals(column.getAlias(), columnName))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
         return pool.next().of(ExpressionNode.LITERAL, token, 0, position);
     }

@@ -1956,7 +1956,11 @@ public class SqlCodeGenerator implements Mutable {
             try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName)) {
                 CharSequence columnName = model.getBottomUpColumnNames().get(0);
                 TableReaderMetadata readerMetadata = reader.getMetadata();
-                int columnIndex = readerMetadata.getColumnIndex(columnName);
+                int columnIndex = readerMetadata.getColumnIndexQuiet(columnName);
+                if (columnIndex == -1) {
+                    columnName = model.getNestedModel().translateAlias(columnName);
+                    columnIndex = readerMetadata.getColumnIndex(columnName);
+                }
                 int columnType = readerMetadata.getColumnType(columnIndex);
                 if (readerMetadata.getVersion() >= 416 && ColumnType.isSymbol(columnType)) {
                     final GenericRecordMetadata distinctSymbolMetadata = new GenericRecordMetadata();

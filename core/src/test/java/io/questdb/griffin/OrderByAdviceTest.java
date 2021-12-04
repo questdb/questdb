@@ -494,6 +494,28 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDistinctWithOrderByAlias() throws Exception {
+        assertQuery("idAlias\n1\n2\n3\n",
+                "select distinct id idAlias from x ORDER BY idAlias ASC;",
+                "create table x as (" +
+                        "select" +
+                        " x id" +
+                        " from long_sequence(3)" +
+                        ")", null);
+    }
+
+    @Test
+    public void testDistinctWithAliasOrderByOriginal() throws Exception {
+        assertQuery("idAlias\n1\n2\n3\n",
+                "select distinct id idAlias from x ORDER BY id ASC;",
+                "create table x as (" +
+                        "select" +
+                        " x id" +
+                        " from long_sequence(3)" +
+                        ")", null);
+    }
+
+    @Test
     public void testDistinctOrderWithColumnDoesNotExistInSelectStatement() throws Exception {
         assertFailure("select distinct id from x ORDER BY j;",
                 "create table x as (" +

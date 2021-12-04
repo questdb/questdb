@@ -1031,20 +1031,8 @@ public final class SqlParser {
                 lexer.unparse();
 
                 boolean distinct = masterModel.isDistinct();
-                if(distinct) {
-                    //check where getColumns is used to see if iterating over to find something is used elsedWhere
-                    ObjList<QueryColumn> columns = masterModel.getColumns();
-                    boolean found = false;
-                    for (int i = 0, l = columns.size(); i < l; i++) {
-                        QueryColumn column = columns.getQuick(i);
-                        if (Chars.equals(column.getName(), tok)) {
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "for SELECT DISTINCT, ORDER BY expressions must appear in select list");
-                    }
+                if (distinct && !SqlUtil.columnsContainsColumName(masterModel.getColumns(), tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "for SELECT DISTINCT, ORDER BY expressions must appear in select list");
                 }
 
                 ExpressionNode n = expr(lexer, model);
