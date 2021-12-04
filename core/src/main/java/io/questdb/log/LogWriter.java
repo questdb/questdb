@@ -27,5 +27,5 @@ package io.questdb.log;
 import io.questdb.mp.Job;
 
 public interface LogWriter extends Job {
-    void bindProperties();
+    void bindProperties(LogFactory factory);
 }

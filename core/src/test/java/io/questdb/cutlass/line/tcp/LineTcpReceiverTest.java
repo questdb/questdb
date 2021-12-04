@@ -574,7 +574,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
 
     @Test
     public void testUnicodeTableName() throws Exception {
-        byte[] utf8Bytes = "ल".getBytes(StandardCharsets.UTF_8);
+        byte[] utf8Bytes = "ल".getBytes(Files.UTF_8);
         Assert.assertEquals(3, utf8Bytes.length);
 
         try (TableModel m = new TableModel(configuration, "लаблअца", PartitionBy.DAY)) {
@@ -1141,7 +1141,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
         long fd = Net.socketTcp(true);
         try {
             TestUtils.assertConnect(fd, sockaddr, noLinger);
-            byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
+            byte[] lineDataBytes = lineData.getBytes(Files.UTF_8);
             long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int n = 0; n < lineDataBytes.length; n++) {
