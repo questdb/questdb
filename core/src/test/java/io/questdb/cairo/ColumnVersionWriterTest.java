@@ -48,14 +48,14 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 ColumnVersionWriter w = new ColumnVersionWriter(FilesFacadeImpl.INSTANCE, path.of(root).concat("_cv").$(), 0);
                 ColumnVersionReader r = new ColumnVersionReader(FilesFacadeImpl.INSTANCE, path, 0)
         ) {
-            w.add(1, 2, 3);
+            w.upsert(1, 2, 3);
 
             for (int i = 0; i < N; i++) {
                 // increment from 0 to 4 columns
                 int increment = rnd.nextInt(4);
 
                 for (int j = 0; j < increment; j++) {
-                    w.add(rnd.nextLong(20), rnd.nextInt(10), rnd.nextLong());
+                    w.upsert(rnd.nextLong(20), rnd.nextInt(10), rnd.nextLong());
                 }
 
                 w.commit();

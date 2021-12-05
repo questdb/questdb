@@ -57,14 +57,15 @@ public class ColumnVersionWriter implements Closeable {
     }
 
     /**
-     * Adds column version entry to the cached list. Entries from the cache are committed to disk via
-     * commit() call. In cache and on disk entries are maintained in chronological order of partition timestamps.
+     * Adds or updates column version entry in the cached list. Entries from the cache are committed to disk via
+     * commit() call. In cache and on disk entries are maintained in ascending chronological order of partition
+     * timestamps and ascending column index order within each timestamp.
      *
      * @param timestamp     partition timestamp
      * @param columnIndex   column index
      * @param columnVersion column version.
      */
-    public void add(long timestamp, int columnIndex, long columnVersion) {
+    public void upsert(long timestamp, int columnIndex, long columnVersion) {
         final int sz = cachedList.size();
         int index = cachedList.binarySearchBlock(0, sz, BLOCK_SIZE_MSB, timestamp, BinarySearch.SCAN_UP);
         boolean insert = true;
