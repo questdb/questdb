@@ -24,6 +24,7 @@
 
 package io.questdb.std.datetime;
 
+import io.questdb.cairo.BinarySearch;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -154,7 +155,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     abstract protected long addDays(long epoch, int days);
 
     private long dstFromHistory(long epoch) {
-        int index = historicTransitions.binarySearch(epoch);
+        int index = historicTransitions.binarySearch(epoch, BinarySearch.SCAN_UP);
         if (index == -1) {
             return Long.MAX_VALUE;
         }
@@ -240,7 +241,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     abstract protected long nextOrSameDayOfWeek(long epoch, int dow);
 
     private long offsetFromHistory(long epoch) {
-        int index = historicTransitions.binarySearch(epoch);
+        int index = historicTransitions.binarySearch(epoch, BinarySearch.SCAN_UP);
         if (index == -1) {
             return firstWall;
         }

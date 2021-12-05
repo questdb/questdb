@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.cairo.BinarySearch;
 import io.questdb.std.*;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -109,10 +110,10 @@ public class CollectionsTest {
         for (int i = 7; i < 2000; i += 10) {
             list.add(i + (rnd.nextPositiveInt() & 9));
         }
-        Assert.assertEquals(18, list.binarySearch(188));
-        Assert.assertEquals(-1, list.binarySearch(6));
-        Assert.assertEquals(-25, list.binarySearch(240));
-        Assert.assertEquals(-201, list.binarySearch(2010));
+        Assert.assertEquals(18, list.binarySearch(188, BinarySearch.SCAN_UP));
+        Assert.assertEquals(-1, list.binarySearch(6, BinarySearch.SCAN_UP));
+        Assert.assertEquals(-25, list.binarySearch(240, BinarySearch.SCAN_UP));
+        Assert.assertEquals(-201, list.binarySearch(2010, BinarySearch.SCAN_UP));
     }
 
     @Test
@@ -133,9 +134,9 @@ public class CollectionsTest {
             }
 
             // Assert.assertEquals("Block hint " + blockSizeHint, 18 << blockSizeHint, list.binarySearchBlock(0, list.size(), blockSizeHint, 188));
-            Assert.assertEquals("Block hint " + blockSizeHint,-1, list.binarySearchBlock(0, list.size(), blockSizeHint, 6));
-            Assert.assertEquals("Block hint " + blockSizeHint, -((24 << blockSizeHint) + 1), list.binarySearchBlock(0, list.size(), blockSizeHint, 240));
-            Assert.assertEquals("Block hint " + blockSizeHint,-((200 << blockSizeHint) + 1), list.binarySearchBlock(0, list.size(), blockSizeHint, 2010));
+            Assert.assertEquals("Block hint " + blockSizeHint,-1, list.binarySearchBlock(0, list.size(), blockSizeHint, 6, BinarySearch.SCAN_UP));
+            Assert.assertEquals("Block hint " + blockSizeHint, -((24 << blockSizeHint) + 1), list.binarySearchBlock(0, list.size(), blockSizeHint, 240, BinarySearch.SCAN_UP));
+            Assert.assertEquals("Block hint " + blockSizeHint,-((200 << blockSizeHint) + 1), list.binarySearchBlock(0, list.size(), blockSizeHint, 2010, BinarySearch.SCAN_UP));
         }
     }
 
@@ -150,7 +151,7 @@ public class CollectionsTest {
         list.add(0);
         list.add(0);
         list.add(0);
-        Assert.assertEquals(-5, list.binarySearchBlock(0, list.size(), 2, 20));
+        Assert.assertEquals(-5, list.binarySearchBlock(0, list.size(), 2, 20, BinarySearch.SCAN_DOWN));
     }
 
     @Test

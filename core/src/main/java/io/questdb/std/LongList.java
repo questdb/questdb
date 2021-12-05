@@ -32,7 +32,7 @@ public class LongList implements Mutable, LongVec {
     private static final int DEFAULT_ARRAY_SIZE = 16;
     private static final long DEFAULT_NO_ENTRY_VALUE = -1;
     private final long noEntryValue;
-    private long[] buffer;
+    private long[] data;
     private int pos = 0;
 
     public LongList() {
@@ -44,51 +44,51 @@ public class LongList implements Mutable, LongVec {
     }
 
     public LongList(int capacity, long noEntryValue) {
-        this.buffer = new long[capacity];
+        this.data = new long[capacity];
         this.noEntryValue = noEntryValue;
     }
 
     public LongList(LongList other) {
-        this.buffer = new long[Math.max(other.size(), DEFAULT_ARRAY_SIZE)];
+        this.data = new long[Math.max(other.size(), DEFAULT_ARRAY_SIZE)];
         setPos(other.size());
-        System.arraycopy(other.buffer, 0, this.buffer, 0, pos);
+        System.arraycopy(other.data, 0, this.data, 0, pos);
         this.noEntryValue = other.noEntryValue;
     }
 
     public void add(long value) {
         ensureCapacity(pos + 1);
-        buffer[pos++] = value;
+        data[pos++] = value;
     }
 
     public void add(long value0, long value1) {
         int n = pos;
         ensureCapacity(n + 2);
-        buffer[n++] = value0;
-        buffer[n++] = value1;
+        data[n++] = value0;
+        data[n++] = value1;
         pos = n;
     }
 
     public void add(long value0, long value1, long value2, long value3) {
         int n = pos;
         ensureCapacity(n + 4);
-        buffer[n++] = value0;
-        buffer[n++] = value1;
-        buffer[n++] = value2;
-        buffer[n++] = value3;
+        data[n++] = value0;
+        data[n++] = value1;
+        data[n++] = value2;
+        data[n++] = value3;
         pos = n;
     }
 
     public void add(long value0, long value1, long value2, long value3, long value4, long value5, long value6, long value7) {
         int n = pos;
         ensureCapacity(n + 8);
-        buffer[n++] = value0;
-        buffer[n++] = value1;
-        buffer[n++] = value2;
-        buffer[n++] = value3;
-        buffer[n++] = value4;
-        buffer[n++] = value5;
-        buffer[n++] = value6;
-        buffer[n++] = value7;
+        data[n++] = value0;
+        data[n++] = value1;
+        data[n++] = value2;
+        data[n++] = value3;
+        data[n++] = value4;
+        data[n++] = value5;
+        data[n++] = value6;
+        data[n++] = value7;
         pos = n;
     }
 
@@ -100,63 +100,76 @@ public class LongList implements Mutable, LongVec {
         int p = pos;
         int s = hi - lo;
         ensureCapacity(p + s);
-        System.arraycopy(that.buffer, lo, this.buffer, p, s);
+        System.arraycopy(that.data, lo, this.data, p, s);
         pos += s;
     }
 
     public void add(int index, long element) {
         ensureCapacity(++pos);
-        System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
-        buffer[index] = element;
+        System.arraycopy(data, index, data, index + 1, pos - index - 1);
+        data[index] = element;
     }
 
     public void arrayCopy(int srcPos, int dstPos, int length) {
-        System.arraycopy(buffer, srcPos, buffer, dstPos, length);
+        System.arraycopy(data, srcPos, data, dstPos, length);
     }
 
-    public int binarySearch(long v) {
+    public int binarySearch(long value, int scanDir) {
         int low = 0;
         int high = pos;
+
+        if (low == high) {
+            return -1;
+        }
 
         while (low < high) {
 
             if (high - low < 65) {
-                return scanSearch(v, low, high);
+                return scanSearch(value, low, high);
             }
 
             int mid = (low + high - 1) >>> 1;
-            long midVal = buffer[mid];
+            long midVal = data[mid];
 
-            if (midVal < v)
-                low = mid + 1;
-            else if (midVal > v)
+            if (midVal < value) {
+                if (low < mid) {
+                    low = mid;
+                } else {
+                    if (data[high] > value) {
+                        return -low - 1;
+                    }
+                    return -high - 1;
+                }
+            } else if (midVal > value)
                 high = mid;
-            else
-                return mid;
-        }
-        return -(low + 1);
-    }
-
-    public int binarySearchBlock(int shift, long v) {
-        return binarySearchBlock(0, size(), shift, v);
-    }
-
-    public int binarySearchBlock(int low, int high, int shift, long v) {
-        final int blockSize = 1 << shift;
-
-        int hi = high - blockSize;
-        if (hi > -1) {
-            long last = getQuick(hi);
-            if (last < v) {
-                return -(hi + blockSize + 1);
-            }
-            if (last == v) {
-                return hi;
+            else {
+                // In case of multiple equal values, find the first
+                mid += scanDir;
+                while (mid > 0 && mid <= high && data[mid] == midVal) {
+                    mid += scanDir;
+                }
+                return mid - scanDir;
             }
         }
 
-        // Binary searches using 2^shift blocks
-        // e.g. when shift == 2
+        if (data[low] > value) {
+            return -low - 1;
+        }
+
+        if (data[low] == value) {
+            return low;
+        }
+
+        return -(low + 1) - 1;
+    }
+
+    public int binarySearchBlock(int shl, long value, int scanDir) {
+        return binarySearchBlock(0, size(), shl, value, scanDir);
+    }
+
+    public int binarySearchBlock(int low, int high, int shl, long value, int scanDir) {
+        // Binary searches using 2^shl blocks
+        // e.g. when shl == 2
         // this method treats 4 longs as 1 entry
         // taking first long for the comparisons
         // and ignoring the other 3 values.
@@ -164,27 +177,59 @@ public class LongList implements Mutable, LongVec {
         // This is useful when list is a dictionary where first long is a key
         // and subsequent X (1, 3, 7 etc.) values are the value of the dictionary.
 
+        if (low == high) {
+            return -1;
+        }
+
+        // this is the same algorithm as implemented in C (util.h)
+        // template<class T, class V>
+        // inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir)
+
         // assert that scan interval is integer number of blocks
-        assert (high - low) % (1 << shift) == 0;
-        high = high >> shift;
-        low = low >> shift;
+        assert (high - low) % (1 << shl) == 0;
+        high = high >> shl;
+        low = low >> shl;
 
         while (low < high) {
             if (high - low < 65) {
-                return scanSearchBlock(v, low, high, shift);
+                return scanSearchBlock(value, low, high, shl);
             }
 
             int mid = (low + high - 1) / 2;
-            long midVal = buffer[mid << shift];
+            long midVal = data[mid << shl];
 
-            if (midVal < v)
-                low = mid + 1;
-            else if (midVal > v)
+            if (midVal < value) {
+                if (low < mid) {
+                    low = mid;
+                } else {
+                    if (data[high << shl] > value) {
+                        return -(low << shl) - 1;
+                    }
+                    return -(high << shl) - 1;
+                }
+            } else if (midVal > value)
                 high = mid;
-            else
-                return mid << shift;
+            else {
+                // In case of multiple equal values, find the first
+                mid += scanDir;
+                while (mid > 0 && mid <= high && data[mid << shl] == midVal) {
+                    mid += scanDir;
+                }
+                return (mid - scanDir) << shl;
+            }
         }
-        return -((low << shift) + 1);
+
+        low <<= shl;
+
+        if (data[low] > value) {
+            return -(low) - 1;
+        }
+
+        if (data[low] == value) {
+            return low;
+        }
+
+        return -(low + 1) - 1;
     }
 
     public void clear() {
@@ -196,18 +241,18 @@ public class LongList implements Mutable, LongVec {
             throw new IllegalArgumentException("Negative capacity. Integer overflow may be?");
         }
 
-        int l = buffer.length;
+        int l = data.length;
         if (capacity > l) {
             int newCap = Math.max(l << 1, capacity);
             long[] buf = new long[newCap];
-            System.arraycopy(buffer, 0, buf, 0, l);
-            this.buffer = buf;
+            System.arraycopy(data, 0, buf, 0, l);
+            this.data = buf;
         }
     }
 
     public void erase() {
         pos = 0;
-        Arrays.fill(buffer, noEntryValue);
+        Arrays.fill(data, noEntryValue);
     }
 
     public void extendAndSet(int index, long value) {
@@ -215,23 +260,23 @@ public class LongList implements Mutable, LongVec {
         if (index >= pos) {
             pos = index + 1;
         }
-        buffer[index] = value;
+        data[index] = value;
     }
 
     public void fill(int from, int to, long value) {
-        Arrays.fill(buffer, from, to, value);
+        Arrays.fill(data, from, to, value);
     }
 
     public long get(int index) {
         if (index < pos) {
-            return buffer[index];
+            return data[index];
         }
         throw new ArrayIndexOutOfBoundsException(index);
     }
 
     public long getAndSetQuick(int index, long value) {
         long v = getQuick(index);
-        buffer[index] = value;
+        data[index] = value;
         return v;
     }
 
@@ -242,14 +287,14 @@ public class LongList implements Mutable, LongVec {
      */
     public long getLast() {
         if (pos > 0) {
-            return buffer[pos - 1];
+            return data[pos - 1];
         }
         return noEntryValue;
     }
 
     public void setLast(long value) {
         if (pos > 0) {
-            buffer[pos - 1] = value;
+            data[pos - 1] = value;
         }
     }
 
@@ -264,12 +309,12 @@ public class LongList implements Mutable, LongVec {
      */
     public long getQuick(int index) {
         assert index < pos;
-        return buffer[index];
+        return data[index];
     }
 
     public void setQuick(int index, long value) {
         assert index < pos;
-        buffer[index] = value;
+        data[index] = value;
     }
 
     @Override
@@ -317,13 +362,13 @@ public class LongList implements Mutable, LongVec {
     }
 
     public void increment(int index) {
-        buffer[index] = buffer[index] + 1;
+        data[index] = data[index] + 1;
     }
 
     public void insert(int index, int length) {
         ensureCapacity(pos + length);
         if (pos > index) {
-            System.arraycopy(buffer, index, buffer, index + length, pos - index);
+            System.arraycopy(data, index, data, index + length, pos - index);
         }
         pos += length;
     }
@@ -341,9 +386,9 @@ public class LongList implements Mutable, LongVec {
         }
         int move = pos - index - 1;
         if (move > 0) {
-            System.arraycopy(buffer, index + 1, buffer, index, move);
+            System.arraycopy(data, index + 1, data, index, move);
         }
-        buffer[--pos] = noEntryValue;
+        data[--pos] = noEntryValue;
     }
 
     public void removeIndexBlock(int index, int slotSize) {
@@ -352,10 +397,10 @@ public class LongList implements Mutable, LongVec {
         }
         int move = pos - index - slotSize;
         if (move > 0) {
-            System.arraycopy(buffer, index + slotSize, buffer, index, move);
+            System.arraycopy(data, index + slotSize, data, index, move);
         }
         pos -= slotSize;
-        Arrays.fill(buffer, pos, pos + slotSize, noEntryValue);
+        Arrays.fill(data, pos, pos + slotSize, noEntryValue);
     }
 
     public void seed(int capacity, long value) {
@@ -367,12 +412,12 @@ public class LongList implements Mutable, LongVec {
     public void seed(int fromIndex, int count, long value) {
         int capacity = fromIndex + count;
         ensureCapacity(capacity);
-        Arrays.fill(buffer, fromIndex, capacity, value);
+        Arrays.fill(data, fromIndex, capacity, value);
     }
 
     public void set(int index, long element) {
         if (index < pos) {
-            buffer[index] = element;
+            data[index] = element;
             return;
         }
         throw new ArrayIndexOutOfBoundsException(index);
@@ -381,18 +426,12 @@ public class LongList implements Mutable, LongVec {
     public void setAll(int capacity, long value) {
         ensureCapacity(capacity);
         pos = capacity;
-        Arrays.fill(buffer, value);
+        Arrays.fill(data, value);
     }
 
     final public void setPos(int pos) {
         ensureCapacity(pos);
         this.pos = pos;
-    }
-
-    public void shuffle(Rnd rnd) {
-        for (int i = 0, sz = size(); i < sz; i++) {
-            swap(i, rnd.nextPositiveInt() & (sz - 1));
-        }
     }
 
     public int size() {
@@ -409,13 +448,13 @@ public class LongList implements Mutable, LongVec {
     public LongList subset(int lo, int hi) {
         int _hi = Math.min(hi, pos);
         LongList that = new LongList(_hi - lo);
-        System.arraycopy(this.buffer, lo, that.buffer, 0, _hi - lo);
+        System.arraycopy(this.data, lo, that.data, 0, _hi - lo);
         that.pos = _hi - lo;
         return that;
     }
 
     public void zero(int value) {
-        Arrays.fill(buffer, 0, pos, value);
+        Arrays.fill(data, 0, pos, value);
     }
 
     private boolean equals(LongList that) {
@@ -443,7 +482,7 @@ public class LongList implements Mutable, LongVec {
 
     private int scanSearch(long v, int low, int high) {
         for (int i = low; i < high; i++) {
-            long f = buffer[i];
+            long f = data[i];
             if (f == v) {
                 return i;
             }
@@ -454,10 +493,10 @@ public class LongList implements Mutable, LongVec {
         return -(high + 1);
     }
 
-    private int scanSearchBlock(long v, int low, int high, int bitHint) {
+    private int scanSearchBlock(long v, int low, int high, int shl) {
         for (int i = low; i < high; i++) {
-            int index = i << bitHint;
-            long f = buffer[index];
+            int index = i << shl;
+            long f = data[index];
             if (f == v) {
                 return index;
             }
@@ -465,12 +504,6 @@ public class LongList implements Mutable, LongVec {
                 return -(index + 1);
             }
         }
-        return -((high << bitHint) + 1);
-    }
-
-    private void swap(int a, int b) {
-        long tmp = getQuick(a);
-        setQuick(a, getQuick(b));
-        setQuick(b, tmp);
+        return -((high << shl) + 1);
     }
 }

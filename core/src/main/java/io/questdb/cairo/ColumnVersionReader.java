@@ -49,7 +49,7 @@ public class ColumnVersionReader implements Closeable {
         mem.close();
     }
 
-    public LongList getColumnVersions() {
+    public LongList getCachedList() {
         return cachedList;
     }
 

@@ -265,7 +265,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public int getPartitionIndexByTimestamp(long timestamp) {
-        int end = openPartitionInfo.binarySearchBlock(PARTITIONS_SLOT_SIZE_MSB, timestamp);
+        int end = openPartitionInfo.binarySearchBlock(PARTITIONS_SLOT_SIZE_MSB, timestamp, BinarySearch.SCAN_UP);
         if (end < 0) {
             // This will return -1 if searched timestamp is before the first partition
             // The caller should handle negative return values

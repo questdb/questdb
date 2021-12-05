@@ -50,8 +50,6 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
         ) {
             w.add(1, 2, 3);
 
-            int lastSize = 4; // number of items in last batch; 4 items per column entry
-
             for (int i = 0; i < N; i++) {
                 // increment from 0 to 4 columns
                 int increment = rnd.nextInt(4);
@@ -64,7 +62,30 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 final long offset = w.getOffset();
                 final long size = w.getSize();
                 r.load(offset, size);
-                assertEqual(w.getCachedList(), r.getColumnVersions());
+                assertEqual(w.getCachedList(), r.getCachedList());
+                // assert list is ordered by (timestamp,column_index)
+
+                LongList list = r.getCachedList();
+                long prevTimestamp = -1;
+                long prevColumnIndex = -1;
+                for (int j = 0, n = list.size(); j < n; j += ColumnVersionWriter.BLOCK_SIZE) {
+                    long timestamp = list.getQuick(j);
+                    long columnIndex = list.getQuick(j + 1);
+
+                    if (prevTimestamp < timestamp) {
+                        prevTimestamp = timestamp;
+                        prevColumnIndex = columnIndex;
+                        continue;
+                    }
+
+                    if (prevTimestamp == timestamp) {
+                        Assert.assertTrue(prevColumnIndex < columnIndex);
+                        prevColumnIndex = columnIndex;
+                        continue;
+                    }
+
+                    Assert.fail();
+                }
             }
         }
     }

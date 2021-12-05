@@ -38,9 +38,9 @@ public class IntListTest {
         list.add(974);
         list.add(1115);
         list.add(2094);
-        Assert.assertEquals(-66, list.binarySearch(70));
-        Assert.assertEquals(65, list.binarySearch(76));
-        Assert.assertEquals(-67, list.binarySearch(950));
-        Assert.assertEquals(-70, list.binarySearch(2500));
+        Assert.assertEquals(-66, list.binarySearchUniqueList(70));
+        Assert.assertEquals(65, list.binarySearchUniqueList(76));
+        Assert.assertEquals(-67, list.binarySearchUniqueList(950));
+        Assert.assertEquals(-70, list.binarySearchUniqueList(2500));
     }
 }

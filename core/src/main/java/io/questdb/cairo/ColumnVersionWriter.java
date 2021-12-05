@@ -66,26 +66,35 @@ public class ColumnVersionWriter implements Closeable {
      */
     public void add(long timestamp, int columnIndex, long columnVersion) {
         final int sz = cachedList.size();
-        int index = cachedList.binarySearchBlock(0, sz, BLOCK_SIZE_MSB, timestamp);
+        int index = cachedList.binarySearchBlock(0, sz, BLOCK_SIZE_MSB, timestamp, BinarySearch.SCAN_UP);
         boolean insert = true;
-        if (index < 0) {
-            index = -index - 1;
+        if (index > -1) {
             // brute force columns for this timestamp
-            while (index < sz && cachedList.getQuick(index) == timestamp){
-                if (cachedList.getQuick(index + 1) == columnIndex) {
+            while (index < sz && cachedList.getQuick(index) == timestamp) {
+                final long thisIndex = cachedList.getQuick(index + 1);
+
+                if (thisIndex == columnIndex) {
                     cachedList.setQuick(index + 2, columnVersion);
                     insert = false;
                     break;
                 }
+
+                if (thisIndex > columnIndex) {
+                    break;
+                }
+
                 index += BLOCK_SIZE;
             }
+        } else {
+            index = -index - 1;
         }
 
-        cachedList.setPos(Math.max(index + BLOCK_SIZE, sz));
 
         if (insert) {
             if (index < sz) {
                 cachedList.insert(index, BLOCK_SIZE);
+            } else {
+                cachedList.setPos(Math.max(index + BLOCK_SIZE, sz + BLOCK_SIZE));
             }
             cachedList.setQuick(index, timestamp);
             cachedList.setQuick(index + 1, columnIndex);
