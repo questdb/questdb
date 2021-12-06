@@ -260,6 +260,8 @@ public interface CairoConfiguration {
 
     int getSqlSortValuePageSize();
 
+    int getSqlJitMode();
+
     int getTableBlockWriterQueueCapacity();
 
     TelemetryConfiguration getTelemetryConfiguration();

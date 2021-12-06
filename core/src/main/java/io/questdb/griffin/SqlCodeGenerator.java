@@ -740,12 +740,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                     final CompiledFilter jitFilter = new CompiledFilter();
                     jitFilter.compile(jitIRMem, jitOptions);
+                    LOG.info()
+                            .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
+                            .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
                     return new CompiledFilterRecordCursorFactory(factory, columnIndexes, jitFilter);
                 } catch (SqlException ex) {
                     LOG.debug()
-                            .$("JIT cannot be applied to query [tableName=").utf8(model.getName())
+                            .$("JIT cannot be applied to (sub)query [tableName=").utf8(model.getName())
                             .$(", ex=").$(ex.getFlyweightMessage())
-                            .$(']').$();
+                            .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
                 } finally {
                     jitIRSerializer.clear();
                     jitIRMem.truncate();

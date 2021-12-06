@@ -41,6 +41,7 @@ import java.util.Arrays;
  *
  * TODO:
  *  * parse geohash constant literals
+ *  * parse symbol literals
  */
 public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
 
