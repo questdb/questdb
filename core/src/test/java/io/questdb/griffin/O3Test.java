@@ -344,6 +344,7 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    // test case is contributed by Zhongwei Yao
     public void testAddColumnO3Fuzz() throws Exception {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
         final String tableName = "ABC";

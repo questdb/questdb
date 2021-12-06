@@ -869,7 +869,7 @@ public class TableWriterTest extends AbstractCairoTest {
             @Override
             public int rmdir(Path name) {
                 if (kIndexFd != -1) {
-                    // Access dinied, file is open
+                    // Access denied, file is open
                     return 5;
                 }
                 return super.rmdir(name);

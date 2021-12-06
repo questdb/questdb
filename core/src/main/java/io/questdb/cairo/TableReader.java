@@ -1044,7 +1044,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                     long columnSize = columnRowCount * 8L + 8L;
                     TableUtils.iFile(path.trimTo(plen), name);
                     mem2 = openOrCreateMemory(path, columns, secondaryIndex, mem2, columnSize);
-                    LOG.info().$("ZW mem2.getLong: ").$(columnRowCount).$();
                     columnSize = mem2.getLong(columnRowCount * 8L);
                     TableUtils.dFile(path.trimTo(plen), name);
                     openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize);
