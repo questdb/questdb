@@ -153,11 +153,15 @@ public class DirectLongList implements Mutable, Closeable {
     public String toString() {
         CharSink sb = Misc.getThreadLocalBuilder();
         sb.put('{');
-        for (int i = 0; i < size(); i++) {
+        final int maxElementsToPrint = 1000; // Do not try to print too much, it can hang IntelliJ debugger.
+        for (int i = 0, n = (int) Math.min(maxElementsToPrint, size()); i < n; i++) {
             if (i > 0) {
                 sb.put(',').put(' ');
             }
             sb.put(get(i));
+        }
+        if (size() > maxElementsToPrint) {
+            sb.put(", .. ");
         }
         sb.put('}');
         return sb.toString();

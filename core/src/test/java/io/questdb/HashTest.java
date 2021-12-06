@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.cairo.map.FastMap;
 import io.questdb.std.*;
 import org.junit.Assert;
 import org.junit.Test;
@@ -32,6 +33,17 @@ public class HashTest {
 
     @Test
     public void testStringHash() {
+        FastMap.HashFunction hashFunction = Hash::hashMem;
+        testHash(hashFunction);
+    }
+
+    @Test
+    public void testStringHashAlternative() {
+        FastMap.HashFunction hashFunction = Hash::hashMemAlternative;
+        testHash(hashFunction);
+    }
+
+    private void testHash(FastMap.HashFunction hashFunction) {
         Rnd rnd = new Rnd();
         IntHashSet hashes = new IntHashSet(100000);
         final int LEN = 64;
@@ -40,7 +52,7 @@ public class HashTest {
 
         for (int i = 0; i < 100000; i++) {
             rnd.nextChars(address, LEN / 2);
-            hashes.add(Hash.hashMem(address, LEN));
+            hashes.add(hashFunction.hash(address, LEN));
         }
         Assert.assertTrue("Hash function distribution dropped", hashes.size() > 99990);
     }
