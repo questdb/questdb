@@ -39,7 +39,7 @@ import SideMenu from "../SideMenu"
 import Schema from "../Schema"
 import Sidebar from "../Sidebar"
 import { useLocalStorage } from "providers/LocalStorageProvider"
-import { QuestProvider } from "providers"
+import { EditorProvider, QuestProvider } from "providers"
 import { StoreKey } from "../../utils/localStorage/types"
 
 const Console = styled.div`
@@ -91,28 +91,30 @@ const Layout = () => {
       {consoleNode &&
         createPortal(
           <Console>
-            <Splitter
-              direction="vertical"
-              fallback={editorSplitterBasis}
-              max={300}
-              min={200}
-              onChange={handleEditorSplitterChange}
-            >
-              <Top>
-                <Splitter
-                  direction="horizontal"
-                  fallback={resultsSplitterBasis}
-                  max={300}
-                  min={200}
-                  onChange={handleResultsSplitterChange}
-                >
-                  {!sm && <Schema />}
-                  <Editor />
-                </Splitter>
-              </Top>
-              <Result />
-            </Splitter>
-            <Notifications />
+            <EditorProvider>
+              <Splitter
+                direction="vertical"
+                fallback={editorSplitterBasis}
+                max={300}
+                min={200}
+                onChange={handleEditorSplitterChange}
+              >
+                <Top>
+                  <Splitter
+                    direction="horizontal"
+                    fallback={resultsSplitterBasis}
+                    max={300}
+                    min={200}
+                    onChange={handleResultsSplitterChange}
+                  >
+                    {!sm && <Schema />}
+                    <Editor />
+                  </Splitter>
+                </Top>
+                <Result />
+              </Splitter>
+              <Notifications />
+            </EditorProvider>
           </Console>,
           consoleNode,
         )}

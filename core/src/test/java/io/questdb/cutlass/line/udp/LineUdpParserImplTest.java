@@ -712,7 +712,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (LineUdpParserImpl parser = new LineUdpParserImpl(engine, AllowAllCairoSecurityContext.INSTANCE, LineProtoNanoTimestampAdapter.INSTANCE)) {
-                    byte[] bytes = lines.getBytes(StandardCharsets.UTF_8);
+                    byte[] bytes = lines.getBytes(Files.UTF_8);
                     int len = bytes.length;
                     long mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
                     try {

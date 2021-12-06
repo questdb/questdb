@@ -269,7 +269,10 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         if (r != null) {
             r.goodby();
             r.close();
-            LOG.info().$("closed '").$(r.getTableName()).$("' [at=").$(entry.index).$(':').$(index).$(", reason=").$(PoolConstants.closeReasonText(reason)).$(']').$();
+            LOG.info().$("closed '").utf8(r.getTableName())
+                    .$("' [at=").$(entry.index).$(':').$(index)
+                    .$(", reason=").$(PoolConstants.closeReasonText(reason))
+                    .I$();
             notifyListener(thread, r.getTableName(), ev, entry.index, index);
             entry.readers[index] = null;
         }

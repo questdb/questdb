@@ -24,11 +24,11 @@
 
 package io.questdb.network;
 
+import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSequenceZ;
-import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -211,8 +211,8 @@ public class NetTest {
     @Test
     public void testSeek() {
         int port = 9993;
-        NativeLPSZ lpsz = new NativeLPSZ();
         String msg = "Test ABC";
+        StringSink sink = new StringSink();
         CharSequenceZ charSink = new CharSequenceZ(msg);
         int msgLen = charSink.length() + 1;
 
@@ -231,11 +231,12 @@ public class NetTest {
         long serverFd = Net.accept(acceptFd);
         long serverBuf = Unsafe.malloc(msgLen, MemoryTag.NATIVE_DEFAULT);
         Assert.assertEquals(msgLen, Net.peek(serverFd, serverBuf, msgLen));
-        lpsz.of(serverBuf);
-        Assert.assertEquals(msg, lpsz.toString());
+        Chars.utf8DecodeZ(serverBuf, sink);
+        TestUtils.assertEquals(msg, sink);
         Assert.assertEquals(msgLen, Net.recv(serverFd, serverBuf, msgLen));
-        lpsz.of(serverBuf);
-        Assert.assertEquals(msg, lpsz.toString());
+        sink.clear();
+        Chars.utf8DecodeZ(serverBuf, sink);
+        TestUtils.assertEquals(msg, sink);
         Unsafe.free(serverBuf, msgLen, MemoryTag.NATIVE_DEFAULT);
         Net.close(serverFd);
 

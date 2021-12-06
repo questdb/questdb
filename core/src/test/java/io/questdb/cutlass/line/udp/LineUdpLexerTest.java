@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cutlass.line.LineProtoException;
+import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
@@ -63,9 +64,9 @@ public class LineUdpLexerTest {
 
     @Test
     public void testCorruptUtf8Sequence() {
-        byte[] bytesA = "违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n".getBytes(StandardCharsets.UTF_8);
+        byte[] bytesA = "违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n".getBytes(Files.UTF_8);
         byte[] bytesB = {-116, -76, -55, 55, -34, 0, -11, 15, 13};
-        byte[] bytesC = "меморандум,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n".getBytes(StandardCharsets.UTF_8);
+        byte[] bytesC = "меморандум,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n".getBytes(Files.UTF_8);
 
         byte[] bytes = new byte[bytesA.length + bytesB.length + bytesC.length];
         System.arraycopy(bytesA, 0, bytes, 0, bytesA.length);
@@ -279,7 +280,7 @@ public class LineUdpLexerTest {
     }
 
     protected void assertError(CharSequence line, int state, int code, int position) throws LineProtoException {
-        byte[] bytes = line.toString().getBytes(StandardCharsets.UTF_8);
+        byte[] bytes = line.toString().getBytes(Files.UTF_8);
         long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
             final int len = bytes.length;
@@ -303,7 +304,7 @@ public class LineUdpLexerTest {
     }
 
     protected void assertThat(CharSequence expected, CharSequence line) throws LineProtoException {
-        assertThat(expected, line.toString().getBytes(StandardCharsets.UTF_8));
+        assertThat(expected, line.toString().getBytes(Files.UTF_8));
     }
 
     protected void assertThat(CharSequence expected, byte[] line) throws LineProtoException {

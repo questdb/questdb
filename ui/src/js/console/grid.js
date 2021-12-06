@@ -392,9 +392,22 @@ $.fn.grid = function (msgBus) {
     totalWidth = 0
     for (i = 0; i < columns.length; i++) {
       var c = columns[i]
-      var col = $('<div class="qg-header qg-w' + i + '">' + c.name + "</div>")
+      var col = $(
+        '<div class="qg-header qg-w' +
+          i +
+          '" data-column-name="' +
+          c.name +
+          '"><span class="qg-header-type">' +
+          c.type.toLowerCase() +
+          '</span><span class="qg-header-name">' +
+          c.name +
+          "</span></div>",
+      )
         .on("click", function (e) {
-          bus.trigger("editor.insert.column", e.target.innerHTML)
+          bus.trigger(
+            "editor.insert.column",
+            e.currentTarget.getAttribute("data-column-name"),
+          )
         })
         .appendTo(header)
       switch (c.type) {
@@ -405,7 +418,7 @@ $.fn.grid = function (msgBus) {
       }
       w = Math.max(
         defaults.minColumnWidth,
-        Math.ceil(c.name.length * 8 * 1.2 + 8),
+        Math.ceil((c.name.length + c.type.length) * 8 * 1.2 + 8),
       )
       colMax.push(w)
       totalWidth += w
