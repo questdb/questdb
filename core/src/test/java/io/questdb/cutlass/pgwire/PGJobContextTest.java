@@ -3122,56 +3122,61 @@ nodejs code:
     }
 
     private void testAddColumnBusyWriter(boolean alterRequestReturnSuccess) throws SQLException, InterruptedException, BrokenBarrierException, SqlException {
-        compiler.compile("create table xyz (a int)", sqlExecutionContext);
-        try (
-                final PGWireServer ignored = createPGServer(2);
-                final Connection connection1 = getConnection(false, true);
-                final Connection connection2 = getConnection(false, true);
-                final PreparedStatement insert = connection1.prepareStatement(
-                        "insert into xyz values (?)"
-                );
-                final PreparedStatement alter = connection2.prepareStatement(
-                        "alter table xyz add column b long"
-                )
-        ) {
-            connection1.setAutoCommit(false);
-            int totalCount = 10;
-            for (int i = 0; i < totalCount; i++) {
-                insert.setInt(1, i);
-                insert.execute();
-            }
-            CyclicBarrier start = new CyclicBarrier(2);
-            CountDownLatch finished = new CountDownLatch(1);
-            AtomicLong errors = new AtomicLong();
-
-            new Thread(() -> {
-                try {
-                    start.await();
-                    alter.execute();
-                } catch (Throwable e) {
-                    e.printStackTrace();
-                    errors.incrementAndGet();
-                } finally {
-                    finished.countDown();
+        AtomicLong errors = new AtomicLong();
+        int iteration = 0;
+        do {
+            String tableName = "xyz" + iteration++;
+            compiler.compile("create table " + tableName + " (a int)", sqlExecutionContext);
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection1 = getConnection(false, true);
+                    final Connection connection2 = getConnection(false, true);
+                    final PreparedStatement insert = connection1.prepareStatement(
+                            "insert into " + tableName + " values (?)"
+                    );
+                    final PreparedStatement alter = connection2.prepareStatement(
+                            "alter table " + tableName + " add column b long"
+                    )
+            ) {
+                connection1.setAutoCommit(false);
+                int totalCount = 10;
+                for (int i = 0; i < totalCount; i++) {
+                    insert.setInt(1, i);
+                    insert.execute();
                 }
-            }).start();
+                CyclicBarrier start = new CyclicBarrier(2);
+                CountDownLatch finished = new CountDownLatch(1);
+                errors.set(0);
 
-            start.await();
-            Thread.sleep(5);
-            connection1.commit();
-            finished.await();
+                new Thread(() -> {
+                    try {
+                        start.await();
+                        alter.execute();
+                    } catch (Throwable e) {
+                        e.printStackTrace();
+                        errors.incrementAndGet();
+                    } finally {
+                        finished.countDown();
+                    }
+                }).start();
 
-            if (alterRequestReturnSuccess) {
-                Assert.assertEquals(0, errors.get());
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "xyz")) {
-                    int bIndex = rdr.getMetadata().getColumnIndex("b");
-                    Assert.assertEquals(1, bIndex);
-                    Assert.assertEquals(totalCount, rdr.size());
+                start.await();
+                Thread.sleep(5);
+                connection1.commit();
+                finished.await();
+
+                if (alterRequestReturnSuccess) {
+                    Assert.assertEquals(0, errors.get());
+                    try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                        int bIndex = rdr.getMetadata().getColumnIndex("b");
+                        Assert.assertEquals(1, bIndex);
+                        Assert.assertEquals(totalCount, rdr.size());
+                    }
                 }
-            } else {
-                Assert.assertEquals(1, errors.get());
             }
-        }
+            // Failure may not happy if we're lucky, even when they are expected
+            // When alterRequestReturnSuccess if false and errors are 0, repeat again
+        } while (!alterRequestReturnSuccess && errors.get() == 0);
     }
 
     @Test
