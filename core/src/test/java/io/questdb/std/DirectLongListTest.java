@@ -115,6 +115,7 @@ public class DirectLongListTest {
         list.close();
         list2.close();
     }
+
     @Test
     public void testSearch() {
         DirectLongList list = new DirectLongList(256);
@@ -122,8 +123,22 @@ public class DirectLongListTest {
         for (int i = 0; i < N; ++i) {
             list.add(i);
         }
-        Assert.assertEquals(N/2, list.scanSearch(N/2, 0, list.size()));
-        Assert.assertEquals(N/2, list.binarySearch(N/2));
+        Assert.assertEquals(N / 2, list.scanSearch(N / 2, 0, list.size()));
+        Assert.assertEquals(N / 2, list.binarySearch(N / 2));
         list.close();
+    }
+
+    @Test
+    public void testToString() {
+        DirectLongList list = new DirectLongList(1001);
+        final int N = 1000;
+        for (int i = 0; i < N; ++i) {
+            list.add(i);
+        }
+        String str1 = list.toString();
+        list.add(1001);
+        String str2 = list.toString();
+
+        Assert.assertEquals(str1.substring(0, str1.length() - 1) + ", .. }", str2);
     }
 }

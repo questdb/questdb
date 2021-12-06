@@ -74,7 +74,7 @@ mvn -pl !benchmarks clean deploy -DskipTests -P build-web-console,maven-central-
 ```bash
 # Create a database root directory and run QuestDB
 mkdir <root_directory>
-java -p core/target/questdb-<software_version>.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
+java -jar core/target/questdb-<software_version>.jar -d <root_directory>
 ```
 
 ## Docker images
