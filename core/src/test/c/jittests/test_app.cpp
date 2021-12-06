@@ -1474,6 +1474,71 @@ public:
     }
 };
 
+class Test_Int32EqNull : public TestCase {
+public:
+    Test_Int32EqNull() : TestCase("Int32EqNull") {}
+
+    static void add(TestApp &app) {
+        app.add(new Test_Int32EqNull());
+    }
+
+    void compile(BaseCompiler &c) override {
+        auto &cc = dynamic_cast<x86::Compiler &>(c);
+        cc.addFunc(FuncSignatureT<int32_t, int32_t, int32_t>(CallConv::kIdHost));
+
+        x86::Gp a = cc.newInt32("a");
+        cc.setArg(0, a);
+        x86::Gp b = cc.newInt32("b");
+        cc.setArg(1, b);
+
+        x86::Gp r = questdb::x86::int32_eq(cc, a.as<x86::Gpd>(), b.as<x86::Gpd>());
+        cc.ret(r);
+        cc.endFunc();
+    }
+
+    bool run(void *_func, String &result, String &expect) override {
+        typedef int32_t (*Func)(int32_t, int32_t);
+        Func func = ptr_as_func<Func>(_func);
+
+        int32_t resultRet = 0;
+        int32_t expectRet = 0;
+
+        resultRet = func(42, -13);
+        expectRet = 0;
+
+        result.assignFormat("ret={%d}", resultRet);
+        expect.assignFormat("ret={%d}", expectRet);
+        if (resultRet != expectRet)
+            return false;
+
+        resultRet = func(42, INT_NULL);
+        expectRet = 0;
+
+        result.assignFormat("ret={%d}", resultRet);
+        expect.assignFormat("ret={%d}", expectRet);
+        if (resultRet != expectRet)
+            return false;
+
+        resultRet = func(INT_NULL, 42);
+        expectRet = 0;
+
+        result.assignFormat("ret={%d}", resultRet);
+        expect.assignFormat("ret={%d}", expectRet);
+        if (resultRet != expectRet)
+            return false;
+
+        resultRet = func(INT_NULL, INT_NULL);
+        expectRet = 1;
+
+        result.assignFormat("ret={%d}", resultRet);
+        expect.assignFormat("ret={%d}", expectRet);
+        if (resultRet != expectRet)
+            return false;
+
+        return true;
+    }
+};
+
 class Test_Float32CmpVec : public TestCase {
 public:
     Test_Float32CmpVec() : TestCase("Float32CmpVec") {}
@@ -1484,7 +1549,7 @@ public:
 
     void compile(BaseCompiler &c) override {
         auto &cc = dynamic_cast<x86::Compiler &>(c);
-        cc.addFunc(FuncSignatureT<int32_t, int32_t *, float *>(CallConv::kIdHost));
+        cc.addFunc(FuncSignatureT<void, float *, float *, int32_t *>(CallConv::kIdHost));
 
         x86::Gp a_ptr = cc.newInt64("a_ptr");
         cc.setArg(0, a_ptr);
@@ -1894,6 +1959,7 @@ void compiler_add_x86_tests(TestApp &app) {
     app.addT<Test_VecInt64GeZero>();
     app.addT<Test_VecInt64LeZero>();
     app.addT<Test_Float64CmpVec>();
+    app.addT<Test_Int32EqNull>();
 }
 
 int main(int argc, char *argv[]) {
