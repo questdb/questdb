@@ -38,6 +38,7 @@ import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.griffin.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -151,6 +152,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlGroupByMapCapacity;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlBindVariablePoolSize;
+    private final int sqlJitMode;
     private final DateLocale locale;
     private final String backupRoot;
     private final DateFormat backupDirTimestampFormat;
@@ -637,6 +639,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.sqlDistinctTimestampKeyCapacity = getInt(properties, env, "cairo.sql.distinct.timestamp.key.capacity", 512);
             this.sqlDistinctTimestampLoadFactor = getDouble(properties, env, "cairo.sql.distinct.timestamp.load.factor", 0.5);
+            this.sqlJitMode = getSqlJitMode(properties, env, "cairo.sql.jit.mode");
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),
@@ -884,6 +887,24 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         return CommitMode.NOSYNC;
+    }
+
+    private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env, String key) {
+        final String jitMode = overrideWithEnv(properties, env, key);
+
+        if (jitMode == null) {
+            return SqlExecutionContext.JIT_MODE_DISABLED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "on")) {
+            return SqlExecutionContext.JIT_MODE_ENABLED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "scalar")) {
+            return SqlExecutionContext.JIT_MODE_FORCE_SCALAR;
+        }
+
+        return SqlExecutionContext.JIT_MODE_DISABLED;
     }
 
     private double getDouble(Properties properties, @Nullable Map<String, String> env, String key, double defaultValue) throws ServerConfigurationException {
@@ -1957,6 +1978,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlSortValuePageSize() {
             return sqlSortValuePageSize;
+        }
+
+        @Override
+        public int getSqlJitMode() {
+            return sqlJitMode;
         }
 
         @Override

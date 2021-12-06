@@ -57,7 +57,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long requestFd = -1;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private long now;
-    private int jitMode = JIT_MODE_DISABLED;
+    private int jitMode;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
         this.cairoConfiguration = cairoEngine.getConfiguration();
@@ -66,6 +66,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.cairoEngine = cairoEngine;
         this.clock = cairoConfiguration.getMicrosecondClock();
         this.cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
+        this.jitMode = cairoConfiguration.getSqlJitMode();
 
         this.telemetryQueue = cairoEngine.getTelemetryQueue();
         if (telemetryQueue != null) {

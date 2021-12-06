@@ -29,6 +29,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.table.CompiledFilterRecordCursorFactory;
+import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
@@ -42,7 +43,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-@Ignore
 @RunWith(Parameterized.class)
 public class CompiledFiltersRegressionTest extends AbstractCairoTest {
 
@@ -87,6 +87,9 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     @Override
     @Before
     public void setUp() {
+        // Disable the test suite on ARM64.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+
         super.setUp();
         bindVariableService.clear();
     }
@@ -280,12 +283,26 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGeoHash() throws Exception {
+    public void testGeoHashValue() throws Exception {
         final String query = "select * from x where geo8a = geo8b";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_geohash(4) geo8a," +
                 " rnd_geohash(4) geo8b" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
+        assertQuery(query, ddl);
+    }
+
+    @Test
+    public void testGeoHashConstant() throws Exception {
+        final String query = "select * from x " +
+                "where geo8 != ##1001 and geo16 != ##100110011001 and geo32 != ##1001100110011001 and geo64 != ##10011001100110011001100110011001";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_geohash(4) geo8," +
+                " rnd_geohash(12) geo16," +
+                " rnd_geohash(16) geo32," +
+                " rnd_geohash(32) geo64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
         assertQuery(query, ddl);
     }

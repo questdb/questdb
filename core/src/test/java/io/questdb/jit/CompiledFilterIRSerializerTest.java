@@ -40,14 +40,14 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
-import static io.questdb.jit.FilterExprIRSerializer.*;
+import static io.questdb.jit.CompiledFilterIRSerializer.*;
 
-public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
+public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     private static TableReader reader;
     private static RecordMetadata metadata;
-    private static MemoryCARW irMem;
-    private static FilterExprIRSerializer serializer;
+    private static MemoryCARW irMemory;
+    private static CompiledFilterIRSerializer serializer;
 
     @BeforeClass
     public static void setUp2() {
@@ -74,19 +74,19 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
 
         reader = new TableReader(configuration, "x");
         metadata = reader.getMetadata();
-        irMem = Vm.getCARWInstance(1024, 1, MemoryTag.NATIVE_DEFAULT);
-        serializer = new FilterExprIRSerializer();
+        irMemory = Vm.getCARWInstance(1024, 1, MemoryTag.NATIVE_DEFAULT);
+        serializer = new CompiledFilterIRSerializer();
     }
 
     @AfterClass
     public static void tearDown2() {
         reader.close();
-        irMem.close();
+        irMemory.close();
     }
 
     @Before
     public void setUp1() {
-        irMem.truncate();
+        irMemory.truncate();
         serializer.clear();
     }
 
@@ -104,7 +104,7 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
             for (String col : typeToColumn.get(type)) {
                 setUp1();
                 serialize(col + " < " + col);
-                assertIR("(" + type + " " + col + ")(" + type + " " + col + ")(<)(ret)");
+                assertIR("different results for " + type, "(" + type + " " + col + ")(" + type + " " + col + ")(<)(ret)");
             }
         }
     }
@@ -142,6 +142,18 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testMixedConstantColumn() throws Exception {
         serialize("anint * 3 + 42.5 + adouble > 1");
+        assertIR("(i32 1L)(f64 adouble)(f64 42.5D)(i32 3L)(i32 anint)(*)(+)(+)(>)(ret)");
+    }
+
+    @Test
+    public void testMixedConstantColumnIntOverflow() throws Exception {
+        serialize("anint * 2147483648 + 42.5 + adouble > 1");
+        assertIR("(i32 1L)(f64 adouble)(f64 42.5D)(i64 2147483648L)(i32 anint)(*)(+)(+)(>)(ret)");
+    }
+
+    @Test
+    public void testMixedConstantColumnFloatConstant() throws Exception {
+        serialize("anint * 3 + 42.5f + adouble > 1");
         assertIR("(i32 1L)(f64 adouble)(f32 42.5D)(i32 3L)(i32 anint)(*)(+)(+)(>)(ret)");
     }
 
@@ -160,11 +172,11 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
 
         for (String[] col : columns) {
             setUp1();
-            String name = col[0];
-            String type = col[1];
-            String value = col[2];
+            final String name = col[0];
+            final String type = col[1];
+            final String value = col[2];
             serialize(name + " <> null");
-            assertIR("(" + type + " " + value + ")(" + type + " " + name + ")(<>)(ret)");
+            assertIR("different results for " + name, "(" + type + " " + value + ")(" + type + " " + name + ")(<>)(ret)");
         }
     }
 
@@ -225,7 +237,7 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
             final String constValue = col[3];
             final String constType = col[4];
             serialize(colName + " > " + constStr);
-            assertIR("(" + constType + " " + constValue + ")(" + colType + " " + colName + ")(>)(ret)");
+            assertIR("different results for " + colName, "(" + constType + " " + constValue + ")(" + colType + " " + colName + ")(>)(ret)");
         }
     }
 
@@ -268,6 +280,30 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
                     "(||)(ret)");
         } finally {
             metadata = originalMetadata;
+        }
+    }
+
+    @Test
+    public void testGeoHashConstant() throws Exception {
+        String[][] columns = new String[][]{
+                {"ageobyte", "i8", "##1", "1L"},
+                {"ageobyte", "i8", "#s", "24L"},
+                {"ageoshort", "i16", "##00000001", "1L"},
+                {"ageoshort", "i16", "#sp", "789L"},
+                {"ageoint", "i32", "##0000000000000001", "1L"},
+                {"ageoint", "i32", "#sp05", "807941L"},
+                {"ageolong", "i64", "##00000000000000000000000000000001", "1L"},
+                {"ageolong", "i64", "#sp052w92p1p8", "888340623145993896L"},
+        };
+
+        for (String[] col : columns) {
+            setUp1();
+            final String name = col[0];
+            final String type = col[1];
+            final String constant = col[2];
+            final String value = col[3];
+            serialize(name + " = " + constant);
+            assertIR("different results for " + name, "(" + type + " " + value + ")(" + type + " " + name + ")(=)(ret)");
         }
     }
 
@@ -467,19 +503,38 @@ public class FilterExprIRSerializerTest extends BaseFunctionFactoryTest {
         serialize("ageolong = 0");
     }
 
+    @Test(expected = SqlException.class)
+    public void testUnsupportedInvalidGeoHashConstant() throws Exception {
+        serialize("ageolong = ##11211");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedGeoHashConstantTooFewBits() throws Exception {
+        serialize("ageolong = ##10001");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedGeoHashConstantTooManyChars() throws Exception {
+        serialize("ageolong = #sp052w92p1p8889");
+    }
+
     private void serialize(CharSequence seq) throws SqlException {
         serialize(seq, false, false);
     }
 
     private int serialize(CharSequence seq, boolean scalar, boolean debug) throws SqlException {
         ExpressionNode node = expr(seq);
-        return serializer.of(irMem, metadata).serialize(node, scalar, debug);
+        return serializer.of(irMemory, metadata).serialize(node, scalar, debug);
+    }
+
+    private void assertIR(String message, String expectedIR) {
+        IRToStringSerializer ser = new IRToStringSerializer(irMemory, metadata);
+        String actualIR = ser.serialize();
+        Assert.assertEquals(message, expectedIR, actualIR);
     }
 
     private void assertIR(String expectedIR) {
-        IRToStringSerializer ser = new IRToStringSerializer(irMem, metadata);
-        String actualIR = ser.serialize();
-        Assert.assertEquals(expectedIR, actualIR);
+        assertIR(null, expectedIR);
     }
 
     private static class IRToStringSerializer {

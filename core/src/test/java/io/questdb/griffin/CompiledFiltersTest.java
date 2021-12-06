@@ -24,6 +24,9 @@
 
 package io.questdb.griffin;
 
+import io.questdb.jit.JitUtil;
+import org.junit.Assume;
+import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -32,6 +35,13 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
 
     // TODO: keep this test for advanced features such as:
     //  * col tops
+    //  * bind variables
+
+    @Before
+    public void setUp() {
+        // Disable the test suite on ARM64.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+    }
 
     @Test
     public void testSelectAllTypesFromRecord() throws Exception {
