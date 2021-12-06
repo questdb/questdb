@@ -46,8 +46,6 @@ import org.junit.*;
 import org.junit.rules.TestName;
 
 import java.net.URISyntaxException;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -445,7 +443,7 @@ public class O3Test extends AbstractO3Test {
         set.add(category);
         set.add(price);
 
-        List<Integer> indexes = new ArrayList<>();
+        IntList indexes = new IntList();
         for (int j = 0, m = newCols.size(); j < m; j++) {
             int columnIndex = writer.getColumnIndex(newCols.getQuick(j));
             indexes.add(columnIndex);
