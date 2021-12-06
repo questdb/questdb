@@ -26,11 +26,4 @@ build_release:
 	packer.json
 
 
-foo: QUESTDB_VERSION?=$(shell $(git) symbolic-ref -q --short HEAD || git describe --tags --exact-match)
-foo: AMI_REGIONS?=$(shell export AWS_REGION=$(AWS_REGION); $(aws) ec2 describe-regions | $(jq) -r '.Regions | map(.RegionName) | join(",")')
-foo:
-	echo $(QUESTDB_VERSION)
-	echo $(AMI_REGIONS)
-
-
 -include ../Mk/phonies
