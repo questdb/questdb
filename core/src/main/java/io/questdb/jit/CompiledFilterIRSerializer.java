@@ -42,7 +42,7 @@ import java.util.Arrays;
  * to be used in SQL JIT compiler.
  *
  * TODO:
- *  * parse symbol literals
+ *  * parse symbol literals (DeferredSymbol* + bind variables)
  */
 public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
 

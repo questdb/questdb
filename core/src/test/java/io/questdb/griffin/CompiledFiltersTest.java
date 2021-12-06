@@ -30,7 +30,6 @@ import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 
-@Ignore
 public class CompiledFiltersTest extends AbstractGriffinTest {
 
     // TODO: keep this test for advanced features such as:
@@ -41,6 +40,11 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
     public void setUp() {
         // Disable the test suite on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
+
+        // Enable JIT.
+        sqlExecutionContext.setJitMode(SqlExecutionContext.JIT_MODE_ENABLED);
+
+        super.setUp();
     }
 
     @Test
@@ -87,6 +91,7 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
         assertQueryRunWithJit(query);
     }
 
+    @Ignore
     @Test
     public void testFilterWithColTops() throws Exception {
         assertMemoryLeak(() -> {
@@ -114,7 +119,6 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
                     "15\t1970-01-01T00:01:54.000000Z\t-4094902006239100839\n" +
                     "16\t1970-01-01T00:01:55.000000Z\t-4474835130332302712\n" +
                     "17\t1970-01-01T00:01:56.000000Z\t-6943924477733600060\n";
-
 
             assertQuery(expected,
                     query,
