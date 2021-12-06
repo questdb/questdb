@@ -516,6 +516,30 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDistinctOrderByMultipleColumns() throws Exception {
+        assertQuery("id\tj\n1\t1\n1\t2\n1\t3\n",
+                "select distinct id, j from x ORDER BY id, j;",
+                "create table x as (" +
+                        "select" +
+                        " 1 id," +
+                        " x j" +
+                        " from long_sequence(3)" +
+                        ")", null);
+    }
+
+    @Test
+    public void testDistinctOrderWithMultipleColumnDoesNotExistInSelectStatement() throws Exception {
+        assertFailure("select distinct id from x ORDER BY id, j;",
+                "create table x as (" +
+                        "select" +
+                        " 1 id," +
+                        " x j" +
+                        " from long_sequence(3)" +
+                        ")"
+                , 39, "for SELECT DISTINCT, ORDER BY expressions must appear in select list");
+    }
+
+    @Test
     public void testDistinctOrderWithColumnDoesNotExistInSelectStatement() throws Exception {
         assertFailure("select distinct id from x ORDER BY j;",
                 "create table x as (" +
