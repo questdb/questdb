@@ -27,9 +27,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.GeoHashUtil;
 import io.questdb.griffin.PostOrderTreeTraversalAlgo;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.*;
 
@@ -40,7 +42,6 @@ import java.util.Arrays;
  * to be used in SQL JIT compiler.
  *
  * TODO:
- *  * parse geohash constant literals
  *  * parse symbol literals
  */
 public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
@@ -285,6 +286,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private void serializeConstant(int position, final CharSequence token, boolean negated) throws SqlException {
+        final int len = token.length();
         final byte typeCode = arithmeticContext.localTypesObserver.constantTypeCode();
         if (typeCode == UNDEFINED_CODE) {
             throw SqlException.position(position).put("all constants expression: ").put(token);
@@ -300,7 +302,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             if (ExpressionType.CHAR != arithmeticContext.expressionType) {
                 throw SqlException.position(position).put("char constant in non-char expression: ").put(token);
             }
-            final int len = token.length();
             if (len == 3) {
                 // this is 'x' - char
                 memory.putByte(IMM_I2);
@@ -326,6 +327,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             memory.putByte(IMM_I1);
             memory.putLong(0);
             return;
+        }
+
+        if (len > 1 && token.charAt(0) == '#') {
+            if (ExpressionType.GEO_HASH != arithmeticContext.expressionType) {
+                throw SqlException.position(position).put("geo hash constant in non-geo hash expression: ").put(token);
+            }
+            ConstantFunction geoConstant = GeoHashUtil.parseGeoHashConstant(position, token, len);
+            if (geoConstant != null) {
+                serializeGeoHash(position, geoConstant, typeCode);
+                return;
+            }
         }
 
         if (ExpressionType.NUMERIC != arithmeticContext.expressionType) {
@@ -367,6 +379,30 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 break;
             default:
                 throw SqlException.position(position).put("unexpected null type: ").put(typeCode);
+        }
+    }
+
+    private void serializeGeoHash(int position, final ConstantFunction geoHashConstant, byte typeCode) throws SqlException {
+        memory.putByte(typeCode);
+        try {
+            switch (typeCode) {
+                case IMM_I1:
+                    memory.putLong(geoHashConstant.getGeoByte(null));
+                    break;
+                case IMM_I2:
+                    memory.putLong(geoHashConstant.getGeoShort(null));
+                    break;
+                case IMM_I4:
+                    memory.putLong(geoHashConstant.getGeoInt(null));
+                    break;
+                case IMM_I8:
+                    memory.putLong(geoHashConstant.getGeoLong(null));
+                    break;
+                default:
+                    throw SqlException.position(position).put("unexpected type code for geo hash: ").put(typeCode);
+            }
+        } catch (UnsupportedOperationException e) {
+            throw SqlException.position(position).put("unexpected type for geo hash: ").put(typeCode);
         }
     }
 
@@ -440,17 +476,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         try {
-            final float f = Numbers.parseFloat(token);
-            memory.putByte(IMM_F4);
-            memory.putDouble(sign * f);
+            final double d = Numbers.parseDouble(token);
+            memory.putByte(IMM_F8);
+            memory.putDouble(sign * d);
             return;
         } catch (NumericException ignore) {
         }
 
         try {
-            final double d = Numbers.parseDouble(token);
-            memory.putByte(IMM_F8);
-            memory.putDouble(sign * d);
+            final float f = Numbers.parseFloat(token);
+            memory.putByte(IMM_F4);
+            memory.putDouble(sign * f);
             return;
         } catch (NumericException ignore) {
         }
