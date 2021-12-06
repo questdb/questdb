@@ -705,25 +705,6 @@ public class MemoryPARWImpl implements MemoryARW {
         return view.of(offset + STRING_LENGTH_BYTES, len);
     }
 
-    public long hash(long offset, long size) {
-        if (roOffsetLo < offset && offset < roOffsetHi - size) {
-            long n = size - (size % 8);
-            long address = absolutePointer + offset;
-
-            long h = 179426491L;
-            for (long i = 0; i < n; i += 8) {
-                h = (h << 5) - h + Unsafe.getUnsafe().getLong(address + i);
-            }
-
-            for (; n < size; n++) {
-                h = (h << 5) - h + Unsafe.getUnsafe().getByte(address + n);
-            }
-            return h;
-        }
-
-        return hash0(offset, size);
-    }
-
     public boolean isMapped(long offset, long len) {
         int pageIndex = pageIndex(offset);
         int pageEndIndex = pageIndex(offset + len - 1);

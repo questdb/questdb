@@ -32,7 +32,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <outputPath>target</outputPath>
         <nodejs.npm.cmd>npm</nodejs.npm.cmd>
-        <nodejs.version>v12.16.2</nodejs.version>
+        <nodejs.version>v12.22.7</nodejs.version>
         <runtime.assembly>none</runtime.assembly>
         <javac.target>11</javac.target>
         <argLine>-Dfile.encoding=UTF-8</argLine>
