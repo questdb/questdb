@@ -507,7 +507,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             bufPos += Long.BYTES;
             int entitiesWritten = 0;
             bufPos += Integer.BYTES;
-            for (int nEntity = 0; nEntity < protoParser.getnEntities(); nEntity++) {
+            for (int nEntity = 0, n = protoParser.getnEntities(); nEntity < n; nEntity++) {
                 if (bufPos + Long.BYTES < bufMax) {
                     ProtoEntity entity = protoParser.getEntity(nEntity);
                     int colIndex = localDetails.getColumnIndex(entity.getName());
