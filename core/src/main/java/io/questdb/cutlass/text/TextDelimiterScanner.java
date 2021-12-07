@@ -103,7 +103,7 @@ public class TextDelimiterScanner implements Closeable {
         }
     }
 
-    byte scan(long address, long hi) throws TextException {
+    byte scan(long address, long hi, boolean expectMore) throws TextException {
         int lineCount = 0;
         boolean quotes = false;
         long cursor = address;
@@ -180,7 +180,8 @@ public class TextDelimiterScanner implements Closeable {
         // calculate standard deviation for every byte in the matrix
         byte delimiter = Byte.MIN_VALUE;
 
-        if (lineCount < 2) {
+        final int minLineCount = expectMore ? 2 : 1;
+        if (lineCount < minLineCount) {
             LOG.info().$("not enough lines [table=").$(tableName).$(']').$();
             throw NotEnoughLinesException.$("not enough lines [table=").put(tableName).put(']');
         }
@@ -230,7 +231,7 @@ public class TextDelimiterScanner implements Closeable {
                     // when stddev of this is less than last - use this
                     // when stddev of this is the same as last then
                     //    choose on priority (higher is better)
-                    //    when priority is the same choose on mean (higher is better
+                    //    when priority is the same choose on mean (higher is better)
                     if (stdDev < lastDelimiterStdDev
                             || (
                             (Math.abs(stdDev - lastDelimiterStdDev) < DOUBLE_TOLERANCE)

@@ -187,8 +187,8 @@ public class TextLoader implements Closeable, Mutable {
         this.textLexer.setSkipLinesWithExtraValues(skipRowsWithExtraValues);
     }
 
-    public void parse(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException {
-        parseMethods.getQuick(state).parse(lo, hi, cairoSecurityContext);
+    public void parse(long lo, long hi, boolean expectMore, CairoSecurityContext cairoSecurityContext) throws TextException {
+        parseMethods.getQuick(state).parse(lo, hi, expectMore, cairoSecurityContext);
     }
 
     public void setState(int state) {
@@ -216,11 +216,11 @@ public class TextLoader implements Closeable, Mutable {
         }
     }
 
-    private void parseData(long lo, long hi, CairoSecurityContext cairoSecurityContext) {
+    private void parseData(long lo, long hi, boolean expectMore, CairoSecurityContext cairoSecurityContext) {
         textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter.getTextListener());
     }
 
-    private void parseJsonMetadata(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException {
+    private void parseJsonMetadata(long lo, long hi, boolean expectMore, CairoSecurityContext cairoSecurityContext) throws TextException {
         try {
             jsonLexer.parse(lo, hi, textMetadataParser);
         } catch (JsonException e) {
@@ -228,11 +228,11 @@ public class TextLoader implements Closeable, Mutable {
         }
     }
 
-    private void parseStructure(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException {
+    private void parseStructure(long lo, long hi, boolean expectMore, CairoSecurityContext cairoSecurityContext) throws TextException {
         if (columnDelimiter > 0) {
             textLexer.of(columnDelimiter);
         } else {
-            textLexer.of(textDelimiterScanner.scan(lo, hi));
+            textLexer.of(textDelimiterScanner.scan(lo, hi, expectMore));
         }
         textLexer.analyseStructure(
                 lo,
@@ -249,6 +249,6 @@ public class TextLoader implements Closeable, Mutable {
 
     @FunctionalInterface
     private interface ParserMethod {
-        void parse(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException;
+        void parse(long lo, long hi, boolean expectMore, CairoSecurityContext cairoSecurityContext) throws TextException;
     }
 }

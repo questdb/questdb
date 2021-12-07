@@ -24,7 +24,35 @@
 
 package io.questdb.cutlass.http;
 
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+import io.questdb.Metrics;
+import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cutlass.NetUtils;
+import io.questdb.cutlass.http.processors.*;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.*;
+import io.questdb.network.*;
+import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.AbstractCharSequence;
+import io.questdb.std.str.ByteSequence;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
 import java.io.InputStream;
 import java.util.concurrent.CountDownLatch;
@@ -35,54 +63,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 
-import io.questdb.cairo.*;
-import io.questdb.std.*;
-import org.jetbrains.annotations.NotNull;
-import org.junit.*;
-import org.junit.rules.TemporaryFolder;
-
-import io.questdb.Metrics;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cutlass.NetUtils;
-import io.questdb.cutlass.http.processors.HealthCheckProcessor;
-import io.questdb.cutlass.http.processors.JsonQueryProcessor;
-import io.questdb.cutlass.http.processors.QueryCache;
-import io.questdb.cutlass.http.processors.StaticContentProcessor;
-import io.questdb.cutlass.http.processors.TextImportProcessor;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
-import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IOContext;
-import io.questdb.network.IOContextFactory;
-import io.questdb.network.IODispatcher;
-import io.questdb.network.IODispatcherConfiguration;
-import io.questdb.network.IODispatchers;
-import io.questdb.network.IOOperation;
-import io.questdb.network.IORequestProcessor;
-import io.questdb.network.Net;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.ByteSequence;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import io.questdb.test.tools.TestUtils;
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class IODispatcherTest {
     public static final String JSON_DDL_RESPONSE = "0d\r\n" +
@@ -1017,6 +998,54 @@ public class IODispatcherTest {
                 NetworkFacadeImpl.INSTANCE,
                 false,
                 120
+        );
+    }
+
+    @Test
+    public void testImportSingleRow() throws Exception {
+        testImport(
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "0666\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|      Location:  |                                          test.csv  |        Pattern  | Locale  |      Errors  |\r\n" +
+                        "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                        "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|   Rows handled  |                                                 1  |                 |         |              |\r\n" +
+                        "|  Rows imported  |                                                 1  |                 |         |              |\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|              0  |                                                f0  |                   STRING  |           0  |\r\n" +
+                        "|              1  |                                                f1  |                   STRING  |           0  |\r\n" +
+                        "|              2  |                                                f2  |                   STRING  |           0  |\r\n" +
+                        "|              3  |                                                f3  |                   STRING  |           0  |\r\n" +
+                        "|              4  |                                                f4  |                TIMESTAMP  |           0  |\r\n" +
+                        "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                "POST /upload HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "User-Agent: curl/7.64.0\r\n" +
+                        "Accept: */*\r\n" +
+                        "Content-Length: 252\r\n" +
+                        "Content-Type: multipart/form-data; boundary=------------------------af41c30bab413e07\r\n" +
+                        "Expect: 100-continue\r\n" +
+                        "\r\n" +
+                        "--------------------------af41c30bab413e07\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"; filename=\"test.csv\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "test,test,test,1.52E+18,2018-01-12T19:28:48.127800Z\r\n" +
+                        "\r\n" +
+                        "--------------------------af41c30bab413e07--",
+                NetworkFacadeImpl.INSTANCE,
+                false,
+                1
         );
     }
 
