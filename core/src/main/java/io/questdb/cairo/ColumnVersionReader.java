@@ -53,7 +53,7 @@ public class ColumnVersionReader implements Closeable {
         return cachedList;
     }
 
-    public void load(long offset, long areaSize) {
+    public void readUnsafe(long offset, long areaSize) {
         resize(offset + areaSize);
 
         int i = 0;

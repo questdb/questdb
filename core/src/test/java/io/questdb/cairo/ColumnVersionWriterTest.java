@@ -61,7 +61,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 w.commit();
                 final long offset = w.getOffset();
                 final long size = w.getSize();
-                r.load(offset, size);
+                r.readUnsafe(offset, size);
                 assertEqual(w.getCachedList(), r.getCachedList());
                 // assert list is ordered by (timestamp,column_index)
 
