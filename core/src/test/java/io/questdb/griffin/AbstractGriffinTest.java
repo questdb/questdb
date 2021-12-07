@@ -29,7 +29,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.griffin.engine.table.CompiledFilterRecordCursorFactory;
 import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -682,7 +681,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected static void assertQueryRunWithJit(CharSequence query) throws Exception {
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         RecordCursorFactory factory = cc.getRecordCursorFactory();
-        Assert.assertTrue("JIT was not enabled for query: " + query, factory instanceof CompiledFilterRecordCursorFactory);
+        Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
         Misc.free(factory);
     }
 

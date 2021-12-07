@@ -428,6 +428,11 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         return true;
     }
 
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
     private void computeYPoints(MapValue x1Value, MapValue x2value) {
         for (int i = 0; i < groupByScalarFunctionCount; i++) {
             InterpolationUtil.StoreYFunction storeYFunction = storeYFunctions.getQuick(i);

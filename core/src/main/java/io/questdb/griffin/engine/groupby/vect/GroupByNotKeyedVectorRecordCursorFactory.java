@@ -158,6 +158,11 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
         return false;
     }
 
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
     static int getRunWhatsLeft(int queuedCount, int reclaimed, int workerId, ObjList<VectorAggregateEntry> activeEntries, SOUnboundedCountDownLatch doneLatch, Log log) {
         for (int i = activeEntries.size() - 1; i > -1 && doneLatch.getCount() > -queuedCount; i--) {
             if (activeEntries.getQuick(i).run(workerId)) {

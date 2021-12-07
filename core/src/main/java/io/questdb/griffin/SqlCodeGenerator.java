@@ -709,10 +709,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateFilter0(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext, ExpressionNode filter) throws SqlException {
         model.setWhereClause(null);
 
-        //todo: check for constant filter
         final Function f = compileFilter(filter, factory.getMetadata(), executionContext);
         if (f.isConstant()) {
-            //noinspection TryFinallyCanBeTryWithResources
             try {
                 if (f.getBool(null)) {
                     return factory;
@@ -723,21 +721,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 f.close();
             }
         }
+
         boolean useJit = executionContext.getJitMode() != SqlExecutionContext.JIT_MODE_DISABLED;
         if (useJit) {
             final boolean optimize = factory.supportPageFrameCursor() && JitUtil.isJitSupported();
             if (optimize) {
-                try {
+                try (TableReader reader = engine.getReader(
+                        executionContext.getCairoSecurityContext(),
+                        model.getTableName().token,
+                        model.getTableId(),
+                        model.getTableVersion())
+                ) {
                     boolean scalarMode = executionContext.getJitMode() == SqlExecutionContext.JIT_MODE_FORCE_SCALAR;
                     int jitOptions = jitIRSerializer.of(jitIRMem, factory.getMetadata()).serialize(filter, scalarMode, false);
                     f.close();
-                    final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
-                    final int topDownColumnCount = topDownColumns.size();
+                    // Restore column indexes from the base factory. We have to use table reader's
+                    // metadata, since factory's metadata is always a GenericRecordMetadata.
                     final IntList columnIndexes = new IntList();
-                    for (int i = 0; i < topDownColumnCount; i++) {
-                        int columnIndex = factory.getMetadata().getColumnIndexQuiet(topDownColumns.getQuick(i).getName());
+                    final int columnCount = factory.getMetadata().getColumnCount();
+                    final TableReaderMetadata readerMetadata = reader.getMetadata();
+                    for (int i = 0; i < columnCount; i++) {
+                        int columnIndex = readerMetadata.getColumnIndexQuiet(factory.getMetadata().getColumnName(i));
                         columnIndexes.add(columnIndex);
                     }
+                    // Try to compile the filter.
                     final CompiledFilter jitFilter = new CompiledFilter();
                     jitFilter.compile(jitIRMem, jitOptions);
                     LOG.info()
@@ -755,6 +762,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
         }
+
         return new FilteredRecordCursorFactory(factory, f);
 
     }

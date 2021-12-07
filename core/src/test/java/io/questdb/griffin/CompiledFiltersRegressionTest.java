@@ -28,7 +28,6 @@ import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.griffin.engine.table.CompiledFilterRecordCursorFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -412,6 +411,17 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
         assertQuery(query, ddl);
     }
 
+    @Test
+    public void testGroupBy() throws Exception {
+        final String query = "select sum(price)/count() from x where price > 0";
+        final String ddl = "create table x as " +
+                "(select rnd_symbol('ABB','HBC','DXR') sym, \n" +
+                " rnd_double() price, \n" +
+                " timestamp_sequence(172800000000, 360000000) ts \n" +
+                "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts) partition by DAY";
+        assertQuery(query, ddl);
+    }
+
     private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {
         final boolean forceScalarJit = jitMode == JitMode.SCALAR;
         assertMemoryLeak(() -> {
@@ -453,7 +463,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
         sqlExecutionContext.setJitMode(SqlExecutionContext.JIT_MODE_DISABLED);
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         RecordCursorFactory factory = cc.getRecordCursorFactory();
-        Assert.assertFalse("JIT was enabled for query: " + query, factory instanceof CompiledFilterRecordCursorFactory);
+        Assert.assertFalse("JIT was enabled for query: " + query, factory.usesCompiledFilter());
         try (CountingRecordCursor cursor = new CountingRecordCursor(factory.getCursor(sqlExecutionContext))) {
             TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
             resultSize = cursor.count();
@@ -465,7 +475,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
         sqlExecutionContext.setJitMode(jitMode);
         cc = compiler.compile(query, sqlExecutionContext);
         factory = cc.getRecordCursorFactory();
-        Assert.assertTrue("JIT was not enabled for query: " + query, factory instanceof CompiledFilterRecordCursorFactory);
+        Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             TestUtils.printCursor(cursor, factory.getMetadata(), true, jitSink, printer);
         } finally {

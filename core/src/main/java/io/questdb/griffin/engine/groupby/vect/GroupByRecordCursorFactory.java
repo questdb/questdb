@@ -283,6 +283,11 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         return true;
     }
 
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
     private static class RostiRecordCursor implements RecordCursor {
         private final RostiRecord record;
         private final long pRosti;

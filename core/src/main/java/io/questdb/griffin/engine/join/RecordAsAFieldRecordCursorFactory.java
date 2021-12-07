@@ -66,6 +66,11 @@ public class RecordAsAFieldRecordCursorFactory implements RecordCursorFactory {
         return base.recordCursorSupportsRandomAccess();
     }
 
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
     private static final class RecordAsAFieldRecord implements Record {
 
         private Record base;

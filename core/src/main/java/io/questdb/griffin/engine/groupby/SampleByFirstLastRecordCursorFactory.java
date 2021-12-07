@@ -134,6 +134,11 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         return false;
     }
 
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
     private void buildFirstLastIndex(
             int[] firstLastIndex,
             int[] queryToFrameColumnMapping,

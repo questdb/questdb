@@ -74,4 +74,9 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return true;
+    }
 }
