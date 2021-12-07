@@ -41,6 +41,7 @@ public class ColumnVersionWriter implements Closeable {
     public static final int OFFSET_OFFSET_B = 24;
     public static final int OFFSET_SIZE_B = 32;
     public static final int BLOCK_SIZE = 4;
+    public static final int BLOCK_SIZE_BYTES = BLOCK_SIZE * Long.BYTES;
     public static final int BLOCK_SIZE_MSB = Numbers.msb(BLOCK_SIZE);
     private final MemoryMARW mem;
     private final LongList cachedList = new LongList();

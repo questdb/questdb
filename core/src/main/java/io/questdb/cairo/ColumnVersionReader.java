@@ -56,18 +56,21 @@ public class ColumnVersionReader implements Closeable {
     public void load(long offset, long areaSize) {
         resize(offset + areaSize);
 
-        long p = offset;
         int i = 0;
+        long p = offset;
         long lim = offset + areaSize;
-        cachedList.setPos((int) ((areaSize / (ColumnVersionWriter.BLOCK_SIZE * 8)) * 4));
+
+        assert areaSize % ColumnVersionWriter.BLOCK_SIZE_BYTES == 0;
+
+        cachedList.setPos((int) ((areaSize / (ColumnVersionWriter.BLOCK_SIZE_BYTES)) * 4));
 
         while (p < lim) {
             cachedList.setQuick(i, mem.getLong(p));
             cachedList.setQuick(i + 1, mem.getLong(p + 8));
             cachedList.setQuick(i + 2, mem.getLong(p + 16));
             cachedList.setQuick(i + 3, mem.getLong(p + 24));
-            i += 4;
-            p += ColumnVersionWriter.BLOCK_SIZE * 8;
+            i += ColumnVersionWriter.BLOCK_SIZE;
+            p += ColumnVersionWriter.BLOCK_SIZE_BYTES;
         }
     }
 

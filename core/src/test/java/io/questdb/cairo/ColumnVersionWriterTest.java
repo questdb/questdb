@@ -42,7 +42,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     @Test
     public void testFuzz() {
         final Rnd rnd = new Rnd();
-        final int N = 10_000;
+        final int N = 100_000;
         try (
                 Path path = new Path();
                 ColumnVersionWriter w = new ColumnVersionWriter(FilesFacadeImpl.INSTANCE, path.of(root).concat("_cv").$(), 0);
@@ -52,7 +52,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
             for (int i = 0; i < N; i++) {
                 // increment from 0 to 4 columns
-                int increment = rnd.nextInt(4);
+                int increment = rnd.nextInt(32);
 
                 for (int j = 0; j < increment; j++) {
                     w.upsert(rnd.nextLong(20), rnd.nextInt(10), rnd.nextLong());
