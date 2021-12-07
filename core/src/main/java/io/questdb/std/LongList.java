@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.BinarySearch;
 import io.questdb.std.str.CharSink;
 
 import java.util.Arrays;
@@ -122,51 +123,47 @@ public class LongList implements Mutable, LongVec {
         // please ensure these implementations are in sync
 
         int low = 0;
-        int high = pos;
-
-        if (low == high) {
-            return -1;
-        }
-
-        while (low < high) {
-
-            if (high - low < 65) {
-                return scanSearch(value, low, high);
-            }
-
-            int mid = (low + high - 1) >>> 1;
-            long midVal = data[mid];
+        int high = pos - 1;
+        while (high - low > 65) {
+            final int mid = (low + high) / 2;
+            final long midVal = data[mid];
 
             if (midVal < value) {
-                if (low < mid) {
-                    low = mid;
-                } else {
-                    if (data[high] > value) {
-                        return -low - 1;
-                    }
-                    return -high - 1;
-                }
-            } else if (midVal > value)
-                high = mid;
-            else {
+                low = mid;
+            } else if (midVal > value) {
+                high = mid - 1;
+            } else {
                 // In case of multiple equal values, find the first
-                mid += scanDir;
-                while (mid > 0 && mid <= high && data[mid] == midVal) {
-                    mid += scanDir;
-                }
-                return mid - scanDir;
+                return scanDir == BinarySearch.SCAN_UP ?
+                        scrollUp(mid, midVal) :
+                        scrollDown(high, mid, midVal);
             }
         }
+        return scanDir == BinarySearch.SCAN_UP ?
+                scanUp(value, low, high + 1) :
+                scanDown(value, low, high + 1);
+    }
 
-        if (data[low] > value) {
-            return -low - 1;
-        }
+    private int scrollDown(int high, int mid, long midVal) {
+        do {
+            if (mid < high) {
+                mid++;
+            } else {
+                return mid;
+            }
+        } while (data[mid] == midVal);
+        return mid - 1;
+    }
 
-        if (data[low] == value) {
-            return low;
-        }
-
-        return -(low + 1) - 1;
+    private int scrollUp(int mid, long midVal) {
+        do {
+            if (mid > 0) {
+                mid--;
+            } else {
+                return 0;
+            }
+        } while (data[mid] == midVal);
+        return mid + 1;
     }
 
     public int binarySearchBlock(int shl, long value, int scanDir) {
@@ -314,7 +311,10 @@ public class LongList implements Mutable, LongVec {
      * @return element at the specified position.
      */
     public long getQuick(int index) {
-        assert index < pos;
+//        assert index < pos;
+        if (index >= pos) {
+            System.out.println("shoot");
+        }
         return data[index];
     }
 
@@ -486,19 +486,6 @@ public class LongList implements Mutable, LongVec {
         return -1;
     }
 
-    private int scanSearch(long v, int low, int high) {
-        for (int i = low; i < high; i++) {
-            long f = data[i];
-            if (f == v) {
-                return i;
-            }
-            if (f > v) {
-                return -(i + 1);
-            }
-        }
-        return -(high + 1);
-    }
-
     private int scanSearchBlock(long v, int low, int high, int shl) {
         for (int i = low; i < high; i++) {
             int index = i << shl;
@@ -511,5 +498,31 @@ public class LongList implements Mutable, LongVec {
             }
         }
         return -((high << shl) + 1);
+    }
+
+    private int scanDown(long v, int low, int high) {
+        for (int i = high - 1; i >= low; i--) {
+            long that = data[i];
+            if (that == v) {
+                return i;
+            }
+            if (that < v) {
+                return -(i + 2);
+            }
+        }
+        return -(low + 1);
+    }
+
+    private int scanUp(long value, int low, int high) {
+        for (int i = low; i < high; i++) {
+            long that = data[i];
+            if (that == value) {
+                return i;
+            }
+            if (that > value) {
+                return -(i + 1);
+            }
+        }
+        return -(high + 1);
     }
 }
