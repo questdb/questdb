@@ -678,13 +678,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 false);
     }
 
-    protected static void assertQueryRunWithJit(CharSequence query) throws Exception {
-        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-        RecordCursorFactory factory = cc.getRecordCursorFactory();
-        Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
-        Misc.free(factory);
-    }
-
     protected static void assertQueryExpectSize(CharSequence expected,
                                                 CharSequence query,
                                                 CharSequence ddl) throws Exception {
@@ -1132,6 +1125,13 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 sink,
                 expected
         );
+    }
+
+    protected void assertSqlRunWithJit(CharSequence query) throws Exception {
+        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+        try (RecordCursorFactory factory = cc.getRecordCursorFactory()) {
+            Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
+        }
     }
 
     protected void createPopulateTable(

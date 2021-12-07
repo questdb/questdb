@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderSelectedColumnRecord;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
@@ -44,15 +45,22 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private PageFrameCursor pageFrameCursor;
     private RecordMetadata metadata;
 
-    private CompiledFilter filter;
+    // Java based filter; used for page frames with present column tops
+    private Function colTopsFilter;
+    // JIT compiled filter; used for dense page frames (no column tops)
+    private CompiledFilter compiledFilter;
     private DirectLongList rows;
     private DirectLongList columns;
 
+    private int partitionIndex;
+    // The following fields are used for table iteration:
+    // when compiled filter is in use they store rows array indexes;
+    // when Java filter is in use they store rowids
     private long hi;
     private long current;
-    private int partitionIndex;
 
     private BooleanSupplier next;
+    private final BooleanSupplier nextColTopsRow = this::nextColTopsRow;
     private final BooleanSupplier nextRow = this::nextRow;
     private final BooleanSupplier nextPage = this::nextPage;
 
@@ -63,12 +71,14 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
     public void of(
             RecordCursorFactory factory,
-            CompiledFilter filter,
+            Function filter,
+            CompiledFilter compiledFilter,
             DirectLongList rows,
             DirectLongList columns,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        this.filter = filter;
+        this.colTopsFilter = filter;
+        this.compiledFilter = compiledFilter;
         this.rows = rows;
         this.columns = columns;
         this.pageFrameCursor = factory.getPageFrameCursor(executionContext);
@@ -76,6 +86,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
         this.recordB.of(pageFrameCursor.getTableReader());
         this.metadata = factory.getMetadata();
         this.next = nextPage;
+        colTopsFilter.init(this, executionContext);
     }
 
     @Override
@@ -100,6 +111,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
     @Override
     public void toTop() {
+        colTopsFilter.toTop();
         pageFrameCursor.toTop();
         next = nextPage;
     }
@@ -119,6 +131,25 @@ class CompiledFilterRecordCursor implements RecordCursor {
         return -1;
     }
 
+    private boolean nextColTopsRow() {
+        seekNextColTopsRow();
+        if (current < hi) {
+            return true;
+        }
+        return nextPage();
+    }
+
+    private void seekNextColTopsRow() {
+        current += 1;
+        while (current < hi) {
+            recordA.jumpTo(partitionIndex, current);
+            if (colTopsFilter.getBool(recordA)) {
+                return;
+            }
+            current += 1;
+        }
+    }
+
     private boolean nextRow() {
         if (current < hi) {
             recordA.jumpTo(partitionIndex, rows.get(current++));
@@ -129,20 +160,51 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
     private boolean nextPage() {
         PageFrame frame;
+        final TableReader reader = pageFrameCursor.getTableReader();
+        final int tableColumnCount = reader.getMetadata().getColumnCount();
+        final int metadataColumnCount = metadata.getColumnCount();
         while ((frame = pageFrameCursor.next()) != null) {
-            int sz = metadata.getColumnCount();
-            columns.extend(sz);
+            partitionIndex = frame.getPartitionIndex();
+
+            final int base = reader.getColumnBase(partitionIndex);
+            boolean hasColumnTops = false;
+            for (int columnIndex = 0; columnIndex < tableColumnCount; columnIndex++) {
+                final long top = reader.getColumnTop(base, columnIndex);
+                if (top > frame.getPartitionLo()) {
+                    hasColumnTops = true;
+                    break;
+                }
+            }
+
+            if (hasColumnTops) {
+                // Use Java filter implementation in case of a page frame with column tops.
+
+                current = frame.getPartitionLo() - 1;
+                hi = frame.getPartitionHi();
+                seekNextColTopsRow();
+
+                if (current < hi) {
+                    recordB.jumpTo(partitionIndex, current);
+                    next = nextColTopsRow;
+                    return true;
+                }
+                continue;
+            }
+
+            // Use compiled filter in case of a dense page frame.
+
+            columns.extend(tableColumnCount);
             columns.clear();
-            for (int columnIndex = 0; columnIndex < sz; columnIndex++) {
+            for (int columnIndex = 0; columnIndex < metadataColumnCount; columnIndex++) {
                 final long columnBaseAddress = frame.getPageAddress(columnIndex);
                 columns.add(columnBaseAddress);
             }
             final long rowCount = frame.getPartitionHi() - frame.getPartitionLo();
+            // TODO: page frames may be quite large; we may want to break them into smaller subframes
             rows.extend(rowCount);
 
-            partitionIndex = frame.getPartitionIndex();
             current = 0;
-            hi = filter.call(
+            hi = compiledFilter.call(
                     columns.getAddress(),
                     columns.size(),
                     rows.getAddress(),

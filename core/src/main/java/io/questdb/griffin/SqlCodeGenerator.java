@@ -734,7 +734,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 ) {
                     boolean scalarMode = executionContext.getJitMode() == SqlExecutionContext.JIT_MODE_FORCE_SCALAR;
                     int jitOptions = jitIRSerializer.of(jitIRMem, factory.getMetadata()).serialize(filter, scalarMode, false);
-                    f.close();
                     // Restore column indexes from the base factory. We have to use table reader's
                     // metadata, since factory's metadata is always a GenericRecordMetadata.
                     final IntList columnIndexes = new IntList();
@@ -750,7 +749,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     LOG.info()
                             .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
                             .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
-                    return new CompiledFilterRecordCursorFactory(factory, columnIndexes, jitFilter);
+                    return new CompiledFilterRecordCursorFactory(factory, columnIndexes, f, jitFilter);
                 } catch (SqlException ex) {
                     LOG.debug()
                             .$("JIT cannot be applied to (sub)query [tableName=").utf8(model.getName())

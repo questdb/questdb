@@ -33,17 +33,14 @@ import org.junit.Test;
 public class CompiledFiltersTest extends AbstractGriffinTest {
 
     // TODO: keep this test for advanced features such as:
-    //  * col tops
     //  * bind variables
 
     @Before
     public void setUp() {
         // Disable the test suite on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
-
         // Enable JIT.
         sqlExecutionContext.setJitMode(SqlExecutionContext.JIT_MODE_ENABLED);
-
         super.setUp();
     }
 
@@ -88,7 +85,33 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
                 "k",
                 true);
 
-        assertQueryRunWithJit(query);
+        assertSqlRunWithJit(query);
+    }
+
+    @Test
+    public void testMultiplePartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t1 as (select " +
+                    " x," +
+                    " timestamp_sequence(to_timestamp('1970-01-01', 'yyyy-MM-dd'), 100000L) ts " +
+                    "from long_sequence(1000)) timestamp(ts) partition by day", sqlExecutionContext);
+
+            compiler.compile("insert into t1 select " +
+                    " x," +
+                    " timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) ts " +
+                    "from long_sequence(1000)", sqlExecutionContext);
+
+            final String query = "select * from t1 where x < 3";
+            final String expected = "x\tts\n" +
+                    "1\t1970-01-01T00:00:00.000000Z\n" +
+                    "2\t1970-01-01T00:00:00.100000Z\n" +
+                    "1\t1970-01-02T00:00:00.000000Z\n" +
+                    "2\t1970-01-02T00:00:00.100000Z\n";
+
+            assertSql(query, expected);
+
+            assertSqlRunWithJit(query);
+        });
     }
 
     @Ignore
@@ -102,11 +125,11 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
 
             compiler.compile("alter table t1 add j long", sqlExecutionContext);
 
-            compiler.compile("insert into t1 select x," +
-                            "timestamp_sequence(100000000, 1000000) ts," +
+            compiler.compile("insert into t1 select " +
+                            " x," +
+                            " timestamp_sequence(100000000, 1000000) ts," +
                             " rnd_long() j " +
-                            "from long_sequence(20)",
-                    sqlExecutionContext);
+                            "from long_sequence(20)", sqlExecutionContext);
 
             final String query = "select * from t1 where j < 0";
             final String expected = "x\tts\tj\n" +
@@ -120,13 +143,9 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
                     "16\t1970-01-01T00:01:55.000000Z\t-4474835130332302712\n" +
                     "17\t1970-01-01T00:01:56.000000Z\t-6943924477733600060\n";
 
-            assertQuery(expected,
-                    query,
-                    null,
-                    "ts",
-                    true);
+            assertSql(query, expected);
 
-            assertQueryRunWithJit(query);
+            assertSqlRunWithJit(query);
         });
     }
 }

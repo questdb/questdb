@@ -88,7 +88,6 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     public void setUp() {
         // Disable the test suite on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
-
         super.setUp();
         bindVariableService.clear();
     }
@@ -407,7 +406,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(to_timestamp('2021-11-29T10:00:00', 'yyyy-MM-ddTHH:mm:ss'), 500000000) as k," +
                 " rnd_int() i32" +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQuery(query, ddl);
     }
 
@@ -418,8 +417,27 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
                 "(select rnd_symbol('ABB','HBC','DXR') sym, \n" +
                 " rnd_double() price, \n" +
                 " timestamp_sequence(172800000000, 360000000) ts \n" +
-                "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts) partition by DAY";
+                "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts)";
         assertQuery(query, ddl);
+    }
+
+    @Ignore
+    @Test
+    public void testHugeFilter() throws Exception {
+        final int N = 1024;
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long() i64 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+
+        FilterGenerator gen = new FilterGenerator();
+        for (int i = 0; i < N; i++) {
+            if (i > 0) {
+                gen.withAnyOf(" and ");
+            }
+            gen.withAnyOf("i64 = 1");
+        }
+        assertGeneratedQuery("select * from x", ddl, gen);
     }
 
     private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {

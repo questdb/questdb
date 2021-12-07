@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -36,16 +37,23 @@ import org.jetbrains.annotations.NotNull;
 
 public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
     private final RecordCursorFactory factory;
-    private final CompiledFilter filter;
+    private final Function filter;
+    private final CompiledFilter compiledFilter;
     private final CompiledFilterRecordCursor cursor;
     private final DirectLongList rows;
     private final DirectLongList columns;
 
-    public CompiledFilterRecordCursorFactory(@NotNull RecordCursorFactory factory, @NotNull IntList columnIndexes, @NotNull CompiledFilter filter) {
+    public CompiledFilterRecordCursorFactory(
+            @NotNull RecordCursorFactory factory,
+            @NotNull IntList columnIndexes,
+            @NotNull Function filter,
+            @NotNull CompiledFilter compiledFilter
+    ) {
         assert !(factory instanceof FilteredRecordCursorFactory);
         assert !(factory instanceof CompiledFilterRecordCursorFactory);
         this.factory = factory;
         this.filter = filter;
+        this.compiledFilter = compiledFilter;
         this.cursor = new CompiledFilterRecordCursor(columnIndexes);
         this.rows = new DirectLongList(1024);
         this.columns = new DirectLongList(16);
@@ -55,13 +63,14 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
     public void close() {
         factory.close();
         filter.close();
+        compiledFilter.close();
         rows.close();
         columns.close();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        this.cursor.of(factory, filter, rows, columns, executionContext);
+        this.cursor.of(factory, filter, compiledFilter, rows, columns, executionContext);
         return this.cursor;
     }
 
