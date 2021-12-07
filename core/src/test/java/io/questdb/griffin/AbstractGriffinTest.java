@@ -426,12 +426,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             }
         } else {
             try {
-                record.getRowId();
-                Assert.fail();
-            } catch (UnsupportedOperationException ignore) {
-            }
-
-            try {
                 cursor.getRecordB();
                 Assert.fail();
             } catch (UnsupportedOperationException ignore) {
