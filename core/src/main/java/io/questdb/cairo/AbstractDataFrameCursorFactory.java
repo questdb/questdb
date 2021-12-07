@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrameCursorFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.str.CharSink;
 
 public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorFactory {
@@ -56,5 +57,10 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
 
     @Override
     public void close() {
+    }
+
+    @Override
+    public boolean supportTableRowId(CharSequence tableName) {
+        return Chars.equalsIgnoreCaseNc(tableName, this.tableName);
     }
 }

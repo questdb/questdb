@@ -91,6 +91,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
         return false;
     }
 
+    default boolean supportTableRowId(CharSequence tableName) {
+        return false;
+    }
+
     default void toSink(CharSink sink) {
         throw new UnsupportedOperationException();
     }

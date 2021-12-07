@@ -43,7 +43,6 @@ import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.griffin.update.UpdateStatement;
-import io.questdb.griffin.update.UpdateStatementBuilder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -1915,29 +1914,60 @@ public class SqlCompiler implements Closeable {
         final QueryModel tableQueryModel = selectQueryModel.getNestedModel();
 
         // First generate plan for nested SELECT QueryModel
-        final UpdateStatementBuilder updateStatementBuilder = codeGenerator.generateUpdate(selectQueryModel, executionContext);
-//
-//        tableQueryModel.setIsUpdate(false);
-//        final RecordCursorFactory f = codeGenerator.generate(tableQueryModel, executionContext);
-
-        // todo:
-        // join factory (f) has master with the rowids needed to update
-        // we cannot match the columns however as updateQueryModel lost the right-hand side of the SET clauses
-        // otherwise it would be possible to lookup matching column indexes via join metadata
-        // f is constructed here using regular optimiser
+        final RecordCursorFactory updateStatementData = codeGenerator.generate(selectQueryModel, executionContext);
 
         // And then generate plan for UPDATE top level QueryModel
-        final IntList tableColumnTypes = tableQueryModel.getTableColumnTypes();
+        final IntList tableColumnTypes = tableQueryModel.getUpdateTableColumnTypes();
         final ObjList<CharSequence> tableColumnNames = tableQueryModel.getBottomUpColumnNames();
         final int tableId = tableQueryModel.getTableId();
         final long tableVersion = tableQueryModel.getTableVersion();
-        return updateStatementBuilder.buildUpdate(
+        return generateUpdateStatement(
                 updateQueryModel,
                 tableColumnTypes,
                 tableColumnNames,
                 tableId,
                 tableVersion,
-                executionContext.getBindVariableService()
+                updateStatementData,
+                configuration.getRandom()
+        );
+    }
+
+    private static UpdateStatement generateUpdateStatement(
+            @Transient QueryModel updateQueryModel,
+            @Transient IntList tableColumnTypes,
+            @Transient ObjList<CharSequence> tableColumnNames,
+            int tableId,
+            long tableVersion,
+            RecordCursorFactory rowIdFactory,
+            Rnd rnd
+    ) throws SqlException {
+        String tableName = Chars.toString(updateQueryModel.getTableName().token);
+        if (!rowIdFactory.supportTableRowId(tableName)) {
+            throw SqlException.$(updateQueryModel.getModelPosition(), "Only simple UPDATE statements without joins are supported");
+        }
+
+        // Check that virtualColumnFunctions match types of updateTableMetadata
+        RecordMetadata valuesResultMetadata = rowIdFactory.getMetadata();
+
+        for (int i = 0, n = valuesResultMetadata.getColumnCount(); i < n; i++) {
+            int virtualColumnType = valuesResultMetadata.getColumnType(i);
+            CharSequence updateColumnName = valuesResultMetadata.getColumnName(i);
+            int tableColumnIndex = tableColumnNames.indexOf(updateColumnName);
+            int columnType = tableColumnTypes.get(tableColumnIndex);
+
+            if (virtualColumnType != columnType) {
+                // get column position
+                ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
+                int position = setRhs.position;
+                throw SqlException.inconvertibleTypes(position, virtualColumnType, "", columnType, updateColumnName);
+            }
+        }
+
+        return new UpdateStatement(
+                tableName,
+                rowIdFactory,
+                tableId,
+                tableVersion
         );
     }
 

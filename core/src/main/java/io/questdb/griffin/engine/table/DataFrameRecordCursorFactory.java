@@ -120,6 +120,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         return cursor;
     }
 
+    @Override
+    public boolean supportTableRowId(CharSequence tableName) {
+        return dataFrameCursorFactory.supportTableRowId(tableName);
+    }
+
     public static class TableReaderPageFrameCursor implements PageFrameCursor {
         private final LongList columnPageNextAddress = new LongList();
         private final LongList columnPageAddress = new LongList();

@@ -25,42 +25,25 @@
 package io.questdb.griffin.update;
 
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 import java.io.Closeable;
 
 public class UpdateStatement implements Closeable {
     public final static UpdateStatement EMPTY = new UpdateStatement();
-    private final CharSequence updateTableName;
+    private final String updateTableName;
     private RecordCursorFactory rowIdFactory;
-    private Function rowIdFilter;
-    private Function postJoinFilter;
-    private RecordMetadata valuesMetadata;
-    private UpdateStatementMasterCursorFactory joinRecordCursorFactory;
-    private RecordColumnMapper columnMapper;
     private int tableId;
     private long tableVersion;
 
     public UpdateStatement(
-            CharSequence tableName,
+            String tableName,
             RecordCursorFactory rowIdFactory,
-            Function rowIdFilter,
-            Function joinFilter,
-            RecordMetadata valuesMetadata,
-            UpdateStatementMasterCursorFactory joinRecordCursorFactory,
-            RecordColumnMapper columnMapper,
             int tableId,
             long tableVersion
     ) {
         this.updateTableName = tableName;
         this.rowIdFactory = rowIdFactory;
-        this.rowIdFilter = rowIdFilter;
-        this.postJoinFilter = joinFilter;
-        this.valuesMetadata = valuesMetadata;
-        this.joinRecordCursorFactory = joinRecordCursorFactory;
-        this.columnMapper = columnMapper;
         this.tableId = tableId;
         this.tableVersion = tableVersion;
     }
@@ -71,12 +54,7 @@ public class UpdateStatement implements Closeable {
 
     @Override
     public void close() {
-        columnMapper = Misc.free(columnMapper);
         rowIdFactory = Misc.free(rowIdFactory);
-        rowIdFilter = Misc.free(rowIdFilter);
-        valuesMetadata = Misc.free(valuesMetadata);
-        postJoinFilter = Misc.free(postJoinFilter);
-        joinRecordCursorFactory = Misc.free(joinRecordCursorFactory);
     }
 
     public int getTableId() {
@@ -87,39 +65,12 @@ public class UpdateStatement implements Closeable {
         return tableVersion;
     }
 
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        columnMapper.init(symbolTableSource, executionContext);
-        if (rowIdFilter != null) {
-            rowIdFilter.init(symbolTableSource, executionContext);
-        }
-    }
-
-    public RecordColumnMapper getColumnMapper() {
-        return columnMapper;
-    }
-
-    public UpdateStatementMasterCursorFactory getJoinRecordCursorFactory() {
-        return joinRecordCursorFactory;
-    }
-
-    public Function getPostJoinFilter() {
-        return postJoinFilter;
-    }
-
     public RecordCursorFactory getRowIdFactory() {
         return rowIdFactory;
     }
 
-    public Function getRowIdFilter() {
-        return rowIdFilter;
-    }
-
     public CharSequence getUpdateTableName() {
         return updateTableName;
-    }
-
-    public RecordMetadata getValuesMetadata() {
-        return valuesMetadata;
     }
 
     public void setTableId(int tableId) {

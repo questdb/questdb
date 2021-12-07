@@ -38,8 +38,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
 
-import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
-import static io.questdb.griffin.model.ExpressionNode.LITERAL;
+import static io.questdb.griffin.model.ExpressionNode.*;
 
 class SqlOptimiser {
 
@@ -690,7 +689,7 @@ class SqlOptimiser {
 
     private void copyColumnTypesFromMetadata(QueryModel model, TableReaderMetadata m){
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
-            model.addTableColumnType(m.getColumnType(i));
+            model.addUpdateTableColumnMetadata(m.getColumnType(i), m.getColumnName(i));
         }
     }
 
@@ -701,9 +700,6 @@ class SqlOptimiser {
             CharSequence columnName = createColumnAlias(m.getColumnName(i), model, cleanColumnNames);
             QueryColumn column = queryColumnPool.next().of(columnName, expressionNodePool.next().of(LITERAL, columnName, 0, 0));
             model.addField(column);
-            if (model.isUpdate()) {
-                model.addTableColumnType(m.getColumnType(i));
-            }
         }
 
         // validate explicitly defined timestamp, if it exists
@@ -1372,6 +1368,9 @@ class SqlOptimiser {
             final QueryModel nested = model.getNestedModel();
             if (nested != null) {
                 enumerateTableColumns(nested, executionContext);
+                if (model.isUpdate()) {
+                    model.copyUpdateTableMetadata(nested);
+                }
                 // copy columns of nested model onto parent one
                 // we must treat sub-query just like we do a table
 //                model.copyColumnsFrom(nested, queryColumnPool, expressionNodePool);
@@ -1885,18 +1884,23 @@ class SqlOptimiser {
     }
 
     void optimiseUpdate(QueryModel updateQueryModel, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        QueryModel optimisedNested = optimise(updateQueryModel.getNestedModel(), sqlExecutionContext);
+        final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
+        selectQueryModel.setIsUpdate(true);
+        QueryModel optimisedNested = optimise(selectQueryModel, sqlExecutionContext);
+        assert optimisedNested.isUpdate();
         updateQueryModel.setNestedModel(optimisedNested);
-        validateUpdateColumns(updateQueryModel, sqlExecutionContext);
+
+        // And then generate plan for UPDATE top level QueryModel
+        validateUpdateColumns(updateQueryModel, sqlExecutionContext, optimisedNested.getTableId(), optimisedNested.getTableVersion());
     }
 
-    private void validateUpdateColumns(QueryModel updateQueryModel, SqlExecutionContext executionContext) throws SqlException {
+    private void validateUpdateColumns(QueryModel updateQueryModel, SqlExecutionContext executionContext, int tableId, long tableVersion) throws SqlException {
         try (
                 TableReader r = engine.getReader(
                         executionContext.getCairoSecurityContext(),
                         updateQueryModel.getTableName().token,
-                        TableUtils.ANY_TABLE_ID,
-                        TableUtils.ANY_TABLE_VERSION
+                        tableId,
+                        tableVersion
                 )
         ) {
             TableReaderMetadata metadata = r.getMetadata();
@@ -3163,6 +3167,10 @@ class SqlOptimiser {
             root.setUnionModel(model.getUnionModel());
             root.setSetOperationType(model.getSetOperationType());
             root.setModelPosition(model.getModelPosition());
+            if (model.isUpdate()) {
+                root.setIsUpdate(true);
+                root.copyUpdateTableMetadata(model);
+            }
         }
         return root;
     }

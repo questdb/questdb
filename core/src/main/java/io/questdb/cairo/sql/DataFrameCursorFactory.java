@@ -44,4 +44,6 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable {
     default void toSink(CharSink sink) {
         throw new UnsupportedOperationException();
     }
+
+    boolean supportTableRowId(CharSequence tableName);
 }

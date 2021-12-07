@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
@@ -120,7 +119,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final QueryWithClauseModel withClauseModel = new QueryWithClauseModel();
     private int modelType;
     private final ObjList<ExpressionNode> updateSetColumns = new ObjList<>();
-    private final IntList tableColumnTypes = new IntList();
+    private final IntList updateTableColumnTypes = new IntList();
+    private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
+    private QueryModel updateTableModel;
 
     private QueryModel() {
         joinModels.add(this);
@@ -154,8 +155,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         aliasToColumnMap.put(alias, column);
     }
 
-    public void addTableColumnType(int columnType) {
-        tableColumnTypes.add(columnType);
+    public void addUpdateTableColumnMetadata(int columnType, String columnName) {
+        updateTableColumnTypes.add(columnType);
+        updateTableColumnNames.add(columnName);
     }
 
     public void addGroupBy(ExpressionNode node) {
@@ -245,7 +247,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         isUpdateModel = false;
         modelType = ExecutionModel.QUERY;
         updateSetColumns.clear();
-        tableColumnTypes.clear();
+        updateTableColumnTypes.clear();
+        updateTableColumnNames.clear();
+        updateTableModel = null;
     }
 
     public void clearColumnMapStructs() {
@@ -304,6 +308,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.orderByDirectionAdvice.addAll(orderByDirection);
     }
 
+    public void copyUpdateTableMetadata(QueryModel updateTableModel) {
+        this.updateTableModel = updateTableModel;
+        this.tableId = updateTableModel.tableId;
+        this.tableVersion = updateTableModel.tableVersion;
+    }
+
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
         for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
             QueryColumn qc = bottomUpColumns.getQuick(i);
@@ -318,8 +328,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return alias;
     }
 
-    public IntList getTableColumnTypes() {
-        return tableColumnTypes;
+    public IntList getUpdateTableColumnTypes() {
+        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnTypes() : updateTableColumnTypes;
+    }
+
+    public ObjList<CharSequence> getUpdateTableColumnNames() {
+        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnNames() : updateTableColumnNames;
     }
 
     public ObjList<ExpressionNode> getUpdateExpressions() {

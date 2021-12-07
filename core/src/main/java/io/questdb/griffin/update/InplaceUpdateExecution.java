@@ -76,7 +76,7 @@ public class InplaceUpdateExecution implements Closeable {
             throw ReaderOutOfDateException.of(tableWriter.getTableName());
         }
 
-        RecordMetadata updateMetadata = updateStatement.getValuesMetadata();
+        RecordMetadata updateMetadata = updateStatement.getRowIdFactory().getMetadata();
         int updateStatementColumnCount = updateMetadata.getColumnCount();
 
         // Build index column map from table to update to values returned in the update statement row cursors
@@ -97,49 +97,22 @@ public class InplaceUpdateExecution implements Closeable {
         // Track how many records updated
         long rowsUpdated = 0;
 
-        UpdateStatementMasterCursor joinCursor = null;
         // Start row by row updates
         try (RecordCursor recordCursor = rowIdFactory.getCursor(executionContext)) {
-            updateStatement.init(recordCursor, executionContext);
 
-            // If this update has a join (FROM clause), execute the join
-            if (updateStatement.getJoinRecordCursorFactory() != null) {
-                joinCursor = updateStatement.getJoinRecordCursorFactory().getCursor(executionContext);
-            }
             Record masterRecord = recordCursor.getRecord();
             long currentPartitionIndex = -1L;
-            Function filter = updateStatement.getRowIdFilter();
-            Function postJoinFilter = updateStatement.getPostJoinFilter();
 
+            long lastRowId = -1;
             while (recordCursor.hasNext()) {
-                if (filter != null && !filter.getBool(masterRecord)) {
-                    continue;
-                }
-
-                Record record = masterRecord;
-                if (joinCursor != null) {
-                    joinCursor.setMaster(record);
-                    record = joinCursor.getRecord();
-                    boolean found = false;
-
-                    // Scroll through joint records
-                    while(joinCursor.hasNext()) {
-                        if (postJoinFilter == null || postJoinFilter.getBool(record)) {
-                            // Found joint record which satisfies post join filter
-                            found = true;
-                            break;
-                        }
-                    }
-
-                    if (!found) {
-                        continue;
-                    }
-
-                } else if (postJoinFilter != null && !postJoinFilter.getBool(record)) {
-                    continue;
-                }
-
                 long rowId = masterRecord.getRowId();
+
+                // Some joins expand results set and returns same row multiple times
+                if (rowId == lastRowId) {
+                    continue;
+                }
+                lastRowId = rowId;
+
                 int partitionIndex = Rows.toPartitionIndex(rowId);
                 long partitionRowId = Rows.toLocalRowID(rowId);
                 if (partitionIndex != currentPartitionIndex) {
@@ -155,16 +128,12 @@ public class InplaceUpdateExecution implements Closeable {
                         updateStatementColumnCount,
                         updateMemory,
                         partitionRowId,
-                        updateStatement.getColumnMapper(),
-                        record);
+                        masterRecord);
                 rowsUpdated++;
             }
         } finally {
             for(int i = 0; i < updateMemory.size(); i++) {
                 updateMemory.getQuick(i).close(false);
-            }
-            if (joinCursor != null) {
-                joinCursor.close();
             }
         }
         if (rowsUpdated > 0) {
@@ -178,7 +147,6 @@ public class InplaceUpdateExecution implements Closeable {
             int columnCount,
             ObjList<MemoryCMARW> updateMemory,
             long rowId,
-            RecordColumnMapper columnMapper,
             Record record
     ) throws SqlException {
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -187,32 +155,32 @@ public class InplaceUpdateExecution implements Closeable {
 
             switch (columnType) {
                 case ColumnType.INT:
-                    primaryColMem.putInt(rowId << 2, columnMapper.getInt(record, columnIndex));
+                    primaryColMem.putInt(rowId << 2, record.getInt(columnIndex));
                     break;
                 case ColumnType.FLOAT:
-                    primaryColMem.putFloat(rowId << 2, columnMapper.getFloat(record, columnIndex));
+                    primaryColMem.putFloat(rowId << 2, record.getFloat(columnIndex));
                     break;
                 case ColumnType.LONG:
-                    primaryColMem.putLong(rowId << 3, columnMapper.getLong(record, columnIndex));
+                    primaryColMem.putLong(rowId << 3, record.getLong(columnIndex));
                     break;
                 case ColumnType.TIMESTAMP:
-                    primaryColMem.putLong(rowId << 3, columnMapper.getTimestamp(record, columnIndex));
+                    primaryColMem.putLong(rowId << 3, record.getTimestamp(columnIndex));
                     break;
                 case ColumnType.DATE:
-                    primaryColMem.putLong(rowId << 3, columnMapper.getDate(record, columnIndex));
+                    primaryColMem.putLong(rowId << 3, record.getDate(columnIndex));
                     break;
                 case ColumnType.DOUBLE:
-                    primaryColMem.putDouble(rowId << 3, columnMapper.getDouble(record, columnIndex));
+                    primaryColMem.putDouble(rowId << 3, record.getDouble(columnIndex));
                     break;
                 case ColumnType.SHORT:
-                    primaryColMem.putShort(rowId << 1, columnMapper.getShort(record,columnIndex));
+                    primaryColMem.putShort(rowId << 1, record.getShort(columnIndex));
                     break;
                 case ColumnType.CHAR:
-                    primaryColMem.putChar(rowId << 1, columnMapper.getChar(record, columnIndex));
+                    primaryColMem.putChar(rowId << 1, record.getChar(columnIndex));
                     break;
                 case ColumnType.BYTE:
                 case ColumnType.BOOLEAN:
-                    primaryColMem.putByte(rowId, columnMapper.getByte(record, columnIndex));
+                    primaryColMem.putByte(rowId, record.getByte(columnIndex));
                     break;
                 default:
                     throw SqlException.$(0, "Column type ")

@@ -47,7 +47,6 @@ import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.griffin.engine.table.*;
 import io.questdb.griffin.engine.union.*;
 import io.questdb.griffin.model.*;
-import io.questdb.griffin.update.UpdateStatementBuilder;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -488,82 +487,6 @@ public class SqlCodeGenerator implements Mutable {
             RecordCursorFactory master,
             RecordCursorFactory slave,
             int joinType
-    ) throws SqlException {
-        if (!(master instanceof UpdateStatementBuilder)) {
-            return createHashJoin0(
-                    metadata,
-                    master,
-                    slave,
-                    joinType
-            );
-        }
-        return createUpdateStatementJoin(metadata, master, slave, joinType);
-    }
-
-    @NotNull
-    private UpdateStatementBuilder createUpdateStatementJoin(
-            RecordMetadata metadata,
-            RecordCursorFactory master,
-            RecordCursorFactory slave,
-            int joinType
-    ) throws SqlException {
-        UpdateStatementBuilder updateBuilder = (UpdateStatementBuilder) master;
-        if (joinType == JOIN_CROSS) {
-            return updateBuilder.withJoin(
-                    new UpdateCrossJoinRecordCursorFactory(
-                            metadata,
-                            master,
-                            slave,
-                            master.getMetadata().getColumnCount()
-                    )
-            );
-        }
-        if (joinType != JOIN_INNER) {
-            throw SqlException.$(0, "Only INNER joins are supported with UPDATE statements. Please specify join condition in WHERE clause.");
-        }
-        final RecordSink masterKeySink = RecordSinkFactory.getInstance(
-                asm,
-                master.getMetadata(),
-                listColumnFilterB,
-                true
-        );
-        final RecordSink slaveKeySink = RecordSinkFactory.getInstance(
-                asm,
-                slave.getMetadata(),
-                listColumnFilterA,
-                true
-        );
-        valueTypes.clear();
-        valueTypes.add(ColumnType.LONG);
-        valueTypes.add(ColumnType.LONG);
-        entityColumnFilter.of(slave.getMetadata().getColumnCount());
-        RecordSink slaveSink = RecordSinkFactory.getInstance(
-                asm,
-                slave.getMetadata(),
-                entityColumnFilter,
-                false
-        );
-        return updateBuilder.withJoin(
-                new UpdateHashJoinRecordCursorFactory(
-                        configuration,
-                        metadata,
-                        master,
-                        slave,
-                        keyTypes,
-                        valueTypes,
-                        masterKeySink,
-                        slaveKeySink,
-                        slaveSink,
-                        master.getMetadata().getColumnCount()
-                )
-        );
-    }
-
-    private RecordCursorFactory createHashJoin0(
-            RecordMetadata metadata,
-            RecordCursorFactory master,
-            RecordCursorFactory slave,
-            int joinType
     ) {
         /*
          * JoinContext provides the following information:
@@ -752,19 +675,6 @@ public class SqlCodeGenerator implements Mutable {
         );
     }
 
-    UpdateStatementBuilder generateUpdate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {
-        // Hint that this is an UPDATE query plan
-        queryModel.setIsUpdate(true);
-        queryModel.getNestedModel().setIsUpdate(true);
-
-        // Expect record factory to be UpdateStatementBuilder
-        RecordCursorFactory finalRecordSet = generate(queryModel, executionContext);
-        if (!(finalRecordSet instanceof UpdateStatementBuilder)) {
-            throw SqlException.$(queryModel.getModelPosition(), "This shape of UPDATE statement is not supported");
-        }
-        return (UpdateStatementBuilder) finalRecordSet;
-    }
-
     RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         return generateQuery(model, executionContext, true);
     }
@@ -789,9 +699,6 @@ public class SqlCodeGenerator implements Mutable {
             } finally {
                 f.close();
             }
-        }
-        if (model.isUpdate()) {
-            return ((UpdateStatementBuilder) factory).withFilter(f);
         }
         return new FilteredRecordCursorFactory(factory, f);
     }
@@ -993,11 +900,7 @@ public class SqlCodeGenerator implements Mutable {
                 // check if there are post-filters
                 ExpressionNode filter = slaveModel.getPostJoinWhereClause();
                 if (filter != null) {
-                    if (!(master instanceof UpdateStatementBuilder)) {
-                        master = new FilteredRecordCursorFactory(master, functionParser.parseFunction(filter, master.getMetadata(), executionContext));
-                    } else {
-                        ((UpdateStatementBuilder) master).withFilter(functionParser.parseFunction(filter, master.getMetadata(), executionContext));
-                    }
+                    master = new FilteredRecordCursorFactory(master, functionParser.parseFunction(filter, master.getMetadata(), executionContext));
                 }
             }
 
@@ -1033,17 +936,14 @@ public class SqlCodeGenerator implements Mutable {
             RecordCursorFactory slave,
             RecordMetadata masterMetadata,
             RecordMetadata slaveMetadata
-    ) throws SqlException {
+    ) {
         RecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
-        if (!(master instanceof UpdateStatementBuilder)) {
-            return new CrossJoinRecordCursorFactory(
-                    joinMetadata,
-                    master,
-                    slave,
-                    masterMetadata.getColumnCount()
-            );
-        }
-        return createUpdateStatementJoin(joinMetadata, master, slave, JOIN_CROSS);
+        return new CrossJoinRecordCursorFactory(
+                joinMetadata,
+                master,
+                slave,
+                masterMetadata.getColumnCount()
+        );
     }
 
     @NotNull
@@ -1292,11 +1192,7 @@ public class SqlCodeGenerator implements Mutable {
             if (tableName.type == FUNCTION) {
                 return generateFunctionQuery(model);
             } else {
-                RecordCursorFactory tableRecordCursorFactory = generateTableQuery(model, executionContext);
-                if (!model.isUpdate()) {
-                    return tableRecordCursorFactory;
-                }
-                return new UpdateStatementBuilder(model.getModelPosition(), tableRecordCursorFactory);
+                return generateTableQuery(model, executionContext);
             }
         }
         return generateSubQuery(model, executionContext);
@@ -1979,6 +1875,34 @@ public class SqlCodeGenerator implements Mutable {
         final int selectColumnCount = columns.size();
         final ExpressionNode timestamp = model.getTimestamp();
 
+        // If this is update query and column types don't match exactly
+        // to the column type of table to be updated we have to fall back to
+        // select-virtual
+        if (model.isUpdate()) {
+            boolean columnTypeMismatch = false;
+            ObjList<CharSequence> updateColumnNames = model.getUpdateTableColumnNames();
+            IntList updateColumnTypes = model.getUpdateTableColumnTypes();
+
+            for(int i = 0, n = columns.size(); i < n; i++) {
+                QueryColumn queryColumn = columns.getQuick(i);
+                CharSequence columnName = columns.getQuick(i).getAlias();
+                int index = metadata.getColumnIndexQuiet(queryColumn.getAst().token);
+                assert index > -1 : "wtf? " + queryColumn.getAst().token;
+
+                int updateColumnIndex = updateColumnNames.indexOf(columnName);
+                int updateColumnType = updateColumnTypes.get(updateColumnIndex);
+
+                if (updateColumnType != metadata.getColumnType(index)) {
+                    columnTypeMismatch = true;
+                    break;
+                }
+            }
+
+            if (columnTypeMismatch) {
+                return generateSelectVirtualWithSubquery(model, executionContext, factory);
+            }
+        }
+
         boolean entity;
         // the model is considered entity when it doesn't add any value to its nested model
         //
@@ -2045,10 +1969,7 @@ public class SqlCodeGenerator implements Mutable {
             columnCrossIndex.add(timestampIndex);
         }
 
-        if (!model.isUpdate()) {
-            return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
-        }
-        return ((UpdateStatementBuilder)factory).withSelectChoose(selectMetadata, columnCrossIndex);
+        return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
     }
 
     private RecordCursorFactory generateSelectCursor(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -2358,7 +2279,11 @@ public class SqlCodeGenerator implements Mutable {
 
     private RecordCursorFactory generateSelectVirtual(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
+        return generateSelectVirtualWithSubquery(model, executionContext, factory);
+    }
 
+    @NotNull
+    private VirtualRecordCursorFactory generateSelectVirtualWithSubquery(QueryModel model, SqlExecutionContext executionContext, RecordCursorFactory factory) throws SqlException {
         try {
             final ObjList<QueryColumn> columns = model.getColumns();
             final int columnCount = columns.size();
@@ -2387,13 +2312,38 @@ public class SqlCodeGenerator implements Mutable {
                         metadata,
                         executionContext
                 );
-                // define "undefined" functions as string unless it's update. Leave Undefined if update
-                if (function.isUndefined() && !model.isUpdate()) {
-                    function.assignType(ColumnType.STRING, executionContext.getBindVariableService());
+                int targetColumnType = -1;
+                if (model.isUpdate()) {
+                    // Check the type of the column to be updated
+                    int columnIndex = model.getUpdateTableColumnNames().indexOf(column.getAlias());
+                    targetColumnType = model.getUpdateTableColumnTypes().get(columnIndex);
                 }
+
+                // define "undefined" functions as string unless it's update. Leave Undefined if update
+                if (function.isUndefined()) {
+                    if (!model.isUpdate()) {
+                        function.assignType(ColumnType.STRING, executionContext.getBindVariableService());
+                    } else {
+                        // Set bind variable the type of the column
+                        function.assignType(targetColumnType, executionContext.getBindVariableService());
+                    }
+                }
+
+                int columnType = function.getType();
+                if (targetColumnType != -1 && targetColumnType != function.getType()) {
+                    // This is an update and the target column does not match with column the update is trying to perform
+                    if (builtInFunctionCast(function.getType(), targetColumnType)) {
+                        // All functions will be able to getLong() if they support getInt(), no need to generate cast here
+                        columnType = targetColumnType;
+                    } else if (implicitCastAllowed(function.getType(), targetColumnType)) {
+                        // TODO: add casts for not exactly convertable types
+                        throw new UnsupportedOperationException();
+                    }
+                }
+
                 functions.add(function);
 
-                if (function instanceof SymbolFunction) {
+                if (function instanceof SymbolFunction && columnType == ColumnType.SYMBOL) {
                     virtualMetadata.add(
                             new TableColumnMetadata(
                                     Chars.toString(column.getAlias()),
@@ -2410,7 +2360,7 @@ public class SqlCodeGenerator implements Mutable {
                             new TableColumnMetadata(
                                     Chars.toString(column.getAlias()),
                                     configuration.getRandom().nextLong(),
-                                    function.getType(),
+                                    columnType,
                                     function.getMetadata()
                             )
                     );
@@ -2449,14 +2399,54 @@ public class SqlCodeGenerator implements Mutable {
                     }
                 }
             }
-            if (model.isUpdate()) {
-                return ((UpdateStatementBuilder) factory).withSelectVirtual(virtualMetadata, functions);
-            }
             return new VirtualRecordCursorFactory(virtualMetadata, functions, factory);
         } catch (SqlException | CairoException e) {
             factory.close();
             throw e;
         }
+    }
+
+    private boolean implicitCastAllowed(int fromType, int toType) {
+        switch (ColumnType.tagOf(fromType)) {
+            case ColumnType.GEOHASH:
+                return ColumnType.tagOf(toType) == ColumnType.GEOHASH && ColumnType.getGeoHashBits(fromType) <= ColumnType.getGeoHashBits(toType);
+
+            case ColumnType.STRING:
+            case ColumnType.SYMBOL:
+                return toType == ColumnType.TIMESTAMP || toType == ColumnType.SYMBOL || toType == ColumnType.STRING;
+
+        }
+        return false;
+    }
+
+    private static boolean builtInFunctionCast(int fromColumnType, int toColumnType) {
+        switch (fromColumnType) {
+            case ColumnType.NULL:
+                return true;
+            case ColumnType.BYTE:
+                if (toColumnType == ColumnType.SHORT) {
+                    return true;
+                }
+            case ColumnType.CHAR:
+            case ColumnType.SHORT:
+                if (toColumnType == ColumnType.INT || toColumnType == ColumnType.CHAR || toColumnType == ColumnType.SHORT) {
+                    return true;
+                }
+            case ColumnType.INT:
+                return toColumnType == ColumnType.LONG || toColumnType == ColumnType.FLOAT || toColumnType == ColumnType.DOUBLE;
+            case ColumnType.LONG:
+                return toColumnType == ColumnType.TIMESTAMP || toColumnType == ColumnType.DOUBLE || toColumnType == ColumnType.FLOAT;
+            case ColumnType.FLOAT:
+                return toColumnType == ColumnType.DOUBLE;
+            case ColumnType.TIMESTAMP:
+                return toColumnType == ColumnType.LONG;
+            case ColumnType.DATE:
+                return toColumnType == ColumnType.TIMESTAMP;
+            case ColumnType.SYMBOL:
+                return toColumnType == ColumnType.STRING;
+
+        }
+        return false;
     }
 
     /**

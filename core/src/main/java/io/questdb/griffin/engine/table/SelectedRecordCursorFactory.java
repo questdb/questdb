@@ -63,4 +63,9 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }
+
+    @Override
+    public boolean supportTableRowId(CharSequence tableName) {
+        return base.supportTableRowId(tableName);
+    }
 }

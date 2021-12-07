@@ -38,13 +38,8 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
 
     public AbstractVirtualFunctionRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
         this.functions = functions;
-        if (supportsRandomAccess) {
-            this.recordA = new VirtualRecord(functions);
-            this.recordB = new VirtualRecord(functions);
-        } else {
-            this.recordA = new VirtualRecordNoRowid(functions);
-            this.recordB = null;
-        }
+        this.recordA = new VirtualRecord(functions);
+        this.recordB = new VirtualRecord(functions);
         this.supportsRandomAccess = supportsRandomAccess;
     }
 
@@ -70,7 +65,7 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
 
     @Override
     public Record getRecordB() {
-        if (recordB != null) {
+        if (supportsRandomAccess) {
             return recordB;
         }
         throw new UnsupportedOperationException();
@@ -99,7 +94,7 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     public void of(RecordCursor cursor) {
         this.baseCursor = cursor;
         recordA.of(baseCursor.getRecord());
-        if (recordB != null) {
+        if (supportsRandomAccess) {
             recordB.of(baseCursor.getRecordB());
         }
     }

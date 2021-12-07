@@ -95,6 +95,11 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         return false;
     }
 
+    @Override
+    public boolean supportTableRowId(CharSequence tableName) {
+        return masterFactory.supportTableRowId(tableName);
+    }
+
     private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
         HashOuterJoinRecordCursorFactory.buildMap(slaveCursor, slaveCursor.getRecord(), joinKeyMap, slaveKeySink, slaveChain, circuitBreaker);
     }

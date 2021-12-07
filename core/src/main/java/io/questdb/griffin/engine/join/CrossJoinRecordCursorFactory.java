@@ -73,6 +73,11 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         return false;
     }
 
+    @Override
+    public boolean supportTableRowId(CharSequence tableName) {
+        return masterFactory.supportTableRowId(tableName);
+    }
+
     private static class CrossJoinRecordCursor implements NoRandomAccessRecordCursor {
         private final JoinRecord record;
         private final int columnSplit;
