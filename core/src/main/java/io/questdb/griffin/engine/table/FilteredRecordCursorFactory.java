@@ -24,13 +24,18 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.MessageBus;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
+import io.questdb.tasks.PageFrameTask;
+
+import java.util.ArrayDeque;
+import java.util.Deque;
 
 public class FilteredRecordCursorFactory implements RecordCursorFactory {
     private final RecordCursorFactory base;
@@ -59,6 +64,39 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
         } catch (Throwable e) {
             Misc.free(cursor);
             throw e;
+        }
+    }
+
+    private final PageFrameRecord pageFrameRecord = new PageFrameRecord();
+
+    @Override
+    public void execute(SqlExecutionContext executionContext) throws SqlException {
+        final PageFrameCursor cursor = base.getPageFrameCursor(executionContext);
+        final MessageBus bus = executionContext.getMessageBus();
+        final RingQueue<PageFrameTask> queue = bus.getPageFrameQueue();
+        final MPSequence pubSeq = bus.getPageFramePubSeq();
+
+        Deque<DirectLongList> listDeque = new ArrayDeque<>();
+
+        PageFrame frame;
+        while ((frame = cursor.next()) != null) {
+
+            long c = pubSeq.next();
+            if (c > -1) {
+                queue.get(c).of(
+                        frame,
+                        filter,
+                        new DirectLongList(1024)
+                );
+                pubSeq.done(c);
+            } else {
+                RecordFilterJob.filter(
+                        frame,
+                        filter,
+                        pageFrameRecord,
+
+                );
+            }
         }
     }
 

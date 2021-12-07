@@ -106,4 +106,12 @@ public interface MessageBus extends Closeable {
     RingQueue<VectorAggregateTask> getVectorAggregateQueue();
 
     Sequence getVectorAggregateSubSeq();
+
+    RingQueue<PageFrameTask> getPageFrameQueue();
+
+    MCSequence getPageFrameSubSeq();
+
+    MPSequence getPageFramePubSeq();
+
+
 }

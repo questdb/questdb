@@ -57,23 +57,12 @@ class FilteredRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
-        if (filter.isConstant()) {
-            return filterIsConstant();
-        }
-
         while (base.hasNext()) {
             if (filter.getBool(record)) {
                 return true;
             }
         }
 
-        return false;
-    }
-
-    private boolean filterIsConstant() {
-        if (filter.getBool(record)) {
-            return base.hasNext();
-        }
         return false;
     }
 

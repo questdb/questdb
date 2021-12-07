@@ -72,7 +72,9 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
      * @param executionContext name of a SQL execution context
      * @return instance of cursor
      */
-    RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException;
+    default RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Metadata of the SQL result. It includes column names, indexes and types.
@@ -83,6 +85,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
 
     default PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         return null;
+    }
+
+    default void execute(SqlExecutionContext executionContext) throws SqlException {
+
     }
 
     boolean recordCursorSupportsRandomAccess();
