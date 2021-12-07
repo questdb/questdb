@@ -489,8 +489,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                 LineTcpParser protoParser,
                 FloatingDirectCharSink floatingCharSink
         ) {
-            final BitSet processedCols = tableUpdateDetails.getProcessedCols();
-            final LowerCaseCharSequenceHashSet addedCols = tableUpdateDetails.getAddedCols();
+            final BitSet processedCols = localDetails.getProcessedCols();
+            final LowerCaseCharSequenceHashSet addedCols = localDetails.getAddedCols();
             processedCols.clear();
             addedCols.clear();
             threadId = INCOMPLETE_EVENT_ID;
@@ -1041,8 +1041,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         private long lastCommitMillis;
         private int networkIOOwnerCount = 0;
         private final int timestampIndex;
-        private final BitSet processedCols = new BitSet();
-        private final LowerCaseCharSequenceHashSet addedCols = new LowerCaseCharSequenceHashSet();
 
         private TableUpdateDetails(CharSequence tableName, int writerThreadId, NetworkIOJob[] netIoJobs) {
             this.writerThreadId = writerThreadId;
@@ -1106,14 +1104,6 @@ class LineTcpMeasurementScheduler implements Closeable {
             return timestampIndex;
         }
 
-        BitSet getProcessedCols() {
-            return processedCols;
-        }
-
-        LowerCaseCharSequenceHashSet getAddedCols() {
-            return addedCols;
-        }
-
         void handleRowAppended() {
             if (writer.checkMaxAndCommitLag(commitMode)) {
                 lastCommitMillis = milliClock.getTicks();
@@ -1173,6 +1163,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             private final IntList geoHashBitsSizeByColIdx = new IntList();
             private final StringSink tempSink = new StringSink();
             private final MangledUtf8Sink mangledUtf8Sink = new MangledUtf8Sink(tempSink);
+            private final BitSet processedCols = new BitSet();
+            private final LowerCaseCharSequenceHashSet addedCols = new LowerCaseCharSequenceHashSet();
 
             ThreadLocalDetails(ObjList<SymbolCache> unusedSymbolCaches) {
                 this.unusedSymbolCaches = unusedSymbolCaches;
@@ -1182,6 +1174,14 @@ class LineTcpMeasurementScheduler implements Closeable {
             public void close() {
                 Misc.freeObjList(symbolCacheByColumnIndex);
                 Misc.free(path);
+            }
+
+            BitSet getProcessedCols() {
+                return processedCols;
+            }
+
+            LowerCaseCharSequenceHashSet getAddedCols() {
+                return addedCols;
             }
 
             private SymbolCache addSymbolCache(int colIndex) {
