@@ -202,7 +202,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(-1, configuration.getLineUdpReceiverConfiguration().ownThreadAffinity());
         Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().ownThread());
 
-        Assert.assertEquals(SqlExecutionContext.JIT_MODE_DISABLED, configuration.getCairoConfiguration().getSqlJitMode());
+        Assert.assertEquals(SqlExecutionContext.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
 
         // statics
         Assert.assertSame(FilesFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getFilesFacade());
@@ -639,10 +639,9 @@ public class PropServerConfigurationTest {
     @Test
     public void testSqlJitMode() throws ServerConfigurationException, JsonException {
         Properties properties = new Properties();
-        properties.setProperty("http.enabled", "false");
         properties.setProperty("cairo.sql.jit.mode", "");
         PropServerConfiguration configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
-        Assert.assertEquals(SqlExecutionContext.JIT_MODE_DISABLED, configuration.getCairoConfiguration().getSqlJitMode());
+        Assert.assertEquals(SqlExecutionContext.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
 
         properties.setProperty("cairo.sql.jit.mode", "on");
         configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
@@ -658,6 +657,6 @@ public class PropServerConfigurationTest {
 
         properties.setProperty("cairo.sql.jit.mode", "foobar");
         configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
-        Assert.assertEquals(SqlExecutionContext.JIT_MODE_DISABLED, configuration.getCairoConfiguration().getSqlJitMode());
+        Assert.assertEquals(SqlExecutionContext.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
     }
 }

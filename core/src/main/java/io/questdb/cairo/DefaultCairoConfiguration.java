@@ -588,6 +588,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlJitMode() {
-        return SqlExecutionContext.JIT_MODE_DISABLED;
+        return SqlExecutionContext.JIT_MODE_ENABLED;
     }
 }
