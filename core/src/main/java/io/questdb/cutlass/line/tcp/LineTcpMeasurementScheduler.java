@@ -503,12 +503,11 @@ class LineTcpMeasurementScheduler implements Closeable {
             long bufPos = bufLo;
             long bufMax = bufLo + bufSize;
             long timestampBufPos = bufPos;
-            //timestamp is saved to timestampBufPos after saving all fields
+            //timestamp and entitiesWritten are saved to timestampBufPos after saving all fields
             bufPos += Long.BYTES;
-            int nEntities = protoParser.getnEntities();
-            Unsafe.getUnsafe().putInt(bufPos, nEntities);
+            int entitiesWritten = 0;
             bufPos += Integer.BYTES;
-            for (int nEntity = 0; nEntity < nEntities; nEntity++) {
+            for (int nEntity = 0; nEntity < protoParser.getnEntities(); nEntity++) {
                 if (bufPos + Long.BYTES < bufMax) {
                     ProtoEntity entity = protoParser.getEntity(nEntity);
                     int colIndex = localDetails.getColumnIndex(entity.getName());
@@ -543,6 +542,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         Unsafe.getUnsafe().putInt(bufPos, colIndex);
                         bufPos += Integer.BYTES;
                     }
+                    entitiesWritten++;
                     switch (entity.getType()) {
                         case LineTcpParser.ENTITY_TYPE_TAG: {
                             long tmpBufPos = bufPos;
@@ -686,6 +686,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 }
             }
             Unsafe.getUnsafe().putLong(timestampBufPos, timestamp);
+            Unsafe.getUnsafe().putInt(timestampBufPos + Long.BYTES, entitiesWritten);
             threadId = tableUpdateDetails.writerThreadId;
         }
 
